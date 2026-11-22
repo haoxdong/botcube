@@ -29,7 +29,7 @@ def test_completed_warmup_supplies_first_turn_memory_without_repeated_read(
     events = service.turn('hello', **member)
 
     assert events[-1]['type'] == 'RUN_FINISHED'
-    assert _memory_block(service.recorder.prompts[-1]) == 'user preferences:\n- Prefers tea'
+    assert _memory_block(service.recorder.prompts[-1]) == 'user preferences:\n- record-P Prefers tea'
     assert not [operation for operation, _ in agentcore_memory.sts.memory_calls
                 if operation == 'list_memory_records']
 
@@ -69,7 +69,7 @@ def test_ineligible_warmup_keeps_first_turn_fresh_memory_read(
 
     assert events[-1]['type'] == 'RUN_FINISHED'
     assert _memory_block(service.recorder.prompts[-1]) == (
-        'user preferences:\n- Prefers coffee' if reason == 'actor' else 'user preferences:\n- Prefers tea')
+        'user preferences:\n- record-P Prefers coffee' if reason == 'actor' else 'user preferences:\n- record-P Prefers tea')
     assert len([operation for operation, _ in agentcore_memory.sts.memory_calls
                 if operation == 'list_memory_records']) == 2
     if reason == 'actor':
@@ -87,7 +87,7 @@ def test_empty_warmup_is_consumed_once_and_later_empty_turn_refreshes(
     assert not [operation for operation, _ in agentcore_memory.sts.memory_calls if operation == 'list_memory_records']
     agentcore_memory.records.append(_memory_record('Prefers tea', 'UserPreferences-1', 'actor-1'))
     assert service.turn('again', **member)[-1]['type'] == 'RUN_FINISHED'
-    assert _memory_block(service.recorder.prompts[-1]) == 'user preferences:\n- Prefers tea'
+    assert _memory_block(service.recorder.prompts[-1]) == 'user preferences:\n- record-P Prefers tea'
     assert len([operation for operation, _ in agentcore_memory.sts.memory_calls
                 if operation == 'list_memory_records']) == 2
 
@@ -139,7 +139,7 @@ def test_turn_arriving_during_warmup_reads_fresh_and_invalidates_handoff(
     assert session_memory._warmups == {}
     agentcore_memory.records.append(_memory_record('New memory', 'SemanticFacts-1', 'actor-1'))
     assert service.turn('again', **member)[-1]['type'] == 'RUN_FINISHED'
-    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- New memory'
+    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- record-N New memory'
     assert calls == 3
 
 
@@ -221,7 +221,7 @@ def test_memory_read_age_is_not_reset_when_warmup_preparation_finishes(
     agentcore_memory.records.append(_memory_record('New memory', 'SemanticFacts-1', 'actor-1'))
     agentcore_memory.sts.memory_calls.clear()
     assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
-    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- New memory'
+    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- record-N New memory'
     assert len([operation for operation, _ in agentcore_memory.sts.memory_calls
                 if operation == 'list_memory_records']) == 2
 
@@ -251,7 +251,7 @@ def test_cancelled_warmup_discards_completed_read_and_next_turn_loads_fresh(
     agentcore_memory.records.append(_memory_record('New memory', 'SemanticFacts-1', 'actor-1'))
     agentcore_memory.sts.memory_calls.clear()
     assert service.turn('hello', actor='actor-1', user='user-1', memory=True)[-1]['type'] == 'RUN_FINISHED'
-    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- New memory'
+    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- record-N New memory'
     assert len([operation for operation, _ in agentcore_memory.sts.memory_calls
                 if operation == 'list_memory_records']) == 2
 
@@ -273,7 +273,7 @@ def test_warmup_valid_at_turn_receipt_survives_slow_turn_preparation(
     monkeypatch.setattr(serving, '_turn_agent', slow)
     agentcore_memory.sts.memory_calls.clear()
     assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
-    assert _memory_block(service.recorder.prompts[-1]) == 'user preferences:\n- Prefers tea'
+    assert _memory_block(service.recorder.prompts[-1]) == 'user preferences:\n- record-P Prefers tea'
     assert not [operation for operation, _ in agentcore_memory.sts.memory_calls if operation == 'list_memory_records']
 
 
@@ -304,6 +304,6 @@ def test_cancelled_first_turn_consumes_handoff_and_next_turn_loads_fresh(
     agentcore_memory.records.append(_memory_record('New memory', 'SemanticFacts-1', 'actor-1'))
     agentcore_memory.sts.memory_calls.clear()
     assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
-    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- New memory'
+    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- record-N New memory'
     assert len([operation for operation, _ in agentcore_memory.sts.memory_calls
                 if operation == 'list_memory_records']) == 2

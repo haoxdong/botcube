@@ -20,12 +20,12 @@ from langchain_core.messages import SystemMessage
 from langgraph.types import Command
 
 from . import turn_timing
+from .memory_index import MemoryIndexEntry, memory_index_line
 
-MEMORY_LIMIT = 50
+MEMORY_LIMIT = 100
 PROMPT_CACHE_TTL_SECONDS = 300
 PREFERENCE_SECTION = 'user preferences:'
 FACT_SECTION = 'semantic facts:'
-SPILLOVER_NOTE = 'More memories are available. Use memory retrieve to search beyond the startup memory block.'
 log = logging.getLogger(__name__)
 
 
@@ -96,15 +96,16 @@ def take_warmup(session: tuple[str, str], actor_id: str, started_at: float) -> s
     return None
 
 
-def render_memory(preferences: Sequence[str], facts: Sequence[str]) -> str:
-    """The block for up to 50 preferences and 50 facts, as given (newest first); empty when there are none."""
+def render_memory(preferences: Sequence[MemoryIndexEntry], facts: Sequence[MemoryIndexEntry]) -> str:
     sections = [
-        label + '\n' + '\n'.join(f'- {text}' for text in texts[:MEMORY_LIMIT])
-        for label, texts in ((PREFERENCE_SECTION, preferences), (FACT_SECTION, facts))
-        if texts
+        label + '\n' + '\n'.join(memory_index_line(entry) for entry in entries[:MEMORY_LIMIT])
+        for label, entries in ((PREFERENCE_SECTION, preferences), (FACT_SECTION, facts))
+        if entries
     ]
-    if len(preferences) > MEMORY_LIMIT or len(facts) > MEMORY_LIMIT:
-        sections.append(SPILLOVER_NOTE)
+    remaining = [f'{len(entries) - MEMORY_LIMIT} more {kind}'
+                 for kind, entries in (('preferences', preferences), ('facts', facts)) if len(entries) > MEMORY_LIMIT]
+    if remaining:
+        sections.append('(' + '; '.join(remaining) + '; use memory list or retrieve)')
     return '\n\n'.join(sections)
 
 

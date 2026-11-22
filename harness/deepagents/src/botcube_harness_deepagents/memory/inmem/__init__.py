@@ -15,6 +15,7 @@ from langgraph.checkpoint.base import (
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 
+from ...memory_index import MemoryIndexEntry
 from ...memory_tools import MemoryToolResult
 from ...session_memory import SessionMemoryMiddleware, render_memory
 
@@ -162,7 +163,7 @@ def _run_memory_action(
 
 
 def _opening_memory(store: InMemoryStore, namespace: tuple[str, str]) -> str:
-    return render_memory([], [text for item in store.search(namespace) if (text := item.value['content'].strip())])
+    return render_memory([], [MemoryIndexEntry('', text) for item in store.search(namespace) if (text := item.value['content'].strip())])
 
 
 def _result(status: Literal['success', 'error'], text: str) -> MemoryToolResult:

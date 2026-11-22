@@ -97,12 +97,15 @@ SUMMARY_TEXT = (
 
 
 def _invoke(action: str, *, store: Any = None, query: str = '', content: str = '',
-            actor_id: str = 'botcube_harness_deepagents', memory_record_id: str = '') -> MemoryToolResult:
+            actor_id: str = 'botcube_harness_deepagents', memory_record_id: str = '',
+            max_results: int = 10, next_token: str = '') -> MemoryToolResult:
     """Call the actor's memory tool function directly."""
     kwargs: dict[str, Any] = {
         'action': action,
         'query': query,
         'content': content,
+        'max_results': max_results,
+        'next_token': next_token,
     }
     if store is not None:
         kwargs['store'] = store
@@ -149,7 +152,10 @@ def test_tool_description_warns_about_pii_extraction_limits() -> None:
     description = memory_tool('actor').description or ''
 
     assert 'PII-like content' in description
-    assert 'should not promise durable storage' in description
+    assert 'do not promise durable storage' in description
+    assert '8-character' in description
+    assert 'next_token' in description
+    assert 'closing count' in description
 
 
 # -- extract_text -----------------------------------------------------------
@@ -287,16 +293,16 @@ def _saved(memory: FakeAgentCoreMemory, text: str, record_id: str, *, actor_id: 
 
 @pytest.mark.parametrize(('action', 'expected'), [
     ('list', [
-        {'text': '[rec-pref] Prefers blue charts.'},
-        {'text': '[rec-fact] Uses blue notebooks.'},
-        {'text': '[rec-summary] Discussed blue charts.'},
-        {'text': '[rec-episode] Reviewed blue charts.'},
+        {'text': '- rec-pref Prefers blue charts.'},
+        {'text': '- rec-fact Uses blue notebooks.'},
+        {'text': '- rec-summ Discussed blue charts.'},
+        {'text': '- rec-epis Reviewed blue charts.'},
     ]),
     ('retrieve', [
-        {'text': 'Prefers blue charts.'},
-        {'text': 'Uses blue notebooks.'},
-        {'text': 'Discussed blue charts.'},
-        {'text': 'Reviewed blue charts.'},
+        {'text': '- rec-pref Prefers blue charts.'},
+        {'text': '- rec-fact Uses blue notebooks.'},
+        {'text': '- rec-summ Discussed blue charts.'},
+        {'text': '- rec-epis Reviewed blue charts.'},
     ]),
 ])
 def test_memory_tool_reads_page_records_and_all_four_kinds(
@@ -372,7 +378,7 @@ class TestRetrieve:
 
         assert result == {
             'status': 'success',
-            'content': [{'text': 'Prefers copper analysis.'}, {'text': 'Trades copper futures.'}],
+            'content': [{'text': '- rec-own Prefers copper analysis.'}, {'text': '- rec-fact Trades copper futures.'}],
         }
 
     def test_unwraps_strategy_record_shapes(self, memory: FakeAgentCoreMemory) -> None:
@@ -388,11 +394,11 @@ class TestRetrieve:
         assert result == {
             'status': 'success',
             'content': [
-                {'text': 'The deploy runbook is at wiki/runbook-v2.'},
-                {'text': 'Prefers the runbook'},
-                {'text': EPISODIC_TEXT},
-                {'text': REFLECTION_TEXT},
-                {'text': SUMMARY_TEXT.replace('memory strategy', 'runbook')},
+                {'text': '- rec-fact The deploy runbook is at wiki/runbook-v2.'},
+                {'text': '- rec-pref Prefers the runbook'},
+                {'text': '- rec-epis Situation: The user saved a deployment runbook. Intent: Recall the runbook later. Assess…'},
+                {'text': '- rec-refl Title: Deployment runbook memory Use Cases: Before deploying AgentCore, recall the saved…'},
+                {'text': '- rec-summ Global Summary: AgentCore runbook work should preserve clean tool output. Review Feedbac…'},
             ],
         }
 
@@ -417,8 +423,8 @@ class TestList:
         assert result == {
             'status': 'success',
             'content': [
-                {'text': '[rec-1] Lives in New York.'},
-                {'text': '[rec-2] Prefers copper analysis'},
+                {'text': '- rec-1 Lives in New York.'},
+                {'text': '- rec-2 Prefers copper analysis'},
             ],
         }
 
@@ -439,9 +445,9 @@ class TestList:
         assert result == {
             'status': 'success',
             'content': [
-                {'text': '[rec-fact] The deploy runbook is at wiki/runbook-v2.'},
-                {'text': f'[rec-episode] {EPISODIC_TEXT}'},
-                {'text': f'[rec-summary] {SUMMARY_TEXT}'},
+                {'text': '- rec-fact The deploy runbook is at wiki/runbook-v2.'},
+                {'text': '- rec-epis Situation: The user saved a deployment runbook. Intent: Recall the runbook later. Assess…'},
+                {'text': '- rec-summ Global Summary: AgentCore memory strategy work should preserve clean tool output. Review…'},
             ],
         }
 
@@ -568,12 +574,46 @@ class TestUnknownAction:
         }
 
 
-# -- actions set matches Strands ---------------------------------------------
+@pytest.mark.parametrize('action', ['list', 'retrieve'])
+def test_pages_use_bounded_references_and_continue(memory: FakeAgentCoreMemory, action: str) -> None:
+    _saved(memory, 'Copper ' + 'x' * 500, 'mem-12345678' + 'a' * 28)
+    _saved(memory, 'Copper second', 'mem-abcdefgh' + 'b' * 28)
+    store = _store(memory)
+    first = _invoke(action, store=store, actor_id=ACTOR, query='Copper', max_results=1)
+    assert first == {
+        'status': 'success',
+        'content': [{'text': '- 12345678 Copper ' + 'x' * 81 + '…'}],
+        'next_token': '1',
+    }
+    second = _invoke(action, store=store, actor_id=ACTOR, query='Copper', max_results=1,
+                     next_token=first['next_token'])
+    assert second == {'status': 'success', 'content': [{'text': '- abcdefgh Copper second'}]}
 
-class TestActionsParity:
-    def test_valid_actions_match_strands(self) -> None:
-        """Our VALID_ACTIONS must match the Strands MemoryAction enum values."""
-        assert set(VALID_ACTIONS) == {'record', 'retrieve', 'list', 'get', 'delete'}
+
+@pytest.mark.parametrize('action', ['get', 'delete'])
+def test_short_references_are_scoped_and_ambiguity_names_full_ids(memory: FakeAgentCoreMemory, action: str) -> None:
+    own = 'mem-12345678' + 'a' * 28
+    other = 'mem-12345678' + 'b' * 28
+    _saved(memory, 'Own full text', own)
+    _saved(memory, 'Other actor', other, actor_id=LONGER_ACTOR)
+    store = _store(memory)
+    result = _invoke(action, store=store, actor_id=ACTOR, memory_record_id='12345678')
+    assert result == {'status': 'success', 'content': [{'text': (
+        'Own full text' if action == 'get' else f'Deleted memory record {own}.'
+    )}]}
+    assert _invoke(action, store=store, actor_id=ACTOR, memory_record_id=other)['status'] == 'error'
+    if action == 'delete':
+        _saved(memory, 'Own full text', own)
+    _saved(memory, 'Clashing record', other)
+    clash = _invoke(action, store=store, actor_id=ACTOR, memory_record_id='12345678')
+    assert clash == {'status': 'error', 'content': [{'text': (
+        f'Ambiguous memory reference 12345678. Use a full id: {own}, {other}'
+    )}]}
+    assert _invoke('get', store=store, actor_id=ACTOR, memory_record_id=own)['status'] == 'success'
+
+
+def test_update_is_not_supported(memory: FakeAgentCoreMemory) -> None:
+    assert _invoke('update', store=_store(memory))['status'] == 'error'
 
 
 # -- the AgentCore Memory API behind each action --------------------------------
@@ -623,59 +663,56 @@ def _stub_actor_listing(stubber: Stubber) -> None:
 
 
 class TestAgentCoreMemoryRequests:
-    def test_list_pages_through_the_actors_records(self, agentcore: tuple[AgentCoreMemoryStore, Stubber]) -> None:
+    @pytest.mark.parametrize('action', ['list', 'retrieve'])
+    def test_each_call_returns_one_page_and_passes_the_continuation(
+        self, agentcore: tuple[AgentCoreMemoryStore, Stubber], action: str,
+    ) -> None:
         store, stubber = agentcore
-        request = {'memoryId': MEMORY_ID, 'namespacePath': '/actors/botcube_harness_deepagents/', 'maxResults': 100}
-        stubber.add_response(
-            'list_memory_records',
-            {'memoryRecordSummaries': [_api_record('Lives in New York.')], 'nextToken': 'page-2'},
-            request,
-        )
-        stubber.add_response(
-            'list_memory_records',
-            {'memoryRecordSummaries': [_api_record('Prefers copper.', OTHER_RECORD_ID)]},
-            {**request, 'nextToken': 'page-2'},
-        )
-
-        result = _invoke('list', store=store)
-
-        assert result == {
-            'status': 'success',
-            'content': [
-                {'text': f'[{RECORD_ID}] Lives in New York.'},
-                {'text': f'[{OTHER_RECORD_ID}] Prefers copper.'},
-            ],
+        request: dict[str, Any] = {
+            'memoryId': MEMORY_ID, 'namespacePath': '/actors/botcube_harness_deepagents/', 'maxResults': 1,
+        }
+        if action == 'retrieve':
+            request['searchCriteria'] = {'searchQuery': 'copper'}
+        operation = 'list_memory_records' if action == 'list' else 'retrieve_memory_records'
+        stubber.add_response(operation, {
+            'memoryRecordSummaries': [_api_record('Lives in New York.')], 'nextToken': 'page-2',
+        }, request)
+        stubber.add_response(operation, {
+            'memoryRecordSummaries': [_api_record('Prefers copper.', OTHER_RECORD_ID)],
+        }, {**request, 'nextToken': 'page-2'})
+        assert _invoke(action, store=store, query='copper', max_results=1) == {
+            'status': 'success', 'content': [{'text': '- aaaaaaaa Lives in New York.'}], 'next_token': 'page-2',
+        }
+        assert _invoke(action, store=store, query='copper', max_results=1, next_token='page-2') == {
+            'status': 'success', 'content': [{'text': '- bbbbbbbb Prefers copper.'}],
         }
 
-    def test_retrieve_searches_under_the_actor_prefix(self, agentcore: tuple[AgentCoreMemoryStore, Stubber]) -> None:
-        store, stubber = agentcore
-        stubber.add_response(
-            'retrieve_memory_records',
-            {'memoryRecordSummaries': [_api_record('Prefers copper.'), _api_record('Trades metals.', OTHER_RECORD_ID)]},
-            {'memoryId': MEMORY_ID, 'namespacePath': '/actors/botcube_harness_deepagents/',
-             'searchCriteria': {'searchQuery': 'copper'}, 'maxResults': 10},
-        )
-
-        result = _invoke('retrieve', store=store, query='copper')
-
-        assert result == {'status': 'success', 'content': [{'text': 'Prefers copper.'}, {'text': 'Trades metals.'}]}
-
-    def test_list_returns_an_error_when_a_later_page_is_denied(
+    def test_retrieve_pages_when_agentcore_ignores_max_results(
         self, agentcore: tuple[AgentCoreMemoryStore, Stubber],
     ) -> None:
         store, stubber = agentcore
-        request = {'memoryId': MEMORY_ID, 'namespacePath': '/actors/botcube_harness_deepagents/', 'maxResults': 100}
-        stubber.add_response(
-            'list_memory_records',
-            {'memoryRecordSummaries': [_api_record('Lives in New York.')], 'nextToken': 'page-2'},
-            request,
-        )
-        stubber.add_client_error(
-            'list_memory_records', 'AccessDeniedException', 'Not authorized',
-            expected_params={**request, 'nextToken': 'page-2'},
-        )
+        request = {'memoryId': MEMORY_ID, 'namespacePath': '/actors/botcube_harness_deepagents/',
+                   'searchCriteria': {'searchQuery': 'copper'}, 'maxResults': 1}
+        response = {'memoryRecordSummaries': [
+            _api_record('Copper first.'), _api_record('Copper second.', OTHER_RECORD_ID),
+        ]}
+        stubber.add_response('retrieve_memory_records', response, request)
+        stubber.add_response('retrieve_memory_records', response, request)
+        first = _invoke('retrieve', store=store, query='copper', max_results=1)
+        assert first['content'] == [{'text': '- aaaaaaaa Copper first.'}]
+        assert first.get('next_token')
+        second = _invoke('retrieve', store=store, query='copper', max_results=1, next_token=first['next_token'])
+        assert second == {'status': 'success', 'content': [{'text': '- bbbbbbbb Copper second.'}]}
 
-        assert _invoke('list', store=store) == {
+    def test_list_returns_an_error_when_the_requested_page_is_denied(
+        self, agentcore: tuple[AgentCoreMemoryStore, Stubber],
+    ) -> None:
+        store, stubber = agentcore
+        stubber.add_client_error('list_memory_records', 'AccessDeniedException', 'Not authorized', expected_params={
+            'memoryId': MEMORY_ID, 'namespacePath': '/actors/botcube_harness_deepagents/',
+            'maxResults': 10, 'nextToken': 'page-2',
+        })
+        assert _invoke('list', store=store, next_token='page-2') == {
             'status': 'error', 'content': [{'text': 'Failed to list memories.'}],
         }
 
@@ -733,7 +770,7 @@ class TestAgentCoreMemoryRequests:
         ],
     )
     def test_a_failed_call_returns_an_error_and_logs_the_cause(
-        self, agentcore: tuple[AgentCoreMemoryStore, Stubber], caplog: pytest.LogCaptureFixture, action: str, operation: str, kwargs: dict[str, str], message: str, text: str
+        self, agentcore: tuple[AgentCoreMemoryStore, Stubber], caplog: pytest.LogCaptureFixture, action: str, operation: str, kwargs: dict[str, Any], message: str, text: str
     ) -> None:
         store, stubber = agentcore
         if action in ('get', 'delete'):
@@ -775,3 +812,34 @@ def test_record_uses_one_clock_across_midnight_and_stays_visible_for_its_full_wi
     assert memory_document.opening_memory(cast(Any, memory), memory_id=FAKE_MEMORY_ID, actor_id=ACTOR) == (
         'semantic facts:\n- Keep midnight save'
     )
+
+
+@pytest.mark.parametrize('action', ['list', 'retrieve'])
+@pytest.mark.parametrize('size', [0, -1, 101])
+def test_page_size_outside_the_service_bound_is_refused(memory: FakeAgentCoreMemory, action: str, size: int) -> None:
+    assert _invoke(action, store=_store(memory), max_results=size) == {
+        'status': 'error', 'content': [{'text': 'max_results must be between 1 and 100.'}],
+    }
+
+
+@pytest.mark.parametrize('action', ['get', 'delete'])
+def test_another_actors_short_reference_is_neither_read_nor_deleted(memory: FakeAgentCoreMemory, action: str) -> None:
+    record_id = 'mem-deadbeef' + 'a' * 28
+    _saved(memory, 'Other actor secret', record_id, actor_id=LONGER_ACTOR)
+    assert _invoke(action, store=_store(memory), actor_id=ACTOR, memory_record_id='deadbeef')['status'] == 'error'
+    assert _invoke('get', store=_store(memory), actor_id=LONGER_ACTOR, memory_record_id=record_id) == {
+        'status': 'success', 'content': [{'text': 'Other actor secret'}],
+    }
+
+
+@pytest.mark.parametrize('action', ['list', 'retrieve'])
+def test_indexes_collapse_record_newlines_but_get_keeps_full_text(memory: FakeAgentCoreMemory, action: str) -> None:
+    record_id = 'mem-12345678' + 'a' * 28
+    _saved(memory, 'First line.\nSecond line.\tThird line.', record_id)
+    store = _store(memory)
+    assert _invoke(action, store=store, actor_id=ACTOR, query='First') == {
+        'status': 'success', 'content': [{'text': '- 12345678 First line. Second line. Third line.'}],
+    }
+    assert _invoke('get', store=store, actor_id=ACTOR, memory_record_id='12345678') == {
+        'status': 'success', 'content': [{'text': 'First line.\nSecond line.\tThird line.'}],
+    }

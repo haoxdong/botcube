@@ -45,7 +45,7 @@ def test_empty_startup_memory_retries_on_the_next_session_turn(
     ]
 
     assert service.turn('hello again', **member)[-1]['type'] == 'RUN_FINISHED'
-    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- Trades copper futures'
+    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- record-T Trades copper futures'
 
 
 def test_populated_startup_memory_refreshes_after_the_last_model_calls_cache_ttl(
@@ -58,7 +58,7 @@ def test_populated_startup_memory_refreshes_after_the_last_model_calls_cache_ttl
 
     assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
     opened = _memory_block(service.recorder.prompts[-1])
-    assert opened == 'semantic facts:\n- Trades copper futures'
+    assert opened == 'semantic facts:\n- record-T Trades copper futures'
     agentcore_memory.records.append(_memory_record('Lives in Paris', 'SemanticFacts-1', 'actor-1'))
 
     for at in (1200.0, 1500.0):
@@ -69,7 +69,7 @@ def test_populated_startup_memory_refreshes_after_the_last_model_calls_cache_ttl
     now = 1801.0
     assert service.turn('hello after a break', **member)[-1]['type'] == 'RUN_FINISHED'
     assert _memory_block(service.recorder.prompts[-1]) == (
-        'semantic facts:\n- Trades copper futures\n- Lives in Paris'
+        'semantic facts:\n- record-T Trades copper futures\n- record-L Lives in Paris'
     )
 
 
@@ -94,7 +94,7 @@ def test_the_turn_reads_its_memory_block_alongside_its_history(
     monkeypatch.setattr(agentcore_memory_backend, 'opening', read_memory)
     monkeypatch.setattr(serving, 'latest_checkpoint', read_history)
     assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
-    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- Trades copper futures'
+    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- record-T Trades copper futures'
     assert reads == ['actor-1']
 
 
@@ -226,7 +226,7 @@ def test_a_failed_memory_read_the_turn_never_used_is_logged_not_raised(
     caplog.set_level(logging.WARNING, logger=session_memory.__name__)
     # Inside the prompt-cache window the Turn keeps its block, so the read it started alongside its history goes unused.
     assert service.turn('hello again', **member)[-1]['type'] == 'RUN_FINISHED'
-    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- Trades copper futures'
+    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- record-T Trades copper futures'
     deadline = time.monotonic() + 5
     def unused() -> list[dict[str, Any]]:
         return [json.loads(record.message) for record in caplog.records if record.name == session_memory.__name__]

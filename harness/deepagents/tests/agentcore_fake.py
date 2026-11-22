@@ -227,7 +227,12 @@ class FakeAgentCoreMemory:
         params = validated('RetrieveMemoryRecords', params)
         query = params['searchCriteria']['searchQuery'].lower()
         found = [record for record in self._under(params) if query in record['content']['text'].lower()]
-        return {'memoryRecordSummaries': found[:params.get('maxResults', PAGE_SIZE)]}
+        start = int(params.get('nextToken', 0))
+        end = start + params.get('maxResults', PAGE_SIZE)
+        response: dict[str, Any] = {'memoryRecordSummaries': found[start:end]}
+        if end < len(found):
+            response['nextToken'] = str(end)
+        return response
 
     def get_memory_record(self, **params: Any) -> dict[str, Any]:
         params = validated('GetMemoryRecord', params)

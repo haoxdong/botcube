@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from .actor_identity import actor_namespace
+from .memory_index import MemoryIndexEntry
 from .memory_tools import extract_text, list_memory_record_summaries, record_namespace
 from .pending_memory import (
     PENDING_MEMORY_WINDOW,
@@ -72,7 +73,8 @@ def opening_memory(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: 
     journal = _journal_entries(events, now, PENDING_MEMORY_WINDOW)
     saves = {save['recordId']: save['text'] for save in journal}
     preferences, facts = _with_saves(preferences, saves), _newest_first(_with_saves(facts, saves))
-    block = render_memory(_record_texts(_newest_first(preferences)), [*pending, *_record_texts(facts)])
+    pending_entries = [MemoryIndexEntry('', text) for text in pending]
+    block = render_memory(_index_entries(_newest_first(preferences)), [*pending_entries, *_index_entries(facts)])
     context = _corrections_context(journal, saves)
     if context:
         block = f'{block}\n\n{context}' if block else context
@@ -102,8 +104,8 @@ def _corrections_context(journal: Sequence[Mapping[str, Any]], saves: Mapping[st
     )
 
 
-def _record_texts(records: Sequence[MemoryRecordSummaryTypeDef]) -> list[str]:
-    return [text for record in records if (text := record_text(record))]
+def _index_entries(records: Sequence[MemoryRecordSummaryTypeDef]) -> list[MemoryIndexEntry]:
+    return [MemoryIndexEntry(record['memoryRecordId'], text) for record in records if (text := record_text(record))]
 
 
 def _saves_session_id(at: datetime) -> str:

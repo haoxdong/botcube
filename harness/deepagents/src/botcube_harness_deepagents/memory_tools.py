@@ -14,10 +14,11 @@ Returns the same ``{"status", "content"}`` envelope as the Strands tool.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NotRequired, TypedDict
 from xml.etree import ElementTree
 
 from langchain_core.tools import BaseTool, tool
@@ -26,11 +27,14 @@ from langgraph_checkpoint_aws import AgentCoreMemoryStore
 
 from . import pending_memory
 from .actor_identity import actor_namespace
+from .memory_index import MemoryIndexEntry, memory_index_line, memory_reference
 
 if TYPE_CHECKING:
     from types_boto3_bedrock_agentcore.type_defs import (
+        ListMemoryRecordsInputTypeDef,
         MemoryRecordSummaryTypeDef,
         MemoryRecordTypeDef,
+        RetrieveMemoryRecordsInputTypeDef,
     )
 
 log = logging.getLogger(__name__)
@@ -57,6 +61,7 @@ class MemoryToolText(TypedDict):
 class MemoryToolResult(TypedDict):
     status: Literal['success', 'error']
     content: list[MemoryToolText]
+    next_token: NotRequired[str]
 
 
 def _ok(text: str) -> MemoryToolResult:
@@ -181,57 +186,41 @@ def memory_tool(actor_id: str) -> BaseTool:
         content: str = '',
         query: str = '',
         memory_record_id: str = '',
+        max_results: int = 10,
+        next_token: str = '',
         store: Annotated[AgentCoreMemoryStore | None, InjectedStore()] = None,
     ) -> MemoryToolResult:
-        """Work with agent memories - create, search, retrieve, list, and manage memory records.
+        """Store, search, list, open, or delete the actor's memories.
 
-        This tool helps agents store and access memories, allowing them to remember important
-        information across conversations and interactions.
-
-        Extraction skips PII-like content such as account numbers, so agents should not promise durable storage for that content.
-
-        Key Capabilities:
-        - Store new memories (text conversations or structured data)
-        - Search for memories using semantic search
-        - Browse and list all stored memories
-        - Retrieve specific memories by ID
-        - Delete unwanted memories
-
-        Supported Actions:
-        -----------------
-        Memory Management:
-        - record: Store a new memory (conversation or data)
-          Use this when you need to save information for later recall.
-
-        - retrieve: Find relevant memories using semantic search
-          Use this when searching for specific information in memories.
-          This is the best action for queries like "find memories about X" or "search for memories related to Y".
-
-        - list: Browse all stored memories
-          Use this to see all available memories without filtering.
-          This is useful for getting an overview of what's been stored.
-
-        - get: Fetch a specific memory by ID
-          Use this when you already know the exact memory ID.
-
-        - delete: Remove a specific memory
-          Use this to delete memories that are no longer needed.
+        record saves content for future conversations. Extraction skips PII-like content such as
+        account numbers, so do not promise durable storage for it.
+        list browses one page. retrieve searches one page using query. Both return one-line indexes
+        of at most 100 characters per record, with stable 8-character references and … for cut text.
+        Pass the returned next_token into the same action and query to continue, using max_results
+        from 1 to 100. The opening block shows at most 100 preferences and 100 facts, newest first.
+        Its closing count names omitted records. Use list or retrieve to find them.
+        get opens full text. delete removes a record. Both accept memory_record_id as the
+        8-character reference or full id, only within this actor's namespace. An ambiguous reference
+        returns the matching full ids. There is no update action.
 
         Args:
-            action: The memory operation to perform (one of: "record", "retrieve", "list", "get", "delete")
-            content: For record action: Simple text string to store as a memory
-                     Example: "User prefers vegetarian pizza with extra cheese"
-            query: Search terms for finding relevant memories (required for retrieve action)
-            memory_record_id: ID of a specific memory (required for get and delete actions)
+            action: record, retrieve, list, get, or delete.
+            content: Text to save with record.
+            query: Semantic search terms for retrieve.
+            memory_record_id: Reference or full id for get and delete.
+            max_results: Page size for list and retrieve, from 1 to 100.
+            next_token: Continuation from the previous page of the same action and query.
         """
         if store is None:
             raise RuntimeError('The memory tool needs the graph store to be injected')
         if action == 'record':
             return _handle_record(store, actor_id, content)
+        if action in ('retrieve', 'list') and not 1 <= max_results <= 100:
+            return _err('max_results must be between 1 and 100.')
         if action == 'retrieve':
-            return _handle_retrieve(store, actor_id, query)
+            return _handle_retrieve(store, actor_id, query, max_results, next_token)
         if action == 'list':
-            return _handle_list(store, actor_id)
+            return _handle_list(store, actor_id, max_results, next_token)
         if action == 'get':
             return _handle_get(store, actor_id, memory_record_id)
         if action == 'delete':
@@ -250,22 +239,36 @@ def _handle_record(store: AgentCoreMemoryStore, actor_id: str, content: str) -> 
     return _ok(RECORD_REPLY)
 
 
-def _handle_retrieve(store: AgentCoreMemoryStore, actor_id: str, query: str) -> MemoryToolResult:
+def _handle_retrieve(store: AgentCoreMemoryStore, actor_id: str, query: str, max_results: int, next_token: str) -> MemoryToolResult:
     try:
-        summaries = store.client.retrieve_memory_records(
-            memoryId=store.memory_id,
-            namespacePath=actor_namespace(actor_id),
-            searchCriteria={'searchQuery': query},
-            maxResults=10,
-        )['memoryRecordSummaries']
+        upstream_token, offset = _retrieve_cursor(next_token)
+        request: RetrieveMemoryRecordsInputTypeDef = {
+            'memoryId': store.memory_id, 'namespacePath': actor_namespace(actor_id),
+            'searchCriteria': {'searchQuery': query}, 'maxResults': max_results,
+        }
+        if upstream_token:
+            request['nextToken'] = upstream_token
+        response = store.client.retrieve_memory_records(**request)
     except Exception:
         log.warning('memory retrieve failed', exc_info=True)
         return _err('Memory search unavailable.')
 
-    if not summaries:
-        return _ok('No relevant memories found.')
+    summaries = response['memoryRecordSummaries']
+    end = offset + max_results
+    continuation = (
+        'index:' + base64.urlsafe_b64encode(json.dumps([upstream_token, end]).encode()).decode()
+        if len(summaries) > end else response.get('nextToken')
+    )
+    return _index_page(summaries[offset:end], continuation, 'No relevant memories found.')
 
-    return {'status': 'success', 'content': [{'text': extract_text(_record_text(s))} for s in summaries]}
+
+def _retrieve_cursor(token: str) -> tuple[str, int]:
+    if not token.startswith('index:'):
+        return token, 0
+    upstream, offset = json.loads(base64.urlsafe_b64decode(token.removeprefix('index:')))
+    if not isinstance(upstream, str) or not isinstance(offset, int) or offset < 0:
+        raise ValueError('Invalid memory page token')
+    return upstream, offset
 
 
 def _record_text(record: MemoryRecordSummaryTypeDef | MemoryRecordTypeDef) -> str:
@@ -275,22 +278,48 @@ def _record_text(record: MemoryRecordSummaryTypeDef | MemoryRecordTypeDef) -> st
     return content['text']
 
 
-def _handle_list(store: AgentCoreMemoryStore, actor_id: str) -> MemoryToolResult:
+def _index_page(
+    summaries: list[MemoryRecordSummaryTypeDef], next_token: str | None, empty: str,
+) -> MemoryToolResult:
+    result: MemoryToolResult = {
+        'status': 'success',
+        'content': [{'text': memory_index_line(MemoryIndexEntry(s['memoryRecordId'], extract_text(_record_text(s))))}
+                    for s in summaries] or [{'text': 'No memories on this page. Continue with next_token.' if next_token else empty}],
+    }
+    if next_token:
+        result['next_token'] = next_token
+    return result
+
+
+def _handle_list(store: AgentCoreMemoryStore, actor_id: str, max_results: int, next_token: str) -> MemoryToolResult:
     try:
-        summaries = list_memory_record_summaries(
-            store.client, memory_id=store.memory_id, namespace=actor_namespace(actor_id), selector='namespacePath',
-        )
+        request: ListMemoryRecordsInputTypeDef = {
+            'memoryId': store.memory_id, 'namespacePath': actor_namespace(actor_id), 'maxResults': max_results,
+        }
+        if next_token:
+            request['nextToken'] = next_token
+        response = store.client.list_memory_records(**request)
     except Exception:
         log.warning('memory list failed', exc_info=True)
         return _err('Failed to list memories.')
+    return _index_page(response['memoryRecordSummaries'], response.get('nextToken'), 'No memories stored.')
 
-    if not summaries:
-        return _ok('No memories stored.')
 
-    return {
-        'status': 'success',
-        'content': [{'text': f'[{s["memoryRecordId"]}] {extract_text(_record_text(s))}'} for s in summaries],
-    }
+class AmbiguousMemoryReference(ValueError):
+    pass
+
+
+def _resolve_record(store: AgentCoreMemoryStore, actor_id: str, reference: str) -> tuple[str, str] | None:
+    records = list_memory_record_summaries(
+        store.client, memory_id=store.memory_id, namespace=actor_namespace(actor_id), selector='namespacePath',
+    )
+    matches = [record for record in records if record['memoryRecordId'] == reference or (
+        len(reference) == 8 and memory_reference(record['memoryRecordId']) == reference
+    )]
+    if len(matches) > 1:
+        ids = ', '.join(record['memoryRecordId'] for record in matches)
+        raise AmbiguousMemoryReference(f'Ambiguous memory reference {reference}. Use a full id: {ids}')
+    return (matches[0]['memoryRecordId'], matches[0]['namespaces'][0]) if matches else None
 
 
 def _handle_get(store: AgentCoreMemoryStore, actor_id: str, memory_record_id: str) -> MemoryToolResult:
@@ -298,14 +327,17 @@ def _handle_get(store: AgentCoreMemoryStore, actor_id: str, memory_record_id: st
         return _err('memory_record_id is required for get action.')
 
     try:
-        namespace = record_namespace(store.client, memory_id=store.memory_id, actor_id=actor_id, record_id=memory_record_id)
-        if namespace is None:
+        resolved = _resolve_record(store, actor_id, memory_record_id)
+        if resolved is None:
             return _err(f'Failed to get memory record {memory_record_id}.')
+        memory_record_id, namespace = resolved
         response = store.client.get_memory_record(
             memoryId=store.memory_id,
             memoryRecordId=memory_record_id,
             namespace=namespace,
         )
+    except AmbiguousMemoryReference as error:
+        return _err(str(error))
     except Exception:
         log.warning('memory get failed', exc_info=True)
         return _err(f'Failed to get memory record {memory_record_id}.')
@@ -318,14 +350,17 @@ def _handle_delete(store: AgentCoreMemoryStore, actor_id: str, memory_record_id:
         return _err('memory_record_id is required for delete action.')
 
     try:
-        namespace = record_namespace(store.client, memory_id=store.memory_id, actor_id=actor_id, record_id=memory_record_id)
-        if namespace is None:
+        resolved = _resolve_record(store, actor_id, memory_record_id)
+        if resolved is None:
             return _err(f'Failed to delete memory record {memory_record_id}.')
+        memory_record_id, namespace = resolved
         store.client.delete_memory_record(
             memoryId=store.memory_id,
             memoryRecordId=memory_record_id,
             namespace=namespace,
         )
+    except AmbiguousMemoryReference as error:
+        return _err(str(error))
     except Exception:
         log.warning('memory delete failed', exc_info=True)
         return _err(f'Failed to delete memory record {memory_record_id}.')

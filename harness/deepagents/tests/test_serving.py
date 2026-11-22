@@ -2323,33 +2323,33 @@ def test_on_agentcore_a_members_memory_opens_their_next_conversation(service: _S
     assert _tool_output(saved) == RECORD_REPLY
     assert _memory_block(service.recorder.prompts[-1]) == (
         'user preferences:\n'
-        '- Prefers dark mode\n'
+        '- record-{ Prefers dark mode\n'
         '\n'
         'semantic facts:\n'
         '- prefers copper\n'
-        '- Trades copper futures'
+        '- record-T Trades copper futures'
     )
     assert agentcore_memory.sts.regions == ['eu-west-1', 'eu-west-1']
 
 
-def test_on_agentcore_a_sessions_memory_block_holds_the_newest_50_preferences_and_facts_and_says_more_exist(
+def test_on_agentcore_a_sessions_memory_block_holds_the_newest_100_preferences_and_facts_and_says_more_exist(
     service: _Service, agentcore_memory: _ScopedMemory,
 ) -> None:
     agentcore_memory.records += [
         _memory_record(f'{{"preference": "Preference {n}"}}', 'UserPreferences-1', 'actor-1',
                        created=datetime(2026, 7, 1, tzinfo=UTC) + timedelta(minutes=n))
-        for n in range(1, 52)
+        for n in range(1, 102)
     ] + [
         _memory_record(f'Fact {n}', 'SemanticFacts-1', 'actor-1', created=datetime(2026, 7, 1, tzinfo=UTC) + timedelta(minutes=n))
-        for n in range(1, 52)
+        for n in range(1, 102)
     ]
 
     service.turn('hello', thread='thread-a', actor='actor-1', user='actor-1', memory=True)
 
     assert _memory_block(service.recorder.prompts[-1]) == (
-        'user preferences:\n' + ''.join(f'- Preference {n}\n' for n in range(51, 1, -1))
-        + '\nsemantic facts:\n' + ''.join(f'- Fact {n}\n' for n in range(51, 1, -1))
-        + '\nMore memories are available. Use memory retrieve to search beyond the startup memory block.'
+        'user preferences:\n' + ''.join(f'- record-{{ Preference {n}\n' for n in range(101, 1, -1))
+        + '\nsemantic facts:\n' + ''.join(f'- record-F Fact {n}\n' for n in range(101, 1, -1))
+        + '\n(1 more preferences; 1 more facts; use memory list or retrieve)'
     )
 
 
@@ -2368,10 +2368,10 @@ def test_on_agentcore_the_memory_tool_lists_retrieves_gets_and_deletes_only_the_
         return json.loads(_tool_output(service.turn(f'memory: {json.dumps(args)}', **member)))
 
     assert run(action='list') == {'status': 'success', 'content': [
-        {'text': f'[{COPPER}] Trades copper futures'}, {'text': f'[{DARK_MODE}] Summary: copper desk review'},
+        {'text': '- copper-0 Trades copper futures'}, {'text': '- dark-mod Summary: copper desk review'},
     ]}
     assert run(action='retrieve', query='copper') == {'status': 'success', 'content': [
-        {'text': 'Trades copper futures'}, {'text': 'Summary: copper desk review'},
+        {'text': '- copper-0 Trades copper futures'}, {'text': '- dark-mod Summary: copper desk review'},
     ]}
     assert run(action='get', memory_record_id=COPPER) == {'status': 'success', 'content': [{'text': 'Trades copper futures'}]}
     assert run(action='delete', memory_record_id=COPPER) == {
@@ -2422,13 +2422,13 @@ def test_on_agentcore_a_memory_page_edit_reaches_the_next_session_and_leaves_the
         ]
     }
     assert continued == opened
-    assert _memory_block(opened).endswith('semantic facts:\n- Trades copper futures\n- Lives in Paris')
+    assert _memory_block(opened).endswith('semantic facts:\n- copper-0 Trades copper futures\n- paris-00 Lives in Paris')
     assert _memory_block(service.recorder.prompts[-1]) == (
         'user preferences:\n'
-        '- Prefers dark mode\n'
+        '- dark-mod Prefers dark mode\n'
         '\n'
         'semantic facts:\n'
-        '- Lives in London\n'
+        '- paris-00 Lives in London\n'
         '\n'
         'Memory page corrections (authoritative):\n'
         'These corrections override conflicting memories above, including paraphrases and parts of compound saves. '
@@ -2459,7 +2459,7 @@ def test_on_agentcore_a_scheduled_runs_summary_leaves_the_sessions_memory_block_
     service.turn('hello again', thread='thread-a', **member)
 
     assert response.status_code == 200, response.text
-    assert _memory_block(opened) == 'semantic facts:\n- Trades copper futures'
+    assert _memory_block(opened) == 'semantic facts:\n- copper-0 Trades copper futures'
     assert service.recorder.prompts[-1] == opened
 
 
@@ -2487,10 +2487,10 @@ def test_on_agentcore_a_memory_page_edit_reaches_a_new_session_while_agentcore_l
     }
     assert _memory_block(service.recorder.prompts[-1]) == (
         'user preferences:\n'
-        '- Prefers dark mode\n'
+        '- dark-mod Prefers dark mode\n'
         '\n'
         'semantic facts:\n'
-        '- Lives in London\n'
+        '- paris-00 Lives in London\n'
         '\n'
         'Memory page corrections (authoritative):\n'
         'These corrections override conflicting memories above, including paraphrases and parts of compound saves. '
@@ -2625,7 +2625,7 @@ def test_on_agentcore_a_failed_memory_load_fails_the_sessions_first_turn_and_the
 
     assert run_error['message'] == 'Memory throttled'
     assert retried[-1]['type'] == 'RUN_FINISHED'
-    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- Trades copper futures'
+    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- record-T Trades copper futures'
 
 
 def test_on_agentcore_a_guests_turn_feeds_nothing(service: _Service, agentcore_memory: _ScopedMemory) -> None:

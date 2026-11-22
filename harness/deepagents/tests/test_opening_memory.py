@@ -21,7 +21,6 @@ from agentcore_fake import (
     TaggedMemoryClient,
 )
 from botcube_harness_deepagents import memory_document
-from botcube_harness_deepagents.session_memory import SPILLOVER_NOTE as SPILLOVER
 
 NOW = datetime(2026, 7, 2, 12, 0, tzinfo=UTC)
 ACTOR = 'jane.doe_ny'
@@ -89,11 +88,11 @@ def test_the_block_lists_the_actors_preferences_then_facts(memory: FakeAgentCore
 
     assert _open(memory) == (
         'user preferences:\n'
-        '- User prefers dark mode\n'
-        '- User likes copper futures\n'
+        '- record-{ User prefers dark mode\n'
+        '- record-{ User likes copper futures\n'
         '\n'
         'semantic facts:\n'
-        '- Copper is an industrial metal'
+        '- record-C Copper is an industrial metal'
     )
 
 
@@ -106,42 +105,43 @@ def test_facts_are_newest_first_and_same_instant_facts_keep_their_listing_order(
         _fact('Tied second', created_at=(NOW - timedelta(days=2)).astimezone(timezone(timedelta(hours=9)))),
     ]
 
-    assert _open(memory) == 'semantic facts:\n- Newest\n- Tied first\n- Tied second\n- Oldest'
+    assert _open(memory) == 'semantic facts:\n- record-N Newest\n- record-T Tied first\n- record-T Tied second\n- record-O Oldest'
 
 
-def test_the_block_caps_each_section_at_fifty_and_points_at_the_rest(memory: FakeAgentCoreMemory) -> None:
-    memory.records += [_preference(f'Preference {i:02d}') for i in range(51)]
-    memory.records += [_fact(f'Fact {i:02d}', created_at=NOW - timedelta(minutes=60 - i)) for i in range(52)]
+def test_the_block_caps_each_section_at_one_hundred_and_points_at_the_rest(memory: FakeAgentCoreMemory) -> None:
+    memory.records += [_preference(f'Preference {i:02d}') for i in range(101)]
+    memory.records += [_fact(f'Fact {i:02d}', created_at=NOW - timedelta(minutes=160 - i)) for i in range(102)]
 
     assert _open(memory) == '\n'.join([
         'user preferences:',
-        *[f'- Preference {i:02d}' for i in range(50)],
+        *[f'- record-{{ Preference {i:02d}' for i in range(100)],
         '',
         'semantic facts:',
-        *[f'- Fact {i:02d}' for i in range(51, 1, -1)],
+        *[f'- record-F Fact {i:02d}' for i in range(101, 1, -1)],
         '',
-        SPILLOVER,
+        '(1 more preferences; 2 more facts; use memory list or retrieve)',
     ])
 
 
-@pytest.mark.parametrize(('preferences', 'facts'), [(51, 1), (1, 51)])
+@pytest.mark.parametrize(('preferences', 'facts'), [(101, 1), (1, 101)])
 def test_either_section_over_its_cap_points_at_the_rest(memory: FakeAgentCoreMemory, preferences: int, facts: int) -> None:
     memory.records += [_preference(f'Preference {i:02d}') for i in range(preferences)]
     memory.records += [_fact(f'Fact {i:02d}') for i in range(facts)]
 
     block = _open(memory)
 
-    assert block.endswith(f'\n\n{SPILLOVER}')
+    assert block.endswith('\n\n(1 more ' + ('preferences' if preferences > 100 else 'facts')
+                          + '; use memory list or retrieve)')
 
 
 def test_sections_exactly_at_their_caps_do_not_point_at_more(memory: FakeAgentCoreMemory) -> None:
-    memory.records += [_preference(f'Preference {i:02d}') for i in range(50)]
-    memory.records += [_fact(f'Fact {i:02d}') for i in range(50)]
+    memory.records += [_preference(f'Preference {i:02d}') for i in range(100)]
+    memory.records += [_fact(f'Fact {i:02d}') for i in range(100)]
 
     block = _open(memory)
 
-    assert block.count('\n- ') == 100
-    assert SPILLOVER not in block
+    assert block.count('\n- ') == 200
+    assert 'more ' not in block
 
 
 def test_pending_memory_crossing_midnight_leads_the_facts(
@@ -155,12 +155,12 @@ def test_pending_memory_crossing_midnight_leads_the_facts(
 
     assert _open(memory) == (
         'user preferences:\n'
-        '- User prefers dark mode\n'
+        '- record-{ User prefers dark mode\n'
         '\n'
         'semantic facts:\n'
         '- Runbook URL is wiki/runbook-v2\n'
         '- Tokyo meeting is next week\n'
-        '- Copper is an industrial metal'
+        '- record-C Copper is an industrial metal'
     )
 
 
@@ -194,7 +194,7 @@ def test_fresh_session_respects_correction_after_pending_save_extraction(
 
     expected = 'semantic facts:\n- QA observatory is Cedar\n- QA telescope colour is copper'
     if not delete:
-        expected += '\n- QA telescope colour is amber\n- QA telescope colour is amber'
+        expected += '\n- 11111111 QA telescope colour is amber\n- 22222222 QA telescope colour is amber'
     block = _open(memory)
     facts, corrections = block.split('\n\nMemory page corrections (authoritative):\n')
     assert facts == expected
@@ -250,10 +250,10 @@ def test_corrections_span_pending_window_but_page_overlay_stays_five_minutes(
     ]
     block = _open(memory)
     if minutes <= 15:
-        assert block.startswith('semantic facts:\n- Amber telescope\n\nMemory page corrections (authoritative):')
+        assert block.startswith('semantic facts:\n- 11111111 Amber telescope\n\nMemory page corrections (authoritative):')
         assert json.dumps({'previousText': 'Copper telescope', 'text': 'Amber telescope'}) in block
     else:
-        assert block == 'semantic facts:\n- Copper telescope'
+        assert block == 'semantic facts:\n- 11111111 Copper telescope'
 
 
 @pytest.mark.parametrize('delete', [False, True])
@@ -284,7 +284,7 @@ def test_legacy_journal_overlays_without_inventing_previous_text(memory: FakeAge
                         eventTimestamp=NOW, payload=[{'blob': json.dumps({
                             'recordId': 'record-Copper telescope', 'text': 'Amber telescope',
                         })}], extractionMode='SKIP')
-    assert _open(memory) == 'semantic facts:\n- Amber telescope'
+    assert _open(memory) == 'semantic facts:\n- record-C Amber telescope'
 
 
 def test_deleting_a_line_names_its_records_exact_namespace(memory: FakeAgentCoreMemory) -> None:
@@ -330,7 +330,7 @@ def test_startup_reads_every_bucket_intersecting_pending_window(
                                      record_id='1' * 40, text='Amber telescope')
     monkeypatch.setattr(memory_document, 'utc_now', lambda: later)
     block = _open(memory)
-    assert block.startswith('semantic facts:\n- Amber telescope\n\nMemory page corrections (authoritative):')
+    assert block.startswith('semantic facts:\n- 11111111 Amber telescope\n\nMemory page corrections (authoritative):')
     assert json.dumps({'previousText': 'Copper telescope', 'text': 'Amber telescope'}) in block
 
 
@@ -339,12 +339,12 @@ def test_correction_authority_is_not_lost_when_fact_section_is_capped(memory: Fa
     memory.records[0]['memoryRecordId'] = '1' * 40
     memory_document.edit_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
                                      record_id='1' * 40, text='Amber telescope')
-    for index in range(51):
+    for index in range(101):
         _save(memory, 'pending-memory-20260702', f'Unrelated fact {index}', at=NOW)
     block = _open(memory)
-    assert SPILLOVER in block
-    assert 'semantic facts:\n- Unrelated fact 50' in block
-    assert '\n- Amber telescope' not in block
+    assert '(2 more facts; use memory list or retrieve)' in block
+    assert 'semantic facts:\n- Unrelated fact 100' in block
+    assert '\n- 11111111 Amber telescope' not in block
     assert json.dumps({'previousText': 'Copper telescope', 'text': 'Amber telescope'}) in block
 
 
@@ -383,7 +383,7 @@ def test_the_opening_reads_memory_concurrently(memory: FakeAgentCoreMemory) -> N
     block = memory_document.opening_memory(cast(Any, slow), memory_id=MEMORY_ID, actor_id=ACTOR)
     elapsed = time.perf_counter() - started
 
-    assert block == 'user preferences:\n- User prefers dark mode\n\nsemantic facts:\n- Copper is an industrial metal'
+    assert block == 'user preferences:\n- record-{ User prefers dark mode\n\nsemantic facts:\n- record-C Copper is an industrial metal'
     assert slow.reads == 7
     assert elapsed < 2 * _SlowMemory.LATENCY, f'{slow.reads} reads took {elapsed:.3f}s'
 
@@ -457,3 +457,22 @@ def test_opening_queries_only_pending_buckets_in_the_window_and_propagates_failu
     else:
         assert _open(memory) == 'semantic facts:\n' + '\n'.join(f'- {day}' for day in days)
     assert sorted(seen) == sorted(f'pending-memory-{day}' for day in days)
+
+
+def test_large_memory_opens_as_a_bounded_index_newest_first(memory: FakeAgentCoreMemory) -> None:
+    for index in range(150):
+        for kind in ('preferences', 'facts'):
+            record = _record('x' * 500, kind, created_at=NOW - timedelta(seconds=150 - index))
+            record['memoryRecordId'] = f'mem-{index:08d}' + 'a' * 28
+            memory.records.append(record)
+    block = _open(memory)
+    preferences, facts, closing = block.split('\n\n')
+    assert preferences.splitlines()[0] == 'user preferences:'
+    assert facts.splitlines()[0] == 'semantic facts:'
+    for section in (preferences, facts):
+        lines = section.splitlines()[1:]
+        assert len(lines) == 100
+        assert all(len(line) == 100 and line.endswith('…') for line in lines)
+        assert lines[0] == '- 00000149 ' + 'x' * 88 + '…'
+        assert lines[-1] == '- 00000050 ' + 'x' * 88 + '…'
+    assert closing == '(50 more preferences; 50 more facts; use memory list or retrieve)'
