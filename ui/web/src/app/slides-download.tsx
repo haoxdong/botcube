@@ -10,7 +10,7 @@ import { PDF, saveFile, storedVersion, type Export } from "./artifact-viewer";
  * PptxGenJS, which loads only once the User downloads. A deck the agent is still writing is refused.
  */
 export const POWERPOINT: Export = {
-  label: "Download as PowerPoint",
+  label: "PowerPoint",
   Icon: PresentationIcon,
   failed: "the PowerPoint",
   stored: true,

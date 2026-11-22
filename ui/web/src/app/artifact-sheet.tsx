@@ -37,7 +37,7 @@ async function openedAt(path: string, { read, readBytes }: Pick<ViewerProps, "re
  * its edits are read again and replayed by ExcelJS, loaded on Download only.
  */
 export const EXCEL: Export = {
-  label: "Download as Excel",
+  label: "Excel",
   Icon: SheetIcon,
   failed: "the Excel file",
   stored: true,

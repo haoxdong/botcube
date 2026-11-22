@@ -37,8 +37,8 @@ export type ExportTarget = {
 };
 
 /**
- * A Download button in the panel head. `run` rejects with what failed; the panel then shows it, with `failed` naming
- * what could not be made, and offers `instead` (the type's PDF, ADR 0087) when the type has one. A `stored` Export is
+ * A format in the panel head's Download menu, named by `label`. `run` rejects with what failed; the panel then shows
+ * it, with `failed` naming what could not be made, and offers `instead` (the type's PDF, ADR 0087) when the type has one. A `stored` Export is
  * made from the stored version on screen, so it leaves out the User's unsaved edits; any other prints what is shown.
  */
 export type Export = {
@@ -75,7 +75,7 @@ export function saveFile(blob: Blob, name: string) {
  * screen, else what the panel shows, unsaved edits included.
  */
 export const pdfOf = (prints: Export["run"], stored: boolean): Export => ({
-  label: "Download as PDF", Icon: PrinterIcon, failed: "the PDF", stored, run: prints,
+  label: "PDF", Icon: PrinterIcon, failed: "the PDF", stored, run: prints,
 });
 
 /** A framed type's PDF: the frame prints its own page, since the app cannot reach into a frame of another origin. */

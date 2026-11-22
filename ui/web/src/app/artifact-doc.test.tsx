@@ -5,6 +5,7 @@ import { HttpAgent } from '@ag-ui/client';
 import { CopilotChatConfigurationProvider, CopilotChatMessageView, CopilotKitProvider, useAgent } from '@copilotkit/react-core/v2';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { downloadAs } from './download-menu.testing';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { crc32, deflateSync, inflateRawSync } from 'node:zlib';
@@ -266,7 +267,7 @@ describe('Download as Word', () => {
       });
     });
 
-    await userEvent.click(within(panel).getByRole('button', { name: 'Download as Word' }));
+    await downloadAs(panel, 'Word');
 
     expect(await saved).toBe('Q4 plan.docx');
     const docx = Buffer.from(await (made.mock.lastCall?.[0] as Blob).arrayBuffer());
@@ -296,7 +297,7 @@ describe('Download as Word', () => {
     const { panel } = await openDoc();
     vi.spyOn(Response.prototype, 'text').mockRejectedValueOnce(new Error('Files went away'));
 
-    await userEvent.click(within(panel).getByRole('button', { name: 'Download as Word' }));
+    await downloadAs(panel, 'Word');
 
     const failure = await within(panel).findByRole('alert');
     expect(failure).toHaveTextContent("Couldn't make the Word file: Files went away.");
@@ -309,7 +310,7 @@ describe('Download as PDF', () => {
     docInFiles(`${PLAN}\n![Pixel](${PIXEL})\n`);
     const { panel } = await openDoc();
 
-    await userEvent.click(within(panel).getByRole('button', { name: 'Download as PDF' }));
+    await downloadAs(panel, 'PDF');
 
     const frame = await waitFor(() => {
       const found = document.querySelector<HTMLIFrameElement>('iframe[title="Q4 plan for print"]');
@@ -335,7 +336,7 @@ describe('Download while the User edits an older version', () => {
 
     expect(await within(panel).findByRole('status')).toHaveTextContent('Version 2 arrived while you edited version 1.');
     expect(within(panel).getByRole('note')).toHaveTextContent('The Word file and the PDF are version 1, without your unsaved edits');
-    await userEvent.click(within(panel).getByRole('button', { name: 'Download as PDF' }));
+    await downloadAs(panel, 'PDF');
 
     const frame = await waitFor(() => {
       const found = document.querySelector<HTMLIFrameElement>('iframe[title="Q4 plan for print"]');

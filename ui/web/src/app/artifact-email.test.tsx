@@ -4,6 +4,7 @@ import { CopilotChatConfigurationProvider, CopilotChatMessageView, CopilotKitPro
 import { Editor } from '@tiptap/react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { downloadAs, openDownloads } from './download-menu.testing';
 import { EMAIL_ELEMENTS } from 'botcube-artifact-check/email-html';
 import PostalMime from 'postal-mime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -176,8 +177,7 @@ describe('an Email in the panel', () => {
     expect(within(panel).getByRole('textbox', { name: 'Subject' })).toHaveValue('Q3 numbers for review');
     expect(within(panel).getByRole('textbox', { name: 'Body' })).toHaveTextContent('Hi Dana,The Q3 review is attached.');
     expect(within(panel).getByRole('list', { name: 'Attachments' })).toHaveTextContent('Q3 review.pdf');
-    expect(within(panel).getByRole('button', { name: 'Download .eml' })).toBeVisible();
-    expect(within(panel).queryByRole('button', { name: 'Download as PDF' })).toBeNull();
+    expect((await openDownloads(panel)).map(({ textContent }) => textContent)).toEqual(['.eml']);
   });
 
   it('saves an edited recipient and body as the next version, saved by you', async () => {
@@ -252,7 +252,7 @@ describe('an Email in the panel', () => {
     const saved = downloads();
     const { panel } = await openDraft();
 
-    await userEvent.click(within(panel).getByRole('button', { name: 'Download .eml' }));
+    await downloadAs(panel, '.eml');
 
     await waitFor(() => expect(saved).toHaveLength(1), SAVED);
     const file = only(saved);
@@ -283,7 +283,7 @@ describe('an Email in the panel', () => {
     await typeInto(within(panel).getByRole('textbox', { name: 'Subject' }), ' (draft)');
 
     expect(within(panel).getByText('The .eml is version 1, without your unsaved edits')).toBeVisible();
-    await userEvent.click(within(panel).getByRole('button', { name: 'Download .eml' }));
+    await downloadAs(panel, '.eml');
 
     await waitFor(() => expect(saved).toHaveLength(1), SAVED);
     const email = await PostalMime.parse(await only(saved).blob.arrayBuffer());
@@ -302,7 +302,7 @@ describe('an Email in the panel', () => {
     await within(panel).findByRole('status');
 
     expect(within(panel).getByText('The .eml is version 1, without your unsaved edits')).toBeVisible();
-    await userEvent.click(within(panel).getByRole('button', { name: 'Download .eml' }));
+    await downloadAs(panel, '.eml');
 
     await waitFor(() => expect(saved).toHaveLength(1), SAVED);
     expect((await PostalMime.parse(await only(saved).blob.arrayBuffer())).subject).toBe('Q3 numbers for review');
@@ -316,7 +316,7 @@ describe('an Email in the panel', () => {
     vi.stubGlobal('print', print);
     const { panel } = await openDraft();
 
-    await userEvent.click(within(panel).getByRole('button', { name: 'Download .eml' }));
+    await downloadAs(panel, '.eml');
 
     const failure = await within(panel).findByRole('alert');
     expect(failure).toHaveTextContent("Couldn't make the .eml: the attachment /reports/q3 review.pdf couldn't be read");
@@ -331,7 +331,7 @@ describe('an Email in the panel', () => {
     const saved = downloads();
     const { panel } = await openDraft();
 
-    await userEvent.click(within(panel).getByRole('button', { name: 'Download .eml' }));
+    await downloadAs(panel, '.eml');
 
     await waitFor(() => expect(saved).toHaveLength(1), SAVED);
     const email = await PostalMime.parse(await only(saved).blob.arrayBuffer());

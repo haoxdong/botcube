@@ -4,6 +4,7 @@ import { HttpAgent, type Message } from '@ag-ui/client';
 import { CopilotChatConfigurationProvider, CopilotChatMessageView, CopilotKitProvider, useAgent } from '@copilotkit/react-core/v2';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { downloadAs } from './download-menu.testing';
 import { check, describe as describeError } from 'botcube-artifact-check';
 import JSZip from 'jszip';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -479,7 +480,7 @@ describe("the User's edit of a published deck's text", () => {
     await within(panel).findByRole('status');
 
     expect(within(panel).getByText('The PowerPoint is version 1, without your unsaved edits')).toBeVisible();
-    await userEvent.click(within(panel).getByRole('button', { name: 'Download as PowerPoint' }));
+    await downloadAs(panel, 'PowerPoint');
 
     await waitFor(() => expect(saved).toHaveLength(1));
     const [blob] = saved;

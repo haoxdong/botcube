@@ -229,19 +229,19 @@ function ArtifactView({ shown, heading, controls }: { shown: Shown; heading?: Re
   const frame = useRef<HTMLIFrameElement>(null);
   const title = titleOf(shown);
   const type = typeOf(shown.artifact.type);
-  const exports = useExports(type.exports, { title, frame, read: readFile, readBytes, newest: shown.artifact });
+  const { menu, failure: exportFailure, shows } = useExports(type.exports, { title, frame, read: readFile, readBytes, newest: shown.artifact });
   return (
     <section aria-label={title} className="artifact-panel" data-full={full || undefined}>
       <header className="artifact-panel-head">
         {heading}
         <span className="artifact-panel-actions">
-          {exports.buttons}
+          {menu}
           {controls}
         </span>
       </header>
       <Refusal message={failure ?? null} />
-      {exports.failure}
-      <ShownFrame shown={shown} frame={frame} shows={exports.shows} />
+      {exportFailure}
+      <ShownFrame shown={shown} frame={frame} shows={shows} />
     </section>
   );
 }

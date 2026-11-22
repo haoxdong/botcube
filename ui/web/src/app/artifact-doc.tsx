@@ -134,7 +134,7 @@ const storedMarkdown = (target: ExportTarget) => target.read(storedVersion(targe
 const DOC_PDF = pdfOf(async (target) => printDoc(htmlOf(await storedMarkdown(target)), target.title), true);
 
 const WORD: Export = {
-  label: "Download as Word",
+  label: "Word",
   Icon: FileTextIcon,
   failed: "the Word file",
   stored: true,

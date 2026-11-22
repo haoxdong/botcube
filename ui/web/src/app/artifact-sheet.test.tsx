@@ -93,12 +93,13 @@ afterEach(() => {
 it("downloads the stored version as Excel, with its formulas, and leaves the User's unsaved typing out", async () => {
   files();
   const panel = await openSheet();
-  expect(panel.queryByRole('button', { name: 'Download as PDF' })).toBeNull();
   expect(panel.queryByText(/without your unsaved edits/)).toBeNull();
 
   typeIntoB2(1500);
   expect(await panel.findByText('The Excel file is version 1, without your unsaved edits')).toBeVisible();
-  await userEvent.click(panel.getByRole('button', { name: 'Download as Excel' }));
+  await userEvent.click(panel.getByRole('button', { name: 'Download' }));
+  expect((await screen.findAllByRole('menuitem')).map(({ textContent }) => textContent)).toEqual(['Excel']);
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Excel' }));
 
   await waitFor(() => expect(downloaded).toHaveLength(1));
   const [{ blob, name }] = downloaded as [{ blob: Blob; name: string }];
@@ -115,7 +116,8 @@ it('names what failed when the Excel Export fails', async () => {
   files({ failing: 2 });
   const panel = await openSheet();
 
-  await userEvent.click(panel.getByRole('button', { name: 'Download as Excel' }));
+  await userEvent.click(panel.getByRole('button', { name: 'Download' }));
+  await userEvent.click(await screen.findByRole('menuitem', { name: 'Excel' }));
 
   expect(await panel.findByRole('alert')).toHaveTextContent("Couldn't make the Excel file: reading version 1 failed: Files answered 500.");
   expect(downloaded).toEqual([]);
@@ -176,7 +178,8 @@ describe('a Sheet that imports a File', () => {
     await filesWithImport();
     const panel = await openSheet({ title: 'Q4 orders', messages: Q4_MESSAGES });
 
-    await userEvent.click(panel.getByRole('button', { name: 'Download as Excel' }));
+    await userEvent.click(panel.getByRole('button', { name: 'Download' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Excel' }));
 
     await waitFor(() => expect(downloaded).toHaveLength(1));
     const book = new ExcelJS.Workbook();

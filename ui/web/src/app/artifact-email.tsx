@@ -64,7 +64,7 @@ const EMAIL_PDF = pdfOf(() => window.print(), false);
 
 /** The panel's Export of an Email: the stored version on screen as an unsent `.eml`. */
 export const EML: Export = {
-  label: "Download .eml",
+  label: ".eml",
   Icon: MailIcon,
   failed: "the .eml",
   stored: true,

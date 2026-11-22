@@ -5,6 +5,7 @@ import { HttpAgent } from '@ag-ui/client';
 import { CopilotChatConfigurationProvider, CopilotChatMessageView, CopilotKitProvider } from '@copilotkit/react-core/v2';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { downloadAs } from './download-menu.testing';
 import JSZip from 'jszip';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
@@ -97,7 +98,7 @@ it('downloads the deck on screen as a PowerPoint of its slides and speaker notes
   const saved = browserDownloads();
   await openDeck();
 
-  await userEvent.click(screen.getByRole('button', { name: 'Download as PowerPoint' }));
+  await downloadAs(document.body, 'PowerPoint');
 
   // Writing five slides takes jsdom about a second.
   await waitFor(() => expect(saved).toHaveLength(1), { timeout: 4000 });
@@ -119,7 +120,7 @@ it('says what failed when the PowerPoint export fails, and offers the PDF instea
   const posted = vi.fn();
   Object.defineProperty(frame, 'contentWindow', { value: { postMessage: posted }, configurable: true });
 
-  await userEvent.click(screen.getByRole('button', { name: 'Download as PowerPoint' }));
+  await downloadAs(document.body, 'PowerPoint');
 
   const failure = await screen.findByRole('alert');
   expect(failure).toHaveTextContent("Couldn't make the PowerPoint: slide numbers: <img> has no PowerPoint form yet.");

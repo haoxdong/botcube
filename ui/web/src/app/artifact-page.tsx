@@ -1,14 +1,28 @@
 "use client";
 
+import { FileCodeIcon } from "lucide-react";
 import { m as motionElement } from "motion/react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 
-import type { ViewerProps } from "./artifact-viewer";
+import { PDF, saveFile, storedVersion, type Export, type ViewerProps } from "./artifact-viewer";
 import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
 
 const SANDBOX_PAGE = "/artifact-sandbox/index.html";
 const SANDBOX = "allow-scripts allow-modals";
+
+/** A Page's HTML Export: the stored version's Source as a file, which opens in a browser. */
+export const HTML: Export = {
+  label: "Web page (.html)",
+  Icon: FileCodeIcon,
+  failed: "the web page",
+  stored: true,
+  instead: PDF,
+  run: async (target) => {
+    const version = storedVersion(target, "the page");
+    saveFile(new Blob([await target.read(version.path)], { type: "text/html" }), `${target.title}.html`);
+  },
+};
 
 /** The untyped Artifact's Viewer: the version's page from Files, which runs. */
 export function VersionFrame({ artifact, read, frame, shows }: ViewerProps) {

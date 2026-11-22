@@ -151,9 +151,35 @@ it('prints the page as shown for Download as PDF', async () => {
   const posted = sandboxReady(screen.getByTitle<HTMLIFrameElement>('Q3 revenue by month'));
   await waitFor(() => expect(posted).toHaveBeenCalledTimes(1));
 
-  await userEvent.click(screen.getByRole('button', { name: 'Download as PDF' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Download' }));
+  await userEvent.click(await screen.findByRole('menuitem', { name: 'PDF' }));
 
   expect(posted).toHaveBeenLastCalledWith({ type: 'artifact-print' }, '*');
+});
+
+it("lists the Page's formats in one Download menu and downloads its stored Source as .html", async () => {
+  phone(false);
+  render(<Chat />);
+  await userEvent.click(await screen.findByRole('button', { name: /Q3 revenue by month/ }));
+  const saved: { blob: Blob; name: string }[] = [];
+  let made: Blob | undefined;
+  vi.spyOn(URL, 'createObjectURL').mockImplementation((blob: Blob | MediaSource) => {
+    made = blob as Blob;
+    return 'blob:page';
+  });
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+    if (made !== undefined) saved.push({ blob: made, name: this.download });
+  });
+
+  await userEvent.click(screen.getByRole('button', { name: 'Download' }));
+  expect((await screen.findAllByRole('menuitem')).map(({ textContent }) => textContent)).toEqual(['Web page (.html)', 'PDF']);
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Web page (.html)' }));
+
+  await waitFor(() => expect(saved).toHaveLength(1));
+  const [{ blob, name }] = saved as [{ blob: Blob; name: string }];
+  expect(name).toBe('Q3 revenue by month.html');
+  expect(blob.type).toBe('text/html');
+  expect(await blob.text()).toBe(PAGE);
 });
 
 it('switches an open panel to the new version when the agent publishes an update, and an older card opens the latest', async () => {
