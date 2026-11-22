@@ -1,4 +1,4 @@
-"""Verify production is really Parked or Live after a deploy (docs/runbooks/production-parking.md).
+"""Verify Parked or Live deployment (scripts/production/production-parking.md).
 
 Read-only except the Live egress probe, which runs one reaper-image task that
 prints its public IP. Every mismatch is named; nothing is logged from secrets.

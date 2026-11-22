@@ -1,6 +1,6 @@
 "use client";
 
-/** The measured unpark, from the Wake up press to the API serving again (docs/runbooks/production-parking.md). */
+/** Measured time from Wake up to API availability (scripts/production/production-parking.md). */
 const WAKE_MINUTES = 12;
 export const WAKE_POLL_MS = 15_000;
 

@@ -373,7 +373,7 @@ aws iam update-role \
 node "$SCRIPT_DIR/managed-deploy-policies.mjs" deploy "$ROLE_POLICY"
 
 # Production starts Live. Only park and unpark change the stored state afterwards
-# (docs/runbooks/production-parking.md), so never overwrite it here.
+# (scripts/production/production-parking.md), so never overwrite it here.
 if ! created="$(aws ssm put-parameter --name "$PARK_STATE" --type String --value live 2>&1)"; then
   grep -q ParameterAlreadyExists <<<"$created" || { echo "$created" >&2; exit 1; }
 fi

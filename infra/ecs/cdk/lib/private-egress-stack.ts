@@ -12,9 +12,9 @@ export interface PrivateEgressStackProps extends StackProps {
 
 /**
  * The private subnets' NAT egress (ADR 0065 decision 4). The Elastic IP is the
- * fixed credential egress IP: it is imported, never created, and always retained
- * (docs/runbooks/private-nat-gateway.md). Parked production has no NAT
- * Gateway or default route (docs/runbooks/production-parking.md).
+ * fixed credential egress IP: it is imported, never created, and always retained.
+ * Parked production has no NAT Gateway or default route
+ * (scripts/production/production-parking.md).
  */
 export class PrivateEgressStack extends Stack {
   constructor(scope: Construct, id: string, props: PrivateEgressStackProps) {

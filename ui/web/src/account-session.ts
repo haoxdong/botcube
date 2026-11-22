@@ -23,7 +23,7 @@ export async function initializeAccountSession({
   }
   if (response.status === 503) {
     const body = (await response.json().catch(() => null)) as { status?: unknown } | null;
-    // Parked production's Cloudflare Worker (docs/runbooks/production-parking.md).
+    // Parked Cloudflare Worker (scripts/production/production-parking.md).
     if (body?.status === "parked") return { status: "parked" };
   }
   throw new Error(`Account session failed: ${response.status}`);

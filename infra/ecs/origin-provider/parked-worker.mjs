@@ -1,5 +1,5 @@
 // Cloudflare Worker routed on the API hostnames while production is Parked
-// (docs/runbooks/production-parking.md). The web UI reads this body across
+// (scripts/production/production-parking.md). The web UI reads this body across
 // origins with credentials, so it carries the Chat Service's CORS grant.
 export default {
   /**

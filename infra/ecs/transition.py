@@ -1,4 +1,4 @@
-"""Park/unpark production per docs/runbooks/production-parking.md."""
+"""Park/unpark production per scripts/production/production-parking.md."""
 import json
 import sys
 import time

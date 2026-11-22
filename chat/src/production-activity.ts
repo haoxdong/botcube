@@ -5,7 +5,7 @@ import { accountErasesRunning } from './purges.js';
 import type { SessionMetadata } from './session-metadata.js';
 import { MAX_RUNNING_TURN_AGE_MS } from './sessions.js';
 
-/** The chat table partition the parking Lambda reads (botcube/infra/ecs/parking, docs/runbooks/production-parking.md). */
+/** The parking Lambda's chat partition (botcube/infra/ecs/parking, scripts/production/production-parking.md). */
 export const PARKING_PARTITION = 'PRODUCTION_PARKING';
 export const HEARTBEAT_MS = 60_000;
 

@@ -47,7 +47,7 @@ const RUNTIME_ALARMS = [
 
 /**
  * The Route 53 health check on the production API and its alarm. Both were built by hand and are imported, never created
- * (docs/runbooks/aws-alerting-stack.md), so the check's ID, which the
+ * (ops/credentials/aws-alerting-stack.md), so the check's ID, which the
  * observability dashboard reads, survives.
  */
 export class ApiHealthStack extends Stack {
