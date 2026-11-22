@@ -13,9 +13,9 @@ if [[ "${1:-}" == '--policy-file' ]]; then
 fi
 test "$#" -eq 0
 read -r ACCOUNT REGION CLUSTER ROLE TASK_FAMILY POLICY_NAME < <(node -e '
-const x = require(process.argv[1]).aws;
+const x = require(require("node:path").resolve(process.argv[1])).deployRootFile(process.argv[2], "identity.json").aws;
 console.log(x.account, x.region, x.ecs.cluster, x.ecs.deployRoleName, x.ecs.rollbackTaskFamilyPrefix, x.ecs.rollbackPolicyName);
-' "$DEPLOY_ROOT/identity.json")
+' "$(dirname "${BASH_SOURCE[0]}")/../../config/read.cjs" "$DEPLOY_ROOT")
 REVISION="$(aws ecs describe-services --region "$REGION" --cluster "$CLUSTER" --services chat-service-preview --query 'services[0].taskDefinition' --output text)"
 read -r TASK_ROLE EXECUTION_ROLE IMAGE < <(aws ecs describe-task-definition --region "$REGION" --task-definition "$REVISION" --query 'taskDefinition.[taskRoleArn,executionRoleArn,containerDefinitions[0].image]' --output text)
 test -n "$TASK_ROLE"

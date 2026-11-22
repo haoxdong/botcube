@@ -17,13 +17,13 @@ export interface HarnessClient {
 
 export interface ModelsDeployment {
   /** The Secrets Manager secrets its credential is read from, which the Chat Service and the Credential Service are granted. */
-  readonly secretArns: readonly string[];
+  readonly secretIds: readonly string[];
 }
 
 export interface RuntimeTelemetry {
   readonly kind: 'xray' | 'otlp' | 'none';
   /** The Secrets Manager secrets its credential is read from, which the Runtime is granted. */
-  readonly secretArns: readonly string[];
+  readonly secretIds: readonly string[];
 }
 
 export interface TokenAudiences {

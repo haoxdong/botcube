@@ -19,6 +19,7 @@ from botcube_credential_service.credential_source import CredentialSourceError
 from botcube_credential_service.invocation import sign_credential_service_invocation
 from botcube_credential_service.models import models_provider_from_config
 from botcube_credential_service.server import CredentialServiceSettings, create_app
+from required_keys import with_required
 
 SECRET = 'credential-service-secret'
 START = 1_790_965_829.0
@@ -300,7 +301,7 @@ def test_startup_refuses_a_command_credential_the_deploy_did_not_opt_in_to() -> 
 
 def test_the_relay_reaches_the_endpoint_the_botcube_config_file_names(gateway: FakeGateway, key: Path, tmp_path: Path) -> None:
     path = tmp_path / 'botcube.yaml'
-    path.write_text(json.dumps({**_endpoint({'kind': 'file', 'path': str(key)})}))
+    path.write_text(json.dumps(with_required(_endpoint({'kind': 'file', 'path': str(key)}))))
 
     response = _completion(_client(gateway, botcube_config_from_env({'BOTCUBE_CONFIG': str(path)})))
 

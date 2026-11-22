@@ -10,10 +10,10 @@ from fastapi import FastAPI
 
 from .audit import CredentialAuditRecorder, StdoutCredentialAuditSink
 from .aws import env_vault
-from .botcube_config import botcube_config_from_env, plan_usage_owner
+from .botcube_config import botcube_config_from_env
 from .models import models_provider_from_config
 from .openai import OpenAIProvider
-from .server import CredentialServiceSettings, create_app
+from .server import CredentialServiceSettings, create_app, plan_usage_owner
 from .vault import RotatingCredentialVault
 
 

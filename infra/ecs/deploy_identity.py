@@ -1,9 +1,11 @@
-"""The active bot's deploy identity: its `identity.json` over BotCube's `identity-defaults.json`."""
+"""The active bot's deploy identity, built from its BotCube Config, over BotCube's `identity-defaults.json`."""
 
 import json
 import os
 from pathlib import Path
 from typing import Any, TypeVar
+
+from botcube_credential_service.botcube_config import deploy_root_file, deployment_file
 
 SERVICES = ('chat-service-preview', 'credential-service')
 
@@ -27,7 +29,17 @@ def deploy_root() -> Path:
 
 
 def load_identity() -> dict[str, Any]:
-    return _over(json.loads(_DEFAULTS.read_text()), json.loads((deploy_root() / 'identity.json').read_text()))
+    """The identity over the defaults: from the BotCube Config `BOTCUBE_CONFIG` names, as a deployed process is told
+    of it, else from the deploy root's files."""
+    config = os.environ.get('BOTCUBE_CONFIG')
+    identity = _bundled_identity(Path(config)) if config else deploy_root_file(deploy_root(), 'identity.json', _DEFAULTS.parents[1])
+    return _over(json.loads(_DEFAULTS.read_text()), identity)
+
+
+def _bundled_identity(config: Path) -> Any:
+    """The identity a deployed process's bundle gives: its BotCube Config as JSON, validated when it was synthesized.
+    The bundle holds no YAML or JSON Schema library, so this needs neither."""
+    return deployment_file(json.loads(config.read_text()), 'identity.json', config, config.parent)
 
 
 def require(condition: object, message: str) -> None:

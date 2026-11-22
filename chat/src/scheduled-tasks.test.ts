@@ -1069,7 +1069,6 @@ describe('ScheduledTasks', () => {
       {
         env: { BOTCUBE_CONFIG: testBotCubeConfig(), BOTCUBE_CHAT_TABLE: table },
         overrides: {
-          corsOrigins: [],
           agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
           models: [{ key: 'test', label: 'Test', provider: 'test' }],
           accountModels: async () => [], accountModel: async () => undefined,
@@ -1086,7 +1085,7 @@ describe('ScheduledTasks', () => {
         },
       },
       {
-        agentCore: runtime ? { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: stack.agentcore.url } : null, localHarnessUrl: null, corsOrigins: null,
+        agentCore: runtime ? { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: stack.agentcore.url } : null, localHarnessUrl: null, corsOrigins: [],
         region: 'us-east-1', agentCoreEndpoint: stack.agentcore.url, browserId: 'test',
         sessionApi: { localUrl: stack.sessionApi.url }, warmupTimeoutMs: 10_000,
         turnSummaryModel: { kind: 'bedrock', region: 'us-east-1', url: `${stack.bedrock.url}/model/summary/converse` },

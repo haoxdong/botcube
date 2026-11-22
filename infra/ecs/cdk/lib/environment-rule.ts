@@ -44,14 +44,6 @@ export const ALLOWED: ReadonlySet<string> = new Set([...LOCATOR, ...SECRETS, ...
 
 export const isAllowed = (name: string): boolean => ALLOWED.has(name) || STANDARD_PREFIXES.some(prefix => name.startsWith(prefix));
 
-/** Names set today outside the four uses, each until a BotCube Config field replaces it. It only shrinks. */
-export const PENDING: readonly string[] = [
-  'BOTCUBE_DEPLOY_REPOSITORY_ROOT',
-  'BOTCUBE_DEPLOY_ROOT',
-  // identity.json's credentialService.rpcPath, deployment data only a product's own service gateway reads; it leaves with that gateway.
-  'BOTCUBE_RAW_SERVICE_RPC_PATH',
-];
-
 /** The variable names one process is deployed with: an ECS container, a Lambda or a Harness Runtime. */
 export interface ProcessEnvironment { process: string; names: string[] }
 
@@ -85,16 +77,12 @@ export function processEnvironments(app: App, label: string): ProcessEnvironment
   });
 }
 
-/** Each name a process sets outside the four uses, `pending` and `exempt`, then each `pending` name nothing sets any more. */
+/** Each name a process sets outside the four uses and `exempt`. */
 export function environmentViolations(
   environments: readonly ProcessEnvironment[],
-  { pending, exempt = [] }: { pending: readonly string[]; exempt?: readonly string[] },
+  { exempt = [] }: { exempt?: readonly string[] } = {},
 ): string[] {
-  const set = new Set(environments.flatMap(({ names }) => names));
-  const outside = environments.flatMap(({ process, names }) => names
-    .filter(name => !isAllowed(name) && !pending.includes(name) && !exempt.includes(name))
+  return environments.flatMap(({ process, names }) => names
+    .filter(name => !isAllowed(name) && !exempt.includes(name))
     .map(name => `${process} sets ${name}, outside the four uses: read it from the BotCube Config`));
-  const stale = pending.filter(name => !set.has(name))
-    .map(name => `PENDING lists ${name}, which nothing sets any more: delete it`);
-  return [...outside, ...stale];
 }

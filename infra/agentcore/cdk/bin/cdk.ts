@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { addAgentCoreStacks } from '../lib/agentcore-app';
 import { loadDeployConfig } from '../lib/deploy-config';
-import { stageAgentCoreDockerPrerequisites, toolStagingRoot } from '../lib/predeploy-assets';
+import { checkoutRoot, stageAgentCoreDockerPrerequisites, toolStagingHook } from '../lib/predeploy-assets';
 import { readCdkContext } from '../lib/cdk-context';
 import { App } from 'aws-cdk-lib';
 import { execFileSync } from 'child_process';
@@ -14,21 +14,23 @@ function checkoutCommit(repositoryRoot: string): string {
 }
 
 async function main() {
-  const config = await loadDeployConfig(process.env.BOTCUBE_DEPLOY_ROOT, process.cwd());
-
-  const repositoryRoot = toolStagingRoot(config.deployRoot, config.identity.artifacts.toolStaging.hook);
-  const commit = checkoutCommit(repositoryRoot);
-  stageAgentCoreDockerPrerequisites(
-    config.spec,
-    config.deployRoot,
-    undefined,
-    repositoryRoot,
-    config.identity.artifacts.toolStaging.hook
-  );
-
   const app = new App({
     context: readCdkContext(path.resolve(__dirname, '../../cdk.json')),
   });
+  const config = await loadDeployConfig(process.env.BOTCUBE_DEPLOY_ROOT, process.cwd());
+
+  const repositoryRoot = checkoutRoot(config.deployRoot);
+  const commit = checkoutCommit(repositoryRoot);
+  if (config.runtimeImage === undefined) {
+    stageAgentCoreDockerPrerequisites(
+      config.spec,
+      config.deployRoot,
+      undefined,
+      repositoryRoot,
+      toolStagingHook(config.deployRoot)
+    );
+  }
+
   addAgentCoreStacks(app, config, commit);
   app.synth();
 }

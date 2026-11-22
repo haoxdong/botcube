@@ -1,11 +1,15 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { commandCredentialOptIn, proxyEnvironment } from './environment.js';
 import { modelGatewayResources } from './models.js';
 import { botcubeConfig, type BotCubeConfig } from './schema.js';
 import { telemetryEnvironment } from './telemetry.js';
 
+/** The keys every BotCube Config gives. */
+const REQUIRED = JSON.parse(readFileSync(new URL('../tests/required-keys.json', import.meta.url), 'utf8'));
+
 const NO_PROXY = 'localhost,127.0.0.1,::1,169.254.169.254,169.254.170.2,.amazonaws.com';
-const forward = (proxy: Partial<Extract<BotCubeConfig['network']['proxy'], { kind: 'forward' }>> = {}): Pick<BotCubeConfig, 'network'> => ({ network: { proxy: { kind: 'forward', url: 'http://proxy.example.com:3128', noProxy: ['.amazonaws.com'], ...proxy } } });
+const forward = (proxy: Partial<Extract<BotCubeConfig['integrations']['proxy'], { kind: 'forward' }>> = {}): { integrations: Pick<BotCubeConfig['integrations'], 'proxy'> } => ({ integrations: { proxy: { kind: 'forward', url: 'http://proxy.example.com:3128', noProxy: ['.amazonaws.com'], ...proxy } } });
 const FILE = { kind: 'file', path: '/run/secrets/proxy-token' } as const;
 const COMMAND = { kind: 'command', command: ['/usr/local/bin/proxy-token'], timeoutSeconds: 30 } as const;
 const COMMAND_CERTIFICATE = { command: ['/usr/local/bin/svid-broker'], timeoutSeconds: 30 } as const;
@@ -34,13 +38,13 @@ describe("the deploy's proxy environment", () => {
   });
 
   it('gives nothing without a proxy', () => {
-    expect(proxyEnvironment({ network: { proxy: { kind: 'none' } } })).toEqual({});
+    expect(proxyEnvironment({ integrations: { proxy: { kind: 'none' } } })).toEqual({});
   });
 });
 
 describe("the deploy's command credential opt-in", () => {
-  const withCommand = botcubeConfig.parse({ allowCommandCredentials: true, integrations: { modelGateway: { kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: COMMAND, turnSummaryModel: 'summary' } } });
-  const withoutCommand = botcubeConfig.parse({  });
+  const withCommand = botcubeConfig.parse({ ...REQUIRED, allowCommandCredentials: true, integrations: { modelGateway: { kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: COMMAND, turnSummaryModel: 'summary' } } });
+  const withoutCommand = botcubeConfig.parse(REQUIRED);
 
   it('passes BOTCUBE_ALLOW_COMMAND_CREDENTIALS through when the operator sets it in the deploy environment', () => {
     expect(commandCredentialOptIn(withCommand, { BOTCUBE_ALLOW_COMMAND_CREDENTIALS: '1' })).toEqual({ BOTCUBE_ALLOW_COMMAND_CREDENTIALS: '1' });
@@ -64,9 +68,9 @@ describe("the deploy's command credential opt-in", () => {
 
   it.each([
     ['integrations.modelGateway.tls.clientCertificate', { integrations: { modelGateway: { ...withCommand.integrations.modelGateway, credential: FILE, tls: { clientCertificate: COMMAND_CERTIFICATE } } } }],
-    ['network.proxy.tls.clientCertificate', { network: { proxy: { kind: 'forward', url: 'https://proxy.example.com:3129', tls: { clientCertificate: COMMAND_CERTIFICATE } } } }],
+    ['integrations.proxy.tls.clientCertificate', { integrations: { proxy: { kind: 'forward', url: 'https://proxy.example.com:3129', tls: { clientCertificate: COMMAND_CERTIFICATE } } } }],
   ])('fails a client certificate command at %s the operator did not opt in to', (field, sections) => {
-    const config = botcubeConfig.parse({ allowCommandCredentials: true, ...sections });
+    const config = botcubeConfig.parse({ ...REQUIRED, allowCommandCredentials: true, ...sections });
 
     expect(() => commandCredentialOptIn(config, {}))
       .toThrow(`${field} is a command credential, which runs only when the deploy environment sets BOTCUBE_ALLOW_COMMAND_CREDENTIALS=1`);
@@ -89,14 +93,14 @@ describe("the deploy's secret grants", () => {
     kind: 'oauth-client-credentials',
     tokenEndpoint: 'https://login.example.com/oauth2/token',
     clientId: 'botcube',
-    clientSecret: { kind: 'secret', secretArn: SECRET_ARN },
+    clientSecret: { kind: 'secret', secretId: SECRET_ARN },
   } as const;
 
   it("grants the secret an OAuth client's secret is read from, for models and telemetry", () => {
     const models = modelGatewayResources({ kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: oauthClient, turnSummaryModel: 'summary', wire: 'chat-completions' });
     const telemetry = telemetryEnvironment({ kind: 'otlp', url: 'https://collector.example.com/v1/traces', credential: oauthClient });
 
-    expect(models?.secretArns).toEqual([SECRET_ARN]);
-    expect(telemetry.secretArns).toEqual([SECRET_ARN]);
+    expect(models?.secretIds).toEqual([SECRET_ARN]);
+    expect(telemetry.secretIds).toEqual([SECRET_ARN]);
   });
 });

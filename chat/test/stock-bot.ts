@@ -1,11 +1,20 @@
 import { stageBotImage } from './bot-image.js';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { AccountStore } from '../src/account-store.js';
 import type { Account } from '../src/account-record.js';
 import { filingUserId } from '../src/filing-user-id.js';
+
+/** The keys every BotCube Config gives, naming the local web UI's origins. */
+const REQUIRED = JSON.parse(readFileSync(new URL('../../tests/required-keys.json', import.meta.url), 'utf8'));
+
+/** These sections over the keys every BotCube Config gives; `existing` keeps their VPC. */
+export function withRequired(sections: Record<string, unknown>): Record<string, unknown> {
+  const { existing, ...rest } = sections;
+  return { ...REQUIRED, ...rest, existing: { ...REQUIRED.existing, ...(existing as object | undefined) } };
+}
 
 /** The test bot's account key: its cookies are `test_account_id` and `test_session`. */
 export const TEST_ACCOUNT_KEY = 'test';
@@ -26,7 +35,7 @@ export function testBotCubeConfig(bot: Record<string, unknown> = TEST_BOT, secti
   const dir = mkdtempSync(join(tmpdir(), 'chat-test-deployment-'));
   stageBotImage(bot);
   writeFileSync(join(dir, 'bot.yaml'), JSON.stringify(bot));
-  writeFileSync(join(dir, 'botcube.yaml'), JSON.stringify({ ...sections }));
+  writeFileSync(join(dir, 'botcube.yaml'), JSON.stringify(withRequired(sections)));
   return join(dir, 'botcube.yaml');
 }
 

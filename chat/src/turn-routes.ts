@@ -5,6 +5,7 @@ import { agentDocumentEdit, type AgentDocumentSet, type AgentDocuments } from '.
 import { botMemory, type TurnRouteSource } from './turn-preparation.js';
 import type { AgentModel } from './models.js';
 import { HttpError } from './http-error.js';
+import { DEPLOY_CHECK_USER_AGENT } from './production-activity.js';
 import { requireCandidatePrompts } from './candidate-prompt.js';
 import type { Requester } from './requester.js';
 import { warmingSessions, warmupTiming } from './warming-sessions.js';
@@ -56,11 +57,11 @@ function userText(message: Message): string {
   return text.trim();
 }
 
-/** The error grouper's traffic marker: the client's, else `test` for a `-Verification/` deploy check. */
+/** The error grouper's traffic marker: the client's, else `test` for a deploy check. */
 function trafficMarker(sent: unknown, userAgent: string | undefined): { traffic?: 'test' | 'real' } {
   if (sent === 'test' || sent === 'real') return { traffic: sent };
   if (sent !== undefined) throw new HttpError(422, 'traffic must be "test" or "real"');
-  return userAgent?.includes('-Verification/') ? { traffic: 'test' } : {};
+  return userAgent?.includes(DEPLOY_CHECK_USER_AGENT) ? { traffic: 'test' } : {};
 }
 
 class WarmupFailure extends Error {

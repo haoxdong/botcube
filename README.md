@@ -101,10 +101,12 @@ It keeps Session Metadata private and contains no product code or harness-librar
 
 ## Tools and deployment
 
-A bot's CLIs install in its image (`examples/bot/Dockerfile`). Deployment names
-and provider values live in the deploy root (`examples/public/deploy/`), whose
-`stage-tools.sh` hook stages the bot's image for AgentCore, and are injected
-into BotCube; no product default is allowed in the cube.
+A bot's CLIs install in its image (`examples/bot/Dockerfile`). A deployment's
+names, domains and provider values live in its one `botcube.yaml`
+(`examples/public/botcube.yaml`) and are injected into BotCube; no product
+default is allowed in the cube. The deploy directory beside it
+(`examples/public/deploy/`) holds code only, such as the `stage-tools.sh` hook
+that stages the bot's image for AgentCore.
 
 ## Run the example
 

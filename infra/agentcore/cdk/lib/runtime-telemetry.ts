@@ -1,5 +1,7 @@
+import { Stack } from 'aws-cdk-lib';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import { secretResource } from 'botcube-config/read';
 import type { Construct } from 'constructs';
 import type { RuntimeTelemetry } from '../../../../config/seams.js' with { 'resolution-mode': 'import' };
 
@@ -19,9 +21,12 @@ export function configureRuntimeTelemetry(
     role.addToPrincipalPolicy(
       new iam.PolicyStatement({ actions: ['xray:PutTraceSegments', 'xray:PutTelemetryRecords'], resources: ['*'] })
     );
-  if (telemetry.secretArns.length)
+  if (telemetry.secretIds.length)
     role.addToPrincipalPolicy(
-      new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [...telemetry.secretArns] })
+      new iam.PolicyStatement({
+        actions: ['secretsmanager:GetSecretValue'],
+        resources: telemetry.secretIds.map(secretId => secretResource(secretId, Stack.of(scope))),
+      })
     );
   new logs.LogRetention(scope, id, {
     logGroupName: `/aws/bedrock-agentcore/runtimes/${runtimeId}-DEFAULT`,

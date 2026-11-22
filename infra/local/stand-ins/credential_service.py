@@ -14,12 +14,12 @@ from botcube_credential_service.audit import (
     StdoutCredentialAuditSink,
 )
 from botcube_credential_service.aws import env_vault
-from botcube_credential_service.botcube_config import (
-    botcube_config_from_env,
+from botcube_credential_service.botcube_config import botcube_config_from_env
+from botcube_credential_service.compose import credential_service_app
+from botcube_credential_service.server import (
+    CredentialServiceSettings,
     plan_usage_owner,
 )
-from botcube_credential_service.compose import credential_service_app
-from botcube_credential_service.server import CredentialServiceSettings
 from botcube_credential_service.vault import DynamoDbCredentialVault
 
 

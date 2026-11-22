@@ -10,6 +10,6 @@ export const outsideIssuer = <Token>(auth: HarnessAuth<Token>): auth is Extract<
 export const withClientSecret = ([path, source]: CredentialField): CredentialField[] =>
   source.kind === 'oauth-client-credentials' ? [[path, source], [[...path, 'clientSecret'], source.clientSecret]] : [[path, source]];
 
-/** The Secrets Manager secrets these Credential Sources are read from, which their readers are granted. */
-export const secretArns = (...sources: CredentialSource[]): string[] =>
-  sources.flatMap((source) => withClientSecret([[], source])).flatMap(([, source]) => (source.kind === 'secret' ? [source.secretArn] : []));
+/** The Secrets Manager secrets these Credential Sources are read from, by name or ARN, which their readers are granted. */
+export const secretIds = (...sources: CredentialSource[]): string[] =>
+  sources.flatMap((source) => withClientSecret([[], source])).flatMap(([, source]) => (source.kind === 'secret' ? [source.secretId] : []));

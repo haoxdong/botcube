@@ -3,8 +3,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { deployRootFile } from '../../config/read.cjs';
 
-const identity = JSON.parse(readFileSync(join(process.env.BOTCUBE_DEPLOY_ROOT, 'identity.json'), 'utf8'));
+const identity = deployRootFile(process.env.BOTCUBE_DEPLOY_ROOT, 'identity.json');
 const { account, region, ecs } = identity.aws;
 const [mode, source] = process.argv.slice(2);
 if (!['deploy', 'rollback'].includes(mode) || !source) throw new Error('Usage: managed-deploy-policies.mjs deploy|rollback POLICY_JSON');

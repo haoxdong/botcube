@@ -126,6 +126,25 @@
         }
       },
       "additionalProperties": false
+    },
+    "productName": {
+      "description": "The product's name, as Users see it.",
+      "type": "string",
+      "minLength": 1
+    },
+    "productService": {
+      "description": "The product's own service.",
+      "type": "object",
+      "properties": {
+        "agentComputerStartedPath": {
+          "type": "string",
+          "format": "starts_with",
+          "pattern": "^\\/.*",
+          "description": "The Credential Service path called when an Agent Computer's browser starts, for the product to prepare it."
+        }
+      },
+      "required": ["agentComputerStartedPath"],
+      "additionalProperties": false
     }
   },
   "required": ["agentIdentity", "accountKey", "models"],

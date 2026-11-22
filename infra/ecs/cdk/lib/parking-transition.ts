@@ -12,6 +12,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
+import { readConfig } from 'botcube-config/read';
 import type { DeployIdentity } from './production-identity.js';
 
 /** The SDK in botcube/infra/transition-requirements.txt, installed once per pin set: the runtime's built-in boto3 is
@@ -32,24 +33,39 @@ function lockedSdk(infraRoot: string) {
 
 const DEPLOY_LEASES = 'deploy-leases/';
 
+/** The BotCube Config synthesis read (`path`). */
+export interface SynthesizedConfig {
+  path: string;
+}
+
+/** The Credential Service's BotCube Config reader, which builds the identity from the bundled config. */
+const CONFIG_READER = ['__init__.py', 'botcube_config.py', 'botcube.schema.json'];
+
+/** The BotCube Config, validated here, bundled as JSON so the transition reads it without a YAML library. */
+function bundleConfig(infraRoot: string, config: SynthesizedConfig, outputDir: string) {
+  fs.writeFileSync(path.join(outputDir, 'botcube.yaml'), JSON.stringify(readConfig(config.path)));
+  const reader = path.join(infraRoot, '../credential-service/src/botcube_credential_service');
+  fs.mkdirSync(path.join(outputDir, 'botcube_credential_service'));
+  for (const file of CONFIG_READER) fs.copyFileSync(path.join(reader, file), path.join(outputDir, 'botcube_credential_service', file));
+}
+
 /** The stacks a production deploy changes: harness, origin and web (DEPLOYED_STACKS in parking_transition.py). */
 export function deployedStacks(identity: DeployIdentity) {
   return [`AgentCore-${identity.aws.cloudFormation.stackFamily}-default`, identity.aws.ecs.previewOriginStackName, identity.aws.ecs.webLatency.stackName];
 }
 
-export function parkingTransition(stack: Stack, infraRoot: string, identity: DeployIdentity, imageRegistry?: string) {
+export function parkingTransition(stack: Stack, infraRoot: string, identity: DeployIdentity, config: SynthesizedConfig, imageRegistry?: string) {
   const { ecs, agentCore } = identity.aws;
   const worker = new lambda.Function(stack, 'Transition', {
     functionName: `${ecs.parking.functionName}-transition`,
     runtime: lambda.Runtime.PYTHON_3_12, handler: 'parking_transition.handler',
     timeout: Duration.minutes(15), memorySize: 512,
-    environment: { PYTHONPATH: '/var/task/ecs', BOTCUBE_DEPLOY_ROOT: '/var/task/deploy', BOTCUBE_DEPLOY_REPOSITORY_ROOT: '/var/task', BACKSTOP_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-backstop` }), MONITORING_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-monitoring` }), TRANSITION_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-transition` }) },
+    environment: { PYTHONPATH: '/var/task/ecs', BOTCUBE_CONFIG: '/var/task/botcube.yaml', BACKSTOP_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-backstop` }), MONITORING_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-monitoring` }), TRANSITION_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-transition` }) },
     code: lambda.Code.fromAsset(infraRoot, { assetHashType: AssetHashType.OUTPUT, bundling: {
       image: imageRegistry ? DockerImage.fromRegistry(`${imageRegistry}/sam/build-${lambda.Runtime.PYTHON_3_12.name}`) : lambda.Runtime.PYTHON_3_12.bundlingImage,
       local: { tryBundle(outputDir) {
         fs.cpSync(lockedSdk(infraRoot), outputDir, { recursive: true });
-        fs.mkdirSync(path.join(outputDir, 'deploy'), { recursive: true });
-        fs.writeFileSync(path.join(outputDir, 'deploy/identity.json'), JSON.stringify(identity));
+        bundleConfig(infraRoot, config, outputDir);
         fs.copyFileSync(path.join(infraRoot, 'identity-defaults.json'), path.join(outputDir, 'identity-defaults.json'));
         // Copy entry by entry: cdk.out sits under ecs/cdk, and copying ecs/ whole into it is a copy into itself.
         const skip = (source: string) => ['cdk', 'parking', '__pycache__'].includes(path.basename(source));

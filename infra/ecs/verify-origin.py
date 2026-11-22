@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import boto3
+from deploy_check import user_agent
 from deploy_identity import load_identity
 
 IDENTITY = load_identity()
@@ -50,7 +51,7 @@ PRODUCTION_HOST = hostname(IDENTITY['domains']['chatService'])
 
 
 def request_status(host: str = HOST, timeout: float = 40):
-    request = urllib.request.Request('https://' + host + '/health?origin-proof=' + str(time.time_ns()), headers={'User-Agent': IDENTITY['verification']['originUserAgent'], 'Cache-Control': 'no-cache', 'Connection': 'close'})
+    request = urllib.request.Request('https://' + host + '/health?origin-proof=' + str(time.time_ns()), headers={'User-Agent': user_agent('ORIGIN_VERIFICATION_USER_AGENT'), 'Cache-Control': 'no-cache', 'Connection': 'close'})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, response.read().decode()

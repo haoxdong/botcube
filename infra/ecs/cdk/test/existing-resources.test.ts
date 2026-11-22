@@ -6,8 +6,10 @@ import * as path from 'node:path';
 import { App, Stack } from 'aws-cdk-lib';
 import { AssetManifestArtifact } from 'aws-cdk-lib/cx-api';
 import { Template } from 'aws-cdk-lib/assertions';
+import { deployIdentity } from '../lib/deploy-root.js';
 import type { DeployIdentity } from '../lib/production-identity.js';
 import { footprint } from '../../../../config/footprint.js';
+import { registryHost } from '../../../../config/images.js';
 import { loadConfig } from '../../../../config/load.js';
 import { botcubeConfigPath, synthesizeExample } from './example-fixture.js';
 
@@ -112,8 +114,7 @@ test('refers only to what each stack defines, once the created resources are gon
   expect(dangling).toEqual([]);
 });
 
-const EXAMPLE_EGRESS = (JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../../examples/public/deploy/identity.json'), 'utf8')) as DeployIdentity)
-  .aws.ecs.privateEgress;
+const EXAMPLE_EGRESS = deployIdentity(path.resolve(__dirname, '../../../../examples/public/deploy')).aws.ecs.privateEgress;
 
 test("leaves egress to the existing network: no NAT, route or Elastic IP, and none of the example's NAT subnet or route table", () => {
   const egress = ['AWS::EC2::NatGateway', 'AWS::EC2::Route', 'AWS::EC2::EIP'];
@@ -124,12 +125,12 @@ test("leaves egress to the existing network: no NAT, route or Elastic IP, and no
 
 test('fails when its deploy identity also names a NAT, naming both fields', async () => {
   const withNat = (identity: DeployIdentity) => ({ ...identity, aws: { ...identity.aws, ecs: { ...identity.aws.ecs, privateEgress: EXAMPLE_EGRESS } } });
-  await expect(synthesizeExample('enterprise', withNat)).rejects.toThrow('existing.network, aws.ecs.privateEgress: ');
+  await expect(synthesizeExample('enterprise', withNat)).rejects.toThrow('network.natGateways, aws.ecs.privateEgress: ');
 });
 
 test('without a existing network, fails when its deploy identity names no NAT, naming both fields', async () => {
   const withoutNat = ({ aws: { ecs: { privateEgress: _, ...ecs }, ...aws }, ...identity }: DeployIdentity) => ({ ...identity, aws: { ...aws, ecs } });
-  await expect(synthesizeExample('public', withoutNat)).rejects.toThrow('existing.network, aws.ecs.privateEgress: ');
+  await expect(synthesizeExample('public', withoutNat)).rejects.toThrow('network.natGateways, aws.ecs.privateEgress: ');
 });
 
 test('runs in the existing network', () => {
@@ -286,7 +287,8 @@ const BUNDLING = 'sam/build-python3.12';
 
 test('prints under Build images every image the Dockerfiles it builds pull, and its bundling image', () => {
   const config = loadConfig(botcubeConfigPath('enterprise'));
-  const pulled = [...DOCKERFILES.flatMap(file => baseImages(readDockerfile(file), config.integrations.imageRegistry)), `${config.integrations.imageRegistry}/${BUNDLING}`];
+  const registry = registryHost(config.integrations.imageRegistry);
+  const pulled = [...DOCKERFILES.flatMap(file => baseImages(readDockerfile(file), registry)), `${registry}/${BUNDLING}`];
   expect(footprint(config).buildImages).toEqual([...new Set(pulled)].sort());
 });
 

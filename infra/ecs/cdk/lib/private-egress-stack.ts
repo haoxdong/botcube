@@ -43,10 +43,10 @@ export class PrivateEgressStack extends Stack {
   }
 }
 
-/** The deploy's NAT, which its identity names exactly when the BotCube Config supplies no network. */
-const EGRESS_FIELDS = 'existing.network, aws.ecs.privateEgress';
-const EGRESS_BOTH = 'A existing network brings its own egress, so the deploy identity names no NAT for BotCube to create and park in it';
-const EGRESS_NEITHER = 'Without a existing network, the deploy identity names the NAT BotCube creates for the private subnets';
+/** The deploy's NAT, which its identity names exactly when the BotCube Config's network.natGateways is 1. */
+const EGRESS_FIELDS = 'network.natGateways, aws.ecs.privateEgress';
+const EGRESS_BOTH = 'With network.natGateways 0, existing.vpc brings its own egress, so the deploy identity names no NAT for BotCube to create and park in it';
+const EGRESS_NEITHER = 'Unless existing.vpc brings its own egress, the deploy identity names the NAT BotCube creates for the private subnets';
 
 export function ownedEgress(app: App, identity: DeployIdentity, existingNetwork: boolean, boundary?: iam.IManagedPolicy): PrivateEgressStack | undefined {
   const egress = identity.aws.ecs.privateEgress;

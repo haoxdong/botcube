@@ -1,8 +1,10 @@
 import { outsideIssuer } from './credential-fields.js';
+import { physicalNames } from './deployment.js';
+import { footprintImages, sorted } from './footprint-images.js';
 import type { BotCubeConfig } from './schema.js';
 import type { CredentialSource, EndpointTls } from './blocks.js';
 import { PRINCIPALS, type Principal } from './principals.js';
-import { NETWORK_INTERFACES, SUPPLIABLE } from './suppliable.js';
+import { NETWORK_INTERFACES, ownEgressVpc, SUPPLIABLE } from './suppliable.js';
 
 const XRAY = ['xray:PutTelemetryRecords', 'xray:PutTraceSegments'];
 const OWN_LOGS = ['logs:CreateLogStream', 'logs:PutLogEvents'];
@@ -23,7 +25,7 @@ export interface Need {
   readonly commands?: readonly string[];
   /** As `Footprint.tls`. */
   readonly tls?: readonly string[];
-  /** Sidecar images pulled from the image registry, by their path in it. */
+  /** Sidecar images the registry serves, by path. */
   readonly pulled?: readonly string[];
   /** As `Footprint.runtime`. */
   readonly runtime?: readonly string[];
@@ -39,6 +41,10 @@ export interface ExistingResource {
 }
 
 export interface Footprint {
+  /** Each physical name the deployment gives a resource, by its `names` key; none without `name`. */
+  readonly names: Readonly<Record<string, string>>;
+  /** Where the deployment is reached, as `[field, origin]`. */
+  readonly domains: readonly (readonly [string, string])[];
   readonly existing: ExistingResource[];
   /** What BotCube creates that the BotCube Config could supply instead, as `<field>: <what it is>`. */
   readonly created: string[];
@@ -58,19 +64,6 @@ export interface Footprint {
   /** Each Endpoint's TLS, as `<field> (<principals>): <identity and certificate source>`; never key material. */
   readonly tls: string[];
 }
-
-/** The images BotCube deploys; a bot's own image is built FROM the Harness image and stands in for it. */
-export const IMAGES = {
-  chatService: 'botcube-chat-service',
-  credentialService: 'botcube-credential-service',
-  bot: 'bot (FROM the BotCube Harness image)',
-} as const;
-
-/** The images BotCube pulls, by their path in the image registry: its sidecars, then what its own images are built FROM. */
-const PULLED = {
-  build: ['docker/library/nginx:stable-alpine', 'docker/library/node:24-bookworm-slim', 'docker/library/python:3.13-slim', 'docker/library/rust:1.88-slim-bookworm',
-    'lambda/python:3.13', 'sam/build-python3.12'],
-};
 
 const BROWSERS = ['ConnectBrowserAutomationStream', 'CreateBrowserProfile', 'DeleteBrowserProfile', 'GetBrowser',
   'GetBrowserSession', 'ListBrowserSessions', 'SaveBrowserSessionProfile', 'StartBrowserSession', 'StopBrowserSession', 'UpdateBrowserStream']
@@ -122,8 +115,9 @@ const FILES_ACCESS_POINTS: Readonly<Record<FilesAccessPointMode, Need>> = {
 };
 
 /** Each resource BotCube would create: existing, with the grants on it moved to its entry, or created and granted. */
-function existingResources({ existing = {}, integrations: { signIn: identity } }: BotCubeConfig): { need: Need; created: string[] } {
-  const entries = Object.entries(SUPPLIABLE).map(([key, resource]) => ({ key, resource, name: resource.name(existing) }));
+function existingResources(config: BotCubeConfig): { need: Need; created: string[] } {
+  const { existing, integrations: { signIn: identity } } = config;
+  const entries = Object.entries(SUPPLIABLE).map(([key, resource]) => ({ key, resource, name: resource.name(existing, config) }));
   const existingEntries: ExistingResource[] = entries.flatMap(({ key, resource, name }) => (name === undefined ? [] : [{
     field: `existing.${key}`,
     name,
@@ -142,7 +136,7 @@ function existingResources({ existing = {}, integrations: { signIn: identity } }
   for (const { resource: { grant } } of createdEntries) {
     for (const { to, actions } of grant ?? []) iam[to] = { actions: [...(iam[to]?.actions ?? []), ...actions] };
   }
-  if (existing.network) {
+  if (ownEgressVpc(config)) {
     iam.sessionApi = { actions: NETWORK_INTERFACES };
     iam.auditCopy = { actions: NETWORK_INTERFACES };
   }
@@ -153,7 +147,7 @@ function existingResources({ existing = {}, integrations: { signIn: identity } }
 }
 
 /** The fields with no `kind`: the bot, and the plain parameters (existing resources, the image registry). */
-type AdapterSections = Omit<BotCubeConfig['integrations'], 'imageRegistry'> & Pick<BotCubeConfig['network'], 'proxy'> & Pick<BotCubeConfig, 'schedules' | 'liveView'>;
+type AdapterSections = Omit<BotCubeConfig['integrations'], 'imageRegistry'> & Pick<BotCubeConfig, 'schedules' | 'liveView'>;
 type Section = keyof AdapterSections;
 
 /** An adapter's need: fixed, or read from its section, such as the host it names. */
@@ -248,8 +242,8 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in AdapterSections[S]['
     // Every service and browser reaches the internet through it; the Chat Service and the Harness relay to it with its credential.
     forward: ({ url, credential, tls }) => [
       { egressHosts: [new URL(url).host] },
-      ...(credential ? [credentialNeed('network.proxy.credential', credential, ['chatService', 'credentialService', 'harness'])] : []),
-      ...tlsNeed('network.proxy.tls', tls, ['chatService', 'credentialService', 'harness']),
+      ...(credential ? [credentialNeed('integrations.proxy.credential', credential, ['chatService', 'credentialService', 'harness'])] : []),
+      ...tlsNeed('integrations.proxy.tls', tls, ['chatService', 'credentialService', 'harness']),
     ],
     none: {},
   },
@@ -291,8 +285,8 @@ function credentialNeed(field: string, credential: CredentialSource, readers: re
 /** The existing, created and runtime resources, IAM actions, egress hosts, images and commands this BotCube Config needs. */
 export function footprint(config: BotCubeConfig, { filesAccessPointMode = 'runtime' }: FootprintOptions = {}): Footprint {
   const resources = existingResources(config);
-  const sections: AdapterSections = { ...config.integrations, proxy: config.network.proxy, schedules: config.schedules, liveView: config.liveView };
-  const needs = [BUILT_IN, config.existing?.files ? {} : FILES_ACCESS_POINTS[filesAccessPointMode],
+  const sections: AdapterSections = { ...config.integrations, schedules: config.schedules, liveView: config.liveView };
+  const needs = [BUILT_IN, config.existing.files ? {} : FILES_ACCESS_POINTS[filesAccessPointMode],
     ...(Object.keys(ADAPTERS) as Section[]).flatMap(section => adapter(section, sections[section])), resources.need];
   const iam: Footprint['iam'] = {};
   for (const principal of Object.keys(PRINCIPALS) as Principal[]) {
@@ -302,8 +296,14 @@ export function footprint(config: BotCubeConfig, { filesAccessPointMode = 'runti
       managedPolicies: sorted(grants.flatMap(grant => grant.managedPolicies ?? [])),
     };
   }
-  const pulled = (paths: readonly string[]) => paths.map(image => `${config.integrations.imageRegistry}/${image}`);
+  const { web, webAliases = [], ...origins } = config.domains;
   return {
+    names: physicalNames(config.name, config.names),
+    domains: [
+      ['domains.web', web] as const,
+      ...webAliases.map(alias => ['domains.webAliases', alias] as const),
+      ...Object.entries(origins).flatMap(([key, origin]) => (origin ? [[`domains.${key}`, origin] as const] : [])),
+    ],
     existing: needs.flatMap(need => need.existing ?? []).map(resource => ({ ...resource, grants: resource.grants.map(grant => ({ ...grant, actions: sorted(grant.actions) })) })),
     created: resources.created,
     runtime: needs.flatMap(need => need.runtime ?? []),
@@ -311,8 +311,7 @@ export function footprint(config: BotCubeConfig, { filesAccessPointMode = 'runti
     models: config.integrations.modelGateway.kind === 'openai-compatible' ? `openai-compatible ${config.integrations.modelGateway.url} wire ${config.integrations.modelGateway.wire}` : config.integrations.modelGateway.kind,
     egressHosts: sorted(needs.flatMap(need => need.egressHosts ?? [])),
     egressFrom: Object.fromEntries(needs.flatMap(need => Object.entries(need.egressFrom ?? {})).map(([host, from]) => [host, [...from]])),
-    images: sorted([...Object.values(IMAGES), ...pulled(needs.flatMap(need => need.pulled ?? []))]),
-    buildImages: sorted(pulled(PULLED.build)),
+    ...footprintImages(config, needs.flatMap(need => need.pulled ?? [])),
     commands: sorted(needs.flatMap(need => need.commands ?? [])),
     tls: sorted(needs.flatMap(need => need.tls ?? [])),
   };
@@ -324,16 +323,16 @@ function adapter(section: Section, config: { kind: string }): Need[] {
   return [typeof need === 'function' ? need(config) : need].flat();
 }
 
-const sorted = (values: readonly string[]) => [...new Set(values)].sort();
-
 /** The footprint as a security reviewer reads it. */
-export function formatFootprint({ existing, created, runtime, iam, models, egressHosts, egressFrom, tls, images, buildImages, commands }: Footprint): string {
+export function formatFootprint({ names, domains, existing, created, runtime, iam, models, egressHosts, egressFrom, tls, images, buildImages, commands }: Footprint): string {
   const roles = (Object.entries(iam) as [Principal, { actions: string[]; managedPolicies: string[] }][]).flatMap(([principal, grant]) => [
     `  ${principal} (${PRINCIPALS[principal]})`,
     ...grant.actions.map(action => `    ${action}`),
     ...grant.managedPolicies.map(policy => `    AWS managed policy ${policy}`),
   ]);
   return [
+    'Names', ...Object.entries(names).map(([key, name]) => `  ${key} ${name}`),
+    'Domains', ...domains.map(([field, origin]) => `  ${field} ${origin}`),
     'Existing resources', ...existing.flatMap(({ field, name, grants }) => [
       `  ${field} ${name}`,
       ...grants.map(({ to, actions, on }) => `    grant ${to}: ${actions.join(' ')}${on ? ` on ${on}` : ''}`),

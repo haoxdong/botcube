@@ -387,6 +387,9 @@ importers:
       aws-cdk-lib:
         specifier: ^2.275.0
         version: 2.275.0(constructs@10.8.1)
+      botcube-config:
+        specifier: workspace:*
+        version: link:../../../config
       constructs:
         specifier: ^10.8.1
         version: 10.8.1

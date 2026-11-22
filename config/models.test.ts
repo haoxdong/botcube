@@ -5,12 +5,12 @@ import { modelGatewayResources } from './models.js';
 
 describe('the models section on an OpenAI-compatible Endpoint', () => {
   it('grants the Chat Service and the Credential Service the secret its credential is read from', () => {
-    const credential = { kind: 'secret', secretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/models-api-key' } as const;
+    const credential = { kind: 'secret', secretId: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/models-api-key' } as const;
     const deployed = modelGatewayResources({
       kind: 'openai-compatible', url: 'https://models.example.com/v1', credential, headers: { 'x-tenant': 'botcube-example' }, turnSummaryModel: 'summary', wire: 'chat-completions',
     });
 
-    expect(deployed).toEqual({ secretArns: [credential.secretArn] });
+    expect(deployed).toEqual({ secretIds: [credential.secretId] });
   });
 
   it('grants nothing for a credential read from a file', () => {
@@ -18,7 +18,7 @@ describe('the models section on an OpenAI-compatible Endpoint', () => {
       kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/key' }, turnSummaryModel: 'summary', wire: 'responses',
     });
 
-    expect(deployed).toEqual({ secretArns: [] });
+    expect(deployed).toEqual({ secretIds: [] });
   });
 });
 

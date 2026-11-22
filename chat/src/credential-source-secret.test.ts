@@ -19,18 +19,26 @@ const options = (now: () => number) => ({ now, env: { AWS_ENDPOINT_URL_SECRETS_M
 
 describe('a Secrets Manager credential source', () => {
   it("gives the secret's string until five minutes on", async () => {
-    const secretArn = await secret('sk-from-secret');
-    const source = credentialSource('models', { kind: 'secret', secretArn }, options(() => START));
+    const secretId = await secret('sk-from-secret');
+    const source = credentialSource('models', { kind: 'secret', secretId }, options(() => START));
 
     expect(await source.get()).toEqual({ value: 'sk-from-secret', expiresAt: new Date(START + minutes(5)) });
   });
 
+  it('reads a secret named without its ARN, in its own region', async () => {
+    const secretId = `models-api-key-${randomUUID()}`;
+    await client.send(new CreateSecretCommand({ Name: secretId, SecretString: 'sk-by-name' }));
+    const source = credentialSource('models', { kind: 'secret', secretId }, { now: () => START, env: { ...options(() => START).env, AWS_REGION: 'us-east-1' } });
+
+    expect(await source.get()).toEqual({ value: 'sk-by-name', expiresAt: new Date(START + minutes(5)) });
+  });
+
   it('reads the secret again a minute before its value expires, picking up a rotation', async () => {
-    const secretArn = await secret('sk-first');
+    const secretId = await secret('sk-first');
     let now = START;
-    const source = credentialSource('models', { kind: 'secret', secretArn }, options(() => now));
+    const source = credentialSource('models', { kind: 'secret', secretId }, options(() => now));
     await source.get();
-    await client.send(new PutSecretValueCommand({ SecretId: secretArn, SecretString: 'sk-rotated' }));
+    await client.send(new PutSecretValueCommand({ SecretId: secretId, SecretString: 'sk-rotated' }));
 
     now = START + minutes(2);
     expect((await source.get()).value).toBe('sk-first');
@@ -39,10 +47,10 @@ describe('a Secrets Manager credential source', () => {
   });
 
   it('fails naming its seam and its secret, on each use while the secret cannot be read', async () => {
-    const secretArn = `arn:aws:secretsmanager:us-east-1:123456789012:secret:absent-${randomUUID()}`;
-    const source = credentialSource('models', { kind: 'secret', secretArn }, options(Date.now));
+    const secretId = `arn:aws:secretsmanager:us-east-1:123456789012:secret:absent-${randomUUID()}`;
+    const source = credentialSource('models', { kind: 'secret', secretId }, options(Date.now));
 
-    await expect(source.get()).rejects.toThrow(new RegExp(`^models credential \\(secret ${secretArn}\\): Secrets Manager can.t find the specified secret`));
-    await expect(source.get()).rejects.toThrow(`models credential (secret ${secretArn})`);
+    await expect(source.get()).rejects.toThrow(new RegExp(`^models credential \\(secret ${secretId}\\): Secrets Manager can.t find the specified secret`));
+    await expect(source.get()).rejects.toThrow(`models credential (secret ${secretId})`);
   });
 });

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 import boto3
 from botocore.exceptions import ClientError
+from deploy_check import user_agent
 from deploy_identity import load_identity, required
 from ecs_service_state import service_facts
 from egress_probe import EgressProbe, WakeEgressProof
@@ -225,7 +226,7 @@ def response_facts(parked: bool) -> dict[str, dict[str, object]]:
     """What each API hostname answers the web UI, once the Worker route change has propagated."""
     def probe(host: str) -> dict[str, object]:
         request = urllib.request.Request(f'https://{host}/health', headers={
-            'Origin': WEB, 'User-Agent': IDENTITY['verification']['originUserAgent'], 'Cache-Control': 'no-cache'})
+            'Origin': WEB, 'User-Agent': user_agent('ORIGIN_VERIFICATION_USER_AGENT'), 'Cache-Control': 'no-cache'})
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
                 status, headers, body = response.status, response.headers, response.read()

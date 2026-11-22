@@ -6,7 +6,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 const PACKAGE_ROOT = path.resolve(__dirname, '..');
-const EXAMPLE_DEPLOY = path.resolve(PACKAGE_ROOT, '../../../examples/public/deploy');
+const PUBLIC_EXAMPLE = path.resolve(PACKAGE_ROOT, '../../../examples/public');
 const mockContextPaths: string[] = [];
 
 // Jest runs the entrypoint from bin/, but deploys run it built into dist/bin/. Record the cdk.json
@@ -19,6 +19,22 @@ jest.mock('../lib/cdk-context', () => {
     readCdkContext: (configPath: string) => {
       mockContextPaths.push(configPath);
       return actual.readCdkContext(resolve(packageRoot, 'dist/bin', relative(resolve(packageRoot, 'bin'), configPath)));
+    },
+  };
+});
+
+// The Runtime builds from BotCube's own Harness; a test repository's stands in for it, so its staging hook writes there.
+const mockHarness: { codeLocation?: string } = {};
+jest.mock('../lib/deploy-config', () => {
+  const actual = jest.requireActual('../lib/deploy-config');
+  const { setSessionProjectRoot } = jest.requireActual('@aws/agentcore-cdk');
+  return {
+    ...actual,
+    loadDeployConfig: async (...args: unknown[]) => {
+      const config = await actual.loadDeployConfig(...args);
+      if (mockHarness.codeLocation) config.spec.runtimes[0].codeLocation = mockHarness.codeLocation;
+      setSessionProjectRoot(actual.agentCoreProjectRoot(config.spec));
+      return config;
     },
   };
 });
@@ -47,23 +63,14 @@ function tempDir(): string {
   return dir;
 }
 
-/** A repository whose bot deploy root is bot/deploy and whose runtime copies staged tools. */
+/** A repository whose bot is the public example's BotCube Config at bot/, with its deploy root bot/deploy staging tools. */
 function repository(): string {
   const repo = tempDir();
   const deployRoot = path.join(repo, 'bot/deploy');
-  const identity = JSON.parse(fs.readFileSync(path.join(EXAMPLE_DEPLOY, 'identity.json'), 'utf8'));
-  const spec = JSON.parse(fs.readFileSync(path.join(EXAMPLE_DEPLOY, 'agentcore/agentcore.json'), 'utf8'));
-  identity.artifacts.toolStaging.hook = 'bot/deploy/stage-tools.sh';
-  spec.runtimes[0].codeLocation = '../../harness/';
-  delete spec.runtimes[0].dockerfile;
-  fs.mkdirSync(path.join(deployRoot, 'agentcore'), { recursive: true });
+  fs.mkdirSync(deployRoot, { recursive: true });
   fs.mkdirSync(path.join(repo, 'harness'));
-  fs.writeFileSync(path.join(deployRoot, 'identity.json'), JSON.stringify(identity));
-  fs.writeFileSync(path.join(deployRoot, 'agentcore/agentcore.json'), JSON.stringify(spec));
-  fs.writeFileSync(
-    path.join(deployRoot, 'agentcore/aws-targets.json'),
-    JSON.stringify([{ name: 'template', account: '000000000000', region: 'us-east-1' }])
-  );
+  mockHarness.codeLocation = path.join(repo, 'harness');
+  fs.copyFileSync(path.join(PUBLIC_EXAMPLE, 'botcube.yaml'), path.join(repo, 'bot/botcube.yaml'));
   fs.writeFileSync(
     path.join(deployRoot, 'stage-tools.sh'),
     '#!/bin/sh\npwd > staged-from\nmkdir -p harness/.tool-dist && echo "FROM scratch" > harness/.tool-dist/Dockerfile\n',
@@ -127,19 +134,11 @@ test('stages tools from the repository root, then synthesizes the stacks with th
   expect(deployedCommit(process.env.CDK_OUTDIR)).toBe(git(repo, 'rev-parse', 'HEAD'));
 });
 
-test('stages a nested deploy root from the root that owns its hook', async () => {
+test('stages a nested deploy root from the checkout that holds it', async () => {
   const repo = repository();
-  const oldDeploy = path.join(repo, 'bot/deploy');
   const deployRoot = path.join(repo, 'examples/public/deploy');
-  fs.mkdirSync(path.dirname(deployRoot), { recursive: true });
-  fs.renameSync(oldDeploy, deployRoot);
-  const identity = JSON.parse(fs.readFileSync(path.join(deployRoot, 'identity.json'), 'utf8'));
-  identity.artifacts.toolStaging.hook = 'examples/public/deploy/stage-tools.sh';
-  fs.writeFileSync(path.join(deployRoot, 'identity.json'), JSON.stringify(identity));
-  const specPath = path.join(deployRoot, 'agentcore/agentcore.json');
-  const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
-  spec.runtimes[0].codeLocation = '../../../harness/';
-  fs.writeFileSync(specPath, JSON.stringify(spec));
+  fs.mkdirSync(path.join(repo, 'examples'));
+  fs.renameSync(path.join(repo, 'bot'), path.join(repo, 'examples/public'));
   setDeployRoot(deployRoot);
   process.env.CDK_OUTDIR = tempDir();
 

@@ -82,8 +82,8 @@ type Adapter = { readonly about: string; readonly read: () => Promise<Credential
 function adapter(source: CredentialSourceConfig, now: () => number, env: NodeJS.ProcessEnv, botcube: BotCubeSigner | undefined): Adapter {
   switch (source.kind) {
     case 'secret': return {
-      about: `secret ${source.secretArn}`,
-      read: async () => ({ value: await secretString(source.secretArn, env), expiresAt: new Date(now() + REREAD_AFTER_MS) }),
+      about: `secret ${source.secretId}`,
+      read: async () => ({ value: await secretString(source.secretId, env), expiresAt: new Date(now() + REREAD_AFTER_MS) }),
     };
     case 'file': return {
       about: `file ${source.path}`,
@@ -184,12 +184,13 @@ async function callerIdentityRequest(audience: string, env: NodeJS.ProcessEnv): 
   return encodeURIComponent(JSON.stringify({ url, method: 'POST', headers }));
 }
 
-async function secretString(secretArn: string, env: NodeJS.ProcessEnv): Promise<string> {
+/** The secret's string: an ARN's in its own region, a name's in the process's. */
+async function secretString(secretId: string, env: NodeJS.ProcessEnv): Promise<string> {
   const endpoint = env.AWS_ENDPOINT_URL_SECRETS_MANAGER;
-  const region = secretArn.split(':')[3];
+  const region = secretId.startsWith('arn:') ? secretId.split(':')[3] : (env.AWS_REGION ?? env.AWS_DEFAULT_REGION);
   const client = new SecretsManagerClient({ ...(region ? { region } : {}), ...(endpoint ? { endpoint } : {}) });
   try {
-    const { SecretString } = await client.send(new GetSecretValueCommand({ SecretId: secretArn }));
+    const { SecretString } = await client.send(new GetSecretValueCommand({ SecretId: secretId }));
     if (!SecretString) throw new Error('the secret holds no string');
     return SecretString;
   } finally {

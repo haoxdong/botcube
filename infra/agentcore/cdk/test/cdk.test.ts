@@ -23,7 +23,7 @@ function onlyOf<T>(entries: T[]): T {
   assert(entry, 'the template spec declares it');
   return entry;
 }
-import { readDeployIdentity, readProjectSpec } from '../lib/deploy-config';
+import { agentCoreProjectRoot, readDeployIdentity, readProjectSpec } from '../lib/deploy-config';
 
 const DEPLOY_ROOT = resolve(__dirname, '../../../../examples/public/deploy');
 const DEPLOY_IDENTITY = readDeployIdentity(DEPLOY_ROOT);
@@ -58,7 +58,7 @@ const PRIVATE_NAT_BROWSER = {
     { id: 'subnet-fixture0123456789abcdef1', availabilityZone: 'us-east-1b', cidrBlock: '198.51.100.0/24' },
   ],
 };
-setSessionProjectRoot(DEPLOY_ROOT);
+setSessionProjectRoot(agentCoreProjectRoot(readProjectSpec(DEPLOY_ROOT)));
 
 test('AgentCoreStack synthesizes with empty spec', () => {
   const app = new cdk.App();
@@ -436,7 +436,7 @@ test('grants the runtime role tracing and no browser access (ADR 0075 decision 5
 });
 
 test('grants the runtime role no X-Ray when telemetry is none, and keeps it otherwise', () => {
-  const runtimePolicies = (telemetry?: { kind: 'none' | 'xray'; secretArns: string[] }) =>
+  const runtimePolicies = (telemetry?: { kind: 'none' | 'xray'; secretIds: string[] }) =>
     JSON.stringify(
       Template.fromStack(
         new AgentCoreStack(new cdk.App(), 'RuntimeTelemetryStack', {
@@ -448,8 +448,8 @@ test('grants the runtime role no X-Ray when telemetry is none, and keeps it othe
       ).findResources('AWS::IAM::Policy')
     );
 
-  expect(runtimePolicies({ kind: 'none', secretArns: [] })).not.toContain('xray:');
-  expect(runtimePolicies({ kind: 'xray', secretArns: [] })).toContain('xray:PutTraceSegments');
+  expect(runtimePolicies({ kind: 'none', secretIds: [] })).not.toContain('xray:');
+  expect(runtimePolicies({ kind: 'xray', secretIds: [] })).toContain('xray:PutTraceSegments');
 });
 
 test.each([

@@ -1,9 +1,15 @@
+import { webOrigins } from 'botcube-config/read';
 import type { MiddlewareHandler } from 'hono';
 
 const ALLOW_METHODS = 'DELETE, GET, PATCH, POST, PUT, OPTIONS';
 
 /** The BotCube web UI's local development server (`pnpm dev:bot`). */
 export const LOCAL_UI_ORIGINS = ['http://localhost:3001', 'http://127.0.0.1:3001'];
+
+/** The web UI's origins: the BotCube Config's `domains.web` and its aliases, else the local web UI's. */
+export function allowedOrigins(config: Parameters<typeof webOrigins>[0]): string[] {
+  return webOrigins(config) ?? LOCAL_UI_ORIGINS;
+}
 
 /**
  * Credentialed CORS for the given origins: a preflight is 200 for an allowed

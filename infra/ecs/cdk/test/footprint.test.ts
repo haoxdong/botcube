@@ -1,13 +1,14 @@
 // Test seam 2 (ADR 0091): each example's infrastructure grants exactly what `botcube footprint` prints for its BotCube Config.
 import { ok as assert } from 'node:assert';
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { App, Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
+import { readConfig, webOrigins } from 'botcube-config/read';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import { footprint, IMAGES } from '../../../../config/footprint.js';
+import { footprint } from '../../../../config/footprint.js';
+import { IMAGES } from '../../../../config/footprint-images.js';
 import type { Principal } from '../../../../config/principals.js';
-import { loadBotCube } from '../../../../config/load.js';
+import { loadConfig } from '../../../../config/load.js';
 import { CREDENTIAL_IMAGE_EXAMPLES_ROOT, EXAMPLES_ROOT, IMAGE_EXAMPLES_ROOT } from '../example/app.js';
 import { deployIdentity } from '../lib/deploy-root.js';
 import { botcubeConfigPath, synthesizeExample } from './example-fixture.js';
@@ -143,8 +144,8 @@ function principalGrants(resources: Resources, principals: Map<string, Principal
 
 const OWN_HOSTS = new Set([EXAMPLE_IDENTITY.domains.chatService, EXAMPLE_IDENTITY.domains.chatServicePreview,
   ...EXAMPLES.flatMap(example => {
-    const { web, existing } = loadBotCube(botcubeConfigPath(example)).config;
-    return [...(web?.corsOrigins ?? []), ...(existing?.credentialService ? [existing.credentialService.url] : [])];
+    const config = loadConfig(botcubeConfigPath(example));
+    return [...(webOrigins(config) ?? []), ...(config.existing.credentialService ? [config.existing.credentialService.url] : [])];
   })].map(origin => new URL(origin).host));
 const isOwn = ({ host, hostname }: URL) =>
   OWN_HOSTS.has(host) || ['localhost', '127.0.0.1', '[::1]', 'task-address'].includes(hostname) || hostname.endsWith(`.${EXAMPLE_IDENTITY.aws.ecs.privateNamespace}`);
@@ -166,11 +167,15 @@ function configuredHosts(resources: Resources): string[] {
   });
 }
 
-/** The text of the BotCube Config at `imagePath` in the chat or Credential Service image, which ships it from botcube/examples/. */
+/**
+ * The text of the BotCube Config at `imagePath` in the chat or Credential Service image, which ships it from
+ * botcube/examples/, without its image registry: ECS and Docker pull from that, not the processes the Config configures.
+ */
 function servedBotCubeConfig(imagePath: unknown): string {
   const root = [IMAGE_EXAMPLES_ROOT, CREDENTIAL_IMAGE_EXAMPLES_ROOT].find(prefix => typeof imagePath === 'string' && imagePath.startsWith(`${prefix}/`));
   assert(typeof imagePath === 'string' && root !== undefined, `${JSON.stringify(imagePath)} is under ${IMAGE_EXAMPLES_ROOT} or ${CREDENTIAL_IMAGE_EXAMPLES_ROOT}`);
-  return fs.readFileSync(path.join(EXAMPLES_ROOT, path.posix.relative(root, imagePath)), 'utf8');
+  const { integrations: { imageRegistry: _pulledFrom, ...integrations } = {}, ...config } = readConfig(path.join(EXAMPLES_ROOT, path.posix.relative(root, imagePath)));
+  return JSON.stringify({ ...config, integrations });
 }
 
 function imagesIn(resources: Resources): string[] {
@@ -202,7 +207,7 @@ function appOf(example: string): Promise<App> {
 }
 
 describe.each(EXAMPLES)('the %s example', example => {
-  const needs = footprint(loadBotCube(botcubeConfigPath(example)).config);
+  const needs = footprint(loadConfig(botcubeConfigPath(example)));
   let synthesized: ReturnType<typeof granted>;
   let pooled: ReturnType<typeof granted>;
   beforeAll(async () => {
@@ -215,7 +220,7 @@ describe.each(EXAMPLES)('the %s example', example => {
   });
 
   test('grants each BotCube role exactly the IAM actions its footprint prints with Files access points from the deploy-time pool', () => {
-    expect(pooled.iam).toEqual(footprint(loadBotCube(botcubeConfigPath(example)).config, { filesAccessPointMode: 'pool' }).iam);
+    expect(pooled.iam).toEqual(footprint(loadConfig(botcubeConfigPath(example)), { filesAccessPointMode: 'pool' }).iam);
   });
 
   test('holds no AWS managed policy on any Lambda role: each function writes its own log group by an inline grant it deploys after', async () => {

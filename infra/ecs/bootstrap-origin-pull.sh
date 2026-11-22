@@ -7,8 +7,8 @@ set -euo pipefail
 # reissues both and appends the new CA to the bundle, so the ALB trusts old and
 # new client certificates until Cloudflare switches; then drop the old CA.
 
-REPO_ROOT="${BOTCUBE_DEPLOY_REPOSITORY_ROOT:?BOTCUBE_DEPLOY_REPOSITORY_ROOT must point to the checkout root}"
 DEPLOY_ROOT="${BOTCUBE_DEPLOY_ROOT:?BOTCUBE_DEPLOY_ROOT must point to the active deploy directory}"
+CONFIG_ROOT="$DEPLOY_ROOT/.."
 
 ROTATE=false
 while [[ "$#" -gt 0 ]]; do
@@ -30,7 +30,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 read -r AWS_REGION CA_PATH SECRET_NAME PREVIEW_URL ORGANIZATION < <(node -e '
-  const identity = require(process.argv[1]);
+  const identity = require(require("node:path").resolve(process.argv[1])).deployRootFile(process.argv[2], "identity.json", { repositoryRoot: process.argv[3] });
   process.stdout.write([
     identity.aws.region,
     identity.aws.ecs.originPullCaCertificate,
@@ -38,7 +38,7 @@ read -r AWS_REGION CA_PATH SECRET_NAME PREVIEW_URL ORGANIZATION < <(node -e '
     identity.domains.chatServicePreview,
     identity.aws.ecs.originPullOrganization,
   ].join(" ") + "\n");
-' "$DEPLOY_ROOT/identity.json")
+' "$(dirname "${BASH_SOURCE[0]}")/../../config/read.cjs" "$DEPLOY_ROOT" "$CONFIG_ROOT")
 export AWS_REGION
 
 SECRET_EXISTS=false
@@ -89,11 +89,11 @@ else
     --secret-string "file://$WORK/secret.json" \
     >/dev/null
 fi
-if [[ "$ROTATE" == true && -f "$REPO_ROOT/$CA_PATH" ]]; then
-  cat "$WORK/ca.crt" >> "$REPO_ROOT/$CA_PATH"
+if [[ "$ROTATE" == true && -f "$CONFIG_ROOT/$CA_PATH" ]]; then
+  cat "$WORK/ca.crt" >> "$CONFIG_ROOT/$CA_PATH"
 else
-  cp "$WORK/ca.crt" "$REPO_ROOT/$CA_PATH"
+  cp "$WORK/ca.crt" "$CONFIG_ROOT/$CA_PATH"
 fi
 
 printf 'Stored the Cloudflare client certificate in %s\n' "$SECRET_NAME"
-printf 'Wrote the ALB trust-store CA to %s; commit it.\n' "$CA_PATH"
+printf 'Wrote the ALB trust-store CA to %s; commit it.\n' "$CONFIG_ROOT/$CA_PATH"

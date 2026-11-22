@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
-const secretArn = z.string().regex(/^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\d{12}:secret:.+$/, 'Expected a Secrets Manager secret ARN');
+const secretId = z
+  .string()
+  .regex(/^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$/, 'Expected a Secrets Manager secret name or ARN')
+  .describe("As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN.");
 
 export const kmsKeyArn = z.string().regex(/^arn:aws[a-z-]*:kms:[a-z0-9-]+:\d{12}:key\/.+$/).describe('A KMS key, by ARN.');
 
@@ -14,7 +17,7 @@ const command = {
 };
 
 const secretSources = [
-  z.strictObject({ kind: z.literal('secret'), secretArn }).describe("A Secrets Manager secret's string, read with the process's own AWS credentials."),
+  z.strictObject({ kind: z.literal('secret'), secretId }).describe("A Secrets Manager secret's string, read with the process's own AWS credentials."),
   z.strictObject({
     kind: z.literal('file'),
     path: absolutePath.describe('A file the platform mounts, such as a secret injector writes; read again as it rotates.'),

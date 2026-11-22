@@ -78,9 +78,10 @@ const config: StorybookConfig = {
     };
     // Optimized in one pass so both entries share CopilotKit's context; found separately, the bot plugin's headless
     // import got its own copy and threw "useCopilotKit must be used within CopilotKitProvider".
+    // botcube-config/parse reaches CommonJS modules (ecr.cjs, names.cjs); served raw, the browser finds no named exports.
     config.optimizeDeps = {
       ...config.optimizeDeps,
-      include: [...(config.optimizeDeps?.include ?? []), 'motion/react', '@copilotkit/react-core/v2', '@copilotkit/react-core/v2/headless', ...(visual ? ['@storybook/nextjs-vite > @storybook/react-vite > @storybook/react > @storybook/react-dom-shim', '@base-ui/react/radio', '@base-ui/react/radio-group', '@base-ui/react/popover', 'next/dynamic', 'rxjs', '@use-gesture/react', '@base-ui/react/context-menu', '@base-ui/react/menu', '@base-ui/react/use-render', '@univerjs/presets', '@univerjs/preset-sheets-core', '@univerjs/preset-sheets-core/locales/en-US', 'marked', 'cronstrue', '@streamdown/cjk', '@streamdown/code', '@streamdown/math', 'remark-breaks', 'streamdown', 'pdfjs-dist', '@streamdown/mermaid', '@base-ui/react/dialog'] : [])],
+      include: [...(config.optimizeDeps?.include ?? []), 'botcube-config/parse', 'motion/react', '@copilotkit/react-core/v2', '@copilotkit/react-core/v2/headless', ...(visual ? ['@storybook/nextjs-vite > @storybook/react-vite > @storybook/react > @storybook/react-dom-shim', '@base-ui/react/radio', '@base-ui/react/radio-group', '@base-ui/react/popover', 'next/dynamic', 'rxjs', '@use-gesture/react', '@base-ui/react/context-menu', '@base-ui/react/menu', '@base-ui/react/use-render', '@univerjs/presets', '@univerjs/preset-sheets-core', '@univerjs/preset-sheets-core/locales/en-US', 'marked', 'cronstrue', '@streamdown/cjk', '@streamdown/code', '@streamdown/math', 'remark-breaks', 'streamdown', 'pdfjs-dist', '@streamdown/mermaid', '@base-ui/react/dialog'] : [])],
     };
     return config;
   },

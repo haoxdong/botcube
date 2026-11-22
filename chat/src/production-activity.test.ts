@@ -9,7 +9,8 @@ import { isUserRequest, PARKING_PARTITION, ProductionActivity, SILENT_TURN_MS } 
 import { MAX_RUNNING_TURN_AGE_MS } from './sessions.js';
 
 const web = ['https://bot.example.com'];
-const automation = ['-Verification/', 'example-probe', 'example-automation'];
+// A deploy check's -Verification/ user agent is never a person's, whatever the BotCube Config lists.
+const automation = ['example-probe', 'example-automation'];
 const request = (path: string, headers: Record<string, string>) => new Request(`https://api.example.com${path}`, { headers });
 
 describe('a user request', () => {

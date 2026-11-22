@@ -44,11 +44,15 @@ function requiresToolStaging(spec: AgentCoreDockerPrerequisiteSpec, projectRoot:
   });
 }
 
-export function toolStagingRoot(deployRoot: string, hook: string): string {
-  for (let root = path.resolve(deployRoot); ; root = path.dirname(root)) {
-    if (fs.existsSync(path.resolve(root, hook))) return root;
-    if (path.dirname(root) === root) throw new Error(`bot tool-staging hook is missing: ${hook}`);
-  }
+/** The bot's tool-staging hook: the `stage-tools.sh` its deploy root holds, as code beside its Dockerfiles; absent, none. */
+export function toolStagingHook(deployRoot: string): string | undefined {
+  const hook = path.join(deployRoot, 'stage-tools.sh');
+  return fs.existsSync(hook) ? hook : undefined;
+}
+
+/** The checkout holding the deploy root, which the hook runs from: its git work tree. */
+export function checkoutRoot(deployRoot: string): string {
+  return execFileSync('git', ['-C', deployRoot, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
 }
 
 export function stageAgentCoreDockerPrerequisites(

@@ -1,5 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { deployRootFile } from 'botcube-config/read';
+import type { SynthesizedConfig } from './parking-transition.js';
 import type { DeployIdentity } from './production-identity.js';
 import { projectDir } from './project-dir.js';
 
@@ -14,6 +16,11 @@ export function activeDeployRoot(env: NodeJS.ProcessEnv = process.env): string {
 
 export { projectDir };
 
+/** The BotCube Config beside the deploy root, which its identity is built from. */
+export function deployRootConfig(deployRoot: string): SynthesizedConfig {
+  return { path: path.join(deployRoot, '../botcube.yaml') };
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -25,9 +32,10 @@ function overDefaults(defaults: unknown, own: unknown): unknown {
   return Object.fromEntries([...keys].map(key => [key, overDefaults(defaults[key], own[key])]));
 }
 
-/** The deploy root's `identity.json` over BotCube's `identity-defaults.json`. */
-export function deployIdentity(deployRoot: string): DeployIdentity {
-  const read = (file: string): unknown => JSON.parse(fs.readFileSync(file, 'utf8'));
-  const defaults = read(path.resolve(projectDir(__dirname), '../../identity-defaults.json'));
-  return overDefaults(defaults, read(path.join(deployRoot, 'identity.json'))) as DeployIdentity;
+/**
+ * The deploy root's identity over BotCube's `identity-defaults.json`, built from the BotCube Config beside it, with its file paths relative to `repositoryRoot` (absent, BotCube's own directory).
+ */
+export function deployIdentity(deployRoot: string, repositoryRoot?: string): DeployIdentity {
+  const defaults: unknown = JSON.parse(fs.readFileSync(path.resolve(projectDir(__dirname), '../../identity-defaults.json'), 'utf8'));
+  return overDefaults(defaults, deployRootFile(deployRoot, 'identity.json', repositoryRoot ? { repositoryRoot } : {})) as DeployIdentity;
 }

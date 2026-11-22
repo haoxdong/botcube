@@ -10,7 +10,6 @@ import type { SessionMetadata } from './session-metadata.js';
 const env = { BOTCUBE_CONFIG: testBotCubeConfig(), BOTCUBE_CHAT_TABLE: 'live-view-test' };
 
 const overrides: StockOverrides = {
-  corsOrigins: [],
   agentDocuments: { agentIdentity: { name: 'Test Bot', character: '', vibe: '', avatar: '' }, soul: '' },
   models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
   accountModels: async () => [], accountModel: async () => undefined,
@@ -72,7 +71,7 @@ const agentDocuments: AgentDocuments = {
 const config: ChatServiceConfig = {
   agentCore: null,
   localHarnessUrl: null,
-  corsOrigins: null,
+  corsOrigins: [],
   region: 'us-west-2',
   agentCoreEndpoint: 'https://bedrock-agentcore.us-west-2.amazonaws.com',
   browserId: 'custom.browser.v7',

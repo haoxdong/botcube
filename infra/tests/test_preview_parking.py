@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, TypedDict
 from unittest.mock import MagicMock, Mock, patch
 
+import deploy_identity
+
 from deploy_script_support import DEPLOY_ECS
 
 verifier = runpy.run_path(str(DEPLOY_ECS / 'verify-park.py'))
@@ -142,11 +144,13 @@ class WithoutOwnedEgressVerificationTests(unittest.TestCase):
     """An existing network brings its own egress, so verification never looks for BotCube's NAT."""
 
     def setUp(self):
-        identity = json.loads((Path(os.environ['BOTCUBE_DEPLOY_ROOT']) / 'identity.json').read_text())
-        del identity['aws']['ecs']['privateEgress']
+        # The public example with network.natGateways 0, whose VPC brings its own egress.
+        public = Path(__file__).resolve().parents[2] / 'examples/public/botcube.yaml'
         root = Path(tempfile.mkdtemp())
-        (root / 'identity.json').write_text(json.dumps(identity))
-        with patch.dict(os.environ, {'BOTCUBE_DEPLOY_ROOT': str(root)}):
+        (root / 'botcube.yaml').write_text(public.read_text().replace('network: { natGateways: 1, publicIp: 192.0.2.1 }', 'network: { natGateways: 0 }'))
+        (root / 'deploy').mkdir()
+        with patch.dict(os.environ, {'BOTCUBE_DEPLOY_ROOT': str(root / 'deploy')}):
+            assert 'privateEgress' not in deploy_identity.load_identity()['aws']['ecs']
             self.verifier = runpy.run_path(str(DEPLOY_ECS / 'verify-park.py'))
 
     @staticmethod

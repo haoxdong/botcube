@@ -163,8 +163,8 @@ it("stops the enterprise example on sign-in's old client secret field, naming it
   try {
     const path = join(dir, 'botcube.yaml');
     const { integrations: { signIn: identity } } = JSON.parse(await readFile(botcubeConfig('enterprise'), 'utf8')) as { integrations: { signIn: { issuer: string } } };
-    const secretArn = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/oidc-client-secret';
-    await writeFile(path, JSON.stringify({ integrations: { signIn: { kind: 'oidc', issuer: identity.issuer, clientId: 'botcube', clientSecret: { secretArn } } } }));
+    const secretId = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/oidc-client-secret';
+    await writeFile(path, JSON.stringify({ integrations: { signIn: { kind: 'oidc', issuer: identity.issuer, clientId: 'botcube', clientSecret: { secretId } } } }));
     await expect(startLocalStack({ chatEnv: { BOTCUBE_CONFIG: path } })).rejects.toThrow(`BotCube Config ${path}: integrations.signIn.clientSecret: Unrecognized key`);
   } finally {
     await rm(dir, { recursive: true, force: true });

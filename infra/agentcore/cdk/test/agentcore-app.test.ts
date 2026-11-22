@@ -17,11 +17,11 @@ import { tmpdir } from 'os';
 import { resolve } from 'path';
 import { addAgentCoreStacks } from '../lib/agentcore-app';
 import type { AgentCoreStack } from '../lib/cdk-stack';
-import { readDeployIdentity, readProjectSpec, type DeployConfig } from '../lib/deploy-config';
+import { agentCoreProjectRoot, readDeployIdentity, readProjectSpec, type DeployConfig } from '../lib/deploy-config';
 
 const COMMIT = 'abc123';
 const DEPLOY_ROOT = resolve(__dirname, '../../../../examples/public/deploy');
-setSessionProjectRoot(DEPLOY_ROOT);
+setSessionProjectRoot(agentCoreProjectRoot(readProjectSpec(DEPLOY_ROOT)));
 
 const PRIVATE_NAT_BROWSER = {
   name: 'template_private_browser',
@@ -395,4 +395,109 @@ test('uploads the locked bot dependencies and their portable links to CodeBuild'
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
+});
+
+const BOT_IMAGE = `123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/bot@sha256:${'a'.repeat(64)}`;
+
+function synthesized(config: DeployConfig): Template {
+  const app = new App();
+  addAgentCoreStacks(app, config, COMMIT);
+  return Template.fromStack(onlyStack(app));
+}
+
+/** The runtime role's policy statements. */
+function runtimeRoleStatements(template: Template): Record<string, unknown>[] {
+  const roleId = Object.keys(template.findResources('AWS::IAM::Role')).find(id => id.includes('RuntimeExecutionRole'));
+  return Object.values(template.findResources('AWS::IAM::Policy'))
+    .filter(policy => policy.Properties.Roles.some((role: { Ref: string }) => role.Ref === roleId))
+    .flatMap(policy => policy.Properties.PolicyDocument.Statement);
+}
+
+const pulls = (statement: Record<string, unknown>) =>
+  /"(ecr:[A-Za-z]+|kms:Decrypt)"/.test(JSON.stringify(statement.Action));
+
+describe('a Bot Image the BotCube Config names', () => {
+  const built = synthesized(deployConfig());
+  const named = synthesized({ ...deployConfig(), runtimeImage: BOT_IMAGE });
+
+  test('runs on the Runtime, which keeps its logical ID', () => {
+    expect(Object.keys(named.findResources('AWS::BedrockAgentCore::Runtime'))).toEqual(
+      Object.keys(built.findResources('AWS::BedrockAgentCore::Runtime'))
+    );
+    named.hasResourceProperties('AWS::BedrockAgentCore::Runtime', {
+      AgentRuntimeArtifact: { ContainerConfiguration: { ContainerUri: BOT_IMAGE } },
+    });
+  });
+
+  test('builds no image: no CodeBuild project, image repository or build function', () => {
+    expect(built.findResources('AWS::CodeBuild::Project')).not.toEqual({});
+    named.resourceCountIs('AWS::CodeBuild::Project', 0);
+    named.resourceCountIs('AWS::ECR::Repository', 0);
+    const functions = (template: Template) => Object.keys(template.findResources('AWS::Lambda::Function'));
+    const build = (id: string) => /Container/.test(id);
+    expect(functions(built).filter(build)).not.toEqual([]);
+    expect(functions(named)).toEqual(functions(built).filter(id => !build(id)));
+    const resources = (template: Template) => Object.keys(template.toJSON().Resources as object);
+    expect(resources(named)).toEqual(resources(built).filter(id => !/Container|EcrRepository/.test(id)));
+  });
+
+  test("the Runtime may pull only that image's repository, and keeps every other grant", () => {
+    expect(runtimeRoleStatements(named).filter(pulls)).toEqual([
+      { Action: 'ecr:GetAuthorizationToken', Effect: 'Allow', Resource: '*' },
+      {
+        Action: ['ecr:BatchGetImage', 'ecr:GetDownloadUrlForLayer', 'ecr:BatchCheckLayerAvailability'],
+        Effect: 'Allow',
+        Resource: 'arn:aws:ecr:us-east-1:123456789012:repository/acme/bot',
+      },
+    ]);
+    const others = (template: Template) => runtimeRoleStatements(template).filter(statement => !pulls(statement));
+    expect(others(named)).toEqual(others(built));
+  });
+
+  test('keeps every other output, and the Runtime its environment, tags and network', () => {
+    const outputs = (template: Template) => Object.keys(template.toJSON().Outputs as object).sort();
+    expect(outputs(named)).toEqual(outputs(built).filter(id => !/ContainerUri/.test(id)));
+    const properties = (template: Template) => {
+      const [runtime] = Object.values(template.findResources('AWS::BedrockAgentCore::Runtime'));
+      const { AgentRuntimeArtifact: _artifact, ...rest } = runtime?.Properties ?? {};
+      return rest;
+    };
+    expect(properties(named)).toEqual(properties(built));
+  });
+});
+
+type TemplateResource = { Type: string; Properties?: Record<string, unknown> };
+const isTags = (name: string, value: unknown) => name.endsWith('Tags') && typeof value === 'object' && value !== null;
+const tagsOf = (resource: TemplateResource) =>
+  Object.entries(resource.Properties ?? {}).filter(([name, value]) => isTags(name, value));
+const hasTeam = (resource: TemplateResource) => JSON.stringify(tagsOf(resource)).includes('"team"');
+
+/** A resource without its `team` tag, in whichever tags property and form, a list or a map, CDK writes. */
+function withoutTeam(resource: TemplateResource): TemplateResource {
+  const properties = Object.entries(resource.Properties ?? {}).flatMap(([name, value]) => {
+    if (!isTags(name, value)) return [[name, value]];
+    const rest = Array.isArray(value)
+      ? (value as { Key: string }[]).filter(tag => tag.Key !== 'team')
+      : Object.fromEntries(Object.entries(value as object).filter(([key]) => key !== 'team'));
+    return (Array.isArray(rest) ? rest.length : Object.keys(rest).length) ? [[name, rest]] : [];
+  });
+  return resource.Properties ? { ...resource, Properties: Object.fromEntries(properties) } : resource;
+}
+
+test('the BotCube Config tags every resource whose tags agentcore-cdk does not compose, and changes nothing else', () => {
+  const untagged = synthesized(deployConfig()).toJSON().Resources as Record<string, TemplateResource>;
+  const tagged = synthesized({ ...deployConfig(), tags: { team: 'cube' } }).toJSON().Resources as Record<
+    string,
+    TemplateResource
+  >;
+
+  expect(Object.fromEntries(Object.entries(tagged).map(([id, resource]) => [id, withoutTeam(resource)]))).toEqual(
+    untagged
+  );
+  const gained = Object.entries(tagged).filter(([, resource]) => hasTeam(resource));
+  expect(gained.length).toBeGreaterThan(0);
+  const composed = ['AWS::BedrockAgentCore::Runtime', 'AWS::BedrockAgentCore::Memory'];
+  expect(gained.map(([, { Type }]) => Type).filter(type => composed.includes(type))).toEqual([]);
+  const missed = Object.entries(tagged).filter(([, resource]) => tagsOf(resource).length > 0 && !hasTeam(resource));
+  expect([...new Set(missed.map(([, { Type }]) => Type))].sort()).toEqual(composed.sort());
 });

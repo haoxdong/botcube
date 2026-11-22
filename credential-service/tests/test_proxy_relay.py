@@ -79,7 +79,7 @@ def _header(head: str, name: str) -> list[str]:
 
 def _from_config(url: str, token: Path, **proxy: object) -> str:
     relay = start_proxy_relay_from_config(
-        {'network': {'proxy': {'kind': 'forward', 'url': url, 'credential': {'kind': 'file', 'path': str(token)}, **proxy}}}, {'HTTPS_PROXY': 'http://127.0.0.1:0'},
+        {'integrations': {'proxy': {'kind': 'forward', 'url': url, 'credential': {'kind': 'file', 'path': str(token)}, **proxy}}}, {'HTTPS_PROXY': 'http://127.0.0.1:0'},
     )
     assert relay is not None
     return relay
@@ -127,9 +127,9 @@ def test_relay_answers_502_naming_the_credential_and_opens_nothing_when_it_fails
 
 @pytest.mark.parametrize('proxy', [{'kind': 'none'}, {'kind': 'forward', 'url': 'http://proxy.example.com:3128'}])
 def test_no_relay_without_a_proxy_credential_or_headers(proxy: dict[str, str]) -> None:
-    assert start_proxy_relay_from_config({'network': {'proxy': proxy}}, {'HTTPS_PROXY': 'http://proxy.example.com:3128'}) is None
+    assert start_proxy_relay_from_config({'integrations': {'proxy': proxy}}, {'HTTPS_PROXY': 'http://proxy.example.com:3128'}) is None
 
 
 def test_a_relayed_proxy_needs_https_proxy_pointed_at_the_relay() -> None:
     with pytest.raises(RuntimeError, match='^HTTPS_PROXY is unset beside the BotCube Config'):
-        start_proxy_relay_from_config({'network': {'proxy': {'kind': 'forward', 'url': 'http://proxy.example.com:3128', 'headers': {'x-tenant': 'a'}}}}, {})
+        start_proxy_relay_from_config({'integrations': {'proxy': {'kind': 'forward', 'url': 'http://proxy.example.com:3128', 'headers': {'x-tenant': 'a'}}}}, {})

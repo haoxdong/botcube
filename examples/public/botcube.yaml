@@ -1,16 +1,40 @@
-{
-  "$schema": "../../config/botcube.schema.json",
-  "productName": "BotCube",
-  "parking": {
-    "automationUserAgents": [
-      "-Verification/",
-      "collective-automation"
-    ]
-  },
-  "network": {
-    "corsOrigins": [
-      "http://localhost:3001",
-      "http://127.0.0.1:3001"
-    ]
-  }
-}
+$schema: ../../config/botcube.schema.json
+name: bot-cube
+env: { account: "000000000000", region: us-east-1 }
+names:
+  agentComputerBrowserProfileNamePrefix: template_
+  linkBrowserName: bot_cube_provider_link
+  agentCoreTargetName: template
+  chatServiceTaskRoleName: bot-cube-chat-service
+  filesMountRoleName: bot-cube-files-mount
+  filesLinksRoleName: bot-cube-files-links
+  agentComputerBrowserRoleName: bot-cube-agent-computer-browser
+domains:
+  web: http://localhost:3001
+  webAliases: [http://127.0.0.1:3001]
+  chatService: http://localhost:8123
+  chatServicePreview: https://api-preview.example.invalid
+agentCore:
+  runtime: { platformVersion: V2 }
+  browsers:
+    link:
+      extension: { bucket: example-browser-assets, key: bot-cube/browser-extensions/provider-user-agent/v2.zip, versionId: placeholder }
+network: { natGateways: 1, publicIp: 192.0.2.1 }
+cloudflare:
+  zone: example.invalid
+  originPull: { caCertificate: deploy/ecs/origin-pull-ca.crt }
+existing:
+  vpc:
+    vpcId: vpc-placeholder
+    publicSubnets:
+      - { subnetId: subnet-placeholdera, availabilityZone: us-east-1a }
+      - { subnetId: subnet-placeholderb, availabilityZone: us-east-1c }
+    privateSubnets:
+      - { subnetId: subnet-placeholdera, availabilityZone: us-east-1a, ipv4CidrBlock: 192.0.2.0/24, routeTableId: rtb-placeholder }
+      - { subnetId: subnet-placeholderb, availabilityZone: us-east-1c, ipv4CidrBlock: 198.51.100.0/24, routeTableId: rtb-placeholder }
+  browsers:
+    link: { browserId: browser-placeholder, securityGroupId: sg-placeholder }
+  buckets:
+    slots: { bucketName: bot-cube-sessions }
+parking:
+  automationUserAgents: [collective-automation]

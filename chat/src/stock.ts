@@ -17,7 +17,7 @@ import type { TurnRouteSource } from './turn-preparation.js';
 import type { ScheduledRunSource } from './scheduled-runs.js';
 import { computerFilesRoutes } from './computer-files-routes.js';
 import { chatTable } from './config.js';
-import { LOCAL_UI_ORIGINS } from './cors.js';
+import { allowedOrigins } from './cors.js';
 import { signCredentialServiceInvocation, turnCredentialBinding } from './credential-service-token.js';
 import { accountFilesFromEnv, filesConfigured } from './files.js';
 import { filingUserId } from './filing-user-id.js';
@@ -93,8 +93,6 @@ export function stockAccountStore(env: NodeJS.ProcessEnv, documents?: Pick<Dynam
 
 /** BotCube's own Chat, composed from the BotCube Config and its bot settings: what the Chat Service's routes and scheduled runs call. */
 export interface StockChat extends TurnRouteSource, ScheduledRunSource {
-  /** The origins allowed when the BotCube Config names no `network.corsOrigins`; the local UI's (LOCAL_UI_ORIGINS) unless given. */
-  readonly corsOrigins?: readonly string[];
   /** The bot's own routes (auth and account), mounted at the root. */
   readonly routes: Hono;
   /**
@@ -135,9 +133,9 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   const accountStore = options.accountStore ?? stockAccountStore(env);
   const store = () => accountStore;
   const cookies = accountCookies(bot.accountKey);
-  const identity = config.integrations.signIn.kind === 'oidc' ? oidcIdentity(config.integrations.signIn, env, { store, cookies, returnOrigins: config.network.corsOrigins ?? LOCAL_UI_ORIGINS }) : null;
-  const files = accountFilesFromEnv(env, store, config.existing?.files, options.filesRoot);
-  const started = agentComputerStartedFromConfig(config.productService?.agentComputerStartedPath, env, async (accountId) => (await accountStore.loadAccount(accountId))?.status !== 'registered');
+  const identity = config.integrations.signIn.kind === 'oidc' ? oidcIdentity(config.integrations.signIn, env, { store, cookies, returnOrigins: allowedOrigins(config) }) : null;
+  const files = accountFilesFromEnv(env, store, config.existing.files, options.filesRoot);
+  const started = agentComputerStartedFromConfig(bot.productService?.agentComputerStartedPath, env, async (accountId) => (await accountStore.loadAccount(accountId))?.status !== 'registered');
   const credentialServiceUrl = env.BOTCUBE_CREDENTIAL_SERVICE_URL;
   // A product service that holds the invocation secret checks the Chat's sessions by Token Introspection.
   const invocationSecret = env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET;

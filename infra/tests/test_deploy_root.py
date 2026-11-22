@@ -1,4 +1,4 @@
-"""Every deploy-root reader takes `BOTCUBE_DEPLOY_ROOT` and `BOTCUBE_DEPLOY_REPOSITORY_ROOT`, and no longer the old names."""
+"""Every deploy-root reader takes `BOTCUBE_DEPLOY_ROOT`, and no longer the old names or a repository root."""
 
 import json
 import os
@@ -8,20 +8,27 @@ from pathlib import Path
 import deploy_identity
 import pytest
 
+from botcube_credential_service.botcube_config import yaml_document
+
 INFRA = Path(__file__).resolve().parents[1]
-EXAMPLE_IDENTITY = INFRA.parent / 'examples/public/deploy/identity.json'
-NAME, REPOSITORY = 'BOTCUBE_DEPLOY_ROOT', 'BOTCUBE_DEPLOY_REPOSITORY_ROOT'
+# The public example's retired identity.json, as it was before its BotCube Config held it.
+RETIRED_IDENTITY = INFRA.parent / 'tests/fixtures/public-example-deploy-root/identity.json'
+PUBLIC_EXAMPLE = INFRA.parent / 'examples/public/deploy'
+NAME, RETIRED_REPOSITORY = 'BOTCUBE_DEPLOY_ROOT', 'BOTCUBE_DEPLOY_REPOSITORY_ROOT'
 OLD_NAME, OLD_REPOSITORY = 'LEGACY_DEPLOY_ROOT', 'LEGACY_REPOSITORY_ROOT'
-ALL_NAMES = (NAME, REPOSITORY, OLD_NAME, OLD_REPOSITORY)
+# The deploy workflow's OIDC subject, which the release tooling gives the deploy-role bootstrap.
+SUBJECT = 'GITHUB_OIDC_SUBJECT'
+ALL_NAMES = (NAME, RETIRED_REPOSITORY, OLD_NAME, OLD_REPOSITORY, SUBJECT)
 
 
 def deploy_root(tmp_path: Path, name: str) -> Path:
-    """A deploy root whose names are its own, so a reader that found it shows them."""
-    identity = json.loads(EXAMPLE_IDENTITY.read_text())
-    identity['aws']['ecs'].update(cluster=f'{name}-cluster', deployRoleName=f'{name}-role', originPullClientSecretName=f'{name}-secret')
-    root = tmp_path / name
-    root.mkdir()
-    (root / 'identity.json').write_text(json.dumps(identity))
+    """A deploy root beside the public example's BotCube Config, named `own-<name>`, so a reader that found it shows its names."""
+    config = yaml_document((PUBLIC_EXAMPLE.parent / 'botcube.yaml').read_text())
+    config.update(name=f'own-{name.lower().replace("_", "-")}')
+    config['names'].update(clusterName=f'{name.lower()}-cluster', deployRoleName=f'{name.lower()}-role')
+    root = tmp_path / name / 'deploy'
+    root.mkdir(parents=True)
+    (root.parent / 'botcube.yaml').write_text(json.dumps(config))
     return root
 
 
@@ -34,7 +41,40 @@ def environment(**names: str) -> dict[str, str]:
 def test_the_identity_loads_from_the_deploy_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv(OLD_NAME, raising=False)
     monkeypatch.setenv(NAME, str(deploy_root(tmp_path, NAME)))
-    assert deploy_identity.load_identity()['aws']['ecs']['cluster'] == f'{NAME}-cluster'
+    assert deploy_identity.load_identity()['aws']['ecs']['cluster'] == f'{NAME.lower()}-cluster'
+
+
+def test_a_deploy_root_still_holding_its_identity_json_fails_naming_each_fields_botcube_yaml_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = deploy_root(tmp_path, NAME)
+    (root / 'identity.json').write_text(RETIRED_IDENTITY.read_text())
+    monkeypatch.setenv(NAME, str(root))
+
+    with pytest.raises(RuntimeError, match=f'Deploy root {root}: identity.json: aws.ecs.cluster: botcube.yaml names.clusterName'):
+        deploy_identity.load_identity()
+    (root / 'identity.json').unlink()
+    assert deploy_identity.load_identity()['aws']['ecs']['cluster'] == f'{NAME.lower()}-cluster'
+
+
+def test_a_deployed_process_loads_the_identity_from_the_botcube_config_it_is_told_of(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv(NAME, str(PUBLIC_EXAMPLE))
+    held = deploy_identity.load_identity()
+    config = tmp_path / 'botcube.yaml'
+    config.write_text(json.dumps(yaml_document((PUBLIC_EXAMPLE.parent / 'botcube.yaml').read_text())))
+    monkeypatch.delenv(NAME)
+    monkeypatch.setenv('BOTCUBE_CONFIG', str(config))
+
+    loaded = deploy_identity.load_identity()
+
+    assert loaded['aws']['ecs'].pop('originPullCaCertificate') == 'deploy/ecs/origin-pull-ca.crt'
+    del held['aws']['ecs']['originPullCaCertificate']
+    assert json.dumps(loaded) == json.dumps(held)
+
+
+@pytest.mark.integration
+def test_the_github_environment_export_reads_a_migrated_deploy_root() -> None:
+    result = subprocess.run(['node', str(INFRA / 'export-github-env.mjs')], env=environment(**{NAME: str(PUBLIC_EXAMPLE)}),
+                            capture_output=True, text=True, check=True)
+    assert 'CLOUDFORMATION_STACK_FAMILY=bot-cube\n' in result.stdout
 
 
 @pytest.mark.parametrize('names', [(), (OLD_NAME,)])
@@ -72,20 +112,30 @@ def fake_aws(tmp_path: Path, exit_code: int) -> tuple[dict[str, str], Path]:
 def test_the_role_bootstraps_read_the_identity_from_the_deploy_root(tmp_path: Path, script: str, call: str) -> None:
     root = deploy_root(tmp_path, NAME)
     path, calls = fake_aws(tmp_path, exit_code=1)
-    result = subprocess.run(['bash', str(INFRA / 'ecs' / script)], env=environment(**{NAME: str(root)}, **path),
+    result = subprocess.run(['bash', str(INFRA / 'ecs' / script)], env=environment(**{NAME: str(root), SUBJECT: 'repo:example/bot:environment:production'}, **path),
                             capture_output=True, text=True, check=False)
     assert result.returncode != 0
-    assert call.format(name=NAME) in calls.read_text()
+    assert call.format(name=NAME.lower()) in calls.read_text()
 
 
 @pytest.mark.integration
-def test_the_origin_pull_bootstrap_reads_both_roots(tmp_path: Path) -> None:
+def test_the_deploy_role_bootstrap_takes_the_workflow_subject_from_the_release_tooling_not_the_deploy_root(tmp_path: Path) -> None:
+    path, calls = fake_aws(tmp_path, exit_code=1)
+    result = subprocess.run(['bash', str(INFRA / 'ecs/bootstrap-deploy-role.sh')], env=environment(**{NAME: str(deploy_root(tmp_path, NAME))}, **path),
+                            capture_output=True, text=True, check=False)
+    assert result.returncode != 0
+    assert 'GITHUB_OIDC_SUBJECT must name the OIDC subject of the workflow that deploys' in result.stderr
+    assert not calls.exists()
+
+
+@pytest.mark.integration
+def test_the_origin_pull_bootstrap_reads_the_identity_from_the_deploy_root(tmp_path: Path) -> None:
     root = deploy_root(tmp_path, NAME)
     path, _ = fake_aws(tmp_path, exit_code=0)
     result = subprocess.run(['bash', str(INFRA / 'ecs/bootstrap-origin-pull.sh')],
-                            env=environment(**{NAME: str(root), REPOSITORY: str(tmp_path)}, **path),
+                            env=environment(**{NAME: str(root)}, **path),
                             capture_output=True, text=True, check=False)
-    assert (result.returncode, result.stderr) == (1, f'{NAME}-secret already exists; pass --rotate to issue new material\n')
+    assert (result.returncode, result.stderr) == (1, '/own-botcube-deploy-root/cloudflare/origin-pull-client already exists; pass --rotate to issue new material\n')
 
 
 @pytest.mark.integration
@@ -93,10 +143,10 @@ def test_the_origin_pull_bootstrap_reads_both_roots(tmp_path: Path) -> None:
 @pytest.mark.parametrize(('script', 'message'), [
     ('bootstrap-deploy-role.sh', 'BOTCUBE_DEPLOY_ROOT must point to the active deploy directory'),
     ('bootstrap-rollback-role.sh', 'BOTCUBE_DEPLOY_ROOT must point to the active deploy directory'),
-    ('bootstrap-origin-pull.sh', 'BOTCUBE_DEPLOY_REPOSITORY_ROOT must point to the checkout root'),
+    ('bootstrap-origin-pull.sh', 'BOTCUBE_DEPLOY_ROOT must point to the active deploy directory'),
 ])
-def test_a_bootstrap_without_its_roots_fails_loud(tmp_path: Path, script: str, message: str, old: bool) -> None:
-    names = {OLD_NAME: str(deploy_root(tmp_path, OLD_NAME)), OLD_REPOSITORY: str(tmp_path)} if old else {}
+def test_a_bootstrap_without_its_deploy_root_fails_loud(tmp_path: Path, script: str, message: str, old: bool) -> None:
+    names = {OLD_NAME: str(deploy_root(tmp_path, OLD_NAME)), OLD_REPOSITORY: str(tmp_path), RETIRED_REPOSITORY: str(tmp_path)} if old else {}
     result = subprocess.run(['bash', str(INFRA / 'ecs' / script)], env=environment(**names), capture_output=True, text=True, check=False)
     assert result.returncode != 0
     assert message in result.stderr

@@ -19,7 +19,7 @@ and the Credential Service with its fake-site provider (`credential_service.py`,
 Set `BOTCUBE_LOCAL_CHAT_PORT` and `BOTCUBE_LOCAL_UI_PORT` to change the host
 ports. The UI uses the selected Chat port unless `NEXT_PUBLIC_CHAT_SERVICE_URL`
 is set. Use the same variables for startup and smoke. A UI port other than 3001
-needs the BotCube Config's `web.corsOrigins` to name its origins.
+needs the BotCube Config's `domains.web` and `domains.webAliases` to name its origins.
 
 If your HTTPS proxy uses a private CA, set `BOTCUBE_BUILD_CA_CERTS` to a
 readable combined CA bundle before startup. BuildKit mounts the bundle for image

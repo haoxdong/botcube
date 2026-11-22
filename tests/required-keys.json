@@ -1,0 +1,32 @@
+{
+  "name": "bot-cube",
+  "env": { "account": "000000000000", "region": "us-east-1" },
+  "domains": {
+    "web": "http://localhost:3001",
+    "webAliases": ["http://127.0.0.1:3001"],
+    "chatService": "http://localhost:8123"
+  },
+  "existing": {
+    "vpc": {
+      "vpcId": "vpc-placeholder",
+      "publicSubnets": [
+        { "subnetId": "subnet-placeholdera", "availabilityZone": "us-east-1a" },
+        { "subnetId": "subnet-placeholderb", "availabilityZone": "us-east-1c" }
+      ],
+      "privateSubnets": [
+        {
+          "subnetId": "subnet-placeholdera",
+          "availabilityZone": "us-east-1a",
+          "ipv4CidrBlock": "192.0.2.0/24",
+          "routeTableId": "rtb-placeholder"
+        },
+        {
+          "subnetId": "subnet-placeholderb",
+          "availabilityZone": "us-east-1c",
+          "ipv4CidrBlock": "198.51.100.0/24",
+          "routeTableId": "rtb-placeholder"
+        }
+      ]
+    }
+  }
+}

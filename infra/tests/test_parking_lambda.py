@@ -9,6 +9,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import TypedDict
 
+import deploy_identity
 import pytest
 from botocore.exceptions import ClientError
 
@@ -632,10 +633,12 @@ class OwnNetwork(Production):
 
 
 def load_without_owned_egress(monkeypatch, tmp_path):
-    identity = json.loads((Path(os.environ['BOTCUBE_DEPLOY_ROOT']) / 'identity.json').read_text())
-    del identity['aws']['ecs']['privateEgress']
-    (tmp_path / 'identity.json').write_text(json.dumps(identity))
-    monkeypatch.setenv('BOTCUBE_DEPLOY_ROOT', str(tmp_path))
+    """The public example with network.natGateways 0, whose VPC brings its own egress."""
+    public = Path(__file__).resolve().parents[2] / 'examples/public/botcube.yaml'
+    (tmp_path / 'botcube.yaml').write_text(public.read_text().replace('network: { natGateways: 1, publicIp: 192.0.2.1 }', 'network: { natGateways: 0 }'))
+    (tmp_path / 'deploy').mkdir()
+    monkeypatch.setenv('BOTCUBE_DEPLOY_ROOT', str(tmp_path / 'deploy'))
+    assert 'privateEgress' not in deploy_identity.load_identity()['aws']['ecs']
     return load()
 
 

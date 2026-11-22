@@ -13,8 +13,8 @@ export interface WebLatencyStackProps extends StackProps {
   appMonitorName: string;
   /** The hostnames whose pages report, each the web's own or its Dev environment's. */
   domains: string[];
-  /** The GitHub OIDC subject of the workflow that reads the metrics: the repository's main branch. */
-  readerSubject: string;
+  /** The GitHub OIDC subject of the workflow that reads the metrics, which its release tooling names; absent, no reader role. */
+  readerSubject?: string;
   /** The moments the web is held to, each its own Latency metric. */
   moments: string[];
   /** The log groups holding the Turn timing lines, by name or name pattern: the Chat Service's and the Harness runtime's. */
@@ -73,11 +73,17 @@ export class WebLatencyStack extends Stack {
         }],
       },
     });
-    // The daily Latency budgets workflow reads the metrics and queries the Turn timing logs, and nothing else, from main.
+    new CfnOutput(this, 'AppMonitorId', { value: monitor.attrId });
+    new CfnOutput(this, 'IdentityPoolId', { value: pool.ref });
+    if (props.readerSubject) this.addReader(props, props.readerSubject);
+  }
+
+  /** The role the workflow `subject` names, such as a daily Latency budgets check, may assume to read the metrics and query the Turn timing logs, and nothing else. */
+  private addReader(props: WebLatencyStackProps, subject: string) {
     const reader = new iam.Role(this, 'Reader', {
       ...optionalPhysicalName('roleName', props.readerRoleName),
       assumedBy: new iam.FederatedPrincipal(this.formatArn({ service: 'iam', region: '', resource: 'oidc-provider', resourceName: 'token.actions.githubusercontent.com' }), {
-        StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com', 'token.actions.githubusercontent.com:sub': props.readerSubject },
+        StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com', 'token.actions.githubusercontent.com:sub': subject },
       }, 'sts:AssumeRoleWithWebIdentity'),
     });
     reader.addToPolicy(new iam.PolicyStatement({ actions: ['cloudwatch:ListMetrics', 'cloudwatch:GetMetricStatistics'], resources: ['*'] }));
@@ -91,8 +97,6 @@ export class WebLatencyStack extends Stack {
       resources: props.turnLogGroups.flatMap(name => [name, `${name}:*`])
         .map(resourceName => this.formatArn({ service: 'logs', resource: 'log-group', resourceName, arnFormat: ArnFormat.COLON_RESOURCE_NAME })),
     }));
-    new CfnOutput(this, 'AppMonitorId', { value: monitor.attrId });
-    new CfnOutput(this, 'IdentityPoolId', { value: pool.ref });
     new CfnOutput(this, 'ReaderRoleArn', { value: reader.roleArn });
   }
 }

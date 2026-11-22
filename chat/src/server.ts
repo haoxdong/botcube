@@ -2,6 +2,7 @@ import { TurnQuota, TurnQuotaExceeded } from './turn-quota.js';
 import { startChatTracing } from './tracing.js';
 import { startProxyRelayForConfig } from './proxy-relay.js';
 import { chatTable } from './config.js';
+import { loadBotSettings } from 'botcube-config/load';
 import { assumeRoleAwsAccess } from './turn-credentials.js';
 import { TurnIdentity, turnIdentityConfigFromEnv, turnIdentityRoutes, type TurnIdentityConfig } from './turn-identity.js';
 import { serve, type ServerType, type WebSocketServerLike } from '@hono/node-server';
@@ -13,7 +14,7 @@ import { cspReportRoutes } from './csp-reports.js';
 import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
 import { sleepComputersAtTaskStop } from './task-stop.js';
-import { cors, LOCAL_UI_ORIGINS } from './cors.js';
+import { cors } from './cors.js';
 import { sessionOperations } from './sessions.js';
 import { purgeQueue } from './purges.js';
 import { sweepEvery } from './task-drain.js';
@@ -48,8 +49,8 @@ export interface ChatServiceConfig {
   harnessAuth?: ChatHarnessAuth;
   /** Set: Turns go to this local Harness over plain HTTP instead of AgentCore. */
   localHarnessUrl: string | null;
-  /** The BotCube Config's `web.corsOrigins`; null keeps the bot's defaults. */
-  corsOrigins: string[] | null;
+  /** The web UI's origins, which CORS allows: `allowedOrigins` of the BotCube Config. */
+  corsOrigins: readonly string[];
   /** The AgentCore region and data-plane endpoint, for browser live-view URLs. */
   region: string;
   agentCoreEndpoint: string;
@@ -184,7 +185,7 @@ export function createChatService(
     });
   }
 
-  app.use(cors(config.corsOrigins ?? bot.corsOrigins ?? LOCAL_UI_ORIGINS));
+  app.use(cors(config.corsOrigins));
   // Cloudflare replaces an origin's 502 or 504 with its own page, which has no CORS headers, so the browser would
   // read only a network error; a 503 keeps the error's body and headers.
   app.use(async (c, next) => {
@@ -279,10 +280,8 @@ export function createChatService(
   return { app, chat: bot, history };
 }
 
-function parkHistoryFromEnv(env: NodeJS.ProcessEnv, productName: string | undefined): ParkHistory | undefined {
-  const parameter = env.BOTCUBE_PARK_STATE_PARAMETER;
-  if (parameter === undefined) return undefined;
-  if (productName === undefined) throw new Error("BOTCUBE_PARK_STATE_PARAMETER needs the BotCube Config's productName, the name a skipped run says was paused");
+function parkHistory(parameter: string, productName: string | undefined): ParkHistory {
+  if (productName === undefined) throw new Error("BOTCUBE_PARK_STATE_PARAMETER needs the bot settings' productName, the name a skipped run says was paused");
   return ssmParkHistory(parameter, productName);
 }
 
@@ -304,6 +303,7 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: 
   const activity = new ProductionActivity();
   const metadata = new DynamoDBSessionMetadata(table);
   const draining = ecsTaskDraining(env.ECS_CONTAINER_METADATA_URI_V4);
+  const parkState = env.BOTCUBE_PARK_STATE_PARAMETER;
   let stopScheduledRuns: (() => void) | undefined;
   const { app, chat } = createChatService(
     { ...options, env },
@@ -314,7 +314,7 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: 
     scheduling && {
       ...scheduling,
       draining,
-      parkHistory: parkHistoryFromEnv(env, adapters.productName),
+      parkHistory: parkState === undefined ? undefined : parkHistory(parkState, loadBotSettings('/bot/bot.yaml').productName),
       onClose: (stop) => { stopScheduledRuns = stop; },
     },
     new TurnQuota(table),
@@ -335,9 +335,8 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: 
   });
   let shutdown: Promise<void> | undefined;
   const stopTracing = () => shutdown ??= tracing?.shutdown() ?? Promise.resolve();
-  const webOrigins = config.corsOrigins ?? chat.corsOrigins ?? LOCAL_UI_ORIGINS;
   const fetch: typeof app.fetch = (request, ...rest) => {
-    if (isUserRequest(request, webOrigins, adapters.automationUserAgents)) activity.userRequest();
+    if (isUserRequest(request, config.corsOrigins, adapters.automationUserAgents)) activity.userRequest();
     return app.fetch(request, ...rest);
   };
   activity.report(table);

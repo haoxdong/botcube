@@ -1,5 +1,6 @@
-import { configSections, type BotCubeConfig } from 'botcube-config';
+import { sectionDefaults, type BotCubeConfig } from 'botcube-config';
 import { loadConfig } from 'botcube-config/load';
+import { allowedOrigins } from './cors.js';
 import type { ChatHarnessAuth } from './harness-auth.js';
 
 const USER_MEMORY_ROLE_ARN = 'BOTCUBE_USER_MEMORY_ROLE_ARN';
@@ -12,11 +13,9 @@ export interface ConfigAdapters {
   awsAccess: AwsAccessAdapter;
   schedules: BotCubeConfig['schedules'];
   telemetry: BotCubeConfig['integrations']['telemetry'];
-  proxy: BotCubeConfig['network']['proxy'];
-  /** `network.corsOrigins`; null keeps the bot's defaults. */
-  corsOrigins: string[] | null;
-  /** `productName`, the name a run skipped while parked says was paused. */
-  productName: string | undefined;
+  proxy: BotCubeConfig['integrations']['proxy'];
+  /** The web UI's origins, which CORS allows (`allowedOrigins`). */
+  corsOrigins: string[];
   /** `parking.automationUserAgents`: requests from these keep no parked deployment awake. */
   automationUserAgents: string[];
   models: BotCubeConfig['integrations']['modelGateway'];
@@ -27,12 +26,11 @@ export interface ConfigAdapters {
  * or the schema's defaults without one (ADR 0091). Startup stops on a chosen kind whose environment is missing.
  */
 export function configAdapters(env: NodeJS.ProcessEnv): ConfigAdapters {
-  const { integrations: { harnessAuth, awsAccess, telemetry, modelGateway: models }, network: { proxy, corsOrigins }, schedules, productName, parking } = env.BOTCUBE_CONFIG
-    ? loadConfig(env.BOTCUBE_CONFIG)
-    : configSections.parse({});
+  const config = env.BOTCUBE_CONFIG ? loadConfig(env.BOTCUBE_CONFIG) : sectionDefaults();
+  const { integrations: { harnessAuth, awsAccess, telemetry, modelGateway: models, proxy }, schedules, parking } = config;
   return {
     harnessAuth, awsAccess: awsAccessAdapter(awsAccess.kind, env[USER_MEMORY_ROLE_ARN] || undefined), schedules, telemetry, proxy,
-    corsOrigins: corsOrigins ?? null, productName, automationUserAgents: parking?.automationUserAgents ?? [], models,
+    corsOrigins: allowedOrigins(config), automationUserAgents: parking?.automationUserAgents ?? [], models,
   };
 }
 

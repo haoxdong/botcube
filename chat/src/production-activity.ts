@@ -9,7 +9,13 @@ import { MAX_RUNNING_TURN_AGE_MS } from './sessions.js';
 export const PARKING_PARTITION = 'PRODUCTION_PARKING';
 export const HEARTBEAT_MS = 60_000;
 
-/** A person's request: from the web UI, not a health check, Test User, or automation that names itself in its user agent. */
+/** What a deploy check's user agent carries (botcube/infra/ecs/deploy_check.py), whichever release tooling sends it. */
+export const DEPLOY_CHECK_USER_AGENT = '-Verification/';
+
+/**
+ * A person's request: from the web UI, not a health check, Test User, deploy check, or automation that names itself in
+ * its user agent.
+ */
 export function isUserRequest(request: Request, webOrigins: readonly string[], automation: readonly string[]): boolean {
   const { pathname } = new URL(request.url);
   if (pathname === '/health' || pathname === '/ping' || pathname.startsWith('/.well-known/')) return false;
@@ -17,7 +23,7 @@ export function isUserRequest(request: Request, webOrigins: readonly string[], a
   if (origin === null || !webOrigins.includes(origin)) return false;
   if (request.headers.has('x-botcube-test-user')) return false;
   const agent = request.headers.get('user-agent') ?? '';
-  return !automation.some((marker) => agent.includes(marker));
+  return ![DEPLOY_CHECK_USER_AGENT, ...automation].some((marker) => agent.includes(marker));
 }
 
 export const SILENT_TURN_MS = 10 * 60_000;

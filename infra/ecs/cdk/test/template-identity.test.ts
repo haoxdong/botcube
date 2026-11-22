@@ -10,6 +10,7 @@ import { defineProduction } from '../lib/production.js';
 import { registryCredentialImage } from './credential-image.js';
 
 const identity = deployIdentity(path.resolve(__dirname, '../../../../examples/public/deploy'));
+const config = { path: path.resolve(__dirname, '../../../../examples/public/botcube.yaml') };
 const roots: string[] = [];
 
 afterEach(() => {
@@ -38,7 +39,7 @@ test.each([true, false])('synthesizes the template identity with parked=%s and l
   const { root, deployRoot, app } = fixture();
   const webLatency = { sessionSampleRate: 1, moments: ['first-response'] };
   defineProduction(app, {
-    repositoryRoot: root, deployRoot, identity, corsOrigins: [], webLatency,
+    repositoryRoot: root, deployRoot, identity, config, corsOrigins: [], webLatency,
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
       images: { chat: ContainerImage.fromRegistry('template-chat'), credential: registryCredentialImage('template-credentials') },
@@ -109,7 +110,7 @@ test('a waking Credential Service passes its ALB health check as fast as Chat', 
     ...identity.aws.ecs.credentialService, publicHostname: 'service.example.com', publicPaths: ['/sheets'],
   } } } };
   defineProduction(app, {
-    repositoryRoot: root, deployRoot, identity: published, corsOrigins: [], webLatency: { sessionSampleRate: 1, moments: ['first-response'] },
+    repositoryRoot: root, deployRoot, identity: published, config, corsOrigins: [], webLatency: { sessionSampleRate: 1, moments: ['first-response'] },
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
       images: { chat: ContainerImage.fromRegistry('template-chat'), credential: registryCredentialImage('template-credentials') },
@@ -127,7 +128,7 @@ test('a waking Credential Service passes its ALB health check as fast as Chat', 
 test.each([true, false])('parks idle production and wakes it from the paused page with parked=%s', parked => {
   const { root, deployRoot, app } = fixture();
   defineProduction(app, {
-    repositoryRoot: root, deployRoot, identity, corsOrigins: [], webLatency: { sessionSampleRate: 1, moments: ['first-response'] },
+    repositoryRoot: root, deployRoot, identity, config, corsOrigins: [], webLatency: { sessionSampleRate: 1, moments: ['first-response'] },
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
       images: { chat: ContainerImage.fromRegistry('template-chat'), credential: registryCredentialImage('template-credentials') },
@@ -199,7 +200,7 @@ test.each([true, false])('composition names adopter-owned networks and browser r
   const { root, deployRoot, app } = fixture();
   const webLatency = { sessionSampleRate: 1, moments: ['first-response'] };
   defineProduction(app, {
-    repositoryRoot: root, deployRoot, identity, corsOrigins: [], webLatency,
+    repositoryRoot: root, deployRoot, identity, config, corsOrigins: [], webLatency,
     storage: { tableName: 'adopter-chat' },
     originConfig: {
       securityGroupName: 'adopter-origin-ingress',
@@ -239,7 +240,7 @@ test.each([true, false])('composition names adopter-owned networks and browser r
 
 test('composition rejects competing chat table names before creating resources', () => {
   expect(() => defineProduction(new App(), {
-    repositoryRoot: '/unused', deployRoot: '/unused', identity, corsOrigins: [],
+    repositoryRoot: '/unused', deployRoot: '/unused', identity, config, corsOrigins: [],
     chatTableName: 'legacy-chat', storage: { tableName: 'configured-chat' },
   })).toThrow('Choose chatTableName or storage.tableName, not both');
 });
@@ -252,7 +253,7 @@ test.each([
 ] as const)('production resource table in %s mode', (mode, nat, credentials, chat) => {
   const { root, deployRoot, app } = fixture();
   defineProduction(app, {
-    repositoryRoot: root, deployRoot, identity, corsOrigins: [],
+    repositoryRoot: root, deployRoot, identity, config, corsOrigins: [],
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', turnIdentityKeysVersion: 'key-revision', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
       images: { chat: ContainerImage.fromRegistry('template-chat'), credential: registryCredentialImage('template-credentials') },
@@ -275,4 +276,48 @@ test.each([
   health.resourceCountIs('AWS::CloudWatch::Alarm', chat);
   if (chat) health.hasResourceProperties('AWS::CloudWatch::Alarm', { ActionsEnabled: true });
   origin.resourceCountIs('AWS::CloudWatch::Alarm', chat ? 13 : credentials ? 4 : 1);
+});
+
+type Resource = { Properties?: Record<string, unknown> };
+const isTags = (name: string, value: unknown) => name.endsWith('Tags') && typeof value === 'object' && value !== null;
+
+/** A resource without its `team` tag, in whichever tags property (Tags, FileSystemTags, ...) and form, a list or a map, CDK writes. */
+function withoutTeam(resource: Resource): Resource {
+  const properties = Object.entries(resource.Properties ?? {}).flatMap(([name, value]) => {
+    if (!isTags(name, value)) return [[name, value]];
+    const rest = Array.isArray(value)
+      ? value.filter((tag: { Key: string }) => tag.Key !== 'team')
+      : Object.fromEntries(Object.entries(value as object).filter(([key]) => key !== 'team'));
+    return (Array.isArray(rest) ? rest.length : Object.keys(rest).length) ? [[name, rest]] : [];
+  });
+  return resource.Properties ? { ...resource, Properties: Object.fromEntries(properties) } : resource;
+}
+
+const tagsOf = (resource: Resource) => Object.entries(resource.Properties ?? {}).filter(([name, value]) => isTags(name, value));
+const hasTeam = (resource: Resource) => JSON.stringify(tagsOf(resource)).includes('"team"');
+
+test('the BotCube Config tags every taggable resource of every stack, and changes nothing else', () => {
+  const stacks = (tags?: Record<string, string>) => {
+    const { root, deployRoot, app } = fixture();
+    defineProduction(app, {
+      repositoryRoot: root, deployRoot, identity, config, corsOrigins: [], webLatency: { sessionSampleRate: 1, moments: ['first-response'] },
+      ...(tags ? { tags } : {}),
+      origin: {
+        input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
+        images: { chat: ContainerImage.fromRegistry('template-chat'), credential: registryCredentialImage('template-credentials') },
+        commit: 'local-fixture',
+      },
+    });
+    return Object.fromEntries(app.node.children.filter(Stack.isStack).map(stack => [stack.node.id, Template.fromStack(stack).toJSON().Resources as Record<string, Resource>]));
+  };
+  const untagged = stacks();
+  const tagged = stacks({ team: 'cube' });
+
+  expect(Object.keys(tagged)).toEqual(Object.keys(untagged));
+  for (const [id, resources] of Object.entries(tagged)) {
+    expect([id, Object.fromEntries(Object.entries(resources).map(([key, resource]) => [key, withoutTeam(resource)]))]).toEqual([id, untagged[id]]);
+    expect([id, Object.values(resources).some(hasTeam)]).toEqual([id, true]);
+    const missed = Object.entries(resources).filter(([, resource]) => tagsOf(resource).length > 0 && !hasTeam(resource));
+    expect([id, missed.map(([key]) => key)]).toEqual([id, []]);
+  }
 });

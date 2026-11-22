@@ -6,6 +6,7 @@
     "avatar": "🧊"
   },
   "accountKey": "template",
+  "productName": "BotCube",
   "models": [{ "key": "echo", "label": "Echo", "provider": "echo" }],
   "skills": ["skills/computer"],
   "memory": true,

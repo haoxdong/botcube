@@ -22,6 +22,7 @@ from mtls_fake import (
     mtls_proxy,
     tunnel,
 )
+from required_keys import with_required
 
 pytestmark = pytest.mark.integration
 
@@ -101,7 +102,7 @@ def test_relay_reads_its_tls_from_the_botcube_config_file(certs: Certificates, t
     with mtls_proxy(certs) as proxy:
         tls = {'clientCertificate': certs.files('client_a'), 'serverIdentity': SERVER_IDENTITY}
         path = tmp_path / 'botcube.yaml'
-        path.write_text(json.dumps({'network': {'proxy': {'kind': 'forward', 'url': proxy.url, 'tls': tls}}}))
+        path.write_text(json.dumps(with_required({'integrations': {'proxy': {'kind': 'forward', 'url': proxy.url, 'tls': tls}}})))
         relay = start_proxy_relay_from_config(load_botcube_config(path), {'HTTPS_PROXY': 'http://127.0.0.1:0'})
 
         assert relay is not None

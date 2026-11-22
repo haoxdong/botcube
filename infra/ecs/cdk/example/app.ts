@@ -4,10 +4,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { App } from 'aws-cdk-lib';
 import { commandCredentialOptIn, proxyEnvironment } from '../../../../config/environment.js';
+import { registryHost } from '../../../../config/images.js';
 import { loadConfig } from '../../../../config/load.js';
+import { webOrigins } from '../../../../config/read.cjs';
 import { modelGatewayResources } from '../../../../config/models.js';
-import { outsideIssuer, secretArns } from '../../../../config/credential-fields.js';
+import { outsideIssuer, secretIds } from '../../../../config/credential-fields.js';
 import type { BotCubeConfig } from '../../../../config/schema.js';
+import { ownEgressVpc } from '../../../../config/suppliable.js';
 import { telemetryEnvironment } from '../../../../config/telemetry.js';
 import { addAgentCoreStacks } from '../../../agentcore/cdk/lib/agentcore-app.js';
 import { loadDeployConfig } from '../../../agentcore/cdk/lib/deploy-config.js';
@@ -17,7 +20,7 @@ import { defineProduction, type ProductionOptions } from '../lib/production.js';
 import { grantLambdasInline } from '../lib/lambda-inline-grants.js';
 import { placeLambdasInNetwork } from '../lib/existing-network.js';
 
-/** The examples' deploy names and AgentCore spec, in the public example's deploy directory. */
+/** The deploy directory the examples' images and staging hook are in: the public example's. */
 const EXAMPLE_DEPLOY_ROOT = path.resolve(__dirname, '../../../../examples/public/deploy');
 export const EXAMPLES_ROOT = path.resolve(__dirname, '../../../../examples');
 export const IMAGE_EXAMPLES_ROOT = '/opt/chat-service/examples';
@@ -43,10 +46,6 @@ const RUNTIME_IMAGE: ExampleImage = {
   name: 'Runtime', dockerfile: path.resolve(EXAMPLE_DEPLOY_ROOT, 'stage-tools.sh'), sources: '.tool-dist/examples/', root: CREDENTIAL_IMAGE_EXAMPLES_ROOT,
 };
 
-const EXAMPLE_IDENTITIES: Readonly<Partial<Record<string, (identity: DeployIdentity) => DeployIdentity>>> = {
-  'enterprise/botcube.yaml': ({ aws: { ecs: { privateEgress: _, ...ecs }, ...aws }, ...identity }) => ({ ...identity, aws: { ...aws, ecs } }),
-};
-
 interface ExampleOptions {
   repositoryRoot: string;
   /** The checkout's commit the stacks deploy. */
@@ -55,6 +54,8 @@ interface ExampleOptions {
   origin?: (identity: DeployIdentity) => NonNullable<ProductionOptions['origin']>;
   /** Adjusts the deploy identity, as a test's fixture paths do. */
   identity?: (identity: DeployIdentity) => DeployIdentity;
+  /** The web latency monitor's metrics reader, which the release tooling that deploys names; absent, none. */
+  webLatency?: ProductionOptions['webLatency'];
 }
 
 /** Define the deployment the BotCube Config at `configPath` describes, failing on a bad field before any stack. */
@@ -63,24 +64,26 @@ export async function defineExample(app: App, configPath: string, options: Examp
   const botcubeConfig = imageBotCubeConfig(CHAT_IMAGE, configPath, []);
   const credentialBotCubeConfig = imageBotCubeConfig(CREDENTIAL_IMAGE, configPath, []);
   const runtimeBotCubeConfig = imageBotCubeConfig(RUNTIME_IMAGE, configPath, []);
-  const network = config.existing?.network;
-  const exampleIdentity = EXAMPLE_IDENTITIES[path.relative(EXAMPLES_ROOT, path.resolve(configPath)).split(path.sep).join('/')] ?? (same => same);
-  const identity = inNetwork((options.identity ?? (same => same))(exampleIdentity(deployIdentity(EXAMPLE_DEPLOY_ROOT))), network);
+  const network = ownEgressVpc(config);
+  const configDeployRoot = path.join(path.dirname(path.resolve(configPath)), 'deploy');
+  const identity = (options.identity ?? (same => same))(deployIdentity(configDeployRoot));
   const environment = proxyEnvironment(config);
   // The operator's opt-in from where the deploy runs, never from the file; it fails here on a command credential without it.
   const commandOptIn = commandCredentialOptIn(config, process.env);
   const telemetry = telemetryEnvironment(config.integrations.telemetry);
-  const { kmsKeys, tables, buckets, credentialService } = config.existing ?? {};
+  const { kmsKeys, tables, buckets, credentialService } = config.existing;
   const seams = seamWiring(config);
   defineProduction(app, {
     ...seams.production,
-    repositoryRoot: options.repositoryRoot, deployRoot: EXAMPLE_DEPLOY_ROOT, identity, corsOrigins: config.network.corsOrigins ?? [], existingNetwork: network !== undefined, imageRegistry: config.integrations.imageRegistry,
+    ...(config.tags ? { tags: config.tags } : {}),
+    repositoryRoot: options.repositoryRoot, deployRoot: EXAMPLE_DEPLOY_ROOT, identity, config: { path: path.resolve(configPath) }, corsOrigins: webOrigins(config) ?? [], existingNetwork: network !== undefined, imageRegistry: registryHost(config.integrations.imageRegistry),
     origin: options.origin?.(identity),
-    storage: { ...(tables?.chat ? { existingChatTable: tables.chat } : {}), ...(config.existing?.files ? { existingFiles: config.existing.files } : {}) },
+    ...(options.webLatency ? { webLatency: options.webLatency } : {}),
+    storage: { ...(tables?.chat ? { existingChatTable: tables.chat } : {}), ...(config.existing.files ? { existingFiles: config.existing.files } : {}) },
     ...(buckets?.connectionLogs ? { originConfig: { existingConnectionLogsBucketName: buckets.connectionLogs } } : {}),
     chat: {
-      ...seams.chat, botcubeConfig, environment: commandOptIn, proxyEnvironment: environment, imageRegistry: config.integrations.imageRegistry,
-      telemetry: config.integrations.telemetry.kind === 'xray' ? { kind: 'xray' } : { kind: config.integrations.telemetry.kind, environment: telemetry.chatService, secretArns: telemetry.secretArns },
+      ...seams.chat, botcubeConfig, environment: commandOptIn, proxyEnvironment: environment, imageRegistry: registryHost(config.integrations.imageRegistry),
+      telemetry: config.integrations.telemetry.kind === 'xray' ? { kind: 'xray' } : { kind: config.integrations.telemetry.kind, environment: telemetry.chatService, secretIds: telemetry.secretIds },
     },
     credentials: {
       environment: { ...environment, ...commandOptIn, BOTCUBE_CONFIG: credentialBotCubeConfig },
@@ -91,12 +94,12 @@ export async function defineExample(app: App, configPath: string, options: Examp
       ...(credentialService ? { existingEndpoint: credentialService } : {}),
     },
   });
-  const agentCore = await loadDeployConfig(EXAMPLE_DEPLOY_ROOT, process.cwd());
-  addAgentCoreStacks(app, { ...agentCore, identity: inNetwork(agentCore.identity, network) }, options.commit, {
+  const agentCore = await loadDeployConfig(configDeployRoot, process.cwd());
+  addAgentCoreStacks(app, agentCore, options.commit, {
     ...seams.agentCore,
-    imageRegistry: config.integrations.imageRegistry,
+    imageRegistry: registryHost(config.integrations.imageRegistry),
     runtimeEnvironment: { ...environment, ...telemetry.harness, ...commandOptIn, BOTCUBE_CONFIG: runtimeBotCubeConfig },
-    telemetry: { kind: config.integrations.telemetry.kind, secretArns: telemetry.secretArns },
+    telemetry: { kind: config.integrations.telemetry.kind, secretIds: telemetry.secretIds },
     ...(kmsKeys?.memory ? { existingMemoryKeyArn: kmsKeys.memory } : {}),
     ...(kmsKeys?.images ? { existingImageKeyArn: kmsKeys.images } : {}),
   }, config.integrations.awsAccess.kind);
@@ -132,36 +135,12 @@ function seamWiring(config: BotCubeConfig) {
     production: {
       ...(models ? { models } : {}),
       awsAccess: config.integrations.awsAccess.kind,
-      chatSecretArns: secretArns(
+      chatSecretIds: secretIds(
         ...(config.integrations.signIn.kind === 'oidc' ? config.integrations.signIn.clients.map(({ clientSecret }) => clientSecret) : []),
         ...(outsideIssuer(config.integrations.harnessAuth) ? [config.integrations.harnessAuth.token] : []),
       ),
     } satisfies Partial<ProductionOptions>,
     chat: { harnessAuth: config.integrations.harnessAuth, schedules: config.schedules.kind, liveView: config.liveView.kind } satisfies ProductionOptions['chat'],
     agentCore: { ...(models ? { models } : {}), harnessAuth: config.integrations.harnessAuth },
-  };
-}
-
-type Network = NonNullable<NonNullable<BotCubeConfig['existing']>['network']>;
-interface NetworkIdentity {
-  aws: { agentCore: { privateNatBrowser?: { subnets: { id: string; availabilityZone: string }[] } }; credentialService?: { vpcId: string }; ecs?: { publicSubnets: unknown[] } };
-}
-
-/**
- * The identity with its VPC and subnets replaced by the existing network's: the origin load balancer in its public
- * subnets; the services, browsers and Runtime in its private ones.
- */
-function inNetwork<Identity extends NetworkIdentity>(identity: Identity, network: Network | undefined): Identity {
-  if (!network) return identity;
-  const subnets = network.privateSubnets.map(({ subnetId, availabilityZone, cidrBlock }) => ({ id: subnetId, availabilityZone, cidrBlock }));
-  const { aws } = identity;
-  return {
-    ...identity,
-    aws: {
-      ...aws,
-      agentCore: { ...aws.agentCore, ...(aws.agentCore.privateNatBrowser ? { privateNatBrowser: { ...aws.agentCore.privateNatBrowser, vpcId: network.vpcId, subnets } } : {}) },
-      ...(aws.credentialService ? { credentialService: { ...aws.credentialService, vpcId: network.vpcId } } : {}),
-      ...(aws.ecs ? { ecs: { ...aws.ecs, publicSubnets: network.publicSubnets.map(({ subnetId, availabilityZone }) => ({ id: subnetId, availabilityZone })) } } : {}),
-    },
   };
 }

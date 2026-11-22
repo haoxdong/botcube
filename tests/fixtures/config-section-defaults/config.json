@@ -8,9 +8,7 @@
         "kind": "command",
         "command": ["/usr/local/bin/telemetry-token"]
       }
-    }
-  },
-  "network": {
+    },
     "proxy": {
       "kind": "forward",
       "url": "http://proxy.example.com:3128"

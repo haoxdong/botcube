@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,14 +25,23 @@ const EXAMPLE_BOT = {
 
 const THEME = { agentBody: '#f5d0a9', agentOutline: '#d9915a', agentDeep: '#9a5a2b', agentDeepest: '#4a2810' };
 
-const DEFAULT_SECTIONS = { allowCommandCredentials: false, schedules: { kind: 'eventbridge-scheduler' }, liveView: { kind: 'agentcore-browser' }, integrations: { signIn: { kind: 'botcube-accounts' }, modelGateway: { kind: 'bedrock' }, harnessAuth: { kind: 'sigv4' }, awsAccess: { kind: 'web-identity' }, telemetry: { kind: 'xray' } }, network: { proxy: { kind: 'none' } } };
+/** The keys every BotCube Config gives; each test's own sections go over them. */
+const REQUIRED = JSON.parse(readFileSync(fileURLToPath(new URL('../tests/required-keys.json', import.meta.url)), 'utf8'));
+
+const DEFAULT_SECTIONS = { allowCommandCredentials: false, schedules: { kind: 'eventbridge-scheduler' }, liveView: { kind: 'agentcore-browser' }, integrations: { signIn: { kind: 'botcube-accounts' }, modelGateway: { kind: 'bedrock' }, harnessAuth: { kind: 'sigv4' }, awsAccess: { kind: 'web-identity' }, telemetry: { kind: 'xray' }, proxy: { kind: 'none' } }, network: {} };
 
 function configFile(config: unknown, bot: unknown = EXAMPLE_BOT): string {
   const dir = mkdtempSync(join(tmpdir(), 'config-'));
   image.settings = JSON.stringify(bot);
   const path = join(dir, 'botcube.yaml');
-  writeFileSync(path, JSON.stringify(config));
+  writeFileSync(path, JSON.stringify(withRequired(config)));
   return path;
+}
+
+function withRequired(config: unknown): unknown {
+  if (config === null || typeof config !== 'object' || Array.isArray(config)) return config;
+  const { existing, ...sections } = config as { existing?: object };
+  return { ...REQUIRED, ...sections, existing: { ...REQUIRED.existing, ...existing } };
 }
 
 const ENTERPRISE_MODELS = {
@@ -48,7 +57,7 @@ const COMMAND = { kind: 'command', command: ['/usr/local/bin/token-broker', '--a
 const CREDENTIAL_TARGET_GROUP = 'arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/corp-botcube-credentials/0123456789abcdef';
 const CREDENTIAL_ENDPOINT = { url: 'http://credentials.example.com', targetGroupArn: CREDENTIAL_TARGET_GROUP, securityGroupId: 'sg-fixturecredentials' };
 
-const OIDC_CLIENT_SECRET = { kind: 'secret', secretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/oidc-client-secret' };
+const OIDC_CLIENT_SECRET = { kind: 'secret', secretId: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/oidc-client-secret' };
 const OIDC = {
   kind: 'oidc',
   issuer: 'https://login.example.com',
@@ -77,7 +86,7 @@ const EXTERNAL_HARNESS = {
 };
 
 /** Where the enterprise example leaves the defaults, one section per seam. */
-const ENTERPRISE_SECTIONS = { schedules: { kind: 'table-poller' }, integrations: { signIn: OIDC, modelGateway: ENTERPRISE_MODELS, harnessAuth: { kind: 'jwt-bearer', issuer: 'botcube', clients: [{ clientId: 'botcube-harness' }] }, awsAccess: { kind: 'assume-role' }, telemetry: { kind: 'otlp' } }, network: { proxy: { kind: 'forward' } } };
+const ENTERPRISE_SECTIONS = { schedules: { kind: 'table-poller' }, integrations: { signIn: OIDC, modelGateway: ENTERPRISE_MODELS, harnessAuth: { kind: 'jwt-bearer', issuer: 'botcube', clients: [{ clientId: 'botcube-harness' }] }, awsAccess: { kind: 'assume-role' }, telemetry: { kind: 'otlp' }, proxy: { kind: 'forward' } } };
 
 describe('the examples', () => {
   it.each([
@@ -90,30 +99,30 @@ describe('the examples', () => {
     expect(config).toMatchObject({ $schema: '../../config/botcube.schema.json', ...DEFAULT_SECTIONS, ...sections });
   });
 
-  it('the public example creates its own resources and talks to the internet directly', () => {
+  it('the public example reuses only a VPC, its link browser and slot bucket, and talks to the internet through the NAT it creates', () => {
     const { config } = loadBotCube(example('public'));
-    expect([config.existing, config.network.proxy]).toEqual([undefined, { kind: 'none' }]);
-    expect(config.integrations.imageRegistry).toBe('public.ecr.aws');
+    expect([Object.keys(config.existing), config.network.natGateways, config.integrations.proxy]).toEqual([['vpc', 'browsers', 'buckets'], 1, { kind: 'none' }]);
+    expect(config.integrations.imageRegistry).toEqual({ url: 'https://public.ecr.aws' });
   });
 
   it('the enterprise example supplies its own resources, collector, proxy and image mirror', () => {
     const { config } = loadBotCube(example('enterprise'));
-    expect(Object.keys(config.existing ?? {})).toEqual(['network', 'kmsKeys', 'tables', 'buckets', 'files', 'credentialService']);
-    expect(config.existing?.credentialService).toEqual({
+    expect(Object.keys(config.existing)).toEqual(['vpc', 'browsers', 'kmsKeys', 'tables', 'buckets', 'files', 'credentialService']);
+    expect(config.existing.credentialService).toEqual({
       url: 'http://credentials.example.com',
       targetGroupArn: 'arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/corp-botcube-credentials/0123456789abcdef',
       securityGroupId: 'sg-fixturecredentials',
     });
-    expect(config.existing?.files?.accessPoints).toHaveLength(2);
-    expect(config.existing?.kmsKeys?.sheet).toBe('arn:aws:kms:us-east-1:000000000000:alias/corp-botcube-sign-in-sheet');
-    expect(config.integrations.imageRegistry).toBe('mirror.example.com/ecr-public');
+    expect(config.existing.files?.accessPoints).toHaveLength(2);
+    expect(config.existing.kmsKeys?.sheet).toBe('arn:aws:kms:us-east-1:000000000000:alias/corp-botcube-sign-in-sheet');
+    expect(config.integrations.imageRegistry).toEqual({ url: 'https://mirror.example.com/ecr-public' });
     expect(config.integrations.telemetry).toEqual({
       kind: 'otlp',
       url: 'http://otel-collector.example.com:4318/v1/traces',
       credential: { kind: 'file', path: '/run/secrets/botcube/telemetry-token' },
       headers: { 'x-tenant': 'botcube-example' },
     });
-    expect(config.network.proxy).toEqual({
+    expect(config.integrations.proxy).toEqual({
       kind: 'forward',
       url: 'http://proxy.example.com:3128',
       noProxy: ['.amazonaws.com'],
@@ -139,8 +148,36 @@ describe('a BotCube Config', () => {
     expect(loadBotCube(configFile({ integrations: { modelGateway: { ...ENTERPRISE_MODELS, ...wire } } })).config.integrations.modelGateway).toMatchObject({ wire: expected });
   });
 
+  it('names the images its services run, each an OCI reference pinned by a tag or a digest', () => {
+    const chatService = { image: `mirror.example.com/acme/chat@sha256:${'a'.repeat(64)}` };
+    const credentialService = { image: '123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/credentials:1.2' };
+    expect(loadBotCube(configFile({ services: { chatService, credentialService } })).config.services).toEqual({ chatService, credentialService });
+  });
+
   it('opens every missing section on its default adapter', () => {
-    expect(loadBotCube(configFile({  })).config).toEqual({ ...DEFAULT_SECTIONS, integrations: { ...DEFAULT_SECTIONS.integrations, imageRegistry: 'public.ecr.aws' } });
+    expect(loadBotCube(configFile({  })).config).toEqual({ ...REQUIRED, ...DEFAULT_SECTIONS, integrations: { ...DEFAULT_SECTIONS.integrations, imageRegistry: { url: 'https://public.ecr.aws' } } });
+  });
+
+  it.each<[string, (config: typeof REQUIRED) => void]>([
+    ['name', (config) => delete config.name],
+    ['env', (config) => delete config.env],
+    ['domains', (config) => delete config.domains],
+    ['domains.web', (config) => delete config.domains.web],
+    ['domains.chatService', (config) => delete config.domains.chatService],
+    ['existing', (config) => delete config.existing],
+    ['existing.vpc', (config) => delete config.existing.vpc],
+  ])('stops without %s, naming it as the Python loader does', (key, leaveOut) => {
+    const config = structuredClone(REQUIRED);
+    leaveOut(config);
+    const path = join(mkdtempSync(join(tmpdir(), 'config-')), 'botcube.yaml');
+    writeFileSync(path, JSON.stringify(config));
+    expect(() => loadBotCube(path)).toThrow(new BotCubeConfigError(`BotCube Config ${path}: ${key}: '${key.split('.').at(-1)}' is a required property`));
+  });
+
+  it('stops on an empty file, naming each key a deployment gives', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'config-')), 'botcube.yaml');
+    writeFileSync(path, '{}');
+    expect(() => loadBotCube(path)).toThrow(new BotCubeConfigError(['name', 'env', 'domains', 'existing'].map((key) => `BotCube Config ${path}: ${key}: '${key}' is a required property`).join('\n')));
   });
 
   it.each<[string, object, string]>([
@@ -148,15 +185,15 @@ describe('a BotCube Config', () => {
     ['an unknown key in a section', { schedules: { kind: 'eventbridge-scheduler', table: 'x' } }, 'schedules.table: Unrecognized key'],
     ['an unknown kind', { integrations: { modelGateway: { kind: 'vertex' } } }, "integrations.modelGateway.kind: Invalid discriminator value. Expected 'bedrock' | 'openai-compatible'"],
     ['an unknown models wire', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, wire: 'messages' } } }, 'integrations.modelGateway.wire: '],
-    ['the deleted API key field', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, apiKey: { secretArn: SECRET_ARN } } } }, 'integrations.modelGateway.apiKey: Unrecognized key'],
+    ['the deleted API key field', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, apiKey: { secretId: SECRET_ARN } } } }, 'integrations.modelGateway.apiKey: Unrecognized key'],
     ['an OpenAI-compatible endpoint without its credential', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, credential: undefined } } }, 'integrations.modelGateway.credential: '],
     ['an API key written in place of its source', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, credential: 'sk-live' } } }, 'integrations.modelGateway.credential: '],
     ['an unknown credential source', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, credential: { kind: 'vault', path: 'x' } } } },
       "integrations.modelGateway.credential.kind: Invalid discriminator value. Expected 'secret' | 'file' | 'command'"],
     ['an unknown field on a credential source', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, credential: { kind: 'file', path: '/run/key', format: 'json' } } } },
       'integrations.modelGateway.credential.format: Unrecognized key'],
-    ['a secret named by something other than its ARN', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, credential: { kind: 'secret', secretArn: 'models-api-key' } } } },
-      'integrations.modelGateway.credential.secretArn: '],
+    ['a secret named by something other than its name or ARN', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, credential: { kind: 'secret', secretId: 'models api key' } } } },
+      'integrations.modelGateway.credential.secretId: Expected a Secrets Manager secret name or ARN'],
     ['a credential file by a relative path', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, credential: { kind: 'file', path: 'secrets/key' } } } },
       'integrations.modelGateway.credential.path: '],
     ['a command with no program', { allowCommandCredentials: true, integrations: { modelGateway: { ...ENTERPRISE_MODELS, credential: { kind: 'command', command: [] } } } },
@@ -219,13 +256,13 @@ describe('a BotCube Config', () => {
     ] as const),
     ['an OIDC provider without its client secret', { integrations: { signIn: { ...OIDC, clients: [{ clientId: 'botcube' }] } } }, 'integrations.signIn.clients.0.clientSecret: '],
     ['a client secret given as its value', { integrations: { signIn: { ...OIDC, clients: [{ clientId: 'botcube', clientSecret: 's3cret' }] } } }, 'integrations.signIn.clients.0.clientSecret: '],
-    ['a client secret named by its ARN alone', { integrations: { signIn: { ...OIDC, clients: [{ clientId: 'botcube', clientSecret: { secretArn: OIDC_CLIENT_SECRET.secretArn } }] } } },
+    ['a client secret named by its ARN alone', { integrations: { signIn: { ...OIDC, clients: [{ clientId: 'botcube', clientSecret: { secretId: OIDC_CLIENT_SECRET.secretId } }] } } },
       'integrations.signIn.clients.0.clientSecret.kind: '],
     ['an OIDC provider with no client', { integrations: { signIn: { ...OIDC, clients: [] } } }, 'integrations.signIn.clients.0: '],
     ['a sign-in client listed twice', { integrations: { signIn: { ...OIDC, clients: [...OIDC.clients, ...OIDC.clients] } } },
       'integrations.signIn.clients.1.clientId: Client botcube is already identity.clients.0.clientId'],
     ...['clientId', 'clientSecret'].map(field => [
-      `the old identity.${field} field`, { integrations: { signIn: { ...OIDC, [field]: field === 'clientId' ? 'botcube' : { secretArn: OIDC_CLIENT_SECRET.secretArn } } } },
+      `the old identity.${field} field`, { integrations: { signIn: { ...OIDC, [field]: field === 'clientId' ? 'botcube' : { secretId: OIDC_CLIENT_SECRET.secretId } } } },
       `integrations.signIn.${field}: Unrecognized key`,
     ] as const),
     ['a command client secret without the opt-in', { integrations: { signIn: { ...OIDC, clients: [{ clientId: 'botcube', clientSecret: COMMAND }] } } },
@@ -234,8 +271,6 @@ describe('a BotCube Config', () => {
     ['an unknown existing resource', { existing: { queues: {} } }, 'existing.queues: Unrecognized key'],
     ['existing Files without their access points', { existing: { files: { fileSystemId: FILES.fileSystemId, kmsKey: FILES.kmsKey, accountsAccessPointId: FILES.accountsAccessPointId } } },
       'existing.files.accessPoints: '],
-    ['existing Files in a network BotCube creates', { existing: { files: FILES } },
-      'existing.files: Existing Files need existing.network'],
     ['existing Files with no access point', { existing: { files: { ...FILES, accessPoints: [] } } }, 'existing.files.accessPoints: '],
     ['an unknown existing Files field', { existing: { files: { ...FILES, mountTargets: [] } } }, 'existing.files.mountTargets: Unrecognized key'],
     ['a existing access point outside the Users\' directories', { existing: { files: { ...FILES, accessPoints: [{ accessPointId: 'fsap-0b', rootDirectory: '/users/alice' }] } } },
@@ -267,21 +302,29 @@ describe('a BotCube Config', () => {
       ['a Credential Service Endpoint with a bearer credential', { ...CREDENTIAL_ENDPOINT, credential: { kind: 'file', path: '/run/secrets/x' } },
         'existing.credentialService.credential: Unrecognized key'],
     ] satisfies [string, object, string][]).map(([name, credentialService, field]): [string, object, string] => [name, { existing: { credentialService } }, field]),
-    ['a proxy that is not an http(s) URL', { network: { proxy: { kind: 'forward', url: 'socks5://proxy:1080' } } }, 'network.proxy.url: '],
-    ['a proxy in the old shape, with no kind', { network: { proxy: { url: 'http://proxy:3128' } } }, 'network.proxy.kind: '],
-    ['a Proxy-Authorization header beside the proxy credential', { network: { proxy: { kind: 'forward', url: 'http://proxy:3128', headers: { 'Proxy-Authorization': 'Basic x' } } } },
-      'network.proxy.headers.Proxy-Authorization: The credential sets Proxy-Authorization'],
+    ['a proxy that is not an http(s) URL', { integrations: { proxy: { kind: 'forward', url: 'socks5://proxy:1080' } } }, 'integrations.proxy.url: '],
+    ['a proxy in the old shape, with no kind', { integrations: { proxy: { url: 'http://proxy:3128' } } }, 'integrations.proxy.kind: '],
+    ['a Proxy-Authorization header beside the proxy credential', { integrations: { proxy: { kind: 'forward', url: 'http://proxy:3128', headers: { 'Proxy-Authorization': 'Basic x' } } } },
+      'integrations.proxy.headers.Proxy-Authorization: The credential sets Proxy-Authorization'],
     ...([
-      ['a secret', { kind: 'secret', secretArn: 'arn:aws:secretsmanager:us-east-1:000000000000:secret:proxy-token' }],
+      ['a secret', { kind: 'secret', secretId: 'arn:aws:secretsmanager:us-east-1:000000000000:secret:proxy-token' }],
       ['a command', COMMAND],
       ['a botcube', { kind: 'botcube', audience: 'proxy' }],
     ] satisfies [string, object][]).map(([kind, credential]): [string, object, string] => [
       `${kind} proxy credential`,
-      { allowCommandCredentials: true, network: { proxy: { kind: 'forward', url: 'http://proxy:3128', credential } } },
-      'network.proxy.credential: A proxy credential is read from a file; any other source would reach out through the proxy it authenticates',
+      { allowCommandCredentials: true, integrations: { proxy: { kind: 'forward', url: 'http://proxy:3128', credential } } },
+      'integrations.proxy.credential: A proxy credential is read from a file; any other source would reach out through the proxy it authenticates',
     ]),
-    ['an image registry given as a URL', { integrations: { imageRegistry: 'https://mirror.example.com' } }, 'integrations.imageRegistry: Expected a registry host and optional path'],
-    ['an image registry with a trailing slash', { integrations: { imageRegistry: 'mirror.example.com/' } }, 'integrations.imageRegistry: Expected a registry host and optional path'],
+    ['a Runtime image outside Amazon ECR, which AgentCore cannot run', { agentCore: { runtime: { containerUri: 'public.ecr.aws/acme/bot:1' } } }, 'agentCore.runtime.containerUri: Expected an Amazon ECR image URI'],
+    ['a Runtime image with neither tag nor digest', { agentCore: { runtime: { containerUri: '123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/bot' } } }, 'agentCore.runtime.containerUri: Expected an Amazon ECR image URI'],
+    ['a Chat Service image with neither tag nor digest', { services: { chatService: { image: 'mirror.example.com/acme/chat' } } }, 'services.chatService.image: Expected an OCI image reference'],
+    ['a Credential Service image outside Amazon ECR, which its audit-copy Lambda cannot run', { services: { credentialService: { image: 'public.ecr.aws/acme/credentials:1' } } },
+      'services.credentialService.image: Expected an Amazon ECR image URI'],
+    ['an image registry given as a bare host, its old shape', { integrations: { imageRegistry: 'mirror.example.com/ecr-public' } }, 'integrations.imageRegistry: '],
+    ['an image registry over http', { integrations: { imageRegistry: { url: 'http://mirror.example.com' } } }, 'integrations.imageRegistry.url: '],
+    ['an image registry URL with a trailing slash', { integrations: { imageRegistry: { url: 'https://mirror.example.com/' } } }, 'integrations.imageRegistry.url: Expected a registry base URL, https and a host with an optional path, no trailing /'],
+    ['an image registry URL with a query', { integrations: { imageRegistry: { url: 'https://mirror.example.com/ecr?x=1' } } }, 'integrations.imageRegistry.url: Expected a registry base URL, https and a host with an optional path, no trailing /'],
+    ['an image registry credential, which the puller brings', { integrations: { imageRegistry: { url: 'https://mirror.example.com', credential: { kind: 'file', path: '/run/token' } } } }, 'integrations.imageRegistry.credential: Unrecognized key'],
     ['an OTLP endpoint with no URL', { integrations: { telemetry: { kind: 'otlp' } } }, 'integrations.telemetry.url: '],
     ['the old telemetry.otlpEndpoint field', { integrations: { telemetry: { otlpEndpoint: 'http://collector:4318/v1/traces' } } }, 'integrations.telemetry.kind: '],
     ['an authorization header beside the telemetry credential', { integrations: { telemetry: { kind: 'otlp', url: 'http://collector:4318/v1/traces', headers: { authorization: 'Bearer x' } } } },
@@ -290,13 +333,10 @@ describe('a BotCube Config', () => {
       'integrations.telemetry.credential: A botcube token is the Harness bearer, which the Chat Service signs for harnessAuth; no configured credential takes one'],
     ['a command telemetry credential without the opt-in', { integrations: { telemetry: { kind: 'otlp', url: 'http://collector:4318/v1/traces', credential: COMMAND } } },
       'integrations.telemetry.credential: A command credential runs only when allowCommandCredentials is true'],
-    ['an empty product name', { productName: ' ' }, 'productName: '],
-    ['a CORS origin over http off this machine', { network: { corsOrigins: ['http://chat.example.com'] } },
-      'network.corsOrigins.0: A CORS origin is https; only a stand-in on this machine may use http'],
-    ['a CORS origin with a path', { network: { corsOrigins: ['https://chat.example.com/chat'] } },
-      'network.corsOrigins.0: Expected an origin: a scheme and host, no path'],
-    ['a started path relative to nothing', { productService: { agentComputerStartedPath: 'me/agent-computer/seed' } },
-      'productService.agentComputerStartedPath: Expected a path starting with /'],
+    ['a product name, which the bot settings carry', { productName: 'Example Bot' }, "productName: renamed to productName in /bot/bot.yaml, the Bot Image's bot settings"],
+    ['a web alias with a path', { domains: { web: 'https://chat.example.com', webAliases: ['https://chat.example.com/chat'], chatService: 'https://api.chat.example.com' } },
+      'domains.webAliases.0: Expected a web origin: a scheme and host, no path (RFC 6454)'],
+    ['a product service, which the bot settings carry', { productService: { agentComputerStartedPath: '/me/agent-computer/seed' } }, "productService: renamed to productService in /bot/bot.yaml, the Bot Image's bot settings"],
     ['a Plan Usage owner that is no Account', { planUsage: { ownerAccountId: '123456789012' } },
       'planUsage.ownerAccountId: Expected an Account id, acct_ and its token'],
     ['an empty automation user agent', { parking: { automationUserAgents: [''] } }, 'parking.automationUserAgents.0: '],
@@ -307,7 +347,7 @@ describe('a BotCube Config', () => {
   });
 
   it.each([
-    ['a Secrets Manager secret', { kind: 'secret', secretArn: SECRET_ARN }],
+    ['a Secrets Manager secret', { kind: 'secret', secretId: SECRET_ARN }],
     ['a mounted file', { kind: 'file', path: '/run/secrets/botcube/models-api-key' }],
   ])('gives the models endpoint its credential from %s', (_, credential) => {
     const models = { ...ENTERPRISE_MODELS, credential };
@@ -322,7 +362,7 @@ describe('a BotCube Config', () => {
 
   it.each([
     ['a mounted file and no scope', OAUTH],
-    ['a Secrets Manager secret and scopes', { ...OAUTH, clientSecret: { kind: 'secret', secretArn: SECRET_ARN }, scopes: ['integrations.modelGateway.invoke', 'api://botcube/.default'] }],
+    ['a Secrets Manager secret and scopes', { ...OAUTH, clientSecret: { kind: 'secret', secretId: SECRET_ARN }, scopes: ['integrations.modelGateway.invoke', 'api://botcube/.default'] }],
     ['a stand-in token endpoint on this machine', { ...OAUTH, tokenEndpoint: 'http://127.0.0.1:9400/token' }],
   ])('gives the models endpoint an OAuth client-credentials token from %s', (_, credential) => {
     const models = { ...ENTERPRISE_MODELS, credential };
@@ -336,7 +376,7 @@ describe('a BotCube Config', () => {
   });
 
   it.each([
-    ['a Secrets Manager secret', { allowCommandCredentials: false }, { kind: 'secret', secretArn: SECRET_ARN }],
+    ['a Secrets Manager secret', { allowCommandCredentials: false }, { kind: 'secret', secretId: SECRET_ARN }],
     ['a mounted file', { allowCommandCredentials: false }, { kind: 'file', path: '/run/secrets/botcube/harness-token' }],
     ['an opted-in command', { allowCommandCredentials: true }, { ...COMMAND, timeoutSeconds: 30 }],
   ])('trusts an outside Harness issuer at its discovery URL, with the token from %s', (_, optIn, token) => {
@@ -367,11 +407,9 @@ describe('a BotCube Config', () => {
     expect(loadBotCube(configFile({ integrations: { modelGateway: models } })).config.integrations.modelGateway).toEqual({ ...models, wire: 'chat-completions' });
   });
 
-  it("takes the product's name, its web origins, its service's started path, the Plan Usage owner and the automation user agents parking skips", () => {
+  it("takes the product's web origins, the Plan Usage owner and the automation user agents parking skips", () => {
     const product = {
-      productName: 'Example Bot',
-      network: { corsOrigins: ['https://chat.example.com', 'https://preview.chat.example.com', 'http://localhost:3001'] },
-      productService: { agentComputerStartedPath: '/me/agent-computer/seed' },
+      domains: { web: 'https://chat.example.com', webAliases: ['https://preview.chat.example.com', 'http://localhost:3001'], chatService: 'https://api.chat.example.com' },
       planUsage: { ownerAccountId: 'acct_plan_owner_0000000000' },
       parking: { automationUserAgents: ['-Verification/', 'collective-automation'] },
     };
@@ -419,29 +457,29 @@ describe('Endpoint TLS', () => {
     ['an expected server identity', { serverIdentity: IDENTITY }],
     ['both', { clientCertificate: FILES, serverIdentity: 'https://models.example.com/gateway' }],
   ])('gives the models Endpoint, the proxy and the OTLP Endpoint %s', (_, tls) => {
-    const { config } = loadBotCube(configFile({ integrations: { modelGateway: { ...ENTERPRISE_MODELS, tls }, telemetry: { ...COLLECTOR, tls } }, network: { proxy: { ...PROXY, tls } } }));
-    expect([config.integrations.modelGateway, config.network.proxy, config.integrations.telemetry]).toEqual([{ ...ENTERPRISE_MODELS, wire: 'chat-completions', tls }, { ...PROXY, tls }, { ...COLLECTOR, tls }]);
+    const { config } = loadBotCube(configFile({ integrations: { modelGateway: { ...ENTERPRISE_MODELS, tls }, telemetry: { ...COLLECTOR, tls }, proxy: { ...PROXY, tls } } }));
+    expect([config.integrations.modelGateway, config.integrations.proxy, config.integrations.telemetry]).toEqual([{ ...ENTERPRISE_MODELS, wire: 'chat-completions', tls }, { ...PROXY, tls }, { ...COLLECTOR, tls }]);
   });
 
   it('runs an opted-in command for a client certificate, 30 s at most unless it says otherwise', () => {
     const tls = { clientCertificate: CERTIFICATE_COMMAND };
-    const { config } = loadBotCube(configFile({ allowCommandCredentials: true, integrations: { modelGateway: { ...ENTERPRISE_MODELS, tls }, telemetry: { ...COLLECTOR, tls } }, network: { proxy: { ...PROXY, tls } } }));
+    const { config } = loadBotCube(configFile({ allowCommandCredentials: true, integrations: { modelGateway: { ...ENTERPRISE_MODELS, tls }, telemetry: { ...COLLECTOR, tls }, proxy: { ...PROXY, tls } } }));
     const expected = { clientCertificate: { ...CERTIFICATE_COMMAND, timeoutSeconds: 30 } };
-    expect([config.integrations.modelGateway, config.network.proxy, config.integrations.telemetry]).toMatchObject([{ tls: expected }, { tls: expected }, { tls: expected }]);
+    expect([config.integrations.modelGateway, config.integrations.proxy, config.integrations.telemetry]).toMatchObject([{ tls: expected }, { tls: expected }, { tls: expected }]);
   });
 
   it.each([
     ['a client certificate command without the opt-in', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, tls: { clientCertificate: CERTIFICATE_COMMAND } } } },
       'integrations.modelGateway.tls.clientCertificate: A command client certificate runs only when allowCommandCredentials is true'],
-    ["a proxy client certificate command without the opt-in", { network: { proxy: { ...PROXY, tls: { clientCertificate: CERTIFICATE_COMMAND } } } },
-      'network.proxy.tls.clientCertificate: A command client certificate runs only when allowCommandCredentials is true'],
+    ["a proxy client certificate command without the opt-in", { integrations: { proxy: { ...PROXY, tls: { clientCertificate: CERTIFICATE_COMMAND } } } },
+      'integrations.proxy.tls.clientCertificate: A command client certificate runs only when allowCommandCredentials is true'],
     ['a relative certificate path', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, tls: { clientCertificate: { ...FILES, key: 'svid-key.pem' } } } } }, 'integrations.modelGateway.tls.clientCertificate'],
     ['a certificate without its key', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, tls: { clientCertificate: { certificate: FILES.certificate } } } } }, 'integrations.modelGateway.tls.clientCertificate'],
-    ['a server identity that is not a URI', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, tls: { serverIdentity: 'network.proxy.example.com' } } } }, 'integrations.modelGateway.tls.serverIdentity: '],
+    ['a server identity that is not a URI', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, tls: { serverIdentity: 'integrations.proxy.example.com' } } } }, 'integrations.modelGateway.tls.serverIdentity: '],
     ['an empty TLS block', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, tls: {} } } }, 'integrations.modelGateway.tls: '],
     ['an unknown TLS field, such as a CA bundle', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, tls: { serverIdentity: IDENTITY, trustBundle: '/run/bundle.pem' } } } }, 'integrations.modelGateway.tls.trustBundle: Unrecognized key'],
-    ['TLS on a proxy reached over http', { network: { proxy: { kind: 'forward', url: 'http://proxy.example.com:3128', tls: { serverIdentity: IDENTITY } } } },
-      'network.proxy.tls: TLS needs the proxy at an https URL'],
+    ['TLS on a proxy reached over http', { integrations: { proxy: { kind: 'forward', url: 'http://proxy.example.com:3128', tls: { serverIdentity: IDENTITY } } } },
+      'integrations.proxy.tls: TLS needs the proxy at an https URL'],
     ['an OTLP client certificate command without the opt-in', { integrations: { telemetry: { ...COLLECTOR, tls: { clientCertificate: CERTIFICATE_COMMAND } } } },
       'integrations.telemetry.tls.clientCertificate: A command client certificate runs only when allowCommandCredentials is true'],
     ['TLS on an OTLP Endpoint reached over http', { integrations: { telemetry: { ...COLLECTOR, url: 'http://collector.example.com:4318/v1/traces', tls: { serverIdentity: IDENTITY } } } },
@@ -466,6 +504,9 @@ describe('bot settings', () => {
     ['instructions naming no file', { ...EXAMPLE_BOT, instructions: '' }, 'instructions: '],
     ['a Memory gate that is not a switch', { ...EXAMPLE_BOT, memory: 'on' }, 'memory: '],
     ['a live browser without the Agent Computer', { ...EXAMPLE_BOT, agentComputer: { enabled: false, liveBrowser: true } }, 'agentComputer.liveBrowser: The live browser is part of the Agent Computer'],
+    ['an empty product name', { ...EXAMPLE_BOT, productName: ' ' }, 'productName: '],
+    ['a started path relative to nothing', { ...EXAMPLE_BOT, productService: { agentComputerStartedPath: 'me/agent-computer/seed' } },
+      'productService.agentComputerStartedPath: Expected a path starting with /'],
     ['a profile-omitted cookie domain that is a URL', { ...EXAMPLE_BOT, agentComputer: { profileOmitsCookieDomains: ['https://site.example'] } }, 'agentComputer.profileOmitsCookieDomains.0: Expected a domain such as example.com'],
   ])('stop on %s and name the field', (_, bot, field) => {
     const path = configFile({  }, bot);
@@ -486,6 +527,11 @@ describe('bot settings', () => {
     const { bot } = loadBotCube(configFile({  }, { agentIdentity, accountKey, models }));
     expect(bot).not.toHaveProperty('theme');
     expect(bot).toMatchObject({ memory: true, agentComputer: { enabled: true, liveBrowser: false, profileOmitsCookieDomains: [] } });
+  });
+
+  it("name the product and the path its service is called on as an Agent Computer's browser starts", () => {
+    const product = { productName: 'Example Bot', productService: { agentComputerStartedPath: '/me/agent-computer/seed' } };
+    expect(loadBotCube(configFile({  }, { ...EXAMPLE_BOT, ...product })).bot).toMatchObject(product);
   });
 
   it('name a file of bot-wide instructions', () => {

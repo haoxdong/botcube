@@ -6,6 +6,260 @@
       "description": "The JSON Schema this file follows, for editors.",
       "type": "string"
     },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*[a-z0-9]$",
+      "description": "The deployment's name, as CDK's stack name prefix: every physical name derives from it."
+    },
+    "tags": {
+      "description": "Tags, as CDK Tags, on every stack of both CDK apps; the AgentCore project also carries agentcore:project-name.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^(?!aws:)[A-Za-z0-9 _.:/=+@-]{1,128}$"
+      },
+      "additionalProperties": { "type": "string", "maxLength": 256 }
+    },
+    "names": {
+      "description": "Physical names that differ from the derived ones, each by its role and CloudFormation name property.",
+      "type": "object",
+      "properties": {
+        "runtimeAgentRuntimeName": {
+          "description": "Absent: {snake}_runtime, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "memoryName": {
+          "description": "Absent: {snake}_memory, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "agentComputerBrowserName": {
+          "description": "Absent: {snake}_agent_computer_managed, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "agentComputerBrowserProfileNamePrefix": {
+          "description": "Absent: {snake}_, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "linkBrowserName": {
+          "description": "Absent: {snake}_link, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "agentCoreTargetName": {
+          "description": "Absent: default, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "sessionApiFunctionName": {
+          "description": "Absent: {name}-session-api, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "clusterName": {
+          "description": "Absent: {name}, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "deployRoleName": {
+          "description": "Absent: {name}-ecs-github-deploy, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "deployPolicyName": {
+          "description": "Absent: {name}-ecs-deploy, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "previewOriginStackName": {
+          "description": "Absent: {name}-preview-origin, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "privateEgressStackName": {
+          "description": "Absent: {name}-private-egress, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "natGatewayName": {
+          "description": "Absent: {name}-private-egress, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "apiHealthStackName": {
+          "description": "Absent: {name}-api-health, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "apiHealthAlarmName": {
+          "description": "Absent: {name}-api-health, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "webLatencyStackName": {
+          "description": "Absent: {name}-web-latency, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "webAppMonitorName": {
+          "description": "Absent: {name}-web, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "alertsTopicName": {
+          "description": "Absent: {name}-alerts, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "parkingFunctionName": {
+          "description": "Absent: {name}-production-parking, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "repositoryName": {
+          "description": "Absent: {name}/runtime, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "buildProjectName": {
+          "description": "Absent: {name}-container-builder, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "buildFunctionName": {
+          "description": "Absent: {name}-container-build-handler, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "buildLogGroupName": {
+          "description": "Absent: /aws/lambda/{name}-container-build-handler, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "deployUserName": {
+          "description": "Absent: {name}-deploy, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "runtimeRoleName": {
+          "description": "Absent: {name}-runtime, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "memoryRoleName": {
+          "description": "Absent: {name}-memory, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "userMemoryRoleName": {
+          "description": "Absent: {name}-user-memory, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "chatServiceTaskRoleName": {
+          "description": "Absent: CloudFormation generates it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "filesMountRoleName": {
+          "description": "Absent: CloudFormation generates it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "filesLinksRoleName": {
+          "description": "Absent: CloudFormation generates it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "agentComputerBrowserRoleName": {
+          "description": "Absent: CloudFormation generates it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "buildFunctionRoleName": {
+          "description": "Absent: {name}-container-build-handler, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "buildRoleName": {
+          "description": "Absent: {name}-container-build, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "sessionApiRoleName": {
+          "description": "Absent: {name}-session-api, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "invokePolicyNamePrefix": {
+          "description": "Absent: {name}-agentcore-invoke, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "runtimeAlarmNamePrefix": {
+          "description": "Absent: {name}-runtime, from name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "runtimeErrorsFilterName": {
+          "description": "Absent: {name}-runtime-error-lines, from name.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "env": {
+      "type": "object",
+      "properties": {
+        "account": { "type": "string", "pattern": "^\\d{12}$" },
+        "region": { "type": "string", "pattern": "^[a-z]{2}(-[a-z]+)+-\\d$" }
+      },
+      "required": ["account", "region"],
+      "additionalProperties": false,
+      "description": "Where the deployment runs, as CDK Environment."
+    },
+    "domains": {
+      "type": "object",
+      "properties": {
+        "web": {
+          "type": "string",
+          "format": "uri",
+          "description": "The web UI origin."
+        },
+        "webAliases": {
+          "description": "Further origins the web UI is served at, as Copilot's http.alias: CORS allows web and these.",
+          "type": "array",
+          "items": { "type": "string", "format": "uri" }
+        },
+        "chatService": {
+          "type": "string",
+          "format": "uri",
+          "description": "The Chat Service's origin; its hostname, over https, issues the per-Turn JWT."
+        },
+        "chatServicePreview": {
+          "description": "BotCube-owned: the preview origin's Chat Service, which a deploy verifies before production moves to it.",
+          "type": "string",
+          "format": "uri"
+        },
+        "credentialService": {
+          "description": "The Credential Service's public origin, which the product's own pages call; absent, it is private.",
+          "type": "string",
+          "format": "uri"
+        },
+        "productService": {
+          "description": "The product's own service, which the Credential Service also serves at this origin; needs credentialService.",
+          "type": "string",
+          "format": "uri"
+        }
+      },
+      "required": ["web", "chatService"],
+      "additionalProperties": false,
+      "description": "Where the deployment is reached, each a web origin."
+    },
     "allowCommandCredentials": {
       "default": false,
       "description": "Whether a credential may come from a command, which then runs as the service; whoever can edit this file chooses that command.",
@@ -49,12 +303,13 @@
                               "type": "object",
                               "properties": {
                                 "kind": { "type": "string", "const": "secret" },
-                                "secretArn": {
+                                "secretId": {
                                   "type": "string",
-                                  "pattern": "^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+$"
+                                  "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                                  "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
                                 }
                               },
-                              "required": ["kind", "secretArn"],
+                              "required": ["kind", "secretId"],
                               "additionalProperties": false,
                               "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
                             },
@@ -126,12 +381,13 @@
                                           "type": "string",
                                           "const": "secret"
                                         },
-                                        "secretArn": {
+                                        "secretId": {
                                           "type": "string",
-                                          "pattern": "^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+$"
+                                          "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                                          "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
                                         }
                                       },
-                                      "required": ["kind", "secretArn"],
+                                      "required": ["kind", "secretId"],
                                       "additionalProperties": false,
                                       "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
                                     },
@@ -252,12 +508,13 @@
                             "type": "object",
                             "properties": {
                               "kind": { "type": "string", "const": "secret" },
-                              "secretArn": {
+                              "secretId": {
                                 "type": "string",
-                                "pattern": "^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+$"
+                                "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                                "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
                               }
                             },
-                            "required": ["kind", "secretArn"],
+                            "required": ["kind", "secretId"],
                             "additionalProperties": false,
                             "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
                           },
@@ -323,12 +580,13 @@
                                         "type": "string",
                                         "const": "secret"
                                       },
-                                      "secretArn": {
+                                      "secretId": {
                                         "type": "string",
-                                        "pattern": "^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+$"
+                                        "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                                        "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
                                       }
                                     },
-                                    "required": ["kind", "secretArn"],
+                                    "required": ["kind", "secretId"],
                                     "additionalProperties": false,
                                     "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
                                   },
@@ -458,6 +716,116 @@
                     "required": ["type", "name"],
                     "additionalProperties": false
                   }
+                },
+                "userPool": {
+                  "type": "object",
+                  "properties": {
+                    "userPoolName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "As CloudFormation UserPool.UserPoolName."
+                    },
+                    "domain": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
+                      "description": "As CloudFormation UserPoolDomain.Domain: the managed login's <domain>.auth.<region>.amazoncognito.com."
+                    },
+                    "customDomain": {
+                      "description": "The managed login's own host, once its certificate is issued.",
+                      "type": "object",
+                      "properties": {
+                        "domain": {
+                          "type": "string",
+                          "minLength": 1,
+                          "description": "As CloudFormation UserPoolDomain.Domain, for a custom domain."
+                        },
+                        "certificateArn": {
+                          "type": "string",
+                          "pattern": "^arn:aws[a-z-]*:acm:us-east-1:\\d{12}:certificate\\/.+$",
+                          "description": "As CloudFormation CustomDomainConfig.CertificateArn."
+                        }
+                      },
+                      "required": ["domain", "certificateArn"],
+                      "additionalProperties": false
+                    },
+                    "callbackUrls": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": { "type": "string", "format": "uri" },
+                      "description": "As CDK OAuthSettings.callbackUrls: the Chat Service's /auth/oidc/callback on each of its origins."
+                    },
+                    "logoutUrls": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": { "type": "string", "format": "uri" },
+                      "description": "As CDK OAuthSettings.logoutUrls: where /logout may return the browser."
+                    },
+                    "email": {
+                      "type": "object",
+                      "properties": {
+                        "sesVerifiedDomain": {
+                          "type": "string",
+                          "minLength": 1,
+                          "description": "As CDK UserPoolSESOptions.sesVerifiedDomain: the SES domain identity codes are sent from."
+                        },
+                        "fromEmail": {
+                          "type": "string",
+                          "format": "email",
+                          "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                          "description": "As CDK UserPoolSESOptions.fromEmail."
+                        },
+                        "fromName": {
+                          "type": "string",
+                          "minLength": 1,
+                          "description": "As CDK UserPoolSESOptions.fromName."
+                        },
+                        "sesVerified": {
+                          "type": "boolean",
+                          "description": "BotCube-owned: whether SES has verified the domain; until then Cognito's own sender sends."
+                        }
+                      },
+                      "required": [
+                        "sesVerifiedDomain",
+                        "fromEmail",
+                        "fromName",
+                        "sesVerified"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "google": {
+                      "description": "Google, on once its secret holds its credentials.",
+                      "type": "object",
+                      "properties": {
+                        "credential": {
+                          "type": "object",
+                          "properties": {
+                            "secretId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "description": "A Secrets Manager secret name or ARN, holding client_id and client_secret."
+                            }
+                          },
+                          "required": ["secretId"],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": ["credential"],
+                      "additionalProperties": false
+                    },
+                    "login": {
+                      "description": "BotCube-owned: whether the Chat Service and the Credential Service read this file, whose oidc signIn turns the managed sign-in on.",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "userPoolName",
+                    "domain",
+                    "callbackUrls",
+                    "logoutUrls",
+                    "email"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Interim: the Cognito user pool the deployment creates for this provider, by its CloudFormation names."
                 }
               },
               "required": ["kind", "issuer", "clients"],
@@ -497,12 +865,13 @@
                       "type": "object",
                       "properties": {
                         "kind": { "type": "string", "const": "secret" },
-                        "secretArn": {
+                        "secretId": {
                           "type": "string",
-                          "pattern": "^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+$"
+                          "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                          "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
                         }
                       },
-                      "required": ["kind", "secretArn"],
+                      "required": ["kind", "secretId"],
                       "additionalProperties": false,
                       "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
                     },
@@ -563,12 +932,13 @@
                               "type": "object",
                               "properties": {
                                 "kind": { "type": "string", "const": "secret" },
-                                "secretArn": {
+                                "secretId": {
                                   "type": "string",
-                                  "pattern": "^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+$"
+                                  "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                                  "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
                                 }
                               },
-                              "required": ["kind", "secretArn"],
+                              "required": ["kind", "secretId"],
                               "additionalProperties": false,
                               "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
                             },
@@ -824,12 +1194,13 @@
                       "type": "object",
                       "properties": {
                         "kind": { "type": "string", "const": "secret" },
-                        "secretArn": {
+                        "secretId": {
                           "type": "string",
-                          "pattern": "^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+$"
+                          "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                          "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
                         }
                       },
-                      "required": ["kind", "secretArn"],
+                      "required": ["kind", "secretId"],
                       "additionalProperties": false,
                       "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
                     },
@@ -890,12 +1261,13 @@
                               "type": "object",
                               "properties": {
                                 "kind": { "type": "string", "const": "secret" },
-                                "secretArn": {
+                                "secretId": {
                                   "type": "string",
-                                  "pattern": "^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+$"
+                                  "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                                  "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
                                 }
                               },
-                              "required": ["kind", "secretArn"],
+                              "required": ["kind", "secretId"],
                               "additionalProperties": false,
                               "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
                             },
@@ -1023,10 +1395,18 @@
           ]
         },
         "imageRegistry": {
-          "default": "public.ecr.aws",
-          "description": "The registry every image BotCube pulls comes from, a mirror of Amazon ECR Public's paths: the services' sidecars and every image BotCube builds FROM.",
-          "type": "string",
-          "pattern": "^[a-z0-9.-]+(:\\d+)?(\\/[a-z0-9._-]+)*$"
+          "default": { "url": "https://public.ecr.aws" },
+          "description": "The registry every image BotCube pulls comes from, an Endpoint whose credential and TLS are the puller's own: the services' sidecars and every image BotCube builds FROM.",
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "format": "uri",
+              "description": "The registry's base URL, a mirror of Amazon ECR Public's paths, such as https://mirror.example.com/ecr-public."
+            }
+          },
+          "required": ["url"],
+          "additionalProperties": false
         },
         "telemetry": {
           "default": { "kind": "xray" },
@@ -1054,12 +1434,13 @@
                       "type": "object",
                       "properties": {
                         "kind": { "type": "string", "const": "secret" },
-                        "secretArn": {
+                        "secretId": {
                           "type": "string",
-                          "pattern": "^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+$"
+                          "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                          "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
                         }
                       },
-                      "required": ["kind", "secretArn"],
+                      "required": ["kind", "secretId"],
                       "additionalProperties": false,
                       "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
                     },
@@ -1120,12 +1501,13 @@
                               "type": "object",
                               "properties": {
                                 "kind": { "type": "string", "const": "secret" },
-                                "secretArn": {
+                                "secretId": {
                                   "type": "string",
-                                  "pattern": "^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+$"
+                                  "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                                  "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
                                 }
                               },
-                              "required": ["kind", "secretArn"],
+                              "required": ["kind", "secretId"],
                               "additionalProperties": false,
                               "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
                             },
@@ -1306,14 +1688,7 @@
               "description": "No traces leave the services, and no collector or X-Ray grant is created."
             }
           ]
-        }
-      },
-      "additionalProperties": false
-    },
-    "network": {
-      "default": {},
-      "type": "object",
-      "properties": {
+        },
         "proxy": {
           "default": { "kind": "none" },
           "oneOf": [
@@ -1338,12 +1713,13 @@
                       "type": "object",
                       "properties": {
                         "kind": { "type": "string", "const": "secret" },
-                        "secretArn": {
+                        "secretId": {
                           "type": "string",
-                          "pattern": "^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+$"
+                          "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                          "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
                         }
                       },
-                      "required": ["kind", "secretArn"],
+                      "required": ["kind", "secretId"],
                       "additionalProperties": false,
                       "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
                     },
@@ -1404,12 +1780,13 @@
                               "type": "object",
                               "properties": {
                                 "kind": { "type": "string", "const": "secret" },
-                                "secretArn": {
+                                "secretId": {
                                   "type": "string",
-                                  "pattern": "^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+$"
+                                  "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                                  "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
                                 }
                               },
-                              "required": ["kind", "secretArn"],
+                              "required": ["kind", "secretId"],
                               "additionalProperties": false,
                               "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
                             },
@@ -1590,12 +1967,173 @@
               "description": "Outbound traffic goes direct."
             }
           ]
-        },
-        "corsOrigins": {
-          "type": "array",
-          "items": { "type": "string", "format": "uri" }
         }
       },
+      "additionalProperties": false
+    },
+    "services": {
+      "description": "The services BotCube creates, where one serves differently from its default.",
+      "type": "object",
+      "properties": {
+        "chatService": {
+          "type": "object",
+          "properties": {
+            "image": {
+              "type": "string",
+              "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+(:\\d+)?(\\/[a-z0-9]+([._-]+[a-z0-9]+)*)+(@sha256:[0-9a-f]{64}|:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}(@sha256:[0-9a-f]{64})?)$",
+              "description": "As ECS ContainerDefinition.Image: the Chat Service image, pinned by digest in production. Absent, BotCube builds the bot's own Chat Service, or its stock one."
+            }
+          },
+          "additionalProperties": false
+        },
+        "credentialService": {
+          "type": "object",
+          "properties": {
+            "image": {
+              "type": "string",
+              "pattern": "^\\d{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com(\\.cn)?\\/[a-z0-9._/-]+(@sha256:[0-9a-f]{64}|:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}(@sha256:[0-9a-f]{64})?)$",
+              "description": "As ECS ContainerDefinition.Image and Lambda Code.ImageUri, so an Amazon ECR image: the Credential Service image, which its audit-copy Lambda also runs, pinned by digest in production. Absent, BotCube builds the bot's own Credential Service, or its stock one."
+            },
+            "http": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "description": "BotCube-owned: the prefix the Credential Service serves its RPC under, which its listener rule and the service read alike; absent, none.",
+                  "type": "string",
+                  "pattern": "^(\\/[A-Za-z0-9._~-]+)+$"
+                },
+                "publicPaths": {
+                  "description": "BotCube-owned: the paths under path the User's browser may reach at domains.credentialService; required with it.",
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "starts_with",
+                    "pattern": "^\\/.*"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "leadingKeyPrefixes": {
+              "description": "As DynamoDB's dynamodb:LeadingKeys condition: the partition-key prefixes of the Chat table rows the product's service reads and writes.",
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "agentCore": {
+      "description": "The AgentCore resources BotCube creates.",
+      "type": "object",
+      "properties": {
+        "runtime": {
+          "type": "object",
+          "properties": {
+            "platformVersion": {
+              "description": "BotCube-owned: the Runtime's platform generation; absent, V2.",
+              "type": "string",
+              "enum": ["V1", "V2"]
+            },
+            "containerUri": {
+              "type": "string",
+              "pattern": "^\\d{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com(\\.cn)?\\/[a-z0-9._/-]+(@sha256:[0-9a-f]{64}|:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}(@sha256:[0-9a-f]{64})?)$",
+              "description": "As CloudFormation Runtime ContainerConfiguration.ContainerUri: the Bot Image the Runtime runs, built FROM the Harness image and pinned by digest in production. Absent, BotCube builds the Harness and the bot's staged image with CodeBuild."
+            },
+            "rollbackEndpoint": {
+              "description": "BotCube-owned: a V1_ROLLBACK endpoint on an earlier Runtime version, to move back to; absent, none.",
+              "type": "object",
+              "properties": {
+                "agentRuntimeVersion": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$",
+                  "description": "As CloudFormation RuntimeEndpoint.AgentRuntimeVersion."
+                }
+              },
+              "required": ["agentRuntimeVersion"],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "browsers": {
+          "type": "object",
+          "properties": {
+            "link": {
+              "type": "object",
+              "properties": {
+                "extension": {
+                  "type": "object",
+                  "properties": {
+                    "bucket": { "type": "string", "minLength": 1 },
+                    "key": { "type": "string", "minLength": 1 },
+                    "versionId": { "type": "string", "minLength": 1 }
+                  },
+                  "required": ["bucket", "key", "versionId"],
+                  "additionalProperties": false,
+                  "description": "The link browser's extension, as CloudFormation's S3Location."
+                }
+              },
+              "required": ["extension"],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "network": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "natGateways": {
+          "description": "As CDK VpcProps.natGateways: 1, BotCube creates and parks a NAT in existing.vpc; 0 or absent, the VPC brings its own egress.",
+          "anyOf": [
+            { "type": "number", "const": 0 },
+            { "type": "number", "const": 1 }
+          ]
+        },
+        "publicIp": {
+          "description": "As AWS::EC2::EIP PublicIp: the Elastic IP BotCube's NAT egress leaves through, which the egress stack owns once imported; with natGateways 1.",
+          "type": "string",
+          "format": "ipv4",
+          "pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cloudflare": {
+      "description": "The Cloudflare records BotCube creates in front of the origins.",
+      "type": "object",
+      "properties": {
+        "zone": {
+          "type": "string",
+          "minLength": 1,
+          "description": "BotCube-owned: the Cloudflare zone the origins are records in."
+        },
+        "originPull": {
+          "type": "object",
+          "properties": {
+            "caCertificate": {
+              "type": "string",
+              "minLength": 1,
+              "description": "BotCube-owned: the authenticated origin pull CA, a PEM file relative to this file."
+            },
+            "organization": {
+              "description": "BotCube-owned: the Organization (O) of the origin pull client certificate's subject; absent, name.",
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["caCertificate"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["zone", "originPull"],
       "additionalProperties": false
     },
     "schedules": {
@@ -1651,8 +2189,7 @@
     "existing": {
       "type": "object",
       "properties": {
-        "network": {
-          "description": "A network that brings its own egress: BotCube creates, routes and parks no NAT in it, so the deploy identity names no aws.ecs.privateEgress.",
+        "vpc": {
           "type": "object",
           "properties": {
             "vpcId": { "type": "string", "pattern": "^vpc-[0-9a-z]+$" },
@@ -1666,12 +2203,16 @@
                     "type": "string",
                     "pattern": "^subnet-[0-9a-z]+$"
                   },
-                  "availabilityZone": { "type": "string", "minLength": 1 }
+                  "availabilityZone": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "As CDK SubnetAttributes.availabilityZone, which CDK needs to synthesize without credentials."
+                  }
                 },
                 "required": ["subnetId", "availabilityZone"],
                 "additionalProperties": false
               },
-              "description": "The origin load balancer's subnets."
+              "description": "The origin load balancer's subnets; with network.natGateways 1, the NAT is in the first."
             },
             "privateSubnets": {
               "minItems": 2,
@@ -1683,16 +2224,49 @@
                     "type": "string",
                     "pattern": "^subnet-[0-9a-z]+$"
                   },
-                  "availabilityZone": { "type": "string", "minLength": 1 },
-                  "cidrBlock": { "type": "string", "minLength": 1 }
+                  "availabilityZone": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "As CDK SubnetAttributes.availabilityZone, which CDK needs to synthesize without credentials."
+                  },
+                  "ipv4CidrBlock": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "As CDK SubnetAttributes.ipv4CidrBlock, which CDK needs to synthesize without credentials."
+                  },
+                  "routeTableId": {
+                    "description": "As CDK SubnetAttributes.routeTableId: required with network.natGateways 1, which routes it to the NAT.",
+                    "type": "string",
+                    "pattern": "^rtb-[0-9a-z]+$"
+                  }
                 },
-                "required": ["subnetId", "availabilityZone", "cidrBlock"],
+                "required": ["subnetId", "availabilityZone", "ipv4CidrBlock"],
                 "additionalProperties": false
               },
-              "description": "The services', browsers' and Lambdas' subnets, which must already reach the internet; the proxy carries only the services' own traffic."
+              "description": "The services', browsers' and Lambdas' subnets."
             }
           },
           "required": ["vpcId", "publicSubnets", "privateSubnets"],
+          "additionalProperties": false,
+          "description": "The VPC, as CDK VpcAttributes: BotCube creates none. With network.natGateways 0 or absent, its private subnets must already reach the internet."
+        },
+        "browsers": {
+          "type": "object",
+          "properties": {
+            "link": {
+              "description": "The link browser, in existing.vpc's private subnets, and its security group.",
+              "type": "object",
+              "properties": {
+                "browserId": { "type": "string", "minLength": 1 },
+                "securityGroupId": {
+                  "type": "string",
+                  "pattern": "^sg-[0-9a-z]+$"
+                }
+              },
+              "required": ["browserId", "securityGroupId"],
+              "additionalProperties": false
+            }
+          },
           "additionalProperties": false
         },
         "kmsKeys": {
@@ -1767,6 +2341,18 @@
               "description": "The origin load balancer's connection logs.",
               "type": "string",
               "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+            },
+            "slots": {
+              "description": "As CDK BucketAttributes: the bucket parking keeps the origin's slot in.",
+              "type": "object",
+              "properties": {
+                "bucketName": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+                }
+              },
+              "required": ["bucketName"],
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
@@ -1843,30 +2429,12 @@
           "additionalProperties": false
         }
       },
+      "required": ["vpc"],
       "additionalProperties": false,
       "description": "Resources the operator supplies, with their grants, instead of BotCube creating them: BotCube creates neither a existing resource nor a policy on it, and `botcube footprint` lists the grants each one needs. Each one left out, BotCube creates and grants."
     },
-    "productName": {
-      "description": "The product's name, as Users see it.",
-      "type": "string",
-      "minLength": 1
-    },
-    "productService": {
-      "description": "The product's own service.",
-      "type": "object",
-      "properties": {
-        "agentComputerStartedPath": {
-          "type": "string",
-          "format": "starts_with",
-          "pattern": "^\\/.*",
-          "description": "The Credential Service path called when an Agent Computer's browser starts, for the product to prepare it."
-        }
-      },
-      "required": ["agentComputerStartedPath"],
-      "additionalProperties": false
-    },
     "planUsage": {
-      "description": "Plan Usage, whose models run on a linked plan.",
+      "description": "BotCube-owned: Plan Usage, whose models run on a linked plan.",
       "type": "object",
       "properties": {
         "ownerAccountId": {
@@ -1885,13 +2453,38 @@
         "automationUserAgents": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
-          "description": "User-Agent substrings marking automation, which doesn't wake a parked deployment."
+          "description": "BotCube-owned: User-Agent substrings marking automation, which doesn't wake a parked deployment."
+        },
+        "autoPark": {
+          "description": "BotCube-owned: whether an idle deployment parks itself; absent, it does not.",
+          "type": "boolean"
         }
       },
       "required": ["automationUserAgents"],
       "additionalProperties": false
+    },
+    "alarms": {
+      "description": "The alarms BotCube creates beside its default ones.",
+      "type": "object",
+      "properties": {
+        "runtime": {
+          "description": "BotCube-owned: alarms on the Runtime's errors, to the alerts topic; absent, none.",
+          "type": "object",
+          "properties": {
+            "metricNamespace": {
+              "type": "string",
+              "minLength": 1,
+              "description": "As CloudWatch MetricTransformation.MetricNamespace: the Runtime's log-error metric."
+            }
+          },
+          "required": ["metricNamespace"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   },
+  "required": ["name", "env", "domains", "existing"],
   "additionalProperties": false,
   "x-renamed-keys": {
     "bot": "/bot/bot.yaml in the Bot Image; remove bot",
@@ -1903,9 +2496,323 @@
     "telemetry": "integrations.telemetry",
     "imageRegistry": "integrations.imageRegistry",
     "supplied": "existing",
-    "proxy": "network.proxy",
-    "corsOrigins": "network.corsOrigins",
-    "web": "network.corsOrigins",
-    "web.corsOrigins": "network.corsOrigins"
+    "proxy": "integrations.proxy",
+    "corsOrigins": "domains.web and domains.webAliases",
+    "web": "domains.web and domains.webAliases",
+    "productName": "productName in /bot/bot.yaml, the Bot Image's bot settings",
+    "productService": "productService in /bot/bot.yaml, the Bot Image's bot settings",
+    "network.proxy": "integrations.proxy",
+    "network.corsOrigins": "domains.web and domains.webAliases",
+    "existing.network": "existing.vpc, with network.natGateways 0",
+    "**.secretArn": "secretId, the secret's name or ARN"
+  },
+  "x-retired-files": {
+    "identity.json": {
+      "aws.account": { "path": "env.account" },
+      "aws.region": { "path": "env.region" },
+      "aws.cloudFormation.stackFamily": { "path": "name" },
+      "aws.agentCore.runtime": {
+        "path": "names.runtimeAgentRuntimeName",
+        "default": "{snake}_runtime"
+      },
+      "aws.agentCore.runtimeMonitoring.alarmPrefix": {
+        "path": "names.runtimeAlarmNamePrefix",
+        "default": "{name}-runtime",
+        "when": "alarms.runtime"
+      },
+      "aws.agentCore.runtimeMonitoring.filterName": {
+        "path": "names.runtimeErrorsFilterName",
+        "default": "{name}-runtime-error-lines",
+        "when": "alarms.runtime"
+      },
+      "aws.agentCore.runtimeMonitoring.metricNamespace": {
+        "path": "alarms.runtime.metricNamespace"
+      },
+      "aws.agentCore.platformVersion": {
+        "path": "agentCore.runtime.platformVersion"
+      },
+      "aws.agentCore.runtimeNetworkParameter": {
+        "derived": "/{name}/agentcore/security-group-id",
+        "when": "existing.browsers.link"
+      },
+      "aws.agentCore.memory": {
+        "path": "names.memoryName",
+        "default": "{snake}_memory"
+      },
+      "aws.agentCore.sessionApiFunction": {
+        "path": "names.sessionApiFunctionName",
+        "default": "{name}-session-api"
+      },
+      "aws.agentCore.agentComputerBrowser.name": {
+        "path": "names.agentComputerBrowserName",
+        "default": "{snake}_agent_computer_managed"
+      },
+      "aws.agentCore.agentComputerBrowser.profileNamePrefix": {
+        "path": "names.agentComputerBrowserProfileNamePrefix",
+        "default": "{snake}_"
+      },
+      "aws.agentCore.privateNatBrowser.name": {
+        "path": "names.linkBrowserName",
+        "default": "{snake}_link",
+        "when": "existing.browsers.link"
+      },
+      "aws.agentCore.privateNatBrowser.id": {
+        "path": "existing.browsers.link.browserId"
+      },
+      "aws.agentCore.privateNatBrowser.vpcId": {
+        "path": "existing.vpc.vpcId",
+        "when": "existing.browsers.link"
+      },
+      "aws.agentCore.privateNatBrowser.browserSecurityGroupId": {
+        "path": "existing.browsers.link.securityGroupId"
+      },
+      "aws.agentCore.privateNatBrowser.extension.bucket": {
+        "path": "agentCore.browsers.link.extension.bucket",
+        "when": "existing.browsers.link"
+      },
+      "aws.agentCore.privateNatBrowser.extension.prefix": {
+        "path": "agentCore.browsers.link.extension.key",
+        "when": "existing.browsers.link"
+      },
+      "aws.agentCore.privateNatBrowser.extension.versionId": {
+        "path": "agentCore.browsers.link.extension.versionId",
+        "when": "existing.browsers.link"
+      },
+      "aws.agentCore.privateNatBrowser.subnets": {
+        "path": "existing.vpc.privateSubnets",
+        "each": {
+          "id": "subnetId",
+          "availabilityZone": "availabilityZone",
+          "cidrBlock": "ipv4CidrBlock"
+        },
+        "when": "existing.browsers.link"
+      },
+      "aws.agentCore.rollbackVersion": {
+        "path": "agentCore.runtime.rollbackEndpoint.agentRuntimeVersion"
+      },
+      "aws.credentialService.vpcId": { "path": "existing.vpc.vpcId" },
+      "aws.signInPool.name": {
+        "path": "integrations.signIn.userPool.userPoolName"
+      },
+      "aws.signInPool.domainPrefix": {
+        "path": "integrations.signIn.userPool.domain"
+      },
+      "aws.signInPool.customDomain.name": {
+        "path": "integrations.signIn.userPool.customDomain.domain"
+      },
+      "aws.signInPool.customDomain.certificateArn": {
+        "path": "integrations.signIn.userPool.customDomain.certificateArn"
+      },
+      "aws.signInPool.callbackUrls": {
+        "path": "integrations.signIn.userPool.callbackUrls"
+      },
+      "aws.signInPool.logoutUrls": {
+        "path": "integrations.signIn.userPool.logoutUrls"
+      },
+      "aws.signInPool.email.domain": {
+        "path": "integrations.signIn.userPool.email.sesVerifiedDomain"
+      },
+      "aws.signInPool.email.from": {
+        "path": "integrations.signIn.userPool.email.fromEmail"
+      },
+      "aws.signInPool.email.fromName": {
+        "path": "integrations.signIn.userPool.email.fromName"
+      },
+      "aws.signInPool.email.sesVerified": {
+        "path": "integrations.signIn.userPool.email.sesVerified"
+      },
+      "aws.signInPool.google.secretName": {
+        "path": "integrations.signIn.userPool.google.credential.secretId"
+      },
+      "aws.signInPool.login": { "path": "integrations.signIn.userPool.login" },
+      "aws.ecs.privateNamespace": { "derived": "{name}.internal" },
+      "aws.ecs.credentialService.rpcPath": {
+        "path": "services.credentialService.http.path",
+        "default": ""
+      },
+      "aws.ecs.credentialService.publicHostname": {
+        "path": "domains.credentialService",
+        "as": "hostname"
+      },
+      "aws.ecs.credentialService.publicPaths": {
+        "path": "services.credentialService.http.publicPaths"
+      },
+      "aws.ecs.credentialService.chatTableKeyPrefixes": {
+        "path": "services.credentialService.leadingKeyPrefixes"
+      },
+      "aws.ecs.chatService.turnIdentityKeysSecretName": {
+        "derived": "/{name}/chat-service/turn-identity-keys"
+      },
+      "aws.ecs.cluster": { "path": "names.clusterName", "default": "{name}" },
+      "aws.ecs.deployRoleName": {
+        "path": "names.deployRoleName",
+        "default": "{name}-ecs-github-deploy"
+      },
+      "aws.ecs.originPullCaCertificate": {
+        "file": "cloudflare.originPull.caCertificate"
+      },
+      "aws.ecs.originPullClientSecretName": {
+        "derived": "/{name}/cloudflare/origin-pull-client"
+      },
+      "aws.ecs.originTokenSecretName": {
+        "derived": "/{name}/cloudflare/origin-api-token"
+      },
+      "aws.ecs.previewOriginStackName": {
+        "path": "names.previewOriginStackName",
+        "default": "{name}-preview-origin"
+      },
+      "aws.ecs.privateEgress.stackName": {
+        "path": "names.privateEgressStackName",
+        "default": "{name}-private-egress",
+        "when": "network.natGateways"
+      },
+      "aws.ecs.privateEgress.publicIp": {
+        "path": "network.publicIp",
+        "when": "network.natGateways"
+      },
+      "aws.ecs.privateEgress.routeTableId": {
+        "path": "existing.vpc.privateSubnets.0.routeTableId",
+        "when": "network.natGateways"
+      },
+      "aws.ecs.privateEgress.natGateway.name": {
+        "path": "names.natGatewayName",
+        "default": "{name}-private-egress",
+        "when": "network.natGateways"
+      },
+      "aws.ecs.privateEgress.natGateway.publicSubnetId": {
+        "path": "existing.vpc.publicSubnets.0.subnetId",
+        "when": "network.natGateways"
+      },
+      "aws.ecs.apiHealth.stackName": {
+        "path": "names.apiHealthStackName",
+        "default": "{name}-api-health"
+      },
+      "aws.ecs.apiHealth.alarmName": {
+        "path": "names.apiHealthAlarmName",
+        "default": "{name}-api-health"
+      },
+      "aws.ecs.webLatency.stackName": {
+        "path": "names.webLatencyStackName",
+        "default": "{name}-web-latency"
+      },
+      "aws.ecs.webLatency.appMonitorName": {
+        "path": "names.webAppMonitorName",
+        "default": "{name}-web"
+      },
+      "aws.ecs.alertsTopicName": {
+        "path": "names.alertsTopicName",
+        "default": "{name}-alerts"
+      },
+      "aws.ecs.publicSubnets": {
+        "path": "existing.vpc.publicSubnets",
+        "each": { "id": "subnetId", "availabilityZone": "availabilityZone" }
+      },
+      "aws.ecs.originOwnership": { "derived": "{name}:preview-origin" },
+      "aws.ecs.parkedWorkerName": { "derived": "{name}-parked" },
+      "aws.ecs.parking.autoPark": {
+        "path": "parking.autoPark",
+        "default": false
+      },
+      "aws.ecs.parking.functionName": {
+        "path": "names.parkingFunctionName",
+        "default": "{name}-production-parking"
+      },
+      "aws.ecs.parking.slotBucket": {
+        "path": "existing.buckets.slots.bucketName"
+      },
+      "aws.ecs.parking.originSlotKey": { "value": "dev-slots/DEV_SLOT_ORIGIN" },
+      "aws.ecs.originZone": { "path": "cloudflare.zone" },
+      "aws.ecs.originPullOrganization": {
+        "path": "cloudflare.originPull.organization",
+        "default": "{name}"
+      },
+      "aws.ecs.deployPolicyName": {
+        "path": "names.deployPolicyName",
+        "default": "{name}-ecs-deploy"
+      },
+      "aws.ecs.rollbackTaskFamilyPrefix": {
+        "derived": "{name}-preview-rollback-"
+      },
+      "aws.ecs.rollbackPolicyName": { "derived": "{name}-preview-rollback" },
+      "aws.ecr.repository": {
+        "path": "names.repositoryName",
+        "default": "{name}/runtime"
+      },
+      "aws.codeBuild.project": {
+        "path": "names.buildProjectName",
+        "default": "{name}-container-builder"
+      },
+      "aws.lambda.family": {
+        "path": "names.buildFunctionName",
+        "default": "{name}-container-build-handler"
+      },
+      "aws.cloudWatch.logGroup": {
+        "path": "names.buildLogGroupName",
+        "default": "/aws/lambda/{name}-container-build-handler"
+      },
+      "aws.iam.deployUser": {
+        "path": "names.deployUserName",
+        "default": "{name}-deploy"
+      },
+      "aws.iam.runtimeRole": {
+        "path": "names.runtimeRoleName",
+        "default": "{name}-runtime"
+      },
+      "aws.iam.memoryRole": {
+        "path": "names.memoryRoleName",
+        "default": "{name}-memory"
+      },
+      "aws.iam.userMemoryRole": {
+        "path": "names.userMemoryRoleName",
+        "default": "{name}-user-memory"
+      },
+      "aws.iam.chatServiceTaskRole": {
+        "path": "names.chatServiceTaskRoleName"
+      },
+      "aws.iam.filesMountRole": { "path": "names.filesMountRoleName" },
+      "aws.iam.filesLinksRole": { "path": "names.filesLinksRoleName" },
+      "aws.iam.agentComputerBrowserRole": {
+        "path": "names.agentComputerBrowserRoleName"
+      },
+      "aws.iam.lambdaRole": {
+        "path": "names.buildFunctionRoleName",
+        "default": "{name}-container-build-handler"
+      },
+      "aws.iam.codeBuildRole": {
+        "path": "names.buildRoleName",
+        "default": "{name}-container-build"
+      },
+      "aws.iam.sessionApiRole": {
+        "path": "names.sessionApiRoleName",
+        "default": "{name}-session-api"
+      },
+      "aws.iam.invokePolicyFamily": {
+        "path": "names.invokePolicyNamePrefix",
+        "default": "{name}-agentcore-invoke"
+      },
+      "ssm.runtimeArn": { "derived": "/{name}/agentcore/runtime-arn" },
+      "ssm.parkState": { "derived": "/{name}/production/park-state" },
+      "domains.web": { "path": "domains.web" },
+      "domains.chatService": { "path": "domains.chatService" },
+      "domains.chatServicePreview": { "path": "domains.chatServicePreview" },
+      "domains.rawServiceOrigins": {
+        "path": "domains.productService",
+        "as": "list",
+        "default": []
+      }
+    },
+    "agentcore/agentcore.json": {
+      "name": { "derived": "{compact}" },
+      "tags.agentcore:project-name": { "path": "name" },
+      "tags": { "path": "tags", "spread": true },
+      "runtimes.0.name": { "derived": "{snake}" },
+      "runtimes.0.dockerfile": { "value": ".tool-dist/Dockerfile" },
+      "memories.0.name": { "derived": "{snake}" }
+    },
+    "agentcore/aws-targets.json": {
+      "0.name": { "path": "names.agentCoreTargetName", "default": "default" },
+      "0.account": { "path": "env.account" },
+      "0.region": { "path": "env.region" }
+    }
   }
 }

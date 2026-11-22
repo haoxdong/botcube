@@ -4,12 +4,12 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import { setSessionProjectRoot } from '@aws/agentcore-cdk';
 import { resolve } from 'path';
 import { AgentCoreStack, type AgentCoreStackProps } from '../lib/cdk-stack';
-import { readDeployIdentity, readProjectSpec } from '../lib/deploy-config';
+import { agentCoreProjectRoot, readDeployIdentity, readProjectSpec } from '../lib/deploy-config';
 
 const DEPLOY_ROOT = resolve(__dirname, '../../../../examples/public/deploy');
 const SPEC = readProjectSpec(DEPLOY_ROOT);
 const IDENTITY = readDeployIdentity(DEPLOY_ROOT);
-setSessionProjectRoot(DEPLOY_ROOT);
+setSessionProjectRoot(agentCoreProjectRoot(readProjectSpec(DEPLOY_ROOT)));
 
 function synthesize(userMemoryRole?: AgentCoreStackProps['userMemoryRole']): Template {
   return Template.fromStack(

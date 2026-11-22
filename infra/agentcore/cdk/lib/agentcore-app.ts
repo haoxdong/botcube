@@ -1,4 +1,4 @@
-import type { App } from 'aws-cdk-lib';
+import { Tags, type App } from 'aws-cdk-lib';
 import * as path from 'path';
 import { grantLambdasInline } from './lambda-inline-grants';
 import { AgentCoreStack, type AgentCoreStackProps, type AgentCorePhysicalIdentity } from './cdk-stack';
@@ -6,12 +6,28 @@ import type { DeployConfig, DeployIdentity } from './deploy-config';
 import type { UserMemoryRole } from './user-memory-role';
 
 /**
+ * The AgentCore resources whose tags agentcore-cdk composes itself, so a resource's own tag wins over a project tag
+ * of the same key; its project tags skip them, and so do the BotCube Config's.
+ */
+const COMPOSED_TAG_TYPES = [
+  'AWS::BedrockAgentCore::Runtime',
+  'AWS::BedrockAgentCore::Memory',
+  'AWS::BedrockAgentCore::Evaluator',
+  'AWS::BedrockAgentCore::OnlineEvaluationConfig',
+  'AWS::BedrockAgentCore::PolicyEngine',
+  'AWS::BedrockAgentCore::Gateway',
+  'AWS::BedrockAgentCore::Dataset',
+  'AWS::BedrockAgentCore::Harness',
+  'AWS::BedrockAgentCore::CapacityProvider',
+];
+
+/**
  * Add one AgentCore stack per deployment target of a loaded bot deploy config, deployed from `commit`, with the
- * BotCube Config's `awsAccess.kind`.
+ * BotCube Config's `awsAccess.kind` and its `tags` on every stack.
  */
 export function addAgentCoreStacks(
   app: App,
-  { deployRoot, identity, spec, targets }: DeployConfig,
+  { deployRoot, identity, spec, targets, runtimeImage, tags = {} }: DeployConfig,
   commit: string,
   overrides: Omit<Partial<AgentCoreStackProps>, 'spec' | 'physicalIdentity' | 'env'> = {},
   awsAccess: 'web-identity' | 'assume-role' = 'web-identity'
@@ -54,6 +70,7 @@ export function addAgentCoreStacks(
         platformVersion: agentCore.platformVersion,
         ...(agentCore.rollbackVersion !== undefined ? { rollbackVersion: agentCore.rollbackVersion } : {}),
         harnessCodeLocation: path.resolve(deployRoot, runtime.codeLocation),
+        runtimeImage,
         runtimeNetwork: agentCore.runtimeNetworkParameter
           ? {
               securityGroupParameterName: agentCore.runtimeNetworkParameter,
@@ -70,6 +87,8 @@ export function addAgentCoreStacks(
         },
       }
     );
+    for (const [key, value] of Object.entries(tags))
+      Tags.of(stack).add(key, value, { excludeResourceTypes: COMPOSED_TAG_TYPES });
     grantLambdasInline(stack);
   }
 }

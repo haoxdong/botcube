@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -37,6 +37,11 @@ class CredentialServiceSettings:
     invocation_secret: Callable[[], str]
     # Trusted deployment owner for Plan Usage; other providers remain unrestricted.
     plan_usage_owner_account_id: str = ''
+
+
+def plan_usage_owner(config: Mapping[str, Any]) -> str:
+    """The Account whose linked plans Plan Usage runs on: the BotCube Config's `planUsage.ownerAccountId`, empty without one."""
+    return str(config.get('planUsage', {}).get('ownerAccountId', ''))
 
 
 class InvocationGuard:

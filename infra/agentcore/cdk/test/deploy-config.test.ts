@@ -3,9 +3,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { findConfigRoot, type AgentCoreProjectSpec } from '@aws/agentcore-cdk';
-import { loadDeployConfig, type DeployIdentity } from '../lib/deploy-config';
+import { loadDeployConfig } from '../lib/deploy-config';
 
-const EXAMPLE_DEPLOY = path.resolve(__dirname, '../../../../examples/public/deploy');
+const botcubeRoot = path.resolve(__dirname, '../../../..');
+/** The public example's retired deploy-root files, as they were before its BotCube Config held them. */
+const RETIRED = path.join(botcubeRoot, 'tests/fixtures/public-example-deploy-root');
+const PUBLIC_EXAMPLE = path.join(botcubeRoot, 'examples/public/deploy');
 const tempRoots: string[] = [];
 
 /** The example spec's one runtime. */
@@ -19,32 +22,14 @@ afterEach(() => {
   for (const root of tempRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-interface Fixture {
-  identity?: (identity: DeployIdentity) => void;
-  spec?: (spec: AgentCoreProjectSpec) => void;
-  targets?: unknown[];
-}
-
-/** A copy of the public example's deploy root, edited per test. */
-function deployRoot(fixture: Fixture = {}): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentcore-deploy-config-'));
+/** A copy of the public example with its BotCube Config edited by `edit`, and its empty deploy root. */
+function publicExample(edit: (text: string) => string = text => text): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentcore-public-example-'));
   tempRoots.push(root);
-  const identity: DeployIdentity = JSON.parse(fs.readFileSync(path.join(EXAMPLE_DEPLOY, 'identity.json'), 'utf8'));
-  const spec: AgentCoreProjectSpec = JSON.parse(
-    fs.readFileSync(path.join(EXAMPLE_DEPLOY, 'agentcore/agentcore.json'), 'utf8')
-  );
-  const [memory] = spec.memories;
-  assert(memory, 'the example spec declares a memory');
-  fixture.identity?.(identity);
-  fixture.spec?.(spec);
-  fs.mkdirSync(path.join(root, 'agentcore'));
-  fs.writeFileSync(path.join(root, 'identity.json'), JSON.stringify(identity));
-  fs.writeFileSync(path.join(root, 'agentcore/agentcore.json'), JSON.stringify(spec));
-  fs.writeFileSync(
-    path.join(root, 'agentcore/aws-targets.json'),
-    JSON.stringify(fixture.targets ?? [{ name: 'template', account: '000000000000', region: 'us-east-1' }])
-  );
-  return root;
+  const example = path.dirname(PUBLIC_EXAMPLE);
+  fs.writeFileSync(path.join(root, 'botcube.yaml'), edit(fs.readFileSync(path.join(example, 'botcube.yaml'), 'utf8')));
+  fs.mkdirSync(path.join(root, 'deploy'));
+  return path.join(root, 'deploy');
 }
 
 test('requires a deploy root', async () => {
@@ -53,126 +38,63 @@ test('requires a deploy root', async () => {
   );
 });
 
-test('loads the identity, project spec and targets from a deploy root relative to the working directory', async () => {
-  const root = deployRoot();
+test('loads the identity, project spec and targets from the BotCube Config beside a deploy root relative to the working directory', async () => {
+  const root = publicExample();
 
   const config = await loadDeployConfig(path.basename(root), path.dirname(root));
 
   expect(config.deployRoot).toBe(root);
   expect(config.identity.aws.cloudFormation.stackFamily).toBe('bot-cube');
   expect(config.spec.name).toBe('botcube');
-  expect(config.targets).toEqual([expect.objectContaining({ name: 'template', account: '000000000000' })]);
-  // The AgentCore constructs find their config through the session project root.
-  expect(findConfigRoot()).toBe(path.join(root, 'agentcore'));
+  expect(config.targets).toEqual([{ name: 'template', account: '000000000000', region: 'us-east-1' }]);
 });
 
-test('reads agentcore.json only from the deploy root', async () => {
-  const root = deployRoot();
-  fs.rmSync(path.join(root, 'agentcore/agentcore.json'));
+test('gives agentcore-cdk the project it finds on disk', async () => {
+  const config = await loadDeployConfig(PUBLIC_EXAMPLE, '/');
 
-  await expect(loadDeployConfig(root, '/')).rejects.toThrow(path.join(root, 'agentcore/agentcore.json'));
+  expect(config.identity).not.toHaveProperty('github');
+  const configRoot = findConfigRoot();
+  assert(configRoot, 'agentcore-cdk finds a project');
+  expect(JSON.parse(fs.readFileSync(path.join(configRoot, 'agentcore.json'), 'utf8'))).toEqual(config.spec);
 });
 
-test('rejects a project without runtimes', async () => {
-  const root = deployRoot({ spec: spec => (spec.runtimes = []) });
+test('runs the Bot Image the BotCube Config names, and builds one without it', async () => {
+  const image = `123456789012.dkr.ecr.us-east-1.amazonaws.com/bot-cube/bot@sha256:${'b'.repeat(64)}`;
+  const named = publicExample(text =>
+    text.replace('runtime: { platformVersion: V2 }', `runtime: { platformVersion: V2, containerUri: "${image}" }`)
+  );
 
-  await expect(loadDeployConfig(root, '/')).rejects.toThrow(new Error('agentcore.json must configure a runtime'));
+  expect((await loadDeployConfig(named, '/')).runtimeImage).toBe(image);
+  expect((await loadDeployConfig(PUBLIC_EXAMPLE, '/')).runtimeImage).toBeUndefined();
 });
 
-test.each([
-  ['account', (identity: DeployIdentity) => Reflect.deleteProperty(identity.aws, 'account')],
-  ['region', (identity: DeployIdentity) => Reflect.deleteProperty(identity.aws, 'region')],
-])('rejects an identity.json without an %s', async (_field, edit) => {
-  const root = deployRoot({ identity: edit });
+test.each(['identity.json', 'agentcore/agentcore.json', 'agentcore/aws-targets.json'])(
+  'fails while the deploy root still holds its retired %s, and loads once it is gone',
+  async retired => {
+    const root = publicExample();
+    fs.mkdirSync(path.join(root, 'agentcore'));
+    fs.copyFileSync(path.join(RETIRED, retired), path.join(root, retired));
+
+    await expect(loadDeployConfig(root, '/')).rejects.toThrow(
+      `Deploy root ${root}: ${retired} is retired: botcube.yaml beside the deploy root replaces it`
+    );
+    fs.rmSync(path.join(root, retired));
+    await expect(loadDeployConfig(root, '/')).resolves.toEqual(expect.objectContaining({ deployRoot: root }));
+  }
+);
+
+test('rejects a BotCube Config that names no account and region', async () => {
+  const root = publicExample(text => text.replace(/^env: .*$/m, ''));
 
   await expect(loadDeployConfig(root, '/')).rejects.toThrow(
-    new Error(`Invalid deploy identity at ${path.join(root, 'identity.json')}`)
+    `BotCube Config ${path.join(root, '..', 'botcube.yaml')}: env: 'env' is a required property`
   );
 });
 
-test('rejects an identity.json without an aws section', async () => {
-  const root = deployRoot({ identity: identity => Reflect.deleteProperty(identity, 'aws') });
-
-  await expect(loadDeployConfig(root, '/')).rejects.toThrow('Invalid deploy identity');
-});
-
-test('rejects a deploy root with no AWS targets', async () => {
-  const root = deployRoot({ targets: [] });
-
-  await expect(loadDeployConfig(root, '/')).rejects.toThrow(
-    new Error(`No deployment targets configured in ${path.join(root, 'agentcore/aws-targets.json')}`)
-  );
-});
-
-test.each([
-  ['account', { name: 'other', account: '111111111111', region: 'us-east-1' }],
-  ['region', { name: 'other', account: '000000000000', region: 'us-west-2' }],
-])('rejects a target whose %s does not match identity.json', async (_field, mismatched) => {
-  const root = deployRoot({
-    targets: [{ name: 'template', account: '000000000000', region: 'us-east-1' }, mismatched],
-  });
-
-  await expect(loadDeployConfig(root, '/')).rejects.toThrow(
-    new Error('AWS target other does not match identity.json account and region')
-  );
-});
-
-test.each([
-  [
-    'payments',
-    (spec: AgentCoreProjectSpec) => (spec.payments = [{ name: 'pay', authorizerType: 'AWS_IAM', connectors: [] }]),
-  ],
-  ['harnesses', (spec: AgentCoreProjectSpec) => (spec.harnesses = [{ name: 'harness', path: 'harness' }])],
-  [
-    'agentCoreGateways',
-    (spec: AgentCoreProjectSpec) => (spec.agentCoreGateways = [{ name: 'gateway', targets: [] } as never]),
-  ],
-  [
-    'credentials',
-    (spec: AgentCoreProjectSpec) => (spec.credentials = [{ authorizerType: 'ApiKeyCredentialProvider', name: 'key' }]),
-  ],
-  [
-    'knowledge-base connectors',
-    (spec: AgentCoreProjectSpec) =>
-      (spec.knowledgeBases = [
-        { type: 'AgentCoreKnowledgeBase', name: 'kb', dataSources: [{ type: 'WEB', connectorConfigFile: 'web.json' }] },
-      ]),
-  ],
-])('rejects an agentcore.json that configures %s, which this app does not deploy', async (feature, edit) => {
-  const root = deployRoot({ spec: edit });
-
-  await expect(loadDeployConfig(root, '/')).rejects.toThrow(
-    new Error(`agentcore.json configures ${feature}, which this app does not deploy`)
-  );
-});
-
-test('accepts a knowledge base that reads only from S3', async () => {
-  const root = deployRoot({
-    spec: spec =>
-      (spec.knowledgeBases = [
-        { type: 'AgentCoreKnowledgeBase', name: 'kb', dataSources: [{ type: 'S3', uri: 's3://bucket/prefix' }] },
-      ]),
-  });
-
-  await expect(loadDeployConfig(root, '/')).resolves.toEqual(expect.objectContaining({ deployRoot: root }));
-});
-
-test('accepts an agentcore.json that omits the optional features', async () => {
-  const root = deployRoot({
-    spec: spec => {
-      delete spec.payments;
-      delete spec.harnesses;
-      delete spec.knowledgeBases;
-    },
-  });
-
-  await expect(loadDeployConfig(root, '/')).resolves.toEqual(expect.objectContaining({ deployRoot: root }));
-});
-
-const HARNESS = path.resolve(__dirname, '../../../../harness/deepagents');
+const HARNESS = path.join(botcubeRoot, 'harness/deepagents');
 
 test("the template names only its project, runtime and memory: BotCube's defaults fill the rest", async () => {
-  const config = await loadDeployConfig(EXAMPLE_DEPLOY, '/');
+  const config = await loadDeployConfig(PUBLIC_EXAMPLE, '/');
 
   expect(config.identity.aws.agentCore.sessionApiAlias).toBe('live');
   expect(config.spec).toMatchObject({
@@ -206,32 +128,8 @@ test("the template names only its project, runtime and memory: BotCube's default
   ]);
 });
 
-test("a bot's own value replaces BotCube's default", async () => {
-  const root = deployRoot({
-    identity: identity => (identity.aws.agentCore.sessionApiAlias = 'blue'),
-    spec: spec => {
-      runtimeOf(spec).envVars = [];
-      Object.assign(spec.memories[0] ?? {}, { eventExpiryDuration: 30 });
-    },
-  });
-
-  const config = await loadDeployConfig(root, '/');
-
-  expect(config.identity.aws.agentCore.sessionApiAlias).toBe('blue');
-  expect(runtimeOf(config.spec).envVars).toEqual([]);
-  expect(config.spec.memories[0]?.eventExpiryDuration).toBe(30);
-});
-
-test('rejects an agentcore.json that the defaults cannot make valid, naming it', async () => {
-  const root = deployRoot({ spec: spec => Object.assign(runtimeOf(spec), { build: 'Zip' }) });
-
-  await expect(loadDeployConfig(root, '/')).rejects.toThrow(
-    `Invalid AgentCore config at ${path.join(root, 'agentcore/agentcore.json')}`
-  );
-});
-
 test('SDK metrics stay off while Turn tracing remains enabled', async () => {
-  const config = await loadDeployConfig(EXAMPLE_DEPLOY, '/');
+  const config = await loadDeployConfig(PUBLIC_EXAMPLE, '/');
   expect(runtimeOf(config.spec).envVars).toEqual(
     expect.arrayContaining([
       { name: 'AGENT_OBSERVABILITY_ENABLED', value: 'true' },
@@ -246,7 +144,7 @@ test('SDK metrics stay off while Turn tracing remains enabled', async () => {
 });
 
 test('the default Harness environment carries no dead var or rolled-out flag', async () => {
-  const config = await loadDeployConfig(EXAMPLE_DEPLOY, '/');
+  const config = await loadDeployConfig(PUBLIC_EXAMPLE, '/');
   const { envVars } = runtimeOf(config.spec);
   assert(envVars, 'the default Harness declares an environment');
   const names = envVars.map(variable => variable.name);

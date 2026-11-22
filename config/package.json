@@ -9,6 +9,14 @@
     ".": "./schema.ts",
     "./blocks": "./blocks.ts",
     "./existing": "./existing.ts",
+    "./images": "./images.ts",
+    "./user-pool": "./user-pool.ts",
+    "./renamed-keys": "./renamed-keys.ts",
+    "./ecr": {
+      "types": "./ecr.d.cts",
+      "default": "./ecr.cjs"
+    },
+    "./deployment": "./deployment.ts",
     "./credential-fields": "./credential-fields.ts",
     "./load": "./load.ts",
     "./parse": "./parse.ts",

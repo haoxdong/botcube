@@ -1,11 +1,13 @@
+import { deployRootFiles, type DeployRootFiles } from 'botcube-config/read';
 import {
   AgentCoreProjectSpecSchema,
-  ConfigIO,
+  AwsDeploymentTargetsSchema,
   setSessionProjectRoot,
   type AgentCoreProjectSpec,
   type AwsDeploymentTarget,
 } from '@aws/agentcore-cdk';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import type { RuntimePlatformVersion } from './runtime-platform';
 
@@ -72,6 +74,17 @@ function readJson(file: string): unknown {
   }
 }
 
+/** The deploy root's retired `file`, built from the BotCube Config beside it. */
+function readDeployRootFile(deployRoot: string, files: DeployRootFiles, file: string): unknown {
+  try {
+    return files.file(file);
+  } catch (error) {
+    throw new Error(
+      `Cannot read ${path.join(deployRoot, file)}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
 export interface PrivateNatBrowserIdentity {
   name: string;
   id: string;
@@ -116,7 +129,6 @@ export interface DeployIdentity {
   };
   /** The Chat Service's origin: its hostname, over https, issues the per-Turn JWT. */
   domains: { chatService: string };
-  artifacts: { toolStaging: { hook: string } };
 }
 
 export interface DeployConfig {
@@ -124,26 +136,25 @@ export interface DeployConfig {
   identity: DeployIdentity;
   spec: AgentCoreProjectSpec;
   targets: AwsDeploymentTarget[];
+  /** The Bot Image the Runtime runs, the BotCube Config's `agentCore.runtime.containerUri`; absent, it is built. */
+  runtimeImage?: string;
+  /** The BotCube Config's `tags`, on every stack. */
+  tags?: Readonly<Record<string, string>>;
 }
 
-/** The deploy root's identity.json over BotCube's identity-defaults.json. */
-export function readDeployIdentity(deployRoot: string): DeployIdentity {
-  const identityPath = path.join(deployRoot, 'identity.json');
-  const identity = overDefaults(readJson(path.join(INFRA, 'identity-defaults.json')), readJson(identityPath)) as {
-    aws?: Partial<DeployIdentity['aws']>;
-  };
-  // identity.json is operator input: check the fields it must carry before trusting its shape.
-  if (!identity.aws?.account || !identity.aws.region) {
-    throw new Error(`Invalid deploy identity at ${identityPath}`);
-  }
-  return identity as DeployIdentity;
+/** The deploy root's identity over BotCube's identity-defaults.json, built from the BotCube Config beside it. */
+export function readDeployIdentity(deployRoot: string, files = deployRootFiles(deployRoot)): DeployIdentity {
+  return overDefaults(
+    readJson(path.join(INFRA, 'identity-defaults.json')),
+    readDeployRootFile(deployRoot, files, 'identity.json')
+  ) as DeployIdentity;
 }
 
-/** The deploy root's agentcore.json over the project, runtime and memory defaults every deploy shares. */
-export function readProjectSpec(deployRoot: string): AgentCoreProjectSpec {
-  const specPath = path.join(deployRoot, 'agentcore', 'agentcore.json');
-  const own = readJson(specPath);
-  if (!isRecord(own)) throw new Error(`Invalid AgentCore config at ${specPath}: not a JSON object`);
+/** The AgentCore project its BotCube Config gives, over the project, runtime and memory defaults every deploy shares. */
+export function readProjectSpec(deployRoot: string, files = deployRootFiles(deployRoot)): AgentCoreProjectSpec {
+  const specPath = path.join(deployRoot, '..', 'botcube.yaml');
+  const own = readDeployRootFile(deployRoot, files, 'agentcore/agentcore.json');
+  if (!isRecord(own)) throw new Error(`Invalid AgentCore project from ${specPath}: not a JSON object`);
   const each = (entries: unknown, defaults: object) =>
     Array.isArray(entries) ? entries.map(entry => overDefaults(defaults, entry)) : entries;
   const parsed = AgentCoreProjectSpecSchema.safeParse({
@@ -151,49 +162,33 @@ export function readProjectSpec(deployRoot: string): AgentCoreProjectSpec {
     runtimes: each(own.runtimes, RUNTIME_DEFAULTS),
     memories: each(own.memories, MEMORY_DEFAULTS),
   });
-  if (!parsed.success) throw new Error(`Invalid AgentCore config at ${specPath}: ${parsed.error.message}`);
+  if (!parsed.success) throw new Error(`Invalid AgentCore project from ${specPath}: ${parsed.error.message}`);
   return parsed.data;
 }
 
 /**
- * Load the active deploy directory and fail loud before synthesis when
- * its AgentCore config does not match identity.json.
+ * The directory agentcore-cdk takes as its project: it finds the project by an agentcore/agentcore.json on disk, so
+ * the spec is written to a directory of its own. Every path in the spec is absolute, so nothing resolves against it.
  */
+export function agentCoreProjectRoot(spec: AgentCoreProjectSpec): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentcore-project-'));
+  fs.mkdirSync(path.join(root, 'agentcore'));
+  fs.writeFileSync(path.join(root, 'agentcore', 'agentcore.json'), JSON.stringify(spec));
+  return root;
+}
+
+/** Load the active deploy directory's AgentCore project, identity and target, all from the BotCube Config beside it. */
 export async function loadDeployConfig(configuredRoot: string | undefined, cwd: string): Promise<DeployConfig> {
   if (!configuredRoot) {
     throw new Error('BOTCUBE_DEPLOY_ROOT must point to the active deploy directory');
   }
   const deployRoot = path.resolve(cwd, configuredRoot);
-  const configRoot = path.join(deployRoot, 'agentcore');
-  const identity = readDeployIdentity(deployRoot);
-  setSessionProjectRoot(deployRoot);
-  const spec = readProjectSpec(deployRoot);
-  const targets = await new ConfigIO({ baseDir: configRoot }).readAWSDeploymentTargets();
-
-  if (targets.length === 0) {
-    throw new Error(`No deployment targets configured in ${path.join(configRoot, 'aws-targets.json')}`);
-  }
-
-  for (const target of targets) {
-    if (target.account !== identity.aws.account || target.region !== identity.aws.region) {
-      throw new Error(`AWS target ${target.name} does not match identity.json account and region`);
-    }
-  }
-
-  const unsupported = {
-    payments: spec.payments ?? [],
-    harnesses: spec.harnesses ?? [],
-    agentCoreGateways: spec.agentCoreGateways,
-    credentials: spec.credentials,
-    'knowledge-base connectors': (spec.knowledgeBases ?? [])
-      .flatMap(kb => kb.dataSources)
-      .filter(ds => ds.type !== 'S3'),
-  };
-  for (const [feature, entries] of Object.entries(unsupported)) {
-    if (entries.length > 0) throw new Error(`agentcore.json configures ${feature}, which this app does not deploy`);
-  }
-
-  if (spec.runtimes.length === 0) throw new Error('agentcore.json must configure a runtime');
-
-  return { deployRoot, identity, spec, targets };
+  const files = deployRootFiles(deployRoot);
+  const identity = readDeployIdentity(deployRoot, files);
+  const spec = readProjectSpec(deployRoot, files);
+  setSessionProjectRoot(agentCoreProjectRoot(spec));
+  const targets = AwsDeploymentTargetsSchema.parse(readDeployRootFile(deployRoot, files, 'agentcore/aws-targets.json'));
+  const runtimeImage = files.config.agentCore?.runtime?.containerUri;
+  const { tags } = files.config;
+  return { deployRoot, identity, spec, targets, ...(runtimeImage ? { runtimeImage } : {}), ...(tags ? { tags } : {}) };
 }

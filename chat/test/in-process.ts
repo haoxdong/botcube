@@ -5,6 +5,7 @@ import { SQSClient } from '@aws-sdk/client-sqs';
 import { Hono } from 'hono';
 import { DynamoDBAgentDocuments } from '../src/agent-documents.js';
 import type { AccountHistory } from '../src/account-history.js';
+import { configAdapters } from '../src/config-adapters.js';
 import { createChatService, type ChatServiceConfig } from '../src/server.js';
 import type { SessionApi } from '../src/session-api.js';
 import { DynamoDBSessionMetadata } from '../src/session-metadata.js';
@@ -31,6 +32,8 @@ export interface InProcessOptions {
   invokeSessionApi?: SessionApi;
   /** Hooks replaced on BotCube's own Chat, which serves the test bot's BotCube Config as production does. */
   overrides?: StockOverrides;
+  /** Sections of the BotCube Config the Chat Service serves, such as its `domains`. */
+  botcube?: Record<string, unknown>;
   /** Overrides of the Chat Service config, which points AgentCore and the session API at the fakes. */
   config?: Partial<ChatServiceConfig>;
   /** Session Metadata table: created (default) or missing. */
@@ -76,10 +79,11 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
   const agentcore = await new FakeAgentCore().listen();
   const sessionApi = await new FakeSessionApi().listen();
   const bedrock = await new FakeBedrock().listen();
+  const botcubeConfig = testBotCubeConfig(undefined, options.botcube);
   const config: ChatServiceConfig = {
     agentCore: { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: agentcore.url },
     localHarnessUrl: null,
-    corsOrigins: null,
+    corsOrigins: configAdapters({ BOTCUBE_CONFIG: botcubeConfig }).corsOrigins,
     region: 'us-east-1',
     agentCoreEndpoint: agentcore.url,
     browserId: 'aws.browser.v1',
@@ -100,7 +104,7 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
   const accounts = new TestAccounts(table, DynamoDBDocumentClient.from(client));
   const { app: service, chat, history } = createChatService(
     {
-      env: { BOTCUBE_CONFIG: testBotCubeConfig(), BOTCUBE_CHAT_TABLE: table },
+      env: { BOTCUBE_CONFIG: botcubeConfig, BOTCUBE_CHAT_TABLE: table },
       accountStore: accounts,
       // The Agent Computer is an External Service: these tests start no browser.
       agentComputer: (local) => ({ ...local, warmSession: async () => undefined, turnStarting: () => undefined }),

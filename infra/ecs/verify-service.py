@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 
 import boto3
 from botocore.exceptions import ClientError
+from deploy_check import user_agent
 from deploy_identity import deploy_root, load_identity
 from origin_smoke import OriginSmoke, cleanup_conversation
 from test_user import test_user
@@ -134,7 +135,7 @@ def verify_deployment(outputs: dict[str, str], ecs: ECSClient, elb: ElasticLoadB
 def request(client: urllib.request.OpenerDirector, path: str, *, method: str = 'GET',
             headers: dict[str, str] | None = None) -> tuple[int, Any]:
     req = urllib.request.Request(IDENTITY['domains'][DOMAIN] + path,
-                                 method=method, headers={'User-Agent': IDENTITY['verification']['userAgent'], 'Cache-Control': 'no-cache', **(headers or {})})
+                                 method=method, headers={'User-Agent': user_agent(), 'Cache-Control': 'no-cache', **(headers or {})})
     try:
         with client.open(req, timeout=30) as response:
             return response.status, None if response.status == 204 else json.load(response)
@@ -387,7 +388,7 @@ def verify_conversation(*, table: Table, observation_seconds: float = 0, progres
         payload = {'threadId': thread_id, 'runId': run_id,
                    'messages': [{'id': str(uuid.uuid4()), 'role': 'user', 'content': prompt}],
                    'tools': [], 'context': [], 'state': {}, 'forwardedProps': {'model': ACCEPTANCE['MODEL']}}
-        headers = {'User-Agent': IDENTITY['verification']['userAgent'], 'Content-Type': 'application/json', 'Accept': 'text/event-stream'}
+        headers = {'User-Agent': user_agent(), 'Content-Type': 'application/json', 'Accept': 'text/event-stream'}
         try:
             req = urllib.request.Request(IDENTITY['domains'][DOMAIN] + '/', data=json.dumps(payload).encode(), headers=headers)
             events = stream_conversation(clients[0], req, timing, observation_seconds, progress_rounds, on_progress)

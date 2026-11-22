@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { required } from '../required.js';
 import { Browser } from './browser.js';
-import { loadBotCube } from '../../../config/load.js';
+import { loadConfig } from '../../../config/load.js';
 import { proxyEnvironment } from '../../../config/environment.js';
 import { telemetryEnvironment } from '../../../config/telemetry.js';
 import { FakeBedrock, FakeOpenAICompatible } from '../fakes/fake-backends.js';
@@ -83,13 +83,14 @@ export async function startLocalStack(options: {
 } = {}): Promise<LocalStack> {
   const dynamodbEndpoint = motoEndpoint();
   // Startup stops on a bad BotCube Config before any process starts, naming the field, as the Chat Service's does.
+  // Only the processes run on the Bot Image's /bot/bot.yaml (image-process.mjs), so this one reads the BotCube Config alone.
   const deploymentPath = options.botcubeConfig ?? options.chatEnv?.BOTCUBE_CONFIG ?? PUBLIC_EXAMPLE;
-  const botcube = loadBotCube(deploymentPath);
+  const config = loadConfig(deploymentPath);
   const home = await mkdtemp('/tmp/bc-');
   const table = `chat-${Math.random().toString(36).slice(2)}`;
   await createChatTable(dynamodbEndpoint, table);
   // The table poller needs its run queue to start, as the CDK always gives it one (`scheduled-runs.ts` in botcube/infra/ecs/cdk).
-  const scheduledRuns = options.scheduling || botcube.config.schedules.kind === 'table-poller' ? await createScheduledRuns(dynamodbEndpoint) : undefined;
+  const scheduledRuns = options.scheduling || config.schedules.kind === 'table-poller' ? await createScheduledRuns(dynamodbEndpoint) : undefined;
   const pythonEnv = {
     PATH: process.env.PATH,
     BOTCUBE_TEST_IMAGE_SETTINGS: fileURLToPath(new URL('../../../examples/bot/bot.yaml', import.meta.url)),
@@ -107,11 +108,11 @@ export async function startLocalStack(options: {
   };
   const processes: RunningProcess[] = [];
   const bedrock = await new FakeBedrock().listen();
-  const models = botcube.config.integrations.modelGateway;
+  const models = config.integrations.modelGateway;
   const openAICompatible = models.kind === 'openai-compatible' ? await new FakeOpenAICompatible(`sk-${table}`).listen() : undefined;
-  const harnessAuth = botcube.config.integrations.harnessAuth;
+  const harnessAuth = config.integrations.harnessAuth;
   const mtls = options.endpointTls ? await mtlsStandIns(required(openAICompatible, 'the models Endpoint stand-in an mTLS front carries to'), home) : undefined;
-  const egress = await egressStandIns(botcube.config, home, mtls);
+  const egress = await egressStandIns(config, home, mtls);
   let authorizer: FakeJwtAuthorizer | undefined;
   const stopAll = async () => {
     await Promise.all([
@@ -126,7 +127,7 @@ export async function startLocalStack(options: {
     // The models Endpoint's stand-in, its API key in a file as a secret injector mounts it, for the Chat Service's Turn
     // Summary and the Credential Service the Harness relays through; the Endpoint's headers are the BotCube Config's own.
     const modelsStandIn = await standInModels(models, openAICompatible, home, mtls);
-    const botcubeConfig = await standInBotCubeConfig(deploymentPath, botcube.config, home, { ...egress?.offline, ...modelsStandIn });
+    const botcubeConfig = await standInBotCubeConfig(deploymentPath, config, home, { ...egress?.offline, ...modelsStandIn });
     // The Harness serves the bot settings the BotCube Config's `bot` names, as the example bot's image does.
     Object.assign(pythonEnv, egress?.environment, mtls?.pythonTrust, { BOTCUBE_CONFIG: botcubeConfig }, options.harnessEnv);
     const start = async (command: string, env: NodeJS.ProcessEnv, path: string, listeningPrefix: string) => {
@@ -197,7 +198,7 @@ export async function startLocalStack(options: {
         ...egress?.chatEnvironment,
         ...mtls?.chatTrust,
         ...credentialService,
-        ...awsAccessEnv(botcube.config, dynamodbEndpoint),
+        ...awsAccessEnv(config, dynamodbEndpoint),
         ...options.chatEnv,
         BOTCUBE_CONFIG: botcubeConfig, BOTCUBE_TEST_IMAGE_SETTINGS: fileURLToPath(new URL('../../../examples/bot/bot.yaml', import.meta.url)),
       },
@@ -222,7 +223,7 @@ interface EgressStandIns {
   readonly proxy: FakeForwardProxy;
   readonly collector: FakeOtlpCollector | undefined;
   /** The sections the BotCube Config stand-in takes in place of the deployed proxy and telemetry. */
-  readonly offline: { proxy: BotCubeConfig['network']['proxy']; telemetry: BotCubeConfig['integrations']['telemetry'] };
+  readonly offline: { proxy: BotCubeConfig['integrations']['proxy']; telemetry: BotCubeConfig['integrations']['telemetry'] };
   readonly environment: Record<string, string>;
   readonly chatEnvironment: Record<string, string>;
   readonly credentialEnvironment: Record<string, string>;
@@ -258,7 +259,7 @@ async function mtlsStandIns(models: FakeOpenAICompatible, home: string): Promise
  * each send through their own relay, on a port of their own here as each has its own loopback when deployed.
  */
 async function egressStandIns(config: BotCubeConfig | undefined, home: string, mtls?: MtlsStandIns): Promise<EgressStandIns | undefined> {
-  const proxy = config?.network.proxy;
+  const proxy = config?.integrations.proxy;
   if (proxy === undefined || proxy.kind === 'none') return undefined;
   const otlp = config?.integrations.telemetry.kind === 'otlp' ? config.integrations.telemetry : undefined;
   const collector = otlp && await new FakeOtlpCollector(otlp.credential ? `Bearer ${STAND_IN_TELEMETRY_TOKEN}` : undefined).listen();
@@ -284,9 +285,9 @@ async function egressStandIns(config: BotCubeConfig | undefined, home: string, m
     proxy: standIn,
     collector,
     offline,
-    environment: { ...proxyEnvironment({ network: { proxy: offline.proxy } }, { relayPort: await freePort() }), ...telemetry?.harness },
-    chatEnvironment: { ...proxyEnvironment({ network: { proxy: offline.proxy } }, { relayPort: await freePort() }), ...telemetry?.chatService },
-    credentialEnvironment: proxyEnvironment({ network: { proxy: offline.proxy } }, { relayPort: await freePort() }),
+    environment: { ...proxyEnvironment({ integrations: { proxy: offline.proxy } }, { relayPort: await freePort() }), ...telemetry?.harness },
+    chatEnvironment: { ...proxyEnvironment({ integrations: { proxy: offline.proxy } }, { relayPort: await freePort() }), ...telemetry?.chatService },
+    credentialEnvironment: proxyEnvironment({ integrations: { proxy: offline.proxy } }, { relayPort: await freePort() }),
   };
 }
 
@@ -313,7 +314,7 @@ async function standInBotCubeConfig(
   path: string,
   config: BotCubeConfig,
   home: string,
-  offline: { proxy?: BotCubeConfig['network']['proxy']; telemetry?: BotCubeConfig['integrations']['telemetry']; models?: BotCubeConfig['integrations']['modelGateway'] },
+  offline: { proxy?: BotCubeConfig['integrations']['proxy']; telemetry?: BotCubeConfig['integrations']['telemetry']; models?: BotCubeConfig['integrations']['modelGateway'] },
 ): Promise<string> {
   if (config.integrations.signIn.kind !== 'oidc' && Object.keys(offline).length === 0) return path;
   const file = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
@@ -322,7 +323,7 @@ async function standInBotCubeConfig(
     ? { signIn: { ...config.integrations.signIn, clients: config.integrations.signIn.clients.map(({ clientId }) => ({ clientId, clientSecret })) } }
     : {};
   const standIn = join(home, 'botcube.yaml');
-  await writeFile(standIn, JSON.stringify({ ...file, integrations: { ...config.integrations, ...identity, ...(offline.telemetry ? { telemetry: offline.telemetry } : {}), ...(offline.models ? { modelGateway: offline.models } : {}) }, network: { ...config.network, ...(offline.proxy ? { proxy: offline.proxy } : {}) } }));
+  await writeFile(standIn, JSON.stringify({ ...file, integrations: { ...config.integrations, ...identity, ...(offline.telemetry ? { telemetry: offline.telemetry } : {}), ...(offline.models ? { modelGateway: offline.models } : {}), ...(offline.proxy ? { proxy: offline.proxy } : {}) } }));
   return standIn;
 }
 

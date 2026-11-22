@@ -10,7 +10,7 @@ let savedEnvironment: NodeJS.ProcessEnv;
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'standalone-latency-'));
   fs.mkdirSync(path.join(root, 'examples/public/deploy'), { recursive: true });
-  fs.copyFileSync(path.resolve(__dirname, '../../../../examples/public/deploy/identity.json'), path.join(root, 'examples/public/deploy/identity.json'));
+  fs.copyFileSync(path.resolve(__dirname, '../../../../examples/public/botcube.yaml'), path.join(root, 'examples/public/botcube.yaml'));
   savedEnvironment = { ...process.env };
   process.env.BOTCUBE_REPOSITORY_ROOT = root;
   process.env.BOTCUBE_DEPLOY_ROOT = path.join(root, 'examples/public/deploy');

@@ -1,6 +1,6 @@
 """The BotCube Config (ADR 0091): the one file every BotCube process reads, located by BOTCUBE_CONFIG.
 
-The twin of the Harness's `botcube_config`, as `credential_source` is.
+botcube/harness/deepagents holds a byte-identical copy of botcube/credential-service's, where its behaviour is tested.
 
 It follows `botcube.schema.json`, emitted from BotCube's seam file `botcube/config/schema.ts`.
 """
@@ -9,19 +9,20 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Iterable, Iterator, Mapping
 from copy import deepcopy
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
-from jsonschema import Draft202012Validator, ValidationError, validators
-from ruamel.yaml import YAML
-from ruamel.yaml.error import YAMLError
+if TYPE_CHECKING:
+    from jsonschema import ValidationError
+    from jsonschema.protocols import Validator
 
 CONFIG_ENV = 'BOTCUBE_CONFIG'
 _SCHEMA = json.loads(Path(__file__).with_name('botcube.schema.json').read_text(encoding='utf8'))
-_VALIDATOR = Draft202012Validator(_SCHEMA)
 
 
 class BotCubeConfigError(RuntimeError):
@@ -33,14 +34,20 @@ def botcube_config_from_env(env: Mapping[str, str] = os.environ) -> dict[str, An
     return _loaded(env.get(CONFIG_ENV) or None)
 
 
+def web_origins(config: Mapping[str, Any]) -> list[str]:
+    """The origins CORS allows: domains.web and its aliases; without domains, none."""
+    domains = config.get('domains')
+    return [domains['web'], *domains.get('webAliases', [])] if domains else []
+
+
+def credential_service_http_path(config: Mapping[str, Any]) -> str:
+    """services.credentialService.http.path, the path the Credential Service serves its RPC under; none without it."""
+    return _value_at(config, 'services.credentialService.http.path') or ''
+
+
 @cache
 def _loaded(path: str | None) -> dict[str, Any]:
     return load_botcube_config(Path(path)) if path else _with_defaults({})
-
-
-def plan_usage_owner(config: Mapping[str, Any]) -> str:
-    """The Account whose linked plans Plan Usage runs on: the config's `planUsage.ownerAccountId`, empty without one."""
-    return str(config.get('planUsage', {}).get('ownerAccountId', ''))
 
 
 def load_botcube_config(path: Path) -> dict[str, Any]:
@@ -52,6 +59,8 @@ def load_botcube_config(path: Path) -> dict[str, Any]:
         text = path.read_text(encoding='utf8')
     except FileNotFoundError:
         raise BotCubeConfigError(f'{source}: no file') from None
+    from ruamel.yaml.error import YAMLError
+
     try:
         config = yaml_document(text)
     except (YAMLError, ValueError) as error:
@@ -59,18 +68,57 @@ def load_botcube_config(path: Path) -> dict[str, Any]:
     replacements = _SCHEMA['x-renamed-keys']
     if isinstance(config, dict):
         for key, replacement in replacements.items():
-            if key in config:
-                raise BotCubeConfigError(f'{source}: {key}: renamed to {replacement}')
-    errors = sorted(_leaves(_VALIDATOR.iter_errors(config)), key=lambda error: list(error.absolute_path))
+            if held := _held_key(config, key):
+                raise BotCubeConfigError(f'{source}: {held}: renamed to {replacement}')
+    errors = sorted(_leaves(_validator().iter_errors(config)), key=lambda error: list(error.absolute_path))
     if errors:
         raise BotCubeConfigError('\n'.join(f'{source}: {_field(error)}: {error.message}' for error in errors))
     return _with_defaults(config)
 
 
+def _held_key(value: Any, path: str) -> str | None:
+    """Where value holds the key at the dotted path, whatever its value: **.key finds it at any depth, the first in document order."""
+    if path.startswith('**.'):
+        return _deep_key(value, path[3:], [])
+    *parents, last = path.split('.')
+    for key in parents:
+        value = value.get(key) if isinstance(value, dict) else None
+    return path if isinstance(value, dict) and last in value else None
+
+
+def _deep_key(value: Any, key: str, at: list[str]) -> str | None:
+    if isinstance(value, dict) and key in value:
+        return '.'.join([*at, key])
+    children = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else []
+    for name, child in children:
+        if found := _deep_key(child, key, [*at, str(name)]):
+            return found
+    return None
+
+
 def _with_defaults(config: dict[str, Any]) -> dict[str, Any]:
     """The config, each field it leaves out that the schema defaults filled in, as the TypeScript loader's parse fills them."""
-    list(_Defaulting(_SCHEMA).iter_errors(config))
+    list(_defaulting()(_SCHEMA).iter_errors(config))
     return config
+
+
+@cache
+def _jsonschema() -> Any:
+    """jsonschema, imported on first use: the parking Transition's bundle builds deploy-root files with no jsonschema."""
+    import jsonschema
+
+    return jsonschema
+
+
+@cache
+def _validator() -> Validator:
+    return _jsonschema().Draft202012Validator(_SCHEMA)
+
+
+@cache
+def _defaulting() -> Any:
+    jsonschema = _jsonschema()
+    return jsonschema.validators.extend(jsonschema.Draft202012Validator, {'properties': _filling_defaults, 'oneOf': _into_the_matching_branch, 'anyOf': _into_the_matching_branch})
 
 
 def _filling_defaults(validator: Any, properties: Mapping[str, Any], instance: Any, schema: Mapping[str, Any]) -> Iterator[ValidationError]:
@@ -78,16 +126,13 @@ def _filling_defaults(validator: Any, properties: Mapping[str, Any], instance: A
         for name, field in properties.items():
             if 'default' in field:
                 instance.setdefault(name, deepcopy(field['default']))
-    yield from Draft202012Validator.VALIDATORS['properties'](validator, properties, instance, schema)
+    yield from _jsonschema().Draft202012Validator.VALIDATORS['properties'](validator, properties, instance, schema)
 
 
 def _into_the_matching_branch(validator: Any, branches: list[Any], instance: Any, _schema: Mapping[str, Any]) -> Iterator[ValidationError]:
-    branch = next((each for each in branches if _VALIDATOR.evolve(schema=each).is_valid(instance)), None)
+    branch = next((each for each in branches if _validator().evolve(schema=each).is_valid(instance)), None)
     if branch is not None:
         yield from validator.descend(instance, branch)
-
-
-_Defaulting = validators.extend(Draft202012Validator, {'properties': _filling_defaults, 'oneOf': _into_the_matching_branch, 'anyOf': _into_the_matching_branch})
 
 
 def _leaves(errors: Iterable[ValidationError]) -> Iterator[ValidationError]:
@@ -122,6 +167,8 @@ def _field(error: ValidationError) -> str:
 
 
 def yaml_document(text: str) -> Any:
+    from ruamel.yaml import YAML
+
     reader = YAML(typ='safe', pure=True)
     reader.version = (1, 2)
     resolvers = reader.resolver.versioned_resolver
@@ -131,3 +178,178 @@ def yaml_document(text: str) -> Any:
     if reader.version != (1, 2):
         raise ValueError('expected YAML 1.2')
     return value
+
+
+def _value_at(value: Any, path: str) -> Any:
+    for key in path.split('.'):
+        if isinstance(value, list) and key.isdigit():
+            value = value[int(key)] if int(key) < len(value) else None
+        elif isinstance(value, dict):
+            value = value.get(key)
+        else:
+            return None
+    return value
+
+
+def _set_at(root: Any, keys: list[str], value: Any) -> None:
+    node = root
+    for index, key in enumerate(keys[:-1]):
+        child: Any = [] if keys[index + 1].isdigit() else {}
+        if isinstance(node, list):
+            if int(key) == len(node):
+                node.append(child)
+            node = node[int(key)]
+        else:
+            node = node.setdefault(key, child)
+    if isinstance(node, list):
+        node.append(value)
+    else:
+        node[keys[-1]] = value
+
+
+def deployment_file(config: Mapping[str, Any], file: str, config_path: Path, repository_root: Path) -> Any:
+    """The retired deploy-root file the BotCube Config at config_path stands for, from the schema's x-retired-files map, as botcube/config/read.cjs builds it."""
+    fields: dict[str, Any] = _SCHEMA['x-retired-files'][file]
+    name: str = config['name']
+    built: Any = [] if next(iter(fields))[0].isdigit() else {}
+    for field, source in fields.items():
+        value = _sourced(source, config, name, config_path, repository_root)
+        if value is None:
+            continue
+        if source.get('spread'):
+            value = {**(_value_at(built, field) or {}), **value}
+        _set_at(built, field.split('.'), value)
+    return built
+
+
+def _sourced(source: Mapping[str, Any], config: Mapping[str, Any], name: str, config_path: Path, repository_root: Path) -> Any:
+    """A retired file's field, from the BotCube Config key, derived name or BotCube's own value its Source names."""
+    if 'when' in source and not _value_at(config, source['when']):
+        return None
+    if 'value' in source:
+        return deepcopy(source['value'])
+    if 'derived' in source:
+        return _filled(source['derived'], name)
+    if 'file' in source:
+        given = _value_at(config, source['file'])
+        return None if given is None else os.path.relpath((config_path.parent / given).resolve(), repository_root.resolve())
+    found = _value_at(config, source['path'])
+    if found is None:
+        default = source.get('default')
+        return _filled(default, name) if isinstance(default, str) else default
+    return _shaped(found, source)
+
+
+def _filled(template: str, name: str) -> str:
+    return template.replace('{name}', name).replace('{snake}', name.replace('-', '_')).replace('{compact}', name.replace('-', ''))
+
+
+def _shaped(found: Any, source: Mapping[str, Any]) -> Any:
+    """A BotCube Config value in the shape its Source gives the retired field: each item's fields, a hostname or a list."""
+    if 'each' in source:
+        return [{field: item[origin] for field, origin in source['each'].items()} for item in found]
+    if source.get('as') == 'hostname':
+        return urlsplit(found).hostname
+    if source.get('as') == 'list':
+        return [found]
+    return found
+
+
+def _replacement(source: Mapping[str, Any] | None) -> str:
+    """Where a retired file's field went: the botcube.yaml key its Source names, or why none does."""
+    if source is None:
+        return 'no botcube.yaml key; delete it'
+    if 'derived' in source:
+        return 'derived from botcube.yaml name'
+    if 'value' in source:
+        return "BotCube's own value; delete it"
+    return f"botcube.yaml {source['file'] if 'file' in source else source['path']}"
+
+
+def _json_leaves(value: Any, path: tuple[str, ...] = ()) -> Iterator[str]:
+    """Each leaf of a JSON value, as its dotted path; an empty object or list is a leaf."""
+    entries: list[tuple[str, Any]] = []
+    if isinstance(value, dict):
+        entries = [(str(key), child) for key, child in value.items()]
+    elif isinstance(value, list):
+        entries = [(str(index), child) for index, child in enumerate(value)]
+    if not entries:
+        yield '.'.join(path)
+    for key, child in entries:
+        yield from _json_leaves(child, (*path, key))
+
+
+def _retired_file_errors(deploy_root: Path, file: str, held: Any) -> list[str]:
+    """The migration error lines of a retired file held in a deploy root, one per field, as botcube/config/read.cjs gives them."""
+    fields: dict[str, Any] = _SCHEMA['x-retired-files'][file]
+
+    def holds(prefix: str) -> bool:
+        return any(each == prefix or each.startswith(f'{prefix}.') for each in fields)
+
+    named: list[str] = []
+    for leaf in _json_leaves(held):
+        keys = leaf.split('.')
+        covering = max((field for field in fields if leaf == field or leaf.startswith(f'{field}.')), key=len, default=None)
+        unmapped = next((index for index in range(len(keys)) if not holds('.'.join(keys[: index + 1]))), None)
+        field = covering or (leaf if unmapped is None else '.'.join(keys[: unmapped + 1]))
+        if field not in named:
+            named.append(field)
+    return [
+        f'Deploy root {deploy_root}: {file} is retired: botcube.yaml beside the deploy root replaces it; move each field to its key there, then delete the file',
+        *(f'Deploy root {deploy_root}: {file}: {field}: {_replacement(fields.get(field))}' for field in named),
+    ]
+
+
+_CONFIGURATION = re.compile(r'(\.(json|ya?ml|toml|ini|cfg|conf|env)|^\.env(\..*)?)$')
+_MANIFEST = re.compile(r'^(package\.json|package-lock\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig(\.[\w-]+)?\.json|pyproject\.toml|uv\.lock|cdk\.json|cdk\.context\.json)$')
+_BOT_DIRECTORY_FILES = frozenset({'botcube.yaml', 'bot.yaml', 'latency-budgets.json'})
+_BUILT = frozenset({'node_modules', 'cdk.out', 'dist', '__pycache__'})
+
+
+def _configuration(name: str) -> bool:
+    return bool(_CONFIGURATION.search(name)) and not _MANIFEST.match(name)
+
+
+def _configuration_files(directory: Path, prefix: str = '') -> list[str]:
+    """The configuration files under a deploy root, as botcube/config/read.cjs finds them."""
+    entries = sorted(directory.iterdir(), key=lambda entry: entry.name)
+    if prefix and any(entry.is_file() and entry.name in ('Dockerfile', 'manifest.json') for entry in entries):
+        return []
+    found: list[str] = []
+    for entry in entries:
+        if entry.is_dir():
+            if not entry.name.startswith('.') and entry.name not in _BUILT:
+                found += _configuration_files(entry, f'{prefix}{entry.name}/')
+        elif _configuration(entry.name):
+            found.append(f'{prefix}{entry.name}')
+    return found
+
+
+def bot_directory_errors(bot_directory: Path, deploy_root: Path | None = None) -> list[str]:
+    """Every error of a bot directory against one config, botcube.yaml plus the images it names, as botcube/config/read.cjs gives them."""
+    deploy_root = bot_directory / 'deploy' if deploy_root is None else deploy_root
+    retired = list(_SCHEMA['x-retired-files'])
+    errors = [line for file in retired if (deploy_root / file).exists()
+              for line in _retired_file_errors(deploy_root, file, json.loads((deploy_root / file).read_text(encoding='utf8')))]
+    own = sorted(entry.name for entry in bot_directory.iterdir()
+                 if entry.is_file() and _configuration(entry.name) and entry.name not in _BOT_DIRECTORY_FILES) if bot_directory.exists() else []
+    beneath = [os.path.relpath(deploy_root / file, bot_directory) for file in _configuration_files(deploy_root) if file not in retired] if deploy_root.exists() else []
+    return [*errors, *(
+        f'Bot directory {bot_directory}: {file}: a configuration file; a deployment is botcube.yaml plus the images it names, '
+        'so move its values into botcube.yaml, or into bot.yaml in the Bot Image, then delete the file'
+        for file in [*own, *beneath]
+    )]
+
+
+def deploy_root_file(deploy_root: Path, file: str, repository_root: Path) -> Any:
+    """A deploy root's file, built from the BotCube Config beside it. It fails while the deploy root still holds a
+    retired file, or its bot directory any other configuration file."""
+    bot_directory = deploy_root.parent
+    errors = bot_directory_errors(bot_directory, deploy_root)
+    if errors:
+        raise BotCubeConfigError('\n'.join(errors))
+    config_path = bot_directory / 'botcube.yaml'
+    config = load_botcube_config(config_path) if config_path.exists() else {}
+    if 'name' not in config:
+        raise BotCubeConfigError(f'{deploy_root / file}: BotCube Config {config_path} names no deployment')
+    return deployment_file(config, file, config_path, repository_root)

@@ -38,7 +38,7 @@ class _Source(BaseModel):
 
 class SecretSource(_Source):
     kind: Literal['secret']
-    secret_arn: str = Field(alias='secretArn')
+    secret_id: str = Field(alias='secretId')
 
 
 class FileSource(_Source):
@@ -181,8 +181,8 @@ def credential_source(
 
 def _adapter(source: Source, env: Mapping[str, str], now: Callable[[], float]) -> tuple[str, Callable[[], Credential]]:
     match source:
-        case SecretSource(secret_arn=arn):
-            return f'secret {arn}', lambda: Credential(_secret_string(arn), now() + REREAD_AFTER_SECONDS)
+        case SecretSource(secret_id=secret_id):
+            return f'secret {secret_id}', lambda: Credential(_secret_string(secret_id, env), now() + REREAD_AFTER_SECONDS)
         case FileSource(path=path):
             return f'file {path}', lambda: Credential(_file_text(path), now() + REREAD_AFTER_SECONDS)
         case CommandSource(command=command, timeout_seconds=timeout):
@@ -219,9 +219,11 @@ def _field(issue: object) -> str:
     return '.'.join(str(part) for part in loc) or 'kind'
 
 
-def _secret_string(arn: str) -> str:
-    client = aws_clients.session().client('secretsmanager', region_name=arn.split(':')[3])
-    value = client.get_secret_value(SecretId=arn).get('SecretString')
+def _secret_string(secret_id: str, env: Mapping[str, str]) -> str:
+    """The secret's string: an ARN's in its own region, a name's in the process's."""
+    region = secret_id.split(':')[3] if secret_id.startswith('arn:') else env.get('AWS_REGION') or env.get('AWS_DEFAULT_REGION')
+    client = aws_clients.session().client('secretsmanager', region_name=region)
+    value = client.get_secret_value(SecretId=secret_id).get('SecretString')
     if not value:
         raise ValueError('the secret holds no string')
     return value

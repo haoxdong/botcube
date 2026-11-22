@@ -29,10 +29,7 @@ export interface CredentialServicePublicRoute {
 /** Publish the product's service on its own host through the origin's ALB, its private routes kept off the listener. */
 export function publishCredentialService(origin: PreviewOriginStack, credentials: PrivateCredentialService, route: CredentialServicePublicRoute): void {
   credentials.container.addEnvironment('BOTCUBE_CHAT_TABLE', route.chatTable.tableName);
-  if (route.rawHostname !== undefined) {
-    credentials.container.addEnvironment('BOTCUBE_RAW_SERVICE_HOST', route.rawHostname);
-    credentials.container.addEnvironment('BOTCUBE_RAW_SERVICE_RPC_PATH', route.rpcPath);
-  }
+  if (route.rawHostname !== undefined) credentials.container.addEnvironment('BOTCUBE_RAW_SERVICE_HOST', route.rawHostname);
   if (route.chatTableKeyPrefixes.length && !route.chatTableExisting) credentials.task.addToTaskRolePolicy(new iam.PolicyStatement({
     actions: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem', 'dynamodb:DeleteItem', 'dynamodb:UpdateItem', 'dynamodb:ConditionCheckItem'], resources: [route.chatTable.tableArn],
     conditions: {

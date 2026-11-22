@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 const overrides: StockOverrides = {
-  corsOrigins: [], agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
+  agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
   models: [{ key: 'test', label: 'Test', provider: 'test' }], accountModels: async () => [], accountModel: async () => undefined,
   routes: new Hono(), requester: async () => ({ owner: 'owner' }),
   filingUserId: (owner) => owner, scheduledRequester: async (owner) => ({ owner }),

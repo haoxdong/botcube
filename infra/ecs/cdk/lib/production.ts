@@ -1,15 +1,17 @@
 import { optionalPhysicalName } from './physical-name.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { App, CfnOutput, Tags } from 'aws-cdk-lib';
+import { App, CfnOutput, Stack, Tags } from 'aws-cdk-lib';
 import { CfnBrowserCustom } from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import type { ITable } from 'aws-cdk-lib/aws-dynamodb';
 import type { DeployIdentity } from './production-identity.js';
+import type { SynthesizedConfig } from './parking-transition.js';
 import { existingFilesRoleNames } from './files-role-names.js';
 import { createProductionParking } from './production-parking-stack.js';
 import { ContainerImage, Secret, type ContainerDefinition } from 'aws-cdk-lib/aws-ecs';
 import { grantModelsEndpoint } from './models-endpoint.js';
+import { grantSecretReads } from './secret-reads.js';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { Asset } from 'aws-cdk-lib/aws-s3-assets';
@@ -70,7 +72,8 @@ export interface ProductionOptions {
     };
   storage?: Omit<import('./chat-storage-stack.js').ChatStorageProps, keyof import('aws-cdk-lib').StackProps | 'corsOrigins'>;
   apiHealth?: Pick<import('./api-health-stack.js').ApiHealthStackProps, 'requestIntervalSeconds' | 'failureThreshold' | 'evaluationPeriods'>;
-  webLatency?: Partial<Pick<import('./web-latency-stack.js').WebLatencyStackProps, 'sessionSampleRate' | 'moments' | 'identityPoolName' | 'guestRoleName' | 'readerRoleName'>>;
+  /** The web latency monitor; its `readerSubject`, the workflow that reads its metrics, is the release tooling's to name. */
+  webLatency?: Partial<Pick<import('./web-latency-stack.js').WebLatencyStackProps, 'sessionSampleRate' | 'moments' | 'identityPoolName' | 'guestRoleName' | 'readerRoleName' | 'readerSubject'>>;
   chatTableName?: string;
   executionRole?: iam.IRole;
   vpc?: ec2.IVpc;
@@ -85,20 +88,24 @@ export interface ProductionOptions {
   credentials?: Partial<Omit<import('./private-credential-service.js').PrivateCredentialServiceProps, 'cluster' | 'chatNetwork' | 'agentNetwork' | 'image' | 'kmsKey' | 'executionRole' | 'permissionsBoundary' | 'subnets'>>;
   /** The BotCube Config's non-Bedrock `models`, as botcube/config's `modelGatewayResources` gives them. */
   models?: ModelsDeployment;
+  /** The BotCube Config's `tags`, on every stack. */
+  tags?: Readonly<Record<string, string>>;
   /** The BotCube Config's `awsAccess.kind`; absent is the default, `web-identity`. */
   awsAccess?: 'web-identity' | 'assume-role';
   /** The secrets the Chat Service's credential sources read. */
-  chatSecretArns?: readonly string[];
+  chatSecretIds?: readonly string[];
   repositoryRoot: string;
   /** The active deploy directory (`BOTCUBE_DEPLOY_ROOT`). */
   deployRoot: string;
   /** The deploy identity, as `deployIdentity` reads it. */
   identity: DeployIdentity;
-  /** The BotCube Config's `web.corsOrigins`: the UI origins the parked Worker answers and web latency reports from. */
+  /** The BotCube Config the identity is built from, which the parking Transition bundles. */
+  config: SynthesizedConfig;
+  /** The BotCube Config's `domains.web` and `domains.webAliases`: the UI origins the parked Worker answers and web latency reports from. */
   corsOrigins: string[];
   /** The registry, mirroring ECR Public's paths, every image comes from. */
   imageRegistry?: string;
-  /** The BotCube Config names `existing.network`, which brings its own egress in place of the identity's `privateEgress`. */
+  /** The BotCube Config's `existing.vpc` brings its own egress (`network.natGateways` 0), in place of the identity's `privateEgress`. */
   existingNetwork?: boolean;
   /** The serving stack; absent keeps storage and egress synthesizable without live prerequisites. */
   origin?: {
@@ -118,9 +125,6 @@ function latencyMoments(deployRoot: string): string[] {
   });
 }
 
-function grantSecrets(chat: PreviewChatService, arns: readonly string[] = []) {
-  if (arns.length) chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [...arns] }));
-}
 
 function addSmokePolicy(origin: PreviewOriginStack, identity: DeployIdentity, storage: ChatStorageStack, runtimeArn: string) {
   new iam.ManagedPolicy(origin, 'OriginSmokePolicy', {
@@ -157,8 +161,16 @@ function runtimeMonitoring({ aws: { agentCore }, ssm }: DeployIdentity) {
   return { runtime: { name: agentCore.runtime, arnParameter: ssm.runtimeArn, ...agentCore.runtimeMonitoring } };
 }
 
-/** Every stack of the ECS CDK app (ADR 0065). */
+/** Every stack of the ECS CDK app (ADR 0065), each tagged with the BotCube Config's `tags`. */
 export function defineProduction(app: App, options: ProductionOptions) {
+  const before = new Set(app.node.children);
+  defineStacks(app, options);
+  for (const stack of app.node.children.filter(child => !before.has(child) && Stack.isStack(child))) {
+    for (const [key, value] of Object.entries(options.tags ?? {})) Tags.of(stack).add(key, value);
+  }
+}
+
+function defineStacks(app: App, options: ProductionOptions) {
   const { identity } = options;
   const env = { account: identity.aws.account, region: identity.aws.region };
   const storage = createChatStorage(app, options);
@@ -172,7 +184,6 @@ export function defineProduction(app: App, options: ProductionOptions) {
   const webLatency = new WebLatencyStack(app, 'WebLatency', {
     env, stackName: identity.aws.ecs.webLatency.stackName, appMonitorName: identity.aws.ecs.webLatency.appMonitorName,
     domains: options.corsOrigins.filter(origin => origin.startsWith('https://')).map(origin => new URL(origin).hostname),
-    readerSubject: `${identity.github.oidcSubjectPrefix}:ref:refs/heads/main`,
     turnLogGroups: [`/${identity.aws.ecs.cluster}/chat-service-preview`, `/aws/bedrock-agentcore/runtimes/${identity.aws.agentCore.runtime}-*`],
     ...options.webLatency,
     moments: options.webLatency?.moments ?? latencyMoments(options.deployRoot),
@@ -183,7 +194,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
   if (!options.origin) return;
   const { input, images, commit } = options.origin;
   const filesRoles = existingFilesRoleNames(storage, identity.aws.iam);
-  const parking = createProductionParking(app, cubeRoot, storage.chatTable as ITable, storage.chatTableExisting, identity, options.imageRegistry);
+  const parking = createProductionParking(app, cubeRoot, storage.chatTable as ITable, storage.chatTableExisting, identity, options.config, options.imageRegistry);
   if (options.permissionsBoundary) iam.PermissionsBoundary.of(parking).apply(options.permissionsBoundary);
   const origin = createServingOrigin(app, options, input, health, egress, parking.wakeUrl);
   const chat = new PreviewChatService(origin, 'ChatService', {
@@ -221,7 +232,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
   chat.container.addSecret('BOTCUBE_TURN_IDENTITY_KEYS', Secret.fromSecretsManager(turnIdentityKeys));
   if (options.awsAccess === 'assume-role') assumeUserMemoryRole(origin, chat, identity.aws.iam);
   nameTaskRoles(chat.task, filesRoles?.chatServiceTaskRole, undefined, undefined);
-  grantSecrets(chat, options.chatSecretArns);
+  grantSecretReads(chat, chat.task, options.chatSecretIds ?? []);
   const agentComputer = addAgentComputerBrowser(origin, chat, storage, browserConfiguration(options, chat.cluster.vpc), {
     ...options.originConfig, ...optionalPhysicalName('agentComputerBrowserRoleName', filesRoles?.agentComputerBrowserRole),
   });

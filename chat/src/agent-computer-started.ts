@@ -67,7 +67,7 @@ function refusalMessage(body: string): string | undefined {
 }
 
 /**
- * The announcer the BotCube Config's `productService.agentComputerStartedPath` names, on the Credential Service at
+ * The announcer the bot settings' `productService.agentComputerStartedPath` names, on the Credential Service at
  * BOTCUBE_CREDENTIAL_SERVICE_URL, signing with the Turn identity keys; no path, none.
  */
 export function agentComputerStartedFromConfig(

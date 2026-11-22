@@ -6,7 +6,6 @@ from pathlib import Path
 from types import ModuleType
 
 os.environ['BOTCUBE_DEPLOY_ROOT'] = str(Path(__file__).resolve().parents[2] / 'examples/public/deploy')
-os.environ['BOTCUBE_DEPLOY_REPOSITORY_ROOT'] = str(Path(__file__).resolve().parents[3])
 DEPLOY_ECS = Path(__file__).resolve().parents[1] / 'ecs'
 
 

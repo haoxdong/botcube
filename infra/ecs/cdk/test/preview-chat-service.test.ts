@@ -330,7 +330,7 @@ test('Chat exports Turn traces through a bounded local ADOT collector to the exi
 });
 
 test('an optional External Service set to none creates nothing for it: no collector, X-Ray, run queue, schedule group or live view grant', () => {
-  const template = synth(undefined, false, privateSubnets, { telemetry: { kind: 'none', environment: {}, secretArns: [] }, schedules: 'none', liveView: 'none' });
+  const template = synth(undefined, false, privateSubnets, { telemetry: { kind: 'none', environment: {}, secretIds: [] }, schedules: 'none', liveView: 'none' });
   const task = named(template, 'ChatServiceTask5').Properties;
   expect(task.ContainerDefinitions.map((container: { Name: string }) => container.Name)).toEqual(['chat-service']);
   const granted = JSON.stringify(named(template, 'ChatServiceTaskTaskRoleDefaultPolicy').Properties.PolicyDocument);
@@ -339,6 +339,14 @@ test('an optional External Service set to none creates nothing for it: no collec
   template.resourceCountIs('AWS::Scheduler::ScheduleGroup', 0);
   const environment = task.ContainerDefinitions[0].Environment.map(({ Name }: { Name: string }) => Name);
   expect(environment.filter((name: string) => /^OTEL_(TRACES|EXPORTER)|^BOTCUBE_SCHEDULE/.test(name))).toEqual([]);
+});
+
+test("an OTLP Endpoint's credential secrets are granted by ARN as given, and by name as every version in the stack's account and region", () => {
+  const arn = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/telemetry-token-AbCdEf';
+  const template = synth(undefined, false, privateSubnets, { telemetry: { kind: 'otlp', environment: {}, secretIds: [arn, 'botcube/telemetry-name'] } });
+  const read = named(template, 'ChatServiceTaskTaskRoleDefaultPolicy').Properties.PolicyDocument.Statement
+    .find((statement: { Action: unknown }) => statement.Action === 'secretsmanager:GetSecretValue');
+  expect(read.Resource).toEqual([arn, { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':secretsmanager:us-east-1:123456789012:secret:botcube/telemetry-name-??????']] }]);
 });
 
 test('the Chat Service container serves port 8123 on Linux x86-64 with its full environment and 30 days of logs (ADR 0085)', () => {

@@ -19,6 +19,7 @@ import { StandInOidcIssuer } from '../test/fakes/oidc-issuer.js';
 import { RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
 import { Browser } from '../test/parity/browser.js';
 import { memoryDocuments } from '../test/memory-documents.js';
+import { withRequired } from '../test/stock-bot.js';
 import { signCredentialServiceInvocation, verifyCredentialServiceInvocation } from './credential-service-token.js';
 import { directoryOf } from './files-shared.js';
 import { filingUserId } from './filing-user-id.js';
@@ -42,17 +43,22 @@ const history: AccountHistory = { delete: async () => undefined, transfer: async
 const PUBLIC_EXAMPLE = fileURLToPath(new URL('../../examples/public/botcube.yaml', import.meta.url));
 
 
-/** The public example's BotCube Config, with these sections too. */
+/** A BotCube Config with these sections. */
 function publicExample(sections: Record<string, unknown>) {
   const path = join(mkdtempSync(join(tmpdir(), 'stock-deployment-')), 'botcube.yaml');
-  writeFileSync(path, JSON.stringify({ ...sections }));
+  writeFileSync(path, JSON.stringify(withRequired(sections)));
   return path;
+}
+
+/** The example bot's settings, as its Bot Image carries them. */
+function exampleBot(): { agentComputer?: object } {
+  return JSON.parse(readFileSync(new URL('../../examples/bot/bot.yaml', import.meta.url), 'utf8')) as { agentComputer?: object };
 }
 
 function botcubeConfig(bot: unknown) {
   const dir = mkdtempSync(join(tmpdir(), 'stock-deployment-'));
   stageBotImage(bot);
-  writeFileSync(join(dir, 'botcube.yaml'), JSON.stringify({  }));
+  writeFileSync(join(dir, 'botcube.yaml'), JSON.stringify(withRequired({})));
   return join(dir, 'botcube.yaml');
 }
 
@@ -145,11 +151,12 @@ describe('the stock Chat Service', () => {
     });
   });
 
-  it('tells the Credential Service path productService.agentComputerStartedPath names of each browser its Agent Computer starts', async () => {
+  it("tells the Credential Service path the bot settings' productService.agentComputerStartedPath names of each browser its Agent Computer starts", async () => {
     const product = await new HttpFake((_, response) => sendJson(response, 200, {})).listen();
     const { privateKey } = await generateKeyPair('ES256', { extractable: true });
+    stageBotImage({ ...exampleBot(), productService: { agentComputerStartedPath: '/agent-computer/started' } });
     const env = {
-      BOTCUBE_CONFIG: publicExample({ productService: { agentComputerStartedPath: '/agent-computer/started' } }),
+      BOTCUBE_CONFIG: PUBLIC_EXAMPLE,
       BOTCUBE_CHROMIUM_PATH: testChromiumPath(),
       BOTCUBE_CREDENTIAL_SERVICE_URL: product.url,
       BOTCUBE_TURN_IDENTITY_KEYS: JSON.stringify([{ ...(await exportJWK(privateKey)), kid: 'k1' }]),
@@ -287,9 +294,9 @@ describe("the stock Chat Service's Agent Computer", () => {
     vi.stubEnv('AWS_SESSION_TOKEN', '');
     vi.stubGlobal('fetch', async () => Response.json({ streams: { automationStream: { streamEndpoint: 'wss://stream.test/awake', streamStatus: 'ENABLED' } } }));
     const dir = mkdtempSync(join(tmpdir(), 'stock-deployment-'));
-    const bot = JSON.parse(readFileSync(new URL('../../examples/bot/bot.yaml', import.meta.url), 'utf8')) as { agentComputer?: object };
+    const bot = exampleBot();
     stageBotImage({ ...bot, agentComputer: { ...bot.agentComputer, liveBrowser: false } });
-    writeFileSync(join(dir, 'botcube.yaml'), JSON.stringify({ liveView: { kind: 'none' } }));
+    writeFileSync(join(dir, 'botcube.yaml'), JSON.stringify(withRequired({ liveView: { kind: 'none' } })));
     const env = {
       BOTCUBE_CONFIG: join(dir, 'botcube.yaml'),
       AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: 'http://agentcore.test',
@@ -791,7 +798,7 @@ describe('a signed-in User deleting their own account', () => {
       ...enterprise.integrations.signIn.clients.map(({ clientId }) => ({ clientId, clientSecret: { kind: 'file', path: join(dir, 'client-secret') } })),
       { clientId: SECOND_CLIENT.clientId, clientSecret: { kind: 'file', path: join(dir, 'mobile-client-secret') } },
     ];
-    writeFileSync(config, JSON.stringify({ integrations: { signIn: { ...enterprise.integrations.signIn, issuer: issuer.url, clients } } }));
+    writeFileSync(config, JSON.stringify(withRequired({ integrations: { signIn: { ...enterprise.integrations.signIn, issuer: issuer.url, clients } } })));
   });
   afterAll(async () => { await issuer.close(); });
 

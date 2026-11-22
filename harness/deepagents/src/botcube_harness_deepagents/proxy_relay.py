@@ -36,7 +36,7 @@ _REPLACED = {'proxy-authorization', 'proxy-connection', 'connection'}
 
 def start_proxy_relay_from_config(config: Mapping[str, Any], env: Mapping[str, str] = os.environ) -> str | None:
     """The relay for the BotCube Config's proxy, listening where HTTPS_PROXY points; None unless it has a credential, headers or TLS."""
-    proxy = config['network']['proxy']
+    proxy = config['integrations']['proxy']
     if proxy['kind'] == 'none' or not {'credential', 'headers', 'tls'} & proxy.keys():
         return None
     listen = urlsplit(env.get('HTTPS_PROXY') or '')

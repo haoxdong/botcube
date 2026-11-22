@@ -15,8 +15,18 @@ export class BotCubeConfigError extends Error {
 export function parsed<Schema extends z.ZodType>(schema: Schema, value: unknown, source: string): z.output<Schema> {
   const result = schema.safeParse(value);
   if (result.success) return result.data;
-  throw new BotCubeConfigError(result.error.issues.flatMap((issue) => fields(issue).map((field) => `${source}: ${field}: ${issue.message}`)).join('\n'));
+  throw new BotCubeConfigError(result.error.issues.flatMap((issue) => fields(issue).map((field) => `${source}: ${field}: ${message(issue, value)}`)).join('\n'));
 }
+
+/** The issue's message; a key its object leaves out reads as JSON Schema's `required` does, as the Python loader's error does. */
+function message(issue: z.core.$ZodIssue, value: unknown): string {
+  const key = issue.path.at(-1);
+  const parent = issue.path.slice(0, -1).reduce<unknown>((node, part) => (isRecord(node) ? node[part] : undefined), value);
+  const missing = issue.code === 'invalid_type' && typeof key === 'string' && isRecord(parent) && !Array.isArray(parent) && !Object.hasOwn(parent, key);
+  return missing ? `'${key}' is a required property` : issue.message;
+}
+
+const isRecord = (value: unknown): value is Record<PropertyKey, unknown> => typeof value === 'object' && value !== null;
 
 function fields(issue: z.core.$ZodIssue): string[] {
   const at = (path: readonly PropertyKey[]) => path.map(String).join('.') || '(root)';

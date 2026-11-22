@@ -7,13 +7,15 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { DynamoEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as logs from 'aws-cdk-lib/aws-logs';
-import { parkingTransition } from './parking-transition.js';
+import { parkingTransition, type SynthesizedConfig } from './parking-transition.js';
 import type { DeployIdentity } from './production-identity.js';
 import type { Construct } from 'constructs';
 
 export interface ProductionParkingProps extends StackProps {
   parkingPath: string;
   identity: DeployIdentity;
+  /** The BotCube Config the transition bundles. */
+  config: SynthesizedConfig;
   /** The registry the transition's bundling image comes from, a mirror of Amazon ECR Public's paths; absent, ECR Public. */
   imageRegistry?: string | undefined;
   chatTable: ITable;
@@ -54,7 +56,7 @@ export class ProductionParkingStack extends Stack {
     grantItems(wake, ['dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:PutItem']);
     const url = wake.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });
 
-    const transition = parkingTransition(this, join(props.parkingPath, '../..'), props.identity, props.imageRegistry);
+    const transition = parkingTransition(this, join(props.parkingPath, '../..'), props.identity, props.config, props.imageRegistry);
     const dispatcher = fn(props.functionName, 'dispatcher', {
       PARK_STATE_PARAMETER: props.parkStateParameter,
       SLOT_BUCKET: props.parking.slotBucket,
@@ -94,11 +96,11 @@ export class ProductionParkingStack extends Stack {
   }
 }
 
-export function createProductionParking(scope: Construct, cubeRoot: string, chatTable: ITable, chatTableExisting: boolean, identity: DeployIdentity, imageRegistry?: string): ProductionParkingStack {
+export function createProductionParking(scope: Construct, cubeRoot: string, chatTable: ITable, chatTableExisting: boolean, identity: DeployIdentity, config: SynthesizedConfig, imageRegistry?: string): ProductionParkingStack {
   const { functionName, autoPark, slotBucket, originSlotKey } = identity.aws.ecs.parking;
   return new ProductionParkingStack(scope, 'ProductionParking', {
     env: { account: identity.aws.account, region: identity.aws.region },
     parkingPath: join(cubeRoot, 'infra/ecs/parking'), hostname: new URL(identity.domains.chatService).hostname,
-    chatTable, chatTableExisting, parkStateParameter: identity.ssm.parkState, parking: { slotBucket, originSlotKey }, functionName, autoPark, identity, imageRegistry,
+    chatTable, chatTableExisting, parkStateParameter: identity.ssm.parkState, parking: { slotBucket, originSlotKey }, functionName, autoPark, identity, config, imageRegistry,
   });
 }

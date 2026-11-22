@@ -27,12 +27,12 @@
         },
         "subnets": [
           {
-            "id": "subnet-placeholder-a",
+            "id": "subnet-placeholdera",
             "availabilityZone": "us-east-1a",
             "cidrBlock": "192.0.2.0/24"
           },
           {
-            "id": "subnet-placeholder-b",
+            "id": "subnet-placeholderb",
             "availabilityZone": "us-east-1c",
             "cidrBlock": "198.51.100.0/24"
           }
@@ -62,7 +62,7 @@
         "routeTableId": "rtb-placeholder",
         "natGateway": {
           "name": "bot-cube-private-egress",
-          "publicSubnetId": "subnet-placeholder-a"
+          "publicSubnetId": "subnet-placeholdera"
         }
       },
       "apiHealth": {
@@ -76,11 +76,11 @@
       "alertsTopicName": "bot-cube-alerts",
       "publicSubnets": [
         {
-          "id": "subnet-placeholder-a",
+          "id": "subnet-placeholdera",
           "availabilityZone": "us-east-1a"
         },
         {
-          "id": "subnet-placeholder-b",
+          "id": "subnet-placeholderb",
           "availabilityZone": "us-east-1c"
         }
       ],
@@ -134,22 +134,5 @@
     "chatService": "http://localhost:8123",
     "chatServicePreview": "https://api-preview.example.invalid",
     "rawServiceOrigins": []
-  },
-  "github": {
-    "environment": "bot-cube-production",
-    "oidcSubjectPrefix": "repo:example-owner@000000000/example-repository@000000000",
-    "variables": {
-      "ecsDeployRoleArn": "BOT_CUBE_ECS_DEPLOY_ROLE_ARN"
-    },
-    "oidcSubject": "repo:example/bot:environment:production"
-  },
-  "artifacts": {
-    "toolStaging": {
-      "hook": "examples/public/deploy/stage-tools.sh"
-    }
-  },
-  "verification": {
-    "userAgent": "BotCube-Preview-Verification/1.0",
-    "originUserAgent": "BotCube-Origin-Verification/1.0"
   }
 }

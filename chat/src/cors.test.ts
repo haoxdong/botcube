@@ -3,10 +3,11 @@ import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { LOCAL_UI_ORIGINS } from './cors.js';
 
 const UI = 'https://ui.example.com';
+const domains = { web: UI, chatService: 'https://chat.example.com' };
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ config: { corsOrigins: [UI] } });
+  stack = await startInProcess({ botcube: { domains } });
 });
 afterAll(() => stack.stop());
 
@@ -134,49 +135,33 @@ describe('a cross-origin request', () => {
 });
 
 describe('the allowed origins', () => {
-  it.each(['http://localhost:3001', 'http://127.0.0.1:3001'])(
-    'include the local web UI at %s for a bot that allows it',
-    async (origin) => {
-      const local = await startInProcess({ overrides: { corsOrigins: LOCAL_UI_ORIGINS } });
-      try {
-        const response = await local.app.request('/threads', {
-          method: 'OPTIONS',
-          headers: { origin, 'access-control-request-method': 'POST' },
-        });
-
-        expect(response.status).toBe(200);
-      } finally {
-        await local.stop();
-      }
-    },
-  );
-
-  it("are the bot's defaults when the BotCube Config names no web.corsOrigins", async () => {
-    const defaults = await startInProcess({ overrides: { corsOrigins: ['https://bot.example.com'] } });
+  it.each(LOCAL_UI_ORIGINS)('are the local web UI, %s, when the BotCube Config names it', async (origin) => {
+    const local = await startInProcess();
     try {
-      const allowed = await defaults.app.request('/ping', { headers: { origin: 'https://bot.example.com' } });
-      const other = await defaults.app.request('/ping', { headers: { origin: UI } });
+      const response = await local.app.request('/threads', {
+        method: 'OPTIONS',
+        headers: { origin, 'access-control-request-method': 'POST' },
+      });
+      const other = await local.app.request('/ping', { headers: { origin: UI } });
 
-      expect(allowed.headers.get('access-control-allow-origin')).toBe('https://bot.example.com');
+      expect(response.status).toBe(200);
       expect(other.headers.has('access-control-allow-origin')).toBe(false);
     } finally {
-      await defaults.stop();
+      await local.stop();
     }
   });
 
-  it("replace the bot's defaults when the BotCube Config names web.corsOrigins", async () => {
-    const overridden = await startInProcess({
-      overrides: { corsOrigins: ['https://bot.example.com'] },
-      config: { corsOrigins: [UI] },
-    });
+  it("are the BotCube Config's domains.web and its aliases, and not the local web UI", async () => {
+    const aliased = await startInProcess({ botcube: { domains: { ...domains, webAliases: ['https://www.ui.example.com'] } } });
     try {
-      const response = await overridden.app.request('/ping', {
-        headers: { origin: 'https://bot.example.com' },
-      });
+      const allowed = async (origin: string) =>
+        (await aliased.app.request('/ping', { headers: { origin } })).headers.get('access-control-allow-origin');
 
-      expect(response.headers.has('access-control-allow-origin')).toBe(false);
+      expect(await allowed(UI)).toBe(UI);
+      expect(await allowed('https://www.ui.example.com')).toBe('https://www.ui.example.com');
+      expect(await allowed('http://localhost:3001')).toBeNull();
     } finally {
-      await overridden.stop();
+      await aliased.stop();
     }
   });
 });

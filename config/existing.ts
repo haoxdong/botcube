@@ -31,7 +31,6 @@ const existingFiles = z
     + "The existing VPC must use Amazon-provided DNS (enableDnsSupport and enableDnsHostnames): the Chat Service finds the file system's mount target as <fileSystemId>.efs.<region>.amazonaws.com.",
   );
 
-const subnet = z.strictObject({ subnetId: z.string().regex(/^subnet-[0-9a-z]+$/), availabilityZone: z.string().min(1) });
 const kmsAliasArn = z
   .string()
   .regex(/^arn:aws[a-z-]*:kms:[a-z0-9-]+:\d{12}:alias\/.+$/, 'Expected a KMS alias ARN, such as arn:aws:kms:us-east-1:123456789012:alias/sign-in-sheet, so the key rotates by moving the alias');
@@ -40,19 +39,36 @@ const bucketName = z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/);
 const STREAM_ARN = /^arn:aws[a-z-]*:dynamodb:[a-z0-9-]+:\d{12}:table\/([a-zA-Z0-9_.-]+)\/stream\/.+$/;
 const targetGroupArn = z.string().regex(/^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:\d{12}:targetgroup\/[a-zA-Z0-9-]{1,32}\/[0-9a-f]+$/);
 
+// CDK's from…Attributes: only the attributes CDK needs to synthesize without AWS credentials are restated.
+const subnetAttributes = z.strictObject({
+  subnetId: z.string().regex(/^subnet-[0-9a-z]+$/),
+  availabilityZone: z.string().min(1).describe('As CDK SubnetAttributes.availabilityZone, which CDK needs to synthesize without credentials.'),
+});
+const vpc = z
+  .strictObject({
+    vpcId: z.string().regex(/^vpc-[0-9a-z]+$/),
+    publicSubnets: z.array(subnetAttributes).min(2).describe("The origin load balancer's subnets; with network.natGateways 1, the NAT is in the first."),
+    privateSubnets: z
+      .array(subnetAttributes.extend({
+        ipv4CidrBlock: z.string().min(1).describe('As CDK SubnetAttributes.ipv4CidrBlock, which CDK needs to synthesize without credentials.'),
+        routeTableId: z.string().regex(/^rtb-[0-9a-z]+$/).optional().describe('As CDK SubnetAttributes.routeTableId: required with network.natGateways 1, which routes it to the NAT.'),
+      }))
+      .min(2)
+      .describe("The services', browsers' and Lambdas' subnets."),
+  })
+  .describe("The VPC, as CDK VpcAttributes: BotCube creates none. With network.natGateways 0 or absent, its private subnets must already reach the internet.");
+
 export const existing = z
   .strictObject({
-    network: z
+    vpc,
+    browsers: z
       .strictObject({
-        vpcId: z.string().regex(/^vpc-[0-9a-z]+$/),
-        publicSubnets: z.array(subnet).min(2).describe("The origin load balancer's subnets."),
-        privateSubnets: z
-          .array(subnet.extend({ cidrBlock: z.string().min(1) }))
-          .min(2)
-          .describe("The services', browsers' and Lambdas' subnets, which must already reach the internet; the proxy carries only the services' own traffic."),
+        link: z
+          .strictObject({ browserId: z.string().min(1), securityGroupId: z.string().regex(/^sg-[0-9a-z]+$/) })
+          .optional()
+          .describe("The link browser, in existing.vpc's private subnets, and its security group."),
       })
-      .optional()
-      .describe("A network that brings its own egress: BotCube creates, routes and parks no NAT in it, so the deploy identity names no aws.ecs.privateEgress."),
+      .optional(),
     kmsKeys: z
       .strictObject({
         vault: kmsKeyArn.optional().describe("Encrypts the Credential Service's vault."),
@@ -79,6 +95,7 @@ export const existing = z
     buckets: z
       .strictObject({
         connectionLogs: bucketName.optional().describe("The origin load balancer's connection logs."),
+        slots: z.strictObject({ bucketName }).optional().describe("As CDK BucketAttributes: the bucket parking keeps the origin's slot in."),
       })
       .optional(),
     files: existingFiles.optional(),
@@ -96,10 +113,7 @@ export const existing = z
       .optional()
       .describe('A Credential Service Endpoint, for a network that refuses a private DNS namespace: BotCube creates no Cloud Map namespace or service.'),
   })
-  .superRefine(({ tables, files, network }, context) => {
-    if (files && !network) {
-      context.addIssue({ code: 'custom', path: ['files'], message: "Existing Files need existing.network: the file system's mount targets are in its private subnets" });
-    }
+  .superRefine(({ tables }, context) => {
     const chat = tables?.chat;
     const streamTable = chat && STREAM_ARN.exec(chat.streamArn)?.[1];
     if (chat && streamTable !== chat.tableName) {

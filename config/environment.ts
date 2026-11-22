@@ -20,7 +20,7 @@ const RELAY_HOST = '127.0.0.1';
  * presents the client certificate on each connection: every client reads HTTP(S)_PROXY once, so only the relay can
  * send a refreshed credential or a rotated certificate.
  */
-export function proxyEnvironment({ network: { proxy } }: Pick<BotCubeConfig, 'network'>, { relayPort = PROXY_RELAY_PORT }: { relayPort?: number } = {}): Record<string, string> {
+export function proxyEnvironment({ integrations: { proxy } }: { integrations: Pick<BotCubeConfig['integrations'], 'proxy'> }, { relayPort = PROXY_RELAY_PORT }: { relayPort?: number } = {}): Record<string, string> {
   if (proxy.kind === 'none') return {};
   const noProxy = [...new Set([...ALWAYS_DIRECT, ...(proxy.noProxy ?? [])])].join(',');
   const relayed = proxy.credential !== undefined || proxy.headers !== undefined || proxy.tls !== undefined;

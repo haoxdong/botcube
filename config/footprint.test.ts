@@ -18,7 +18,7 @@ function section(printed: string, heading: string): string[] {
 
 it.each(['public', 'enterprise'])('prints the %s example as existing, created and runtime-created resources, IAM actions, egress hosts, images and commands', (name) => {
   const headings = printedFor(name).split('\n').filter((line) => line && !line.startsWith(' '));
-  expect(headings).toEqual(['Existing resources', 'Created resources', 'Created at runtime', 'IAM actions', 'Models', 'Egress hosts', 'TLS', 'Images', 'Build images', 'Commands']);
+  expect(headings).toEqual(['Names', 'Domains', 'Existing resources', 'Created resources', 'Created at runtime', 'IAM actions', 'Models', 'Egress hosts', 'TLS', 'Images', 'Build images', 'Commands']);
 });
 
 it("names the enterprise example's OIDC issuer host among its egress hosts", () => {
@@ -44,9 +44,10 @@ it('lists the resources a BotCube Config runs its OIDC provider on among the exi
 describe('the enterprise example', () => {
   it('lists each resource it supplies with the grants it carries', () => {
     expect(section(printedFor('enterprise'), 'Existing resources')).toEqual([
-      '  existing.network vpc-fixtureenterprise',
+      '  existing.vpc vpc-fixtureenterprise',
       "    grant every other Lambda function's role, the deploy's own included: ec2:AssignPrivateIpAddresses ec2:CreateNetworkInterface ec2:DeleteNetworkInterface ec2:DescribeNetworkInterfaces ec2:DescribeSubnets ec2:UnassignPrivateIpAddresses",
       '    grant its private subnets a route, by a NAT gateway or VPC endpoints: to each egress host below',
+      '  existing.browsers.link browser-placeholder (security group sg-placeholder)',
       '  existing.kmsKeys.vault arn:aws:kms:us-east-1:000000000000:key/11111111-aaaa-4aaa-8aaa-111111111111',
       '    grant Credential Service task: kms:Decrypt kms:DescribeKey kms:GenerateDataKey',
       '  existing.kmsKeys.sheet arn:aws:kms:us-east-1:000000000000:alias/corp-botcube-sign-in-sheet',
@@ -66,6 +67,7 @@ describe('the enterprise example', () => {
       '    grant Credential Service task: dynamodb:ConditionCheckItem dynamodb:DeleteItem dynamodb:GetItem dynamodb:PutItem dynamodb:Query dynamodb:UpdateItem',
       '  existing.buckets.connectionLogs corp-botcube-connection-logs',
       '    grant Elastic Load Balancing log delivery: s3:PutObject',
+      '  existing.buckets.slots bot-cube-sessions',
       '  existing.credentialService http://credentials.example.com',
       '  existing.files fs-0fea7e5f11e5 (KMS key arn:aws:kms:us-east-1:000000000000:key/66666666-ffff-4fff-8fff-666666666666)',
       '    grant Chat Service task (role aws.iam.chatServiceTaskRole): elasticfilesystem:ClientMount elasticfilesystem:ClientWrite',
@@ -123,11 +125,32 @@ describe('the enterprise example', () => {
 });
 
 describe('the public example', () => {
-  it('supplies nothing and creates every resource BotCube would', () => {
+  it('names every resource from its name, unless names overrides it, and lists its domains', () => {
     const printed = printedFor('public');
-    expect(section(printed, 'Existing resources')).toEqual([]);
+    expect(section(printed, 'Names')).toEqual(expect.arrayContaining([
+      '  runtimeAgentRuntimeName bot_cube_runtime',
+      '  agentComputerBrowserProfileNamePrefix template_',
+      '  linkBrowserName bot_cube_provider_link',
+      '  agentCoreTargetName template',
+      '  clusterName bot-cube',
+      '  buildLogGroupName /aws/lambda/bot-cube-container-build-handler',
+    ]));
+    expect(section(printed, 'Domains')).toEqual([
+      '  domains.web http://localhost:3001',
+      '  domains.webAliases http://127.0.0.1:3001',
+      '  domains.chatService http://localhost:8123',
+      '  domains.chatServicePreview https://api-preview.example.invalid',
+    ]);
+  });
+
+  it('supplies its link browser and slot bucket, and creates every other resource BotCube would', () => {
+    const printed = printedFor('public');
+    expect(section(printed, 'Existing resources')).toEqual([
+      '  existing.browsers.link browser-placeholder (security group sg-placeholder)',
+      '  existing.buckets.slots bot-cube-sessions',
+    ]);
     expect(section(printed, 'Created resources')).toEqual([
-      "  existing.network: the private subnets' NAT gateway, its Elastic IP and route",
+      "  existing.vpc: the private subnets' NAT gateway, its Elastic IP and route",
       "  existing.kmsKeys.vault: the Credential Service's vault key",
       "  existing.kmsKeys.images: the bot image repository's key",
       '  existing.tables.chat: the chat table and its stream',
@@ -190,7 +213,7 @@ describe("the models Endpoint's credential", () => {
   if (config.integrations.modelGateway.kind !== 'openai-compatible') throw new Error('The enterprise example runs its models on an OpenAI-compatible endpoint');
   const models = config.integrations.modelGateway;
   const withCredential = (credential: CredentialSource) => footprint({ ...config, allowCommandCredentials: true, integrations: { ...config.integrations,  modelGateway: { ...models, credential } } });
-  const secretArn = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube-example/models-api-key';
+  const secretId = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube-example/models-api-key';
 
   it('from a mounted file needs no grant and runs no command', () => {
     const needs = footprint(config);
@@ -210,7 +233,7 @@ describe("the models Endpoint's credential", () => {
   });
 
   it('from a secret grants its readers, the Chat Service and the Credential Service, its value, and the Harness nothing', () => {
-    const needs = withCredential({ kind: 'secret', secretArn });
+    const needs = withCredential({ kind: 'secret', secretId });
     expect(needs.iam.chatService?.actions).toContain('secretsmanager:GetSecretValue');
     expect(needs.iam.credentialService?.actions).toContain('secretsmanager:GetSecretValue');
     expect(needs.iam.harness?.actions).not.toContain('secretsmanager:GetSecretValue');
@@ -226,7 +249,7 @@ describe("the models Endpoint's credential", () => {
     withCredential({ kind: 'oauth-client-credentials', tokenEndpoint: 'https://idp.example.com:8443/oauth2/token', clientId: 'botcube-models', clientSecret });
 
   it('from OAuth client credentials reaches the token endpoint, and grants its readers the client secret and the Harness nothing', () => {
-    const needs = oauth({ kind: 'secret', secretArn });
+    const needs = oauth({ kind: 'secret', secretId });
     expect(needs.egressHosts).toEqual(expect.arrayContaining(['idp.example.com:8443', 'secretsmanager.<region>.amazonaws.com']));
     expect(needs.iam.chatService?.actions).toContain('secretsmanager:GetSecretValue');
     expect(needs.iam.credentialService?.actions).toContain('secretsmanager:GetSecretValue');
@@ -247,7 +270,7 @@ describe("sign-in's client secret", () => {
     footprint({ ...config, integrations: { ...config.integrations,  signIn: { ...identity, clients: [{ clientId: 'botcube', clientSecret }] } } });
 
   it('from a secret grants the Chat Service alone its value', () => {
-    const needs = withClientSecret({ kind: 'secret', secretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/oidc-client-secret' });
+    const needs = withClientSecret({ kind: 'secret', secretId: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/oidc-client-secret' });
     expect(needs.iam.chatService?.actions).toContain('secretsmanager:GetSecretValue');
     expect(needs.iam.harness?.actions).not.toContain('secretsmanager:GetSecretValue');
     expect(needs.egressHosts).toContain('secretsmanager.<region>.amazonaws.com');
@@ -261,6 +284,18 @@ describe("sign-in's client secret", () => {
   it('from the aws source grants, reaches and runs nothing more: the receiver checks it', () => {
     const file = footprint({ ...config, integrations: { ...config.integrations,  signIn: { ...identity, clients: [{ clientId: 'botcube', clientSecret: { kind: 'file', path: '/run/secrets/botcube/oidc-client-secret' } }] } } });
     expect(withClientSecret({ kind: 'aws', audience: 'login.example.com' })).toEqual(file);
+  });
+});
+
+describe('the images a BotCube Config names', () => {
+  it('stand in the Images for the ones BotCube would build', () => {
+    const config = loadConfig(example('public'));
+    const bot = '123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/bot@sha256:' + 'b'.repeat(64);
+    const chat = 'mirror.example.com/acme/chat:1';
+    const credential = '123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/credentials:1';
+    const { images } = footprint({ ...config, agentCore: { ...config.agentCore, runtime: { ...config.agentCore?.runtime, containerUri: bot } },
+      services: { chatService: { image: chat }, credentialService: { image: credential } } });
+    expect(images).toEqual([bot, credential, chat, 'public.ecr.aws/aws-observability/aws-otel-collector:v0.50.0']);
   });
 });
 
@@ -302,7 +337,7 @@ describe("the enterprise example's telemetry Endpoint", () => {
 
   it('from a secret grants both services its value', () => {
     if (config.integrations.telemetry.kind !== 'otlp') throw new Error('The enterprise example exports to its own collector');
-    const needs = footprint({ ...config, integrations: { ...config.integrations,  telemetry: { ...config.integrations.telemetry, credential: { kind: 'secret', secretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/telemetry-token' } } } });
+    const needs = footprint({ ...config, integrations: { ...config.integrations,  telemetry: { ...config.integrations.telemetry, credential: { kind: 'secret', secretId: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/telemetry-token' } } } });
     expect(needs.iam.chatService?.actions).toContain('secretsmanager:GetSecretValue');
     expect(needs.iam.harness?.actions).toContain('secretsmanager:GetSecretValue');
   });
@@ -310,31 +345,31 @@ describe("the enterprise example's telemetry Endpoint", () => {
 
 describe("the enterprise example's proxy Endpoint", () => {
   const config = loadConfig(example('enterprise'));
-  if (config.network.proxy.kind !== 'forward') throw new Error('The enterprise example reaches the internet through its proxy');
-  const proxy = config.network.proxy;
-  const withCredential = (credential: NonNullable<typeof proxy.credential>) => ({ ...config, allowCommandCredentials: true, network: { ...config.network,  proxy: { ...proxy, credential } } });
+  if (config.integrations.proxy.kind !== 'forward') throw new Error('The enterprise example reaches the internet through its proxy');
+  const proxy = config.integrations.proxy;
+  const withCredential = (credential: NonNullable<typeof proxy.credential>) => ({ ...config, allowCommandCredentials: true, integrations: { ...config.integrations, proxy: { ...proxy, credential } } });
 
   it('from a mounted file, as the example gives it, grants the Harness no secret', () => {
     expect(footprint(config).iam.harness?.actions).not.toContain('secretsmanager:GetSecretValue');
   });
 
   it('from a secret grants the Chat Service and the Harness, which relay to it, its value', () => {
-    const needs = footprint(withCredential({ kind: 'secret', secretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/proxy-token' }));
+    const needs = footprint(withCredential({ kind: 'secret', secretId: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/proxy-token' }));
     expect(needs.iam.chatService?.actions).toContain('secretsmanager:GetSecretValue');
     expect(needs.iam.harness?.actions).toContain('secretsmanager:GetSecretValue');
   });
 
   it('from a command lists the command each of them may run', () => {
     const needs = footprint(withCredential({ kind: 'command', command: ['/usr/local/bin/proxy-token', '--egress'], timeoutSeconds: 30 }));
-    expect(needs.commands).toEqual(['network.proxy.credential (chatService, credentialService, harness): /usr/local/bin/proxy-token --egress']);
+    expect(needs.commands).toEqual(['integrations.proxy.credential (chatService, credentialService, harness): /usr/local/bin/proxy-token --egress']);
   });
 });
 
 describe('Endpoint TLS', () => {
   const config = loadConfig(example('enterprise'));
-  if (config.integrations.modelGateway.kind !== 'openai-compatible' || config.network.proxy.kind !== 'forward') throw new Error('The enterprise example has a models Endpoint and a proxy');
+  if (config.integrations.modelGateway.kind !== 'openai-compatible' || config.integrations.proxy.kind !== 'forward') throw new Error('The enterprise example has a models Endpoint and a proxy');
   const { modelGateway: models } = config.integrations;
-  const { proxy } = config.network;
+  const { proxy } = config.integrations;
   const KEY = '/run/spiffe/svid-key.pem';
   const files = { clientCertificate: { certificate: '/run/spiffe/svid.pem', key: KEY }, serverIdentity: 'spiffe://example.org/ns/egress/sa/proxy' };
   const command = { clientCertificate: { command: ['/usr/local/bin/svid-broker', '--audience', 'models'] as [string, ...string[]], timeoutSeconds: 30 } };
@@ -344,12 +379,12 @@ describe('Endpoint TLS', () => {
   });
 
   it("prints each Endpoint's expected identity and certificate files, by who connects to it", () => {
-    const printed = formatFootprint(footprint({ ...config, integrations: { ...config.integrations,  modelGateway: { ...models, tls: files }, telemetry: { kind: 'otlp', url: 'https://otel-collector.example.com/v1/traces', tls: files } }, network: { ...config.network,  proxy: { ...proxy, url: 'https://proxy.example.com:3129', tls: files } } }));
+    const printed = formatFootprint(footprint({ ...config, integrations: { ...config.integrations,  modelGateway: { ...models, tls: files }, telemetry: { kind: 'otlp', url: 'https://otel-collector.example.com/v1/traces', tls: files }, proxy: { ...proxy, url: 'https://proxy.example.com:3129', tls: files } } }));
 
     expect(section(printed, 'TLS')).toEqual([
       '  integrations.modelGateway.tls (chatService, credentialService): server identity spiffe://example.org/ns/egress/sa/proxy; client certificate /run/spiffe/svid.pem, key /run/spiffe/svid-key.pem',
+      '  integrations.proxy.tls (chatService, credentialService, harness): server identity spiffe://example.org/ns/egress/sa/proxy; client certificate /run/spiffe/svid.pem, key /run/spiffe/svid-key.pem',
       '  integrations.telemetry.tls (chatService, harness): server identity spiffe://example.org/ns/egress/sa/proxy; client certificate /run/spiffe/svid.pem, key /run/spiffe/svid-key.pem',
-      '  network.proxy.tls (chatService, credentialService, harness): server identity spiffe://example.org/ns/egress/sa/proxy; client certificate /run/spiffe/svid.pem, key /run/spiffe/svid-key.pem',
     ]);
   });
 
@@ -372,7 +407,7 @@ describe("an outside Harness issuer's bearer", () => {
   });
 
   it('from a secret grants the Chat Service alone its value', () => {
-    const needs = withToken({ kind: 'secret', secretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/harness-token' });
+    const needs = withToken({ kind: 'secret', secretId: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/harness-token' });
     expect(needs.iam.chatService?.actions).toContain('secretsmanager:GetSecretValue');
     expect(needs.iam.harness?.actions).not.toContain('secretsmanager:GetSecretValue');
   });

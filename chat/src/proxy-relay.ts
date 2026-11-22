@@ -63,7 +63,7 @@ export async function startProxyRelay({ upstream, listen, credential, headers, t
  * botcube/config) before any client connects; undefined unless the proxy takes a credential, headers or
  * TLS. A relay that cannot listen stops the process.
  */
-export function startProxyRelayForConfig(proxy: BotCubeConfig['network']['proxy'], env: NodeJS.ProcessEnv = process.env): Promise<ProxyRelay> | undefined {
+export function startProxyRelayForConfig(proxy: BotCubeConfig['integrations']['proxy'], env: NodeJS.ProcessEnv = process.env): Promise<ProxyRelay> | undefined {
   if (proxy.kind === 'none' || (proxy.credential === undefined && proxy.headers === undefined && proxy.tls === undefined)) return undefined;
   const listen = env.HTTPS_PROXY ? new URL(env.HTTPS_PROXY) : undefined;
   if (listen === undefined || !listen.hostname || !listen.port) {

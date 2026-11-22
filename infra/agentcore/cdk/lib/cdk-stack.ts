@@ -1,4 +1,4 @@
-import { AgentCoreApplication, type AgentCoreProjectSpec } from '@aws/agentcore-cdk';
+import type { AgentCoreApplication, AgentCoreProjectSpec } from '@aws/agentcore-cdk';
 import { CfnOutput, Duration, Stack, type CfnResource, type StackProps } from 'aws-cdk-lib';
 import * as bedrockagentcore from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as codebuild from 'aws-cdk-lib/aws-codebuild';
@@ -19,6 +19,7 @@ import type { HarnessAuth, ModelsDeployment, RuntimeTelemetry } from '../../../.
   'resolution-mode': 'import',
 };
 import { addUserMemoryRole, type UserMemoryRole } from './user-memory-role';
+import { runtimeApplication, type RuntimeEnvironment } from './bot-image-runtime';
 
 /**
  * Cap (seconds) on a runtime microVM's total lifetime — permanent
@@ -108,6 +109,8 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
   existingImageKeyArn?: string;
   /** The registry, mirroring ECR Public's paths, images are built FROM. */
   imageRegistry?: string;
+  /** agentCore.runtime.containerUri: the Bot Image to run, else built. */
+  runtimeImage?: string | undefined;
   /** Variables every runtime gets, such as the proxy and the OTLP traces endpoint (BotCube Config plain parameters). */
   runtimeEnvironment?: Record<string, string>;
   permissionsBoundary?: iam.IManagedPolicy;
@@ -178,15 +181,11 @@ function configuredSpec(props: AgentCoreStackProps): AgentCoreProjectSpec {
   };
 }
 
-/**
- * CDK Stack that deploys AgentCore infrastructure.
- *
- * This is a thin wrapper that instantiates L3 constructs.
- * All resource logic and outputs are contained within the L3 constructs.
- */
+/** CDK Stack that deploys AgentCore infrastructure. */
 export class AgentCoreStack extends Stack {
   /** The AgentCore application containing all agent environments */
   public readonly application: AgentCoreApplication;
+  private readonly runtimes: RuntimeEnvironment[];
 
   constructor(scope: Construct, id: string, props: AgentCoreStackProps) {
     const { permissionsBoundary, ...stackProps } = props;
@@ -201,11 +200,12 @@ export class AgentCoreStack extends Stack {
     const { physicalIdentity, privateNatBrowser } = props;
     const spec = configuredSpec(props);
 
-    this.application = new AgentCoreApplication(this, 'Application', { spec });
+    [this.application, this.runtimes] = runtimeApplication(this, spec, props.runtimeImage);
     this.applyPhysicalIdentity(
       physicalIdentity,
       spec,
-      !!props.executionRole || spec.runtimes.some(runtime => !!runtime.executionRoleArn)
+      !!props.executionRole || spec.runtimes.some(runtime => !!runtime.executionRoleArn),
+      !props.runtimeImage
     );
 
     if (privateNatBrowser) {
@@ -242,14 +242,14 @@ export class AgentCoreStack extends Stack {
         }
       }
       // The Harness persists each Session in this memory (ADR 0067 §1).
-      for (const env of this.application.environments.values()) {
+      for (const env of this.runtimes) {
         env.runtime.addEnvironmentVariable('AGENTCORE_MEMORY_ID', memory.memoryId);
         removeMemoryAlias(env.runtime.node.defaultChild as bedrockagentcore.CfnRuntime, memory.getEnvVarName());
       }
       if (props.harnessCodeLocation) {
         this.addSessionApi(props.harnessCodeLocation, memory, physicalIdentity, props);
       }
-      if (props.userMemoryRole) addUserMemoryRole(this, this.application, memory.memoryArn, props.userMemoryRole);
+      if (props.userMemoryRole) addUserMemoryRole(this, this.runtimes, memory.memoryArn, props.userMemoryRole);
     }
   }
 
@@ -257,7 +257,7 @@ export class AgentCoreStack extends Stack {
     // Cap each runtime's lifecycle (ADR 0029 defense-in-depth). The
     // agentcore-cdk L3 construct doesn't expose LifecycleConfiguration, so set
     // it on the underlying CfnRuntime (the runtime's default child).
-    for (const env of this.application.environments.values()) {
+    for (const env of this.runtimes) {
       const cfnRuntime = env.runtime.node.defaultChild as bedrockagentcore.CfnRuntime;
       const platformVersion = props.platformVersion === undefined ? 'V2' : props.platformVersion;
       applyRuntimePlatform(cfnRuntime, platformVersion, props.rollbackVersion);
@@ -278,7 +278,7 @@ export class AgentCoreStack extends Stack {
         `${env.node.id}LogRetention`,
         cfnRuntime.attrAgentRuntimeId,
         env.runtime.role,
-        props.telemetry ?? { kind: 'xray', secretArns: [] }
+        props.telemetry ?? { kind: 'xray', secretIds: [] }
       );
       if (props.runtimeNetwork) applyRuntimeNetwork(cfnRuntime, props.runtimeNetwork);
       applyDeploymentSeams(this, env.runtime, cfnRuntime, props);
@@ -374,7 +374,7 @@ export class AgentCoreStack extends Stack {
     });
     const sessionApiAlias = sessionApi.addAlias(identity.sessionApiAlias);
     scaleSessionApi(sessionApiAlias);
-    for (const env of this.application.environments.values()) env.runtime.node.addDependency(sessionApiAlias);
+    for (const env of this.runtimes) env.runtime.node.addDependency(sessionApiAlias);
     new CfnOutput(this, 'SessionApiFunctionArn', { value: sessionApi.functionArn });
   }
 
@@ -389,7 +389,8 @@ export class AgentCoreStack extends Stack {
   private applyPhysicalIdentity(
     identity: AgentCorePhysicalIdentity,
     spec: AgentCoreProjectSpec,
-    externalExecutionRole: boolean
+    externalExecutionRole: boolean,
+    builds: boolean
   ): void {
     const resources = this.node.findAll();
     const requireOne = <T extends CfnResource>(
@@ -415,11 +416,12 @@ export class AgentCoreStack extends Stack {
       const runtime = requireOne(bedrockagentcore.CfnRuntime);
       runtime.agentRuntimeName = identity.runtime;
       new CfnOutput(this, 'AgentRuntimeVersion', { value: runtime.attrAgentRuntimeVersion });
+      if (!externalExecutionRole) requireOne(iam.CfnRole, '/Runtime/ExecutionRole/').roleName = identity.roles.runtime;
+      if (!builds) return;
       requireOne(ecr.CfnRepository).repositoryName = identity.ecrRepository;
       requireOne(codebuild.CfnProject).name = identity.codeBuildProject;
       requireOne(lambda.CfnFunction).functionName = identity.lambdaFunction;
       requireOne(iam.CfnRole, '/ContainerBuildHandler/ServiceRole/').roleName = identity.roles.lambda;
-      if (!externalExecutionRole) requireOne(iam.CfnRole, '/Runtime/ExecutionRole/').roleName = identity.roles.runtime;
       requireOne(iam.CfnRole, '/ContainerBuildProject/ContainerBuildExecutionRole/').roleName =
         identity.roles.codeBuild;
     }

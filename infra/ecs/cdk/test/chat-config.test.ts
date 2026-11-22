@@ -9,7 +9,8 @@ import { synthesizeExample, synthesizeExampleAt } from './example-fixture.js';
 
 interface Container { Name: string; Environment?: { Name: string; Value: unknown }[] }
 
-const DOCKERFILE = fs.readFileSync(path.resolve(__dirname, '../../../../chat/Dockerfile'), 'utf8').split('\n');
+const BOTCUBE = path.resolve(__dirname, '../../../..');
+const DOCKERFILE = fs.readFileSync(path.join(BOTCUBE, 'chat/Dockerfile'), 'utf8').split('\n');
 const CREDENTIAL_DOCKERFILE = fs.readFileSync(path.resolve(__dirname, '../../../../credential-service/Dockerfile'), 'utf8').split('\n');
 
 function containerEnvironment(app: App, name: string): Record<string, unknown> {
@@ -41,7 +42,7 @@ test('a BotCube Config the chat image does not ship fails before any stack', asy
   try {
     const config = path.join(root, 'botcube.yaml');
     fs.copyFileSync(path.resolve(__dirname, '../../../../examples/bot/bot.yaml'), path.join(root, 'bot.yaml'));
-    fs.writeFileSync(config, JSON.stringify({  }));
+    fs.copyFileSync(path.join(BOTCUBE, 'tests/required-keys.json'), config);
     await expect(synthesizeExampleAt(config)).rejects.toThrow(`BotCube Config ${config}: the chat image ships only`);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

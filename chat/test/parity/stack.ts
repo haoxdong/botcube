@@ -19,7 +19,7 @@ export { AWS_ACCESS_KEY_ID, createChatTable, RUNTIME_ARN };
 interface StackOptions {
   agentcore?: 'fake' | 'unreachable' | 'unconfigured';
   table?: 'created' | 'missing';
-  /** The BotCube Config's `web.corsOrigins`. */
+  /** The web UI origins: the BotCube Config's `domains.web`, then its `domains.webAliases`. */
   corsOrigins?: string[];
 }
 
@@ -56,7 +56,8 @@ export async function startStack(options: StackOptions = {}) {
   }
   const address = unreachable.address();
   const agentcoreUrl = address && typeof address !== 'string' ? `http://127.0.0.1:${address.port}` : agentcore.url;
-  const imageConfig = testBotCubeConfig(PARITY_BOT, options.corsOrigins === undefined ? {} : { network: { corsOrigins: options.corsOrigins } });
+  const [web, ...webAliases] = options.corsOrigins ?? [];
+  const imageConfig = testBotCubeConfig(PARITY_BOT, web === undefined ? {} : { domains: { web, webAliases, chatService: 'https://chat.example.invalid' } });
   const env: NodeJS.ProcessEnv = {
     PATH: process.env.PATH, HOME: home,
     AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,

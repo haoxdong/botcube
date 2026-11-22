@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_ROOT="${BOTCUBE_DEPLOY_ROOT:?BOTCUBE_DEPLOY_ROOT must point to the active deploy directory}"
+# The GitHub OIDC subject of the workflow that deploys: the release tooling's, which no BotCube Config holds.
+OIDC_SUBJECT="${GITHUB_OIDC_SUBJECT:?GITHUB_OIDC_SUBJECT must name the OIDC subject of the workflow that deploys}"
 
 if [[ "${1:-}" == '--profile' ]]; then
   test -n "${2:-}"
@@ -14,8 +16,8 @@ if [[ "$#" -ne 0 ]]; then
   exit 2
 fi
 
-read -r AWS_ACCOUNT_ID AWS_REGION STACK_FAMILY CLUSTER ROLE_NAME ORIGIN_PULL_SECRET ORIGIN_TOKEN_SECRET ALERTS_TOPIC MEMORY_NAME PARK_STATE OIDC_SUBJECT POLICY_NAME PARKING_FUNCTION SESSION_API RUNTIME_ROLE EGRESS_STACK ORIGIN_STACK HEALTH_STACK TURN_IDENTITY_SECRET < <(node -e '
-  const identity = require(process.argv[1]);
+read -r AWS_ACCOUNT_ID AWS_REGION STACK_FAMILY CLUSTER ROLE_NAME ORIGIN_PULL_SECRET ORIGIN_TOKEN_SECRET ALERTS_TOPIC MEMORY_NAME PARK_STATE POLICY_NAME PARKING_FUNCTION SESSION_API RUNTIME_ROLE EGRESS_STACK ORIGIN_STACK HEALTH_STACK TURN_IDENTITY_SECRET < <(node -e '
+  const identity = require(require("node:path").resolve(process.argv[1])).deployRootFile(process.argv[2], "identity.json");
   process.stdout.write([
     identity.aws.account,
     identity.aws.region,
@@ -27,7 +29,6 @@ read -r AWS_ACCOUNT_ID AWS_REGION STACK_FAMILY CLUSTER ROLE_NAME ORIGIN_PULL_SEC
     identity.aws.ecs.alertsTopicName,
     identity.aws.agentCore.memory,
     identity.ssm.parkState,
-    identity.github.oidcSubject,
     identity.aws.ecs.deployPolicyName,
     identity.aws.ecs.parking.functionName,
     identity.aws.agentCore.sessionApiFunction,
@@ -37,7 +38,7 @@ read -r AWS_ACCOUNT_ID AWS_REGION STACK_FAMILY CLUSTER ROLE_NAME ORIGIN_PULL_SEC
     identity.aws.ecs.apiHealth.stackName,
     identity.aws.ecs.chatService.turnIdentityKeysSecretName,
   ].join(" ") + "\n");
-' "$DEPLOY_ROOT/identity.json")
+' "$(dirname "${BASH_SOURCE[0]}")/../../config/read.cjs" "$DEPLOY_ROOT")
 
 TRUST_POLICY="$(mktemp)"
 ROLE_POLICY="$(mktemp)"

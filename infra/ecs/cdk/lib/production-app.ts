@@ -1,43 +1,19 @@
-import { readConfig } from 'botcube-config/read';
+import { readConfig, webOrigins as configWebOrigins } from 'botcube-config/read';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { App } from 'aws-cdk-lib';
-import { ContainerImage } from 'aws-cdk-lib/aws-ecs';
-import { activeDeployRoot, deployIdentity, projectDir } from './deploy-root.js';
+import { activeDeployRoot, deployIdentity, deployRootConfig, projectDir } from './deploy-root.js';
 import { defineProduction, type ProductionOptions } from './production.js';
-import { credentialServiceImage } from './credential-audit-copy.js';
 import { grantLambdasInline } from './lambda-inline-grants.js';
-import { repositoryImageProps } from './repository-image.js';
+import { productionChatImage, productionCredentialImage, serviceImages, type BotServiceDockerfiles } from './service-images.js';
 
 /** Where a bot keeps an ECS CDK app of its own, which wraps this one to add its own resources (ADR 0091). */
 export const BOT_ECS_APP = 'ecs/cdk';
 
-/**
- * The preview origin's Chat Service image and the BotCube Config it serves (`config`). A bot holding its own Chat
- * Service in `chat/` beside `deploy/` builds that, on the BotCube Config beside them; any other deploy root runs the
- * stock Chat Service, on the public example's BotCube Config its image ships.
- */
-export function productionChatImage(repositoryRoot: string, deployRoot: string): { file: string; config: string; botcubeConfig?: string } {
-  const own = path.join(deployRoot, '../chat/Dockerfile');
-  if (fs.existsSync(own)) return { file: path.relative(repositoryRoot, own), config: path.join(deployRoot, '../botcube.yaml') };
-  const botcube = path.resolve(projectDir(__dirname), '../../..');
-  return {
-    file: path.relative(repositoryRoot, path.join(botcube, 'chat/Dockerfile')),
-    config: path.join(botcube, 'examples/public/botcube.yaml'),
-    botcubeConfig: '/opt/chat-service/examples/public/botcube.yaml',
-  };
-}
-
-/** The browser origins, besides its own, the BotCube Config at `configPath` names in `network.corsOrigins`; none without them. */
+/** The browser origins, besides its own, the BotCube Config at `configPath` names: `domains.web` and its aliases; none without them. */
 export function webOrigins(configPath: string): string[] {
-  return readConfig(configPath).network?.corsOrigins ?? [];
-}
-
-/** The preview origin's Credential Service image: the deploy root's own, or else the stock one from `credential-service/`. */
-export function productionCredentialImage(repositoryRoot: string, deployRoot: string): string {
-  const own = path.join(deployRoot, 'credential-service/Dockerfile');
-  return path.relative(repositoryRoot, fs.existsSync(own) ? own : path.resolve(projectDir(__dirname), '../../../credential-service/Dockerfile'));
+  return configWebOrigins(readConfig(configPath)) ?? [];
 }
 
 /** HEAD, marked `-dirty` when tracked files differ from it, so a deploy never claims a commit it did not ship. */
@@ -46,13 +22,26 @@ function checkoutCommit(root: string): string {
   return git('rev-parse', 'HEAD') + (git('status', '--porcelain', '--untracked-files=no') ? '-dirty' : '');
 }
 
-/** The production stacks of the active bot, from its deploy identity and this app's context and inputs. */
-export function productionApp(product: Pick<ProductionOptions, 'serving' | 'credentials'> = {}): App {
+/** What a bot's own ECS app adds to BotCube's production stacks. */
+export type ProductOptions = Pick<ProductionOptions, 'serving' | 'credentials' | 'webLatency'> & {
+  /** Its own services' Dockerfiles, which build when its BotCube Config names no image for them. */
+  images?: BotServiceDockerfiles;
+};
+
+/**
+ * The production stacks of the active bot, from its deploy identity and this app's context and inputs, with what the
+ * bot's own ECS app adds (`product`): its resources, its own services' Dockerfiles, and its release tooling's metrics reader.
+ */
+export function productionApp({ images: dockerfiles = {}, ...product }: ProductOptions = {}): App {
   const app = new App();
   const repositoryRoot = path.resolve(projectDir(__dirname), process.env.BOTCUBE_REPOSITORY_ROOT ?? '../../../..');
   const deployRoot = activeDeployRoot();
-  const identity = deployIdentity(deployRoot);
-  const chatImage = productionChatImage(repositoryRoot, deployRoot);
+  const identity = deployIdentity(deployRoot, repositoryRoot);
+  const config = deployRootConfig(deployRoot);
+  const botcubeConfig = readConfig(config.path);
+  const { services, tags } = botcubeConfig;
+  const chatImage = productionChatImage(repositoryRoot, deployRoot, dockerfiles.chat, services?.chatService?.image);
+  const corsOrigins = configWebOrigins(chatImage.config === config.path ? botcubeConfig : readConfig(chatImage.config)) ?? [];
   let origin;
   let chat;
   if (app.node.tryGetContext('previewOrigin')) {
@@ -61,24 +50,23 @@ export function productionApp(product: Pick<ProductionOptions, 'serving' | 'cred
     if (chatImage.botcubeConfig) chat = { botcubeConfig: chatImage.botcubeConfig };
     origin = {
       input: JSON.parse(fs.readFileSync(inputPath, 'utf8')),
-      images: {
-        chat: ContainerImage.fromAsset(repositoryRoot, repositoryImageProps(repositoryRoot, chatImage.file)),
-        credential: credentialServiceImage(repositoryRoot, repositoryImageProps(repositoryRoot, productionCredentialImage(repositoryRoot, deployRoot))),
-      },
+      images: serviceImages(repositoryRoot, services, {
+        chat: chatImage.file, credential: productionCredentialImage(repositoryRoot, dockerfiles.credential),
+      }),
       commit: checkoutCommit(repositoryRoot),
     };
   }
   const momentsContext = app.node.tryGetContext('webLatencyMoments');
-  let webLatency;
+  let webLatency = product.webLatency;
   if (momentsContext !== undefined) {
     if (typeof momentsContext !== 'string') throw new Error('Context webLatencyMoments must be a JSON array of nonempty strings');
     const moments: unknown = JSON.parse(momentsContext);
     if (!Array.isArray(moments) || moments.length === 0 || moments.some(moment => typeof moment !== 'string' || moment.trim().length === 0)) {
       throw new Error('Context webLatencyMoments must be a JSON array of nonempty strings');
     }
-    webLatency = { moments };
+    webLatency = { ...webLatency, moments };
   }
-  defineProduction(app, { repositoryRoot, deployRoot, identity, corsOrigins: webOrigins(chatImage.config), origin, ...(chat ? { chat } : {}), ...(webLatency ? { webLatency } : {}), ...product });
+  defineProduction(app, { repositoryRoot, deployRoot, identity, config, corsOrigins, origin, ...(tags ? { tags } : {}), ...(chat ? { chat } : {}), ...product, ...(webLatency ? { webLatency } : {}) });
   grantLambdasInline(app);
   return app;
 }

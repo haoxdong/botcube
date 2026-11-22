@@ -5,7 +5,7 @@ import { setSessionProjectRoot } from '@aws/agentcore-cdk';
 import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { AgentCoreStack, SESSION_API_TIMEOUT_SECONDS } from '../lib/cdk-stack';
-import { readDeployIdentity, readProjectSpec } from '../lib/deploy-config';
+import { agentCoreProjectRoot, readDeployIdentity, readProjectSpec } from '../lib/deploy-config';
 
 const DEPLOY_ROOT = resolve(__dirname, '../../../../examples/public/deploy');
 const SPEC = readProjectSpec(DEPLOY_ROOT);
@@ -13,7 +13,7 @@ const IDENTITY = readDeployIdentity(DEPLOY_ROOT);
 const [RUNTIME] = SPEC.runtimes;
 assert(RUNTIME, 'the template spec declares a runtime');
 const HARNESS = resolve(DEPLOY_ROOT, RUNTIME.codeLocation);
-setSessionProjectRoot(DEPLOY_ROOT);
+setSessionProjectRoot(agentCoreProjectRoot(readProjectSpec(DEPLOY_ROOT)));
 
 function stack(app = new cdk.App()): AgentCoreStack {
   return new AgentCoreStack(app, 'SessionApiStack', {

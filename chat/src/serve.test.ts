@@ -26,7 +26,6 @@ vi.mock('./dispatcher-fetch.js', async (importOriginal) => {
 const CONFIG = testBotCubeConfig();
 
 const overrides: StockOverrides = {
-  corsOrigins: ['https://bot.example.com'],
   agentDocuments: { agentIdentity: { name: 'Test Bot', character: '', vibe: '', avatar: '' }, soul: '' },
   models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
   accountModels: async () => [], accountModel: async () => undefined,
@@ -324,27 +323,27 @@ describe('the Chat Service served from the environment', () => {
     expect(consoleWarn).not.toHaveBeenCalled();
   });
 
-  it("allows the BotCube Config's network.corsOrigins in place of the bot defaults", async () => {
+  it("allows the BotCube Config's web origin and its aliases in place of the local web UI", async () => {
     const url = await serve({
       PORT: '0',
       BOTCUBE_CHAT_TABLE: await newTable(),
-      BOTCUBE_CONFIG: testBotCubeConfig(undefined, { network: { corsOrigins: ['https://a.example.com', 'https://b.example.com'] } }),
+      BOTCUBE_CONFIG: testBotCubeConfig(undefined, { domains: { web: 'https://a.example.com', webAliases: ['https://b.example.com'], chatService: 'https://api.example.com' } }),
     });
     const allowed = async (origin: string) =>
       (await fetch(`${url}/ping`, { headers: { origin } })).headers.get('access-control-allow-origin');
 
     expect(await allowed('https://a.example.com')).toBe('https://a.example.com');
     expect(await allowed('https://b.example.com')).toBe('https://b.example.com');
-    expect(await allowed('https://bot.example.com')).toBeNull();
+    expect(await allowed('http://localhost:3001')).toBeNull();
     expect(await allowed('')).toBeNull();
   });
 
-  it('allows the bot default origins without network.corsOrigins', async () => {
+  it('allows the local web UI when the BotCube Config names no web origin', async () => {
     const url = await serve({ PORT: '0', BOTCUBE_CHAT_TABLE: await newTable() });
 
-    const response = await fetch(`${url}/ping`, { headers: { origin: 'https://bot.example.com' } });
+    const response = await fetch(`${url}/ping`, { headers: { origin: 'http://localhost:3001' } });
 
-    expect(response.headers.get('access-control-allow-origin')).toBe('https://bot.example.com');
+    expect(response.headers.get('access-control-allow-origin')).toBe('http://localhost:3001');
   });
 
   it('presigns live views of the AGENTCORE_BROWSER_ID browser in AWS_REGION', async () => {

@@ -1,10 +1,9 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { deployRootFile } from '../config/read.cjs';
 
 const deployRoot = process.env.BOTCUBE_DEPLOY_ROOT;
 if (!deployRoot) throw new Error('BOTCUBE_DEPLOY_ROOT is required');
-const identity = JSON.parse(readFileSync(join(deployRoot, 'identity.json'), 'utf8'));
+const identity = deployRootFile(deployRoot, 'identity.json');
 const values = {
   AWS_ACCOUNT_ID: identity.aws.account,
   AWS_REGION: identity.aws.region,
@@ -15,7 +14,6 @@ const values = {
   CODEBUILD_PROJECT: identity.aws.codeBuild.project,
   NEXT_PUBLIC_CHAT_SERVICE_URL: identity.domains.chatService,
   ECR_REPOSITORY: identity.aws.ecr.repository,
-  GITHUB_DEPLOY_ENVIRONMENT: identity.github.environment,
   IAM_CODEBUILD_ROLE: identity.aws.iam.codeBuildRole,
   IAM_DEPLOY_USER: identity.aws.iam.deployUser,
   IAM_INVOKE_POLICY_FAMILY: identity.aws.iam.invokePolicyFamily,
@@ -25,7 +23,6 @@ const values = {
   LAMBDA_FAMILY: identity.aws.lambda.family,
   PUBLIC_WEB_URL: identity.domains.web,
   RUNTIME_ARN_SSM_PARAMETER: identity.ssm.runtimeArn,
-  TOOL_STAGING_HOOK: identity.artifacts.toolStaging.hook,
 };
 
 for (const [name, value] of Object.entries(values)) {

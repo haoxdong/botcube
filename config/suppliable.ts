@@ -11,6 +11,11 @@ const PARKING = 'production parking functions';
 const ORIGIN_SMOKE = "the deploy role's origin smoke test";
 
 type Existing = NonNullable<BotCubeConfig['existing']>;
+
+/** The supplied VPC when it brings its own egress, with `network.natGateways` 0; none when BotCube creates its NAT in it. */
+export function ownEgressVpc({ network, existing }: Pick<BotCubeConfig, 'network' | 'existing'>) {
+  return network.natGateways ? undefined : existing.vpc;
+}
 interface SuppliableGrant {
   readonly to: Principal;
   readonly actions: readonly string[];
@@ -22,7 +27,7 @@ interface SuppliableGrant {
 interface Suppliable {
   /** What BotCube creates in its place; absent, it creates and grants nothing, as for AgentCore Memory on its AWS owned key. */
   readonly created?: string;
-  readonly name: (existing: Existing) => string | undefined;
+  readonly name: (existing: Existing, config: BotCubeConfig) => string | undefined;
   /** What a BotCube role needs on it, granted when BotCube creates it and existing with it otherwise. */
   readonly grant?: readonly SuppliableGrant[];
   /** What the deploy machinery and AWS services need on it, granted the same way. */
@@ -31,14 +36,15 @@ interface Suppliable {
 
 /** Each resource BotCube creates unless the BotCube Config supplies it with its grants (ADR 0091). */
 export const SUPPLIABLE: Readonly<Record<string, Suppliable>> = {
-  network: {
+  vpc: {
     created: "the private subnets' NAT gateway, its Elastic IP and route",
-    name: ({ network }) => network?.vpcId,
+    name: (_existing, config) => ownEgressVpc(config)?.vpcId,
     others: {
       "every other Lambda function's role, the deploy's own included": NETWORK_INTERFACES,
       'its private subnets a route, by a NAT gateway or VPC endpoints': ['to each egress host below'],
     },
   },
+  'browsers.link': { name: ({ browsers }) => browsers?.link && `${browsers.link.browserId} (security group ${browsers.link.securityGroupId})` },
   'kmsKeys.vault': { created: "the Credential Service's vault key", name: ({ kmsKeys }) => kmsKeys?.vault, grant: [{ to: 'credentialService', actions: KEY_USE }] },
   'kmsKeys.sheet': {
     name: ({ kmsKeys }) => kmsKeys?.sheet,
@@ -72,6 +78,7 @@ export const SUPPLIABLE: Readonly<Record<string, Suppliable>> = {
     name: ({ buckets }) => buckets?.connectionLogs,
     others: { 'Elastic Load Balancing log delivery': ['s3:PutObject'] },
   },
+  'buckets.slots': { name: ({ buckets }) => buckets?.slots?.bucketName },
   credentialService: {
     created: "the Credential Service's private DNS namespace and Cloud Map service",
     name: ({ credentialService }) => credentialService?.url,

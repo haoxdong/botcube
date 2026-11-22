@@ -71,7 +71,6 @@ async function localHarness(answer: (response: ServerResponse) => void) {
 const env = { BOTCUBE_CONFIG: testBotCubeConfig(), BOTCUBE_CHAT_TABLE: 'local-agent-test' };
 
 const bot: StockOverrides = {
-  corsOrigins: [],
   recoverAccountDeletions: async () => undefined,
   turnStarting: () => undefined,
   browserLiveView: async () => null,
@@ -133,7 +132,7 @@ const agentDocuments: AgentDocuments = {
 const config: Omit<ChatServiceConfig, 'turnSummaryModel'> = {
   agentCore: null,
   localHarnessUrl: null,
-  corsOrigins: null,
+  corsOrigins: [],
   region: 'us-east-1',
   agentCoreEndpoint: 'https://bedrock-agentcore.us-east-1.amazonaws.com',
   browserId: 'aws.browser.v1',

@@ -1,4 +1,3 @@
-import type { AgentCoreApplication } from '@aws/agentcore-cdk';
 import { CfnOutput, Duration, type Stack } from 'aws-cdk-lib';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import type { TokenAudiences } from '../../../../config/seams.js' with { 'resolution-mode': 'import' };
@@ -16,14 +15,12 @@ export type UserMemoryRole = { roleName: string } & (
   { issuer: string } | { awsAccess: 'assume-role'; chatServiceTaskRole: string }
 );
 
+/** The Runtimes a Turn's Memory role is named to. */
+type Runtimes = Iterable<{ readonly runtime: { addEnvironmentVariable(name: string, value: string): void } }>;
+
 /** The Memory role each Turn's credentials come from (ADR 0067 §8), by the Turn credentials adapter. */
-export function addUserMemoryRole(
-  stack: Stack,
-  application: AgentCoreApplication,
-  memoryArn: string,
-  config: UserMemoryRole
-): void {
-  if ('issuer' in config) webIdentityMemoryRole(stack, application, memoryArn, config);
+export function addUserMemoryRole(stack: Stack, runtimes: Runtimes, memoryArn: string, config: UserMemoryRole): void {
+  if ('issuer' in config) webIdentityMemoryRole(stack, runtimes, memoryArn, config);
   else assumedMemoryRole(stack, memoryArn, config);
 }
 
@@ -33,7 +30,7 @@ export function addUserMemoryRole(
  */
 function webIdentityMemoryRole(
   stack: Stack,
-  application: AgentCoreApplication,
+  runtimes: Runtimes,
   memoryArn: string,
   config: { issuer: string; roleName: string }
 ): void {
@@ -90,7 +87,7 @@ function webIdentityMemoryRole(
     statement.addResources(memoryArn);
     role.addToPolicy(statement);
   }
-  for (const env of application.environments.values()) {
+  for (const env of runtimes) {
     env.runtime.addEnvironmentVariable('BOTCUBE_USER_MEMORY_ROLE_ARN', role.roleArn);
   }
   new CfnOutput(stack, 'UserMemoryRoleArn', { value: role.roleArn });

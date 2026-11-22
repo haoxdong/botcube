@@ -1,5 +1,5 @@
 import type { BotCubeConfig } from 'botcube-config';
-import { secretArns } from 'botcube-config/credential-fields';
+import { secretIds } from 'botcube-config/credential-fields';
 
 /** The Harness's OTLP credential provider, an `opentelemetry_otlp_credential_provider` entry point (botcube/harness). */
 const HARNESS_CREDENTIAL_PROVIDER = 'botcube';
@@ -10,7 +10,7 @@ export interface TelemetryDeployment {
   /** Set on the Harness's Runtime. */
   readonly harness: Readonly<Record<string, string>>;
   /** The Secrets Manager secrets the credential is read from, which each service is granted. */
-  readonly secretArns: readonly string[];
+  readonly secretIds: readonly string[];
 }
 
 /**
@@ -18,9 +18,9 @@ export interface TelemetryDeployment {
  * OpenTelemetry's standard variables, the credential read from the BotCube Config; under `none` neither exports.
  */
 export function telemetryEnvironment(telemetry: BotCubeConfig['integrations']['telemetry']): TelemetryDeployment {
-  if (telemetry.kind === 'xray') return { chatService: {}, harness: {}, secretArns: [] };
+  if (telemetry.kind === 'xray') return { chatService: {}, harness: {}, secretIds: [] };
   if (telemetry.kind === 'none') {
-    return { chatService: {}, harness: { OTEL_SDK_DISABLED: 'true', OTEL_TRACES_EXPORTER: 'none', AGENT_OBSERVABILITY_ENABLED: 'false' }, secretArns: [] };
+    return { chatService: {}, harness: { OTEL_SDK_DISABLED: 'true', OTEL_TRACES_EXPORTER: 'none', AGENT_OBSERVABILITY_ENABLED: 'false' }, secretIds: [] };
   }
   const { url, credential, headers, tls } = telemetry;
   const shared = {
@@ -31,6 +31,6 @@ export function telemetryEnvironment(telemetry: BotCubeConfig['integrations']['t
   return {
     chatService: shared,
     harness: { ...shared, ...(credential || tls ? { OTEL_PYTHON_EXPORTER_OTLP_HTTP_TRACES_CREDENTIAL_PROVIDER: HARNESS_CREDENTIAL_PROVIDER } : {}) },
-    secretArns: credential ? secretArns(credential) : [],
+    secretIds: credential ? secretIds(credential) : [],
   };
 }

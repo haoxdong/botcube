@@ -88,11 +88,29 @@ class OriginTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, 'Expected Cloudflare origin failure'):
                         phase(Mock(), 'base', 'cert', False)
 
-    def test_origin_probe_identifies_itself_and_preserves_edge_errors(self):
+    def test_origin_probe_identifies_itself_as_the_release_tooling_says_and_preserves_edge_errors(self):
         verifier = runpy.run_path(str(ECS / 'verify-origin.py'))
         rejected = HTTPError('url', 403, 'forbidden', Message(), io.BytesIO(b'error code: 1010'))
-        with patch.object(handler.urllib.request, 'urlopen', side_effect=rejected) as request:
+        with patch.dict(os.environ, {'ORIGIN_VERIFICATION_USER_AGENT': 'Example-Origin-Verification/1.0'}), \
+                patch.object(handler.urllib.request, 'urlopen', side_effect=rejected) as request:
             self.assertEqual(verifier['request_status'](), (403, 'error code: 1010'))
+            self.assertEqual(request.call_args.args[0].get_header('User-agent'), 'Example-Origin-Verification/1.0')
+
+    def test_origin_probe_refuses_a_user_agent_the_chat_service_would_count_as_a_person(self):
+        verifier = runpy.run_path(str(ECS / 'verify-origin.py'))
+        with patch.dict(os.environ, {'ORIGIN_VERIFICATION_USER_AGENT': 'Example-Origin-Probe/1.0'}), \
+                patch.object(handler.urllib.request, 'urlopen') as request:
+            with self.assertRaisesRegex(RuntimeError, 'ORIGIN_VERIFICATION_USER_AGENT must give the deploy check user agent, carrying -Verification/'):
+                verifier['request_status']()
+            request.assert_not_called()
+
+    def test_origin_probe_named_by_no_release_tooling_identifies_itself_as_botcube(self):
+        # The parking Transition runs this probe in a Lambda no release tooling configures.
+        verifier = runpy.run_path(str(ECS / 'verify-origin.py'))
+        others = {name: value for name, value in os.environ.items() if name != 'ORIGIN_VERIFICATION_USER_AGENT'}
+        rejected = HTTPError('url', 403, 'forbidden', Message(), io.BytesIO(b'error code: 1010'))
+        with patch.dict(os.environ, others, clear=True), patch.object(handler.urllib.request, 'urlopen', side_effect=rejected) as request:
+            verifier['request_status']()
             self.assertEqual(request.call_args.args[0].get_header('User-agent'), 'BotCube-Origin-Verification/1.0')
 
     def test_non_identity_hostname_rejected_before_provider_access(self):

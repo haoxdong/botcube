@@ -16,7 +16,7 @@ const cube = (path: string) => fileURLToPath(new URL(`../../../${path}`, import.
 /** The public example's BotCube Config, its web origins this test's UI port. */
 async function webOriginsConfig(): Promise<string> {
   const path = join(await mkdtemp(join(tmpdir(), 'local-smoke-deployment-')), 'botcube.yaml');
-  await writeFile(path, JSON.stringify({ network: { corsOrigins: ['http://localhost:4001', 'http://127.0.0.1:4001'] } }));
+  await writeFile(path, JSON.stringify({ domains: { web: 'http://localhost:4001', webAliases: ['http://127.0.0.1:4001'], chatService: 'http://localhost:8123' } }));
   return path;
 }
 let stack: LocalStack | undefined;

@@ -12,8 +12,12 @@ ENDPOINT_MODELS = {'kind': 'openai-compatible', 'url': 'https://models.example.c
                    'credential': {'kind': 'file', 'path': '/run/secrets/botcube/models-api-key'}, 'turnSummaryModel': 'example-summary'}
 
 
+REQUIRED: dict[str, Any] = json.loads((Path(__file__).resolve().parents[3] / 'tests' / 'required-keys.json').read_text(encoding='utf8'))
+
+
 def deploy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **sections: Any) -> Path:
+    """A BotCube Config of these sections over the keys every one gives; existing keeps their VPC."""
     path = tmp_path / 'botcube.yaml'
-    path.write_text(json.dumps({**sections}))
+    path.write_text(json.dumps({**REQUIRED, **sections, 'existing': {**REQUIRED['existing'], **sections.get('existing', {})}}))
     monkeypatch.setenv('BOTCUBE_CONFIG', str(path))
     return path

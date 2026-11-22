@@ -13,6 +13,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { nameTaskRoles } from './task-role-names.js';
 import { addScheduledRuns, type ScheduledRunsProps } from './scheduled-runs.js';
+import { grantSecretReads } from './secret-reads.js';
 import { PreviewOriginStack } from './preview-origin-stack.js';
 import type { HarnessAuth } from '../../../../config/seams.js' with { 'resolution-mode': 'import' };
 
@@ -32,9 +33,9 @@ export interface PreviewChatServiceProps extends ScheduledRunsProps {
   proxyEnvironment?: Record<string, string>;
   /**
    * The BotCube Config's `telemetry` adapter; absent, X-Ray through a collector sidecar. `otlp` exports straight to
-   * its Endpoint with `environment`, granted `secretArns`; `none` creates no collector, grant or exporter.
+   * its Endpoint with `environment`, granted `secretIds`; `none` creates no collector, grant or exporter.
    */
-  telemetry?: { kind: 'xray' } | { kind: 'otlp' | 'none'; environment: Readonly<Record<string, string>>; secretArns: readonly string[] };
+  telemetry?: { kind: 'xray' } | { kind: 'otlp' | 'none'; environment: Readonly<Record<string, string>>; secretIds: readonly string[] };
   /** The BotCube Config's Agent Computer `liveView` adapter; `none` grants no live view stream. */
   liveView?: 'agentcore-browser' | 'none';
   metricFilterNames?: Partial<Record<'sessionPurgeFailures' | 'turnSummaryFailures' | 'agentComputerStopSleepFailures' | 'filesMountFailures' | 'accountDeletionFailures' | 'errors', string>>;
@@ -191,9 +192,7 @@ export class PreviewChatService extends Construct {
       stopTimeout: Duration.seconds(props.containerStopTimeoutSeconds ?? 120),
     });
     if (telemetry.kind === 'xray') addXrayCollector(task, this.container, origin, logGroup, props.proxyEnvironment, props.imageRegistry);
-    else if (telemetry.secretArns.length) {
-      task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [...telemetry.secretArns] }));
-    }
+    else grantSecretReads(task, task, telemetry.secretIds);
     addScheduledRuns(this, origin, task, this.container, props);
     const service = this.service = new ecs.FargateService(this, 'Service', {
       // aws-cdk-lib's Cluster declares `T | undefined` getters where ICluster declares `prop?: T`,
