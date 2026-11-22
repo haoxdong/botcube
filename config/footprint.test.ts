@@ -136,9 +136,9 @@ describe('the public example', () => {
       '  buildLogGroupName /aws/lambda/bot-cube-container-build-handler',
     ]));
     expect(section(printed, 'Domains')).toEqual([
-      '  domains.web http://localhost:3001',
-      '  domains.webAliases http://127.0.0.1:3001',
-      '  domains.chatService http://localhost:8123',
+      '  domains.web https://chat.example.invalid',
+      '  domains.webAliases https://www.chat.example.invalid',
+      '  domains.chatService https://api.example.invalid',
       '  domains.chatServicePreview https://api-preview.example.invalid',
     ]);
   });

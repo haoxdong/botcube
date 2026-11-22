@@ -22,6 +22,20 @@ describe('against the local Harness', () => {
         BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'local-stack-secret',
       },
     });
+    const url = stack.url;
+    await Promise.all(['http://localhost:3001', 'http://127.0.0.1:3001'].map(async (origin) => {
+      const preflight = await fetch(`${url}/threads`, {
+        method: 'OPTIONS', headers: { origin, 'access-control-request-method': 'POST' },
+      });
+      expect(preflight.status).toBe(200);
+      expect(preflight.headers.get('access-control-allow-origin')).toBe(origin);
+      expect(preflight.headers.get('access-control-allow-credentials')).toBe('true');
+    }));
+    const denied = await fetch(`${url}/threads`, {
+      method: 'OPTIONS', headers: { origin: 'https://unrelated.example.invalid', 'access-control-request-method': 'POST' },
+    });
+    expect(denied.status).toBe(400);
+    expect(denied.headers.has('access-control-allow-origin')).toBe(false);
     const browser = stack.browser();
     await browser.openAccountSession();
     const id = await browser.newSideChat();

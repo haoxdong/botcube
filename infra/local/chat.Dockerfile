@@ -27,12 +27,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends chromium \
 
 WORKDIR /opt/chat-service
 COPY --from=build /workspace/dist/ dist/
-COPY --from=build /workspace/examples/ examples/
+COPY infra/local/deployment/botcube.yaml botcube.yaml
 COPY --from=build /bot/ /bot/
 
 ENV BOTCUBE_LOCAL_HARNESS_URL=http://harness:8080
 ENV BOTCUBE_LOCAL_SESSION_API_URL=http://session-api:8081
-ENV BOTCUBE_CONFIG=/opt/chat-service/examples/public/botcube.yaml
+ENV BOTCUBE_CONFIG=/opt/chat-service/botcube.yaml
 ENV PORT=8123
 EXPOSE 8123
 CMD ["node", "dist/main.js"]

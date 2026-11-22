@@ -32,7 +32,7 @@ it('serves the stock Chat Service over HTTP with persisted thread metadata and c
     AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
     BOTCUBE_CHAT_TABLE: table,
     BOTCUBE_LOCAL_SESSION_API_URL: sessions.url,
-    BOTCUBE_CONFIG: fileURLToPath(new URL('../../examples/public/botcube.yaml', import.meta.url)),
+    BOTCUBE_CONFIG: fileURLToPath(new URL('../../infra/local/deployment/botcube.yaml', import.meta.url)),
   };
   vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
   cleanup.push(async () => {
@@ -49,6 +49,19 @@ it('serves the stock Chat Service over HTTP with persisted thread metadata and c
   expect(process.listenerCount('SIGTERM')).toBe(taskStops + 1);
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   expect((await fetch(`${url}/health`)).status).toBe(200);
+  await Promise.all(['http://localhost:3001', 'http://127.0.0.1:3001'].map(async (origin) => {
+    const preflight = await fetch(`${url}/threads`, {
+      method: 'OPTIONS', headers: { origin, 'access-control-request-method': 'POST' },
+    });
+    expect(preflight.status).toBe(200);
+    expect(preflight.headers.get('access-control-allow-origin')).toBe(origin);
+    expect(preflight.headers.get('access-control-allow-credentials')).toBe('true');
+  }));
+  const denied = await fetch(`${url}/threads`, {
+    method: 'OPTIONS', headers: { origin: 'https://unrelated.example.invalid', 'access-control-request-method': 'POST' },
+  });
+  expect(denied.status).toBe(400);
+  expect(denied.headers.has('access-control-allow-origin')).toBe(false);
   const account = await fetch(`${url}/account/session`);
   const cookie = account.headers.get('set-cookie')?.split(';')[0];
   if (!cookie) throw new Error('Account cookie missing');

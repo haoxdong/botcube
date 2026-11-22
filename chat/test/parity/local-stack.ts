@@ -1,10 +1,11 @@
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { required } from '../required.js';
 import { Browser } from './browser.js';
 import { loadConfig } from '../../../config/load.js';
+import { readConfig } from '../../../config/read.cjs';
 import { proxyEnvironment } from '../../../config/environment.js';
 import { telemetryEnvironment } from '../../../config/telemetry.js';
 import { FakeBedrock, FakeOpenAICompatible } from '../fakes/fake-backends.js';
@@ -305,25 +306,23 @@ async function keyFile(home: string, value: string, name = 'models-api-key'): Pr
 /** The OIDC client secret the stand-in provider takes, in place of the one the BotCube Config's source names. */
 const STAND_IN_CLIENT_SECRET = 'stand-in-client-secret';
 
-/**
- * The BotCube Config every process reads: the one at `path`, with its proxy and telemetry offline and its sign-in
- * client secret a file in `home` as a secret injector mounts it, so no Secrets Manager is needed offline; unchanged
- * when none of those apply.
- */
 async function standInBotCubeConfig(
   path: string,
   config: BotCubeConfig,
   home: string,
   offline: { proxy?: BotCubeConfig['integrations']['proxy']; telemetry?: BotCubeConfig['integrations']['telemetry']; models?: BotCubeConfig['integrations']['modelGateway'] },
 ): Promise<string> {
-  if (config.integrations.signIn.kind !== 'oidc' && Object.keys(offline).length === 0) return path;
-  const file = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+  const localDomains = path === PUBLIC_EXAMPLE
+    ? loadConfig(fileURLToPath(new URL('../../../infra/local/deployment/botcube.yaml', import.meta.url))).domains
+    : undefined;
+  if (!localDomains && config.integrations.signIn.kind !== 'oidc' && Object.keys(offline).length === 0) return path;
+  const file = readConfig(path);
   const clientSecret = { kind: 'file', path: await keyFile(home, STAND_IN_CLIENT_SECRET, 'oidc-client-secret') } as const;
   const identity = config.integrations.signIn.kind === 'oidc'
     ? { signIn: { ...config.integrations.signIn, clients: config.integrations.signIn.clients.map(({ clientId }) => ({ clientId, clientSecret })) } }
     : {};
   const standIn = join(home, 'botcube.yaml');
-  await writeFile(standIn, JSON.stringify({ ...file, integrations: { ...config.integrations, ...identity, ...(offline.telemetry ? { telemetry: offline.telemetry } : {}), ...(offline.models ? { modelGateway: offline.models } : {}), ...(offline.proxy ? { proxy: offline.proxy } : {}) } }));
+  await writeFile(standIn, JSON.stringify({ ...file, ...(localDomains ? { domains: localDomains } : {}), integrations: { ...config.integrations, ...identity, ...(offline.telemetry ? { telemetry: offline.telemetry } : {}), ...(offline.models ? { modelGateway: offline.models } : {}), ...(offline.proxy ? { proxy: offline.proxy } : {}) } }));
   return standIn;
 }
 

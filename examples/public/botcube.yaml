@@ -10,9 +10,9 @@ names:
   filesLinksRoleName: bot-cube-files-links
   agentComputerBrowserRoleName: bot-cube-agent-computer-browser
 domains:
-  web: http://localhost:3001
-  webAliases: [http://127.0.0.1:3001]
-  chatService: http://localhost:8123
+  web: https://chat.example.invalid
+  webAliases: [https://www.chat.example.invalid]
+  chatService: https://api.example.invalid
   chatServicePreview: https://api-preview.example.invalid
 agentCore:
   runtime: { platformVersion: V2 }
