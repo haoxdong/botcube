@@ -324,7 +324,7 @@ it('shows the send button grey at rest and while the empty composer has focus, a
   }
 });
 
-it("lifts the composer on a clear border in the resting shadow, on a desktop and a phone alike", () => {
+it("lifts the composer on a clear border in the resting shadow, with no coloured focus ring, on a desktop and a phone alike", () => {
   // A fresh composer per viewport, as happy-dom keeps an element's computed style. happy-dom matches no
   // `:focus-within`, so this reads the composer at rest.
   const lift = (width: number) => {
@@ -333,7 +333,7 @@ it("lifts the composer on a clear border in the resting shadow, on a desktop and
     const box = host.querySelector('.composer-box');
     if (box === null) throw new Error('no input group');
     const style = getComputedStyle(box);
-    const appearance = { fill: style.backgroundColor, input: style.getPropertyValue('--input').trim(), shadow: style.boxShadow, opacity: style.opacity };
+    const appearance = { fill: style.backgroundColor, input: style.getPropertyValue('--input').trim(), ring: style.getPropertyValue('--ring').trim(), shadow: style.boxShadow, opacity: style.opacity };
     host.remove();
     return appearance;
   };
@@ -343,6 +343,7 @@ it("lifts the composer on a clear border in the resting shadow, on a desktop and
     const resting = {
       fill: '#fff',
       input: 'transparent',
+      ring: 'transparent',
       shadow: '0 0, 0 0, 0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.08)',
       opacity: '1',
     };
@@ -351,8 +352,12 @@ it("lifts the composer on a clear border in the resting shadow, on a desktop and
   } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
   }
-  // Focus is stock InputGroup's ring: no composer rule keys on focus or draws a shadow layer of its own.
-  expect(sheet).not.toMatch(/\.(chat-composer|composer-[a-z]+)[^{,]*:focus(-within|-visible)?\b/);
+  // Focus draws no coloured ring (version C): stock InputGroup's ring reads the clear `--ring`, and the one composer
+  // focus rule deepens the shadow to the floating one. The + and Send keep the blue ring.
+  expect(sheet.match(/\.(chat-composer|composer-[a-z]+)[^{,]*:focus(-within|-visible)?\b[^{]*\{[^}]*\}/g)).toEqual([
+    expect.stringMatching(/^\.chat-composer > \.composer-box:focus-within \{[^}]*box-shadow: var\(--tw-ring-offset-shadow, 0 0\), var\(--tw-ring-shadow, 0 0\), var\(--shadow-float\);\s*\}$/),
+  ]);
+  expect(sheet).toMatch(/\.chat-composer > \.composer-box > \* \{\s*--ring: var\(--color-blue\);\s*\}/);
   expect(sheet).not.toMatch(/\.composer-box::(before|after)/);
 });
 
