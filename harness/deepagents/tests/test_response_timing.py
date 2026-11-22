@@ -2,12 +2,16 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from starlette.requests import ClientDisconnect
 from starlette.types import Message
 
 from botcube_harness_deepagents import serving
+from test_serving import _Service
+from test_serving import service as service
+from test_serving import start as start
 
 
 def _stamps(caplog: pytest.LogCaptureFixture) -> list[dict[str, object]]:
@@ -57,3 +61,28 @@ def test_first_nonempty_body_is_stamped_at_the_asgi_send_boundary(
         asyncio.run(request())
         assert b''.join(message.get('body', b'') for message in output) == ''.join(chunks).encode()
     assert 'private-answer' not in caplog.text
+
+
+def test_diagnostic_invocation_holds_the_selected_verification_run(
+    service: _Service, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv('BOTCUBE_DIAGNOSTIC_FIRST_RESPONSE', '1')
+    monkeypatch.setenv('BOTCUBE_DIAGNOSTIC_FIRST_RESPONSE_SCOPE', json.dumps({
+        'runId': 'run-0', 'verificationIdentity': 'diagnostic-test-user',
+        'expiresAt': (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
+    }))
+    waits: list[float] = []
+    sleep = asyncio.sleep
+
+    async def fast_sleep(seconds: float) -> None:
+        if seconds >= 1:
+            waits.append(seconds)
+        else:
+            await sleep(seconds)
+
+    monkeypatch.setattr(asyncio, 'sleep', fast_sleep)
+    events = service.turn('hello', actor='diagnostic-test-user', user='diagnostic-test-user')
+
+    assert len(waits) == 1
+    assert 30 < waits[0] <= 31
+    assert events[-1]['type'] == 'RUN_FINISHED'

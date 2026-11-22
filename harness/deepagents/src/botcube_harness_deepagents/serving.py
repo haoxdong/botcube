@@ -68,6 +68,7 @@ from starlette.types import Receive, Scope, Send
 
 from . import (
     aws_clients,
+    diagnostic_response,
     message_times,
     process_observation,
     restore_prime,
@@ -1309,12 +1310,16 @@ class _InvocationResponse(StreamingResponse):
     """Stamp the first nonempty ASGI send attempt; transport delivery is unobserved."""
 
     def __init__(self, content: AsyncIterable[str | bytes], *, run_id: str,
-                 runtime_session_id: str | None, media_type: str) -> None:
+                 runtime_session_id: str | None, media_type: str,
+                 diagnostic_hold: Callable[[], Awaitable[None]] | None = None) -> None:
         super().__init__(content, media_type=media_type)
         self.run_id = run_id
         self.runtime_session_id = runtime_session_id
+        self.diagnostic_hold = diagnostic_hold
 
     async def stream_response(self, send: Send) -> None:
+        if self.diagnostic_hold is not None:
+            await self.diagnostic_hold()
         first = True
 
         async def observed_send(message: ASGIMessage) -> None:
@@ -1368,6 +1373,9 @@ async def invocations(request: Request) -> Any:
     return _InvocationResponse(
         keep_alive(_invocation_frames(run_input, context, encoder, timing), _KEEPALIVE_SECONDS),
         run_id=run_input.run_id, runtime_session_id=context.session_id, media_type=encoder.get_content_type(),
+        diagnostic_hold=diagnostic_response.response_hold(
+            run_input, receipt, lambda: _require_bot().prepare_invocation(run_input).actor_id,
+        ),
     )
 
 
@@ -1499,6 +1507,8 @@ def _prime_snapshot() -> None:
 
 def main() -> None:
     import uvicorn
+
+    diagnostic_response.configured_gate()
 
     # Listening before any client connects: every client, and every command the agent runs, sends through it.
     start_proxy_relay_from_config(botcube_config_from_env())
