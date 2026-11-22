@@ -15,11 +15,8 @@ services:
       args:
         BOTCUBE_ROOT: .
     environment:
-      BOTCUBE_CONFIG: /opt/chat-service/botcube.yaml
       BOTCUBE_LOCAL_HARNESS_URL: http://harness:8080
       BOTCUBE_LOCAL_SESSION_API_URL: http://session-api:8081
-    volumes:
-      - ./deployment/botcube.yaml:/opt/chat-service/botcube.yaml:ro
   harness:
     image: botcube-production-example-bot
     build:

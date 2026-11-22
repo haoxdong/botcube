@@ -73,11 +73,11 @@ services:
       BOTCUBE_VAULT_TABLE: credential-vault
       BOTCUBE_LOCAL_VAULT_KEY_FILE: /var/lib/local-vault/key
       BOTCUBE_CREDENTIAL_INVOCATION_SECRET: local-invocation-secret
-      BOTCUBE_CONFIG: &config /opt/botcube/examples/public/botcube.yaml
+      BOTCUBE_CONFIG: &config /opt/botcube/botcube.yaml
       FAKE_SITE_URL: http://fake-site:8124
     volumes:
       - credential-key:/var/lib/local-vault
-      - &config-file ../../examples/public/botcube.yaml:/opt/botcube/examples/public/botcube.yaml:ro
+      - &config-file ./deployment/botcube.yaml:/opt/botcube/botcube.yaml:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8125/health')"]
       interval: 2s
@@ -145,6 +145,9 @@ services:
       BOTCUBE_CREDENTIAL_SERVICE_URL: http://credential-service:8125
       BOTCUBE_CREDENTIAL_INVOCATION_SECRET: local-invocation-secret
       BOTCUBE_AGENT_COMPUTER_CDP_URL: ws://chat-service:8123/agent-computer/cdp
+      BOTCUBE_CONFIG: *config
+    volumes:
+      - *config-file
     ports:
       - "${BOTCUBE_LOCAL_CHAT_PORT:-8123}:8123"
 
