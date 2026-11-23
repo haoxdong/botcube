@@ -16,6 +16,7 @@ import re
 import threading
 import time
 import tomllib
+from base64 import b64decode, b64encode
 from collections.abc import (
     AsyncIterator,
     Awaitable,
@@ -27,11 +28,13 @@ from collections.abc import (
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NoReturn, TypedDict
 
 import boto3
+import httpx
 import pytest
 import uvicorn
 from botocore.exceptions import ClientError
@@ -40,6 +43,7 @@ from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
 from fastapi.testclient import TestClient
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
+    AIMessage,
     AIMessageChunk,
     BaseMessage,
     HumanMessage,
@@ -48,10 +52,12 @@ from langchain_core.messages import (
 )
 from langchain_core.messages.ai import UsageMetadata
 from langchain_core.messages.tool import tool_call_chunk
-from langchain_core.outputs import ChatGenerationChunk, ChatResult
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import empty_checkpoint
 from langgraph_checkpoint_aws import AgentCoreMemorySaver
+from openai import APIStatusError
+from PIL import Image, PngImagePlugin
 
 from agentcore_fake import (
     MEMORY_ID,
@@ -405,6 +411,106 @@ def test_a_turn_streams_the_models_answer_and_files_the_session_under_the_sessio
     assert events[-1]['type'] == 'RUN_FINISHED'
     assert _said(events) == 'Echo: hello'
     assert _replay('user-a', 'thread-a') == [('user', 'hello'), ('assistant', 'Echo: hello')]
+
+
+def _png(size: tuple[int, int], padding: int = 0) -> bytes:
+    buffer = BytesIO()
+    info = PngImagePlugin.PngInfo()
+    if padding:
+        info.add(b'vpAg', b'x' * padding)
+    Image.new('RGB', size).save(buffer, format='PNG', pnginfo=info)
+    return buffer.getvalue()
+
+
+def _inline_images(messages: list[BaseMessage]) -> Iterator[str]:
+    for message in messages:
+        if isinstance(message.content, list):
+            for block in message.content_blocks:
+                if block['type'] == 'image' and 'base64' in block:
+                    yield block['base64']
+
+
+@pytest.mark.parametrize('decode', [True, False], ids=['tall-raster', 'undecodable'])
+def test_a_turn_can_resume_with_a_screenshot(
+    service: _Service, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, decode: bool,
+) -> None:
+    workspace = _workspace(tmp_path, monkeypatch, 'screenshots')
+    original = _png((600, 3000)) if decode else b'\x89PNG\r\n\x1a\ncorrupt'
+    (workspace / 'screenshot.png').write_bytes(original)
+    seen = []
+    stream = _ScriptedModel._stream
+
+    def dimension_limit(model: _ScriptedModel, messages: list[BaseMessage], *args: Any, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
+        encoded = next(_inline_images(messages), None)
+        if encoded is None:
+            yield from stream(model, messages, *args, **kwargs)
+            return
+        data = b64decode(encoded)
+        if decode:
+            with Image.open(BytesIO(data)) as image:
+                if max(image.size) > 2000:
+                    raise ValueError('Image exceeds the 2000 pixel dimension limit')
+                seen.append(image.size)
+        else:
+            seen.append(data)
+        yield _text('Screenshot seen')
+
+    monkeypatch.setattr(_ScriptedModel, '_stream', dimension_limit)
+    for text in ('read: /screenshot.png', 'Continue'):
+        events = service.turn(text, message=text)
+        assert events[-1]['type'] == 'RUN_FINISHED', events[-1]
+        assert _said(events) == 'Screenshot seen'
+    assert seen == ([(400, 2000)] * 2 if decode else [original] * 2)
+    agent = next(iter(serving._AGENTS.values()))
+    assert service.client.portal is not None
+    state = service.client.portal.call(agent.graph.aget_state, {'configurable': {'thread_id': 'thread-1', 'actor_id': 'user-1'}})
+    assert list(_inline_images(state.values['messages'])) == [b64encode(original).decode()]
+
+
+@pytest.mark.parametrize('proactive', [False, True], ids=['gateway-refusal', 'normal-compaction'])
+def test_a_turn_recovers_from_an_oversized_model_request(
+    service: _Service, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, proactive: bool,
+) -> None:
+    monkeypatch.setattr(serving, 'build_model', lambda **_: _ScriptedModel(
+        recorder=service.recorder, profile={'max_input_tokens': 200_000},
+    ))
+    workspace = _workspace(tmp_path, monkeypatch, 'attachments')
+    (workspace / 'attachment.png').write_bytes(_png((1, 1), 5 * 1024 * 1024))
+    refusals = []
+    stream = _ScriptedModel._stream
+
+    def byte_limit(model: _ScriptedModel, messages: list[BaseMessage], *args: Any, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
+        if messages[-1].id == 'brief':
+            yield _text('Brief seen')
+        elif any(_inline_images(messages)):
+            if messages[-1].content == 'Continue':
+                refusals.append(True)
+                response = httpx.Response(413, request=httpx.Request('POST', 'https://example.test/v1/messages'))
+                raise APIStatusError('Request Entity Too Large', response=response, body=None)
+            yield _text('Attachment seen')
+        else:
+            yield from stream(model, messages, *args, **kwargs)
+
+    monkeypatch.setattr(_ScriptedModel, '_stream', byte_limit)
+    summaries = []
+
+    def summarize(*_args: Any, **_kwargs: Any) -> ChatResult:
+        summaries.append(True)
+        return ChatResult(generations=[ChatGeneration(message=AIMessage('Earlier conversation included an attachment.'))])
+
+    monkeypatch.setattr(_ScriptedModel, '_generate', summarize)
+    if proactive:
+        assert _said(service.turn('Brief' + ' ' * 500_000, message='brief')) == 'Brief seen'
+        service.fed()
+        assert not summaries
+    assert _said(service.turn('read: /attachment.png', message='read-attachment')) == 'Attachment seen'
+    service.fed()
+    assert len(summaries) == int(proactive)
+    events = service.turn('Continue', message='continue')
+
+    assert events[-1]['type'] == 'RUN_FINISHED', events[-1]
+    assert _said(events) == 'Echo: Continue'
+    assert len(refusals) == (0 if proactive else 1)
 
 
 def test_scheduled_runs_in_one_task_chat_keep_earlier_turns_for_the_agent(service: _Service) -> None:

@@ -16,6 +16,7 @@ dependencies = [
   "langchain-aws>=1.8.0",
   "langchain-core>=1.6.7",
   "langchain-openai>=1.6.7",
+  "pillow==13.0.0",
   "ag-ui-langgraph>=0.0.46",
   "fastapi>=0.142.2",
   "httpx>=0.28.1",

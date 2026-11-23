@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import posixpath
 from collections.abc import Awaitable, Callable, Iterable, Sequence
-from functools import cache
+from functools import cache, partial
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, NotRequired
 
@@ -60,6 +60,7 @@ from .compaction import BackgroundCompaction, PendingSummary
 from .files import ARTIFACTS_DIRECTORY, HARNESS_DIRECTORY
 from .lazy_files import LazyFilesMiddleware
 from .llm import build_model
+from .model_request import ModelRequestBounds, count_request_tokens
 
 DEFAULT_SYSTEM_PROMPT = ''
 
@@ -401,12 +402,18 @@ def build_agent(
     }
     turn_timing.graph_step('middleware')
     compaction = SummarizationMiddleware if backend is None else BackgroundCompaction
+    summarization = compute_summarization_defaults(resolved_model)
+    trigger_unit, trigger_value = summarization['trigger']
+    media_trigger = int(trigger_value)
+    if trigger_unit == 'fraction':
+        media_trigger = int(trigger_value * resolved_model.profile['max_input_tokens'])
     kwargs['middleware'] = [
         compaction(
             model=resolved_model, backend=StateBackend() if backend is None else backend,
-            **compute_summarization_defaults(resolved_model),
-            trim_tokens_to_summarize=None,
+            **summarization,
+            trim_tokens_to_summarize=None, token_counter=partial(count_request_tokens, media_trigger=media_trigger),
         ),
+        ModelRequestBounds(),
         _FilesMiddleware(backend=files_backend),
         _SchemaSkillsMiddleware(backend=files_backend, sources=resolved_skills, user_prompt=user_prompt),
         _UncheckpointedTasksMiddleware(),
@@ -458,7 +465,7 @@ def general_purpose_subagent(instructions: str, skills: Sequence[str]) -> dict[s
 
 
 def _subagent_spec(spec: dict[str, Any], backend: Any, skills: list[str]) -> dict[str, Any]:
-    middleware: list[Any] = [_FilesMiddleware(backend=backend)]
+    middleware: list[Any] = [ModelRequestBounds(), _FilesMiddleware(backend=backend)]
     sources = skills if spec.get('mode') == 'fork' else spec.get('skills')
     if sources is not None and (sources or spec.get('mode') == 'fork'):
         middleware.append(_SchemaSkillsMiddleware(backend=backend, sources=sources))
