@@ -1201,7 +1201,7 @@ _SNAPSHOT_ID = 'snapshot-prime'
 
 def _prime_snapshot() -> None:
     if _AGENTS or _BACKENDS or _BACKEND_BY_AGENT or _MODEL_RELAYS:
-        raise RuntimeError('The snapshot build must run before any agent is cached')
+        raise RuntimeError('Snapshot prime requires empty caches')
     started = perf_counter()
     agentcore_memory_backend.sts_client.cache_clear()
     restore_prime.prime(AWS_REGION)
@@ -1211,7 +1211,7 @@ def _prime_snapshot() -> None:
         with tempfile.TemporaryDirectory() as root, workspace_at(root):
             walk_graph(_get_agent(
                 actor_id=_SNAPSHOT_ID, session_user_id=_SNAPSHOT_ID, persistent_memory=True,
-                model=_SNAPSHOT_MODEL, thread_id=_SNAPSHOT_ID, model_relay=relay,
+                model=_SNAPSHOT_MODEL, thread_id=_SNAPSHOT_ID, model_relay=relay, syncs_files=True,
             ))
             model = build_model(model=_SNAPSHOT_MODEL, max_tokens=16000, relay=lambda: relay)
             asyncio.run(answer_once(model, _SNAPSHOT_ID))

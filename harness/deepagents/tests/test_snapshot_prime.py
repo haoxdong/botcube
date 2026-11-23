@@ -115,14 +115,19 @@ def test_only_a_snapshot_build_primes_the_harness_without_network_or_the_real_wo
 def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_no_files(
     tmp_path: Path,
 ) -> None:
+    artifact_skills = tmp_path / 'image-skills'
+    artifact_skills.mkdir()
     aws_config = tmp_path / 'aws-config'
     aws_config.write_text('[default]\nregion = us-east-1\n')
     program = textwrap.dedent('''
         import asyncio
         import json
+        import os
         import socket
         import sys
         from datetime import UTC, datetime, timedelta
+        from pathlib import Path
+        from unittest.mock import patch
         from zoneinfo import ZoneInfo
 
         def forbidden(*args, **kwargs):
@@ -131,9 +136,10 @@ def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_n
         socket.getaddrinfo = forbidden
 
         from botcube_harness_deepagents.definition import HarnessDefinition, ModelRelay
-        from botcube_harness_deepagents import serving
+        from botcube_harness_deepagents import artifact, serving
         from botcube_harness_deepagents.snapshot_build import answer_once
 
+        artifact.SKILLS = Path(sys.argv[1])
         serving.configure_harness_definition(HarnessDefinition(
             skills=[], agent_name='snapshot-fixture', system_prompt='Fixture instructions.',
             prepare_invocation=forbidden, prepare_root=lambda root: None,
@@ -169,8 +175,15 @@ def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_n
         sys.addaudithook(lambda event, args: imported.append(f'{event} {args[0]}') if event in (
             'import', 'open', 'os.listdir', 'os.scandir') else None)
         relay = ModelRelay(base_url='https://turn.invalid/v1', token='turn', headers={}, session_id='turn')
-        agent = serving._get_agent(actor_id='turn', session_user_id='turn', persistent_memory=True,
-                                   model=serving._SNAPSHOT_MODEL, thread_id='turn', model_relay=relay)
+        lstat = os.lstat
+        def record_artifact_skill_lookup(path, *args, **kwargs):
+            if os.fsdecode(path) == str(artifact.SKILLS):
+                imported.append(f'lstat {path}')
+            return lstat(path, *args, **kwargs)
+        with patch.object(os, 'lstat', record_artifact_skill_lookup):
+            agent = serving._get_agent(actor_id='turn', session_user_id='turn', persistent_memory=True,
+                                       model=serving._SNAPSHOT_MODEL, thread_id='turn', model_relay=relay,
+                                       syncs_files=True)
         # The OpenTelemetry LangGraph instrumentation walks every Turn's graph for its span, importing this lazily.
         from opentelemetry.instrumentation.langchain.langgraph_utils import extract_graph_structure
         extract_graph_structure(agent.graph)
@@ -192,7 +205,7 @@ def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_n
         print(json.dumps(sorted(set(imported))))
     ''')
     result = subprocess.run(
-        [sys.executable, '-c', program], capture_output=True, text=True, timeout=120, check=False,
+        [sys.executable, '-c', program, str(artifact_skills)], capture_output=True, text=True, timeout=120, check=False,
         env={**os.environ, 'BOTCUBE_WORKSPACE': str(tmp_path), 'AGENTCORE_MEMORY_ID': 'snapshot-memory',
              'AWS_CONFIG_FILE': str(aws_config),
              'AWS_ACCESS_KEY_ID': '', 'AWS_SECRET_ACCESS_KEY': '', 'AWS_SESSION_TOKEN': '', 'AWS_PROFILE': 'default',
