@@ -22,9 +22,9 @@ import { filed } from '../test/stock-bot.js';
 
 describe('a scheduled run', () => {
   it.each([
-    { status: 503, code: 'POST_REFUSED', nextTurn: 200 },
-    { status: 504, code: 'SESSION_READ_TIMEOUT', nextTurn: 409 },
-  ])('answers the next Main Chat Turn with $nextTurn after Session API returns $code', async ({ status, code, nextTurn }) => {
+    { status: 503, code: 'POST_REFUSED' },
+    { status: 504, code: 'SESSION_READ_TIMEOUT' },
+  ])('keeps the Main Chat post lease after Session API returns $code', async ({ status, code }) => {
     const isolated = await startInProcess({ scheduled: true });
     const failed = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const client = new AbortController();
@@ -48,8 +48,8 @@ describe('a scheduled run', () => {
           messages: [{ id: 'question', role: 'user', content: 'Next question' }] }),
       });
       const body = await response.text();
-      expect(response.status, body).toBe(nextTurn);
-      expect(body).toContain(nextTurn === 200 ? 'RUN_FINISHED' : 'SESSION_BUSY');
+      expect(response.status, body).toBe(409);
+      expect(body).toContain('SESSION_BUSY');
     } finally {
       failed.mockRestore();
       waiting.mockRestore();

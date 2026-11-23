@@ -163,22 +163,6 @@ it('keeps the external fence when coupled completion fails and never treats a di
   } finally { await stack.stop(); }
 });
 
-it('releases an external registration only when its caller proves Lambda was never submitted', async () => {
-  const stack = await startInProcess();
-  try {
-    await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
-    const post = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main', undefined, undefined, 'session-post');
-    await Promise.all([post('not-written'), post('not-written')]);
-    const writer = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main');
-    expect(writer.session).toMatchObject({ filing_user_id: 'original', session_id: 'main' });
-    await writer();
-    const completed = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main', undefined, undefined, 'session-post');
-    await defined(completed.markSucceeded, 'post completed')('session-post');
-    await expect(completed('not-written')).rejects.toThrow('completion is unproved');
-    await completed();
-  } finally { await stack.stop(); }
-});
-
 it('removes idle writer control only after durable Session purge completion', async () => {
   const stack = await startInProcess();
   const documents = DynamoDBDocumentClient.from(stack.table.client);
@@ -197,7 +181,7 @@ it('removes idle writer control only after durable Session purge completion', as
 });
 
 
-it.each(['absent', 'failed'] as const)('retains rejected writers and releases an unsubmitted post after %s recovery', async (result) => {
+it.each(['absent', 'failed'] as const)('retains rejected writers and the post lease after %s recovery', async (result) => {
   const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
@@ -212,8 +196,7 @@ it.each(['absent', 'failed'] as const)('retains rejected writers and releases an
     await expect(stack.sessionMetadata.beginDispatch('acct_account-1', 'main', undefined, undefined, 'session-post', recovery)).rejects.toThrow();
     expect(stop).toHaveBeenCalledWith(rejected.session.session_id);
     expect(await stack.sessionMetadata.rejectedDispatches(rejected.session, 'runtime-target')).toHaveLength(1);
-    const newer = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main');
-    await newer();
+    await expect(stack.sessionMetadata.beginDispatch('acct_account-1', 'main')).rejects.toThrow(SessionBusyError);
     await expect(stack.sessionMetadata.beginDispatch('acct_account-1', 'main', undefined, undefined, 'session-post')).rejects.toThrow(SessionBusyError);
   } finally { await stack.stop(); }
 });

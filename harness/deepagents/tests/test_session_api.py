@@ -295,6 +295,9 @@ def test_a_post_reaches_the_sessions_history_under_the_id_given(
         await session_api.handle(
             {'operation': 'post', 'sessionId': 'session-1', 'userId': 'user-1', 'content': 'Brief', 'messageId': 'post-1'}
         )
+        await session_api.handle(
+            {'operation': 'post', 'sessionId': 'session-1', 'userId': 'user-1', 'content': 'Retry', 'messageId': 'post-1'}
+        )
         return (await session_api.handle(GET))['messages']
 
     replayed = asyncio.run(scenario())

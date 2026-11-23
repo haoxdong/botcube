@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { ScheduledRunStore } from './scheduled-run-store.js';
 import { assertContinuable, oneIdSession, type SessionIdentity, type SessionPurge } from './session-identity.js';
-import { REGISTRATION_EXPIRY_MS, SessionWriters, SessionWriterRecoveryError, writerControlKey, type RegisteredDispatch, type RegisteredSessionDispatch, type SessionWriterHolder } from './session-writers.js';
+import { POST_LEASE_AVAILABLE, REGISTRATION_EXPIRY_MS, SessionWriters, writerControlKey, type RegisteredDispatch, type RegisteredSessionDispatch, type SessionWriterHolder } from './session-writers.js';
 
 import {
   ConditionalCheckFailedException,
+  type CancellationReason,
   DescribeTableCommand,
   DynamoDBClient,
   TransactionCanceledException,
@@ -155,16 +156,6 @@ function assertWarmupContinuable(existing: SessionItem | null, warmupFilingUserI
 }
 
 const readOnlyMark = (row?: Record<string, unknown>): Pick<SessionIdentity, 'read_only'> => row?.read_only === true ? { read_only: true } : {};
-
-async function settleRejectedWriters(complete: RegisteredSessionDispatch, session: SessionPurge, rejected: readonly RegisteredDispatch[], recovery?: RejectedWriterRecovery): Promise<void> {
-  if (rejected.length === 0 || recovery === undefined) return;
-  try { await recovery.settle(session, rejected); }
-  catch (error) {
-    try { await complete('not-written'); }
-    catch (releaseError) { throw new AggregateError([error, releaseError], 'Rejected writer recovery and post fence release failed'); }
-    throw new SessionWriterRecoveryError('Rejected Runtime writer recovery failed', { cause: error });
-  }
-}
 
 export interface RejectedWriterRecovery {
   runtimeTarget: string;
@@ -440,8 +431,8 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       } },
       { Delete: {
         TableName: this.tableName, Key: writerControlKey(session),
-        ConditionExpression: 'attribute_not_exists(external_token) AND (attribute_not_exists(runtime_writers) OR runtime_writers = :zero)',
-        ExpressionAttributeValues: { ':zero': 0 },
+        ConditionExpression: POST_LEASE_AVAILABLE + ' AND (attribute_not_exists(runtime_writers) OR runtime_writers = :zero)',
+        ExpressionAttributeValues: { ':zero': 0, ':now': Date.now() },
       } },
     ] }));
   }
@@ -549,13 +540,13 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     } };
   }
 
-  private dispatchTransaction(owner: string, identity: DispatchIdentity, token: string, epoch: string, kind: 'runtime' | 'session-post', acceptedTurn?: AcceptedDispatch, expectedSession?: Readonly<SessionPurge>, rejected: readonly RegisteredDispatch[] = [], recovery?: RejectedWriterRecovery): TransactWriteCommandInput {
+  private dispatchTransaction(owner: string, identity: DispatchIdentity, token: string, epoch: string, kind: 'runtime' | 'session-post', now: number, acceptedTurn?: AcceptedDispatch, rejected: readonly RegisteredDispatch[] = [], recovery?: RejectedWriterRecovery): TransactWriteCommandInput {
     const { dispatchOwner, session, claimDestination } = identity;
     const claimedTurn = claimDestination === null ? undefined : acceptedTurn;
     const claimCondition = claimedTurn === undefined ? 'attribute_not_exists(pk)' : 'attribute_not_exists(pk) OR attribute_exists(destination)';
     const fencedOwner = claimDestination ?? dispatchOwner;
     const destination = dispatchOwner === owner ? claimDestination : null;
-    const [registration, control] = this.writers.registration(session, token, kind, rejected.length);
+    const [registration, control] = this.writers.registration(session, token, kind, rejected.length, now);
     return { TransactItems: [
       { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
       { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(dispatchOwner),
@@ -590,8 +581,8 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     const epoch = kind === 'session-post' ? randomUUID() : identity.snapshotEpoch ?? randomUUID();
     const issueEpoch = kind === 'runtime';
     const rejected = kind === 'session-post' && recovery !== undefined ? await this.rejectedDispatches(session, recovery.runtimeTarget) : [];
-    const leaseExpiresAt = Date.now() + REGISTRATION_EXPIRY_MS;
-    const transaction = this.dispatchTransaction(owner, identity, token, epoch, kind, acceptedTurn, expectedSession, rejected, recovery);
+    const now = Date.now();
+    const transaction = this.dispatchTransaction(owner, identity, token, epoch, kind, now, acceptedTurn, rejected, recovery);
     try {
       await this.documents.send(new TransactWriteCommand(transaction));
     } catch (error) {
@@ -600,8 +591,8 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       }
     }
     const complete = this.writers.acknowledgement(session, token, false, false, undefined, kind, issueEpoch ? epoch : undefined);
-    await settleRejectedWriters(complete, session, rejected, recovery);
-    return kind === 'session-post' ? Object.assign(complete, { postLeaseExpiresAt: leaseExpiresAt }) : complete;
+    if (rejected.length > 0) await recovery?.settle(session, rejected);
+    return kind === 'session-post' ? Object.assign(complete, { postLeaseExpiresAt: now + REGISTRATION_EXPIRY_MS }) : complete;
   }
 
   private async writerAdmissionChanged(error: unknown, identity: DispatchIdentity, transaction: TransactWriteCommandInput): Promise<boolean> {
@@ -609,7 +600,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     const writes = transaction.TransactItems ?? [];
     const controlIndex = writes.findIndex((item) => item.Update?.Key?.pk === writerControlKey(identity.session).pk);
     if (reasons?.[controlIndex]?.Code === 'ConditionalCheckFailed') {
-      await this.settleWriterConflict(identity.session, reasons[controlIndex].Item?.external_token?.S);
+      await this.writerConflict(identity.session, reasons[controlIndex]);
       return true;
     }
     if (reasons?.[2]?.Code !== 'ConditionalCheckFailed') return false;
@@ -617,9 +608,15 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     return current !== null && current.snapshot_epoch !== identity.snapshotEpoch;
   }
 
-  private async settleWriterConflict(session: SessionPurge, token?: string): Promise<void> {
+  private async writerConflict(session: SessionPurge, reason: CancellationReason): Promise<void> {
+    const control = reason.Item === undefined ? await this.writers.postControl(session) : undefined;
+    const token = reason.Item?.external_token?.S ?? control?.external_token;
+    const leaseToken = reason.Item?.lease_token?.S ?? control?.lease_token;
     const holder = await this.writers.holder(session, token);
-    if (!await this.writers.settleExpiredPost(session, holder)) throw new SessionBusyError('Session persistence writer is still active', holder);
+    if (holder?.scheduled && token !== leaseToken && Date.parse(holder.createdAt) + REGISTRATION_EXPIRY_MS < Date.now()) {
+      return this.writers.backfillPostLease(session, holder);
+    }
+    throw new SessionBusyError('Session persistence writer is still active', holder);
   }
 
   rejectedDispatches(session: SessionPurge, runtimeTarget?: string): Promise<RegisteredDispatch[]> {
@@ -767,8 +764,8 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
     const failed = (index: number) => reasons?.[index]?.Code === 'ConditionalCheckFailed';
     if (failed(0)) throw new SessionDeletedError(session.session_id);
-    if (failed(4)) {
-      await this.settleWriterConflict(session, reasons?.[4]?.Item?.external_token?.S);
+    if (reasons?.[4]?.Code === 'ConditionalCheckFailed') {
+      await this.writerConflict(session, reasons[4]);
       return fallback();
     }
     if (failed(1)) {

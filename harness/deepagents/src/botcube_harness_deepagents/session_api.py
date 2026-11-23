@@ -271,7 +271,12 @@ async def post_message(
 ) -> None:
     config = _config(user_id, session_id)
     graph = _graph()
-    if await latest_checkpoint(graph, config) is None:
+    saved = await latest_checkpoint(graph, config)
+    if saved is not None and message_id and any(
+        message.id == message_id for message in saved.checkpoint['channel_values'].get('messages', ())
+    ):
+        return
+    if saved is None:
         # LangGraph drops the values of a Session's first update; this one starts the record.
         await graph.aupdate_state(config, {'messages': []}, as_node='model')  # pragma: no mutate: LangGraph drops this update's values, so any values or node name that it accepts starts the same record
     # As the model's answer: the Session's next Turn starts from a finished one. Its own ID,

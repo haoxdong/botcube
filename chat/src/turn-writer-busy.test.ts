@@ -1,3 +1,4 @@
+import { DynamoDBDocumentClient, UpdateCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
 import { expect, it, vi } from 'vitest';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
@@ -36,24 +37,45 @@ it('answers the next Turn while the previous Runtime writer remains registered',
   } finally { await stack.stop(); }
 });
 
-it.each(['Turn', 'delete'] as const)('accepts a %s after an abandoned scheduled-post lease expires', async (operation) => {
+it.each([
+  ['Turn', false], ['delete', false], ['Turn', true], ['delete', true],
+] as const)('accepts a %s after an abandoned scheduled-post lease expires (legacy lease: %s)', async (operation, legacy) => {
   const stack = await startInProcess();
   const client = new AbortController();
-  const waiting = vi.spyOn(console, 'warn').mockImplementation(() => client.abort());
+  const waiting = vi.spyOn(console, 'warn').mockImplementation((message: unknown) => {
+    if (String(message).startsWith('Turn is waiting for Session persistence writer')) client.abort();
+  });
   try {
-    await previousWriter(stack, 'session-post');
+    const previous = await previousWriter(stack, 'session-post');
+    if (legacy) await DynamoDBDocumentClient.from(stack.table.client).send(new UpdateCommand({
+      TableName: stack.table.name,
+      Key: { pk: `WRITERS#${JSON.stringify([previous.session.filing_user_id, previous.session.session_id])}`, sk: 'CONTROL' },
+      UpdateExpression: 'REMOVE lease_token, lease_expires_at',
+    }));
     vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(Date.now() + 3 * 3_600_000);
+    vi.setSystemTime(Date.now() + 3 * 3_600_000 + 1);
     if (operation === 'Turn') {
+      let admissionWrites = 0;
+      stack.table.client.middlewareStack.add((next, context) => async (args) => {
+        const { TransactItems } = args.input as TransactWriteCommandInput;
+        if (context.commandName?.startsWith('TransactWrite') && TransactItems?.some(({ Update }) =>
+          Update?.Key?.sk === 'CONTROL' && Update.ReturnValuesOnConditionCheckFailure === 'ALL_OLD'
+        )) admissionWrites += 1;
+        return next(args);
+      }, { step: 'initialize', name: 'countTurnAdmissionWrites' });
       const response = await nextTurn(stack, 'writer-busy', client.signal);
-      expect(response.status, await response.clone().text()).toBe(200);
-      expect(await response.text()).toContain('RUN_FINISHED');
+      const body = await response.text();
+      expect(response.status, body).toBe(200);
+      expect(body).toContain('RUN_FINISHED');
+      if (!legacy) expect(admissionWrites).toBe(1);
+      await expect(defined(previous.markSucceeded, 'previous post completion')('session-post')).rejects.toThrow();
     } else {
       const response = await stack.app.request('/threads/writer-busy', { method: 'DELETE' });
       expect(response.status).toBe(204);
       await expect.poll(() => stack.sessionApi.events()).toContainEqual({
         operation: 'purge', userId: filed('acct_account-1'), sessionId: 'writer-busy',
       });
+      await expect.poll(() => stack.sessionMetadata.pendingPurges()).toEqual([]);
     }
   } finally {
     vi.useRealTimers();

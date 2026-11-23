@@ -39,8 +39,6 @@ export type SessionApiConfig =
   | { localUrl: string }
   | null;
 
-export class SessionPostNotWrittenError extends HttpError {}
-
 export class SessionNotFoundError extends HttpError {
   constructor(detail: string) { super(404, detail); }
 }
@@ -82,7 +80,7 @@ export function sessionApi(config: SessionApiConfig): SessionApi {
     limit(async () => {
       if (config === null) throw new HttpError(503, 'The session API is not configured');
       if (postLeaseExpiresAt !== undefined && Date.now() + timeoutSeconds * 1000 + LAMBDA_MAX_INVOCATION_MS >= postLeaseExpiresAt) {
-        throw new SessionPostNotWrittenError(503, 'Scheduled post lease expires before Session API can finish');
+        throw new HttpError(503, 'Scheduled post lease expires before Session API can finish');
       }
       const { status, body } =
         'functionArn' in config
@@ -93,19 +91,16 @@ export function sessionApi(config: SessionApiConfig): SessionApi {
 }
 
 function sessionApiResult(operation: SessionApiEvent['operation'], status: number, body: unknown): Record<string, unknown> {
-  const timedOut = status === 504 && (body as { code?: unknown } | null)?.code === 'SESSION_READ_TIMEOUT';
-  const refused = operation === 'post' && status >= 400 && status < 600 && !timedOut;
-  const ResponseError = refused ? SessionPostNotWrittenError : HttpError;
   if (status === 404) {
     const { error, code } = body as { error: unknown; code?: unknown };
-    throw code === 'SESSION_NOT_FOUND' && !refused ? new SessionNotFoundError(String(error)) : new ResponseError(404, String(error));
+    throw operation !== 'post' && code === 'SESSION_NOT_FOUND' ? new SessionNotFoundError(String(error)) : new HttpError(404, String(error));
   }
   if (status === 410 || (operation === 'get' && [400, 409].includes(status))) {
     const { error, code } = body as { error: unknown; code: unknown };
-    throw new ResponseError(status, String(error), String(code));
+    throw new HttpError(status, String(error), String(code));
   }
   if (status !== 200) {
-    throw Object.assign(new ResponseError(503, `Session API returned HTTP ${status}`), { cause: body });
+    throw Object.assign(new HttpError(503, `Session API returned HTTP ${status}`), { cause: body });
   }
   if (operation === 'get' &&
       (typeof body !== 'object' || body === null || !('messages' in body) || !Array.isArray(body.messages))) {
