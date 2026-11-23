@@ -20,6 +20,7 @@ from botcube_harness_deepagents.memory import agentcore
 
 @pytest.fixture(autouse=True)
 def environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setattr(restore_prime.os, 'environ', restore_prime.os.environ.copy())
     for variable in ('SSL_CERT_FILE', 'AWS_CA_BUNDLE', 'SSL_CERT_DIR'):
         monkeypatch.delenv(variable, raising=False)
     monkeypatch.setenv('AWS_ACCESS_KEY_ID', 'test')
@@ -182,3 +183,60 @@ def test_sts_and_scoped_memory_use_bounded_standard_retries() -> None:
         assert client.meta.config.connect_timeout == 2
         assert client.meta.config.read_timeout == 5
         assert client.meta.config.retries == {'mode': 'standard', 'total_max_attempts': 2}
+
+
+@pytest.mark.parametrize('phase', ['memory', 'disk', '', 'unknown'])
+def test_only_the_runtime_memory_warmup_primes(phase: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from botcube_harness_deepagents import serving
+
+    primed: list[str] = []
+    monkeypatch.setattr(serving, '_prime_snapshot', lambda: primed.append(serving.AWS_REGION))
+    with TestClient(serving.app) as client:
+        response = client.post('/warmup', headers={'X-Amzn-Bedrock-AgentCore-Runtime-Warmup-Type': phase})
+        assert response.status_code == (200 if phase in ('memory', 'disk') else 400)
+        assert primed == ([serving.AWS_REGION] if phase == 'memory' else [])
+        assert client.get('/ping').json() == {'status': 'Healthy'}
+
+
+def test_a_failed_memory_warmup_fails_the_hook(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from botcube_harness_deepagents import serving
+
+    def fail(region: str) -> None:
+        raise RuntimeError('no runtime credentials')
+
+    monkeypatch.setattr(serving, '_prime_snapshot', lambda: fail(serving.AWS_REGION))
+    with TestClient(serving.app, raise_server_exceptions=False) as client:
+        response = client.post('/warmup', headers={'X-Amzn-Bedrock-AgentCore-Runtime-Warmup-Type': 'memory'})
+        assert response.status_code == 500
+
+
+def test_ping_stays_responsive_during_memory_warmup(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from fastapi.testclient import TestClient
+
+    from botcube_harness_deepagents import serving
+
+    started = threading.Event()
+    finish = threading.Event()
+
+    def prime() -> None:
+        started.set()
+        assert finish.wait(10)
+
+    monkeypatch.setattr(serving, '_prime_snapshot', prime)
+    with TestClient(serving.app) as client, ThreadPoolExecutor() as executor:
+        warming = executor.submit(client.post, '/warmup', headers={
+            'X-Amzn-Bedrock-AgentCore-Runtime-Warmup-Type': 'memory'})
+        try:
+            assert started.wait(10)
+            assert client.get('/ping').status_code == 200
+            assert not warming.done()
+        finally:
+            finish.set()
+        assert warming.result().status_code == 200

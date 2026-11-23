@@ -43,12 +43,6 @@ def run(command: Sequence[str]) -> None:
     subprocess.run(list(command), check=True, capture_output=True)
 
 
-def prime_if_enabled(region: str) -> None:
-    """Runtime V2 only (BOTCUBE_RESTORE_PRIME=1): V1's pre-started spares have nothing to restore."""
-    if os.getenv('BOTCUBE_RESTORE_PRIME') == '1':
-        prime(region)
-
-
 def prime(region: str, *, root: Path = ROOT, mount: Callable[[Sequence[str]], None] = run) -> None:
     hold_in_memory(root)
     bind_static_resolver_config(root, mount)

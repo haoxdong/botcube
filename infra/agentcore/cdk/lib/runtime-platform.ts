@@ -10,6 +10,10 @@ export function applyRuntimePlatform(
 ): void {
   if (!['V1', 'V2'].includes(platformVersion)) throw new Error('Runtime platform must be V1 or V2');
   runtime.platformVersion = platformVersion;
+  if (platformVersion === 'V2')
+    runtime.addPropertyOverride('HooksConfiguration', {
+      Build: { Warmup: { Action: { HttpPost: { Path: '/warmup', Port: 8080 } } } },
+    });
   if (rollbackVersion === undefined) return;
   if (typeof rollbackVersion !== 'string' || !/^[1-9][0-9]*$/.test(rollbackVersion))
     throw new Error('V1 rollback requires a numeric runtime version');

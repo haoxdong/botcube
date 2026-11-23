@@ -1180,14 +1180,19 @@ def _record_failed_calls(calls: FailedCalls, *, responded: bool) -> None:
 
 @app.get('/ping')
 def ping() -> JSONResponse:
-    """Health check — bare ``{"status": "Healthy"}`` with no ``time_of_last_update``.
-
-    Omitting the timestamp lets AgentCore anchor idle to the last /invocations
-    (which it tracks independently), so idle microVMs reap at ~300 s instead of
-    running to maxLifetime. See ADR 0029.
-    """
+    """Omit the timestamp so AgentCore measures idle from /invocations. See ADR 0029."""
     process_observation.mark('first_ping')
     return JSONResponse({'status': 'Healthy'})
+
+
+@app.post('/warmup')
+async def warmup(request: Request) -> JSONResponse:
+    phase = request.headers.get('X-Amzn-Bedrock-AgentCore-Runtime-Warmup-Type')
+    if phase not in ('memory', 'disk'):
+        return JSONResponse({'error': 'Expected Runtime warmup type memory or disk'}, status_code=400)
+    if phase == 'memory':
+        await asyncio.to_thread(_prime_snapshot)
+    return JSONResponse({})
 
 
 _SNAPSHOT_MODEL = f'{PLAN_MODEL_PREFIX}gpt-6.1-sol'
@@ -1197,6 +1202,9 @@ _SNAPSHOT_ID = 'snapshot-prime'
 def _prime_snapshot() -> None:
     if _AGENTS or _BACKENDS or _BACKEND_BY_AGENT or _MODEL_RELAYS:
         raise RuntimeError('The snapshot build must run before any agent is cached')
+    started = perf_counter()
+    agentcore_memory_backend.sts_client.cache_clear()
+    restore_prime.prime(AWS_REGION)
     relay = ModelRelay(base_url='https://snapshot.invalid/v1', token=_SNAPSHOT_ID, headers={}, session_id=_SNAPSHOT_ID)
     prime_process()
     try:
@@ -1216,6 +1224,7 @@ def _prime_snapshot() -> None:
         _BACKENDS.clear()
         _BACKEND_BY_AGENT.clear()
         _MODEL_RELAYS.clear()
+        log.info('Snapshot prime completed in %.3f seconds', perf_counter() - started)
 
 
 def main() -> None:
@@ -1223,17 +1232,14 @@ def main() -> None:
 
     diagnostic_response.configured_gate()
 
-    # Listening before any client connects: every client, and every command the agent runs, sends through it.
     start_proxy_relay_from_config(botcube_config_from_env())
     importlib.import_module('openai.resources.responses')
-    restore_prime.prime_if_enabled(AWS_REGION)
     if AGENTCORE_MEMORY_ID:
         agentcore_memory_backend.sts_client(AWS_REGION)
     models_on_endpoint()
     cache_markers_on()
     if _bot is None:
         configure_harness_definition(*bot_from_env())
-    # Prompt cache lines go out bare, one JSON object per line.
     logging.config.dictConfig({
         'version': 1,
         'disable_existing_loggers': False,
@@ -1249,7 +1255,6 @@ def main() -> None:
             'botcube_harness_deepagents.prompt_cache': {'level': 'INFO', 'handlers': ['bare'], 'propagate': False},
         },
     })
-    _prime_snapshot()
     process_observation.name_spans(trace.get_tracer_provider())
     process_observation.mark('serve_handoff')
     uvicorn.run(app, host='0.0.0.0', port=int(os.getenv('PORT', '8080')))

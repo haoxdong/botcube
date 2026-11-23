@@ -1,4 +1,4 @@
-"""Runtime V2 snapshots the Harness at its first healthy /ping; the first agent build must already be in it."""
+"""Runtime V2 primes the Harness through its memory warmup hook before capturing the snapshot."""
 import json
 import os
 import subprocess
@@ -12,9 +12,9 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-@pytest.mark.parametrize('restore_enabled', ['0', '1'])
-def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_real_workspace(
-    tmp_path: Path, restore_enabled: str,
+@pytest.mark.parametrize('snapshot_build', [False, True])
+def test_only_a_snapshot_build_primes_the_harness_without_network_or_the_real_workspace(
+    tmp_path: Path, snapshot_build: bool,
 ) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
@@ -55,9 +55,19 @@ def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_r
         serving._get_agent = counting
 
         def serve(app, **options):
+            from fastapi.testclient import TestClient
+            assert not prepared_root.exists()
+            with TestClient(app) as client:
+                assert client.get('/ping').status_code == 200
+                assert not prepared_root.exists()
+                if sys.argv[2] == 'True':
+                    response = client.post('/warmup', headers={
+                        'X-Amzn-Bedrock-AgentCore-Runtime-Warmup-Type': 'memory'})
+                    assert response.status_code == 200, response.text
+                    assert prepared_root.is_dir()
             spare = serving.agentcore_memory_backend._SPARE
-            clients = [serving.agentcore_memory_backend.sts_client(serving.AWS_REGION),
-                       *aws_clients.bedrock(serving.AWS_REGION)]
+            clients = ([serving.agentcore_memory_backend.sts_client(serving.AWS_REGION),
+                        *aws_clients.bedrock(serving.AWS_REGION)] if sys.argv[2] == 'True' else [])
             if spare is not None:
                 clients.append(spare[0].client)
             print(json.dumps({
@@ -75,33 +85,35 @@ def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_r
             }))
         uvicorn.run = serve
         serving.main()
+        if sys.argv[2] == 'False':
+            serving.main()
     ''')
     result = subprocess.run(
-        [sys.executable, '-c', program, str(workspace)],
+        [sys.executable, '-c', program, str(workspace), str(snapshot_build)],
         capture_output=True, text=True, timeout=120, check=False,
         env={**os.environ, 'BOTCUBE_WORKSPACE': str(workspace), 'AGENTCORE_MEMORY_ID': 'snapshot',
-             'BOTCUBE_RESTORE_PRIME': restore_enabled,
-             'AWS_ACCESS_KEY_ID': 'snapshot', 'AWS_SECRET_ACCESS_KEY': 'snapshot',
-             'AWS_SESSION_TOKEN': 'snapshot', 'AWS_DEFAULT_REGION': 'us-east-1'},
+             'AWS_ACCESS_KEY_ID': 'snapshot' if snapshot_build else '',
+             'AWS_SECRET_ACCESS_KEY': 'snapshot' if snapshot_build else '',
+             'AWS_SESSION_TOKEN': 'snapshot' if snapshot_build else '', 'AWS_DEFAULT_REGION': 'us-east-1'},
     )
     assert result.returncode == 0, result.stderr
     state = json.loads(result.stdout.strip().splitlines()[-1])
-    assert len(state['built']) == 1 and state['built'][0].startswith('openai-plan:')
-    assert len(state['roots']) == 1 and state['roots'][0] != str(workspace)
+    assert len(state['built']) == (1 if snapshot_build else 0)
+    assert len(state['roots']) == (1 if snapshot_build else 0)
+    assert all(root != str(workspace) for root in state['roots'])
     assert state['rootsLeft'] == []
     assert state['workspaceEnv'] == str(workspace)
     assert state['workspaceEntries'] == []
     assert state['cached'] == [0, 0, 0, 0]
     assert state['network'] == 0
     assert state['memoryUnbound']
-    assert state['spareUnbound']
-    if restore_enabled == '1':
+    assert state['spareUnbound'] == snapshot_build
+    if snapshot_build:
         assert state['transportVerifyPaths'] == [state['preparedBundle']] * 4
 
 
-@pytest.mark.parametrize('restore_enabled', ['0', '1'])
 def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_no_files(
-    tmp_path: Path, restore_enabled: str,
+    tmp_path: Path,
 ) -> None:
     aws_config = tmp_path / 'aws-config'
     aws_config.write_text('[default]\nregion = us-east-1\n')
@@ -128,6 +140,7 @@ def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_n
             session_id_env_var='TEST_SESSION_ID',
             environment_cache_key=lambda environment: (),
         ))
+        serving.restore_prime.prime = lambda region: None
         serving._prime_snapshot()
         memory = serving.agentcore_memory_backend
         from botocore.awsrequest import AWSResponse
@@ -181,7 +194,7 @@ def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_n
     result = subprocess.run(
         [sys.executable, '-c', program], capture_output=True, text=True, timeout=120, check=False,
         env={**os.environ, 'BOTCUBE_WORKSPACE': str(tmp_path), 'AGENTCORE_MEMORY_ID': 'snapshot-memory',
-             'BOTCUBE_RESTORE_PRIME': restore_enabled, 'AWS_CONFIG_FILE': str(aws_config),
+             'AWS_CONFIG_FILE': str(aws_config),
              'AWS_ACCESS_KEY_ID': '', 'AWS_SECRET_ACCESS_KEY': '', 'AWS_SESSION_TOKEN': '', 'AWS_PROFILE': 'default',
              'AWS_SHARED_CREDENTIALS_FILE': str(tmp_path / 'no-credentials'),
              'AWS_CONTAINER_CREDENTIALS_FULL_URI': 'http://127.0.0.1:9/credentials', 'AWS_DEFAULT_REGION': 'us-east-1'},
