@@ -9438,7 +9438,7 @@ describe('attaching files', () => {
     copilot.rows = true;
     await renderPage();
     await attach('report.csv', 'notes.md');
-    expect(chips()).toEqual(['csvreport.csvUploading… 0%', 'mdnotes.mdUploading… 0%']);
+    expect(chips()).toEqual(['csvreport.csvUploading… 0%Remove report.csv', 'mdnotes.mdUploading… 0%Remove notes.md']);
 
     await sendMessage('Summarise these');
     expect(agent().messages).toEqual([]);
@@ -9448,7 +9448,7 @@ describe('attaching files', () => {
       uploads[0]?.resolve('/report.csv');
       uploads[1]?.reject(new Error('Upload failed: 403'));
     });
-    expect(chips()).toEqual(['csvreport.csvCSV', 'mdnotes.mdUpload failed: 403Retry']);
+    expect(chips()).toEqual(['csvreport.csvCSVRemove report.csv', 'mdnotes.mdUpload failed: Upload failed: 403 · RetryRemove notes.md']);
     await sendMessage('Summarise these');
     expect(agent().messages).toEqual([]);
 
@@ -9483,7 +9483,7 @@ describe('attaching files', () => {
     await act(async () => uploads[0]?.resolve('/report.csv'));
     const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
     await sendMessage('Summarise this');
-    expect(chips()).toEqual(['csvreport.csvCSV']);
+    expect(chips()).toEqual(['csvreport.csvCSVRemove report.csv']);
     online.mockReturnValue(true);
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(agent().messages.at(-1)?.content).toBe('Summarise this\n\nAttached files:\n- /report.csv');
@@ -9506,7 +9506,7 @@ describe('attaching files', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/^Your models are still loading\. Send it again once they have\.$/);
     expect(copilot.runAgent).not.toHaveBeenCalled();
     expect(agent().messages).toEqual([]);
-    expect(chips()).toEqual(['csvreport.csvCSV']);
+    expect(chips()).toEqual(['csvreport.csvCSVRemove report.csv']);
 
     await act(async () => models.resolve());
     await settle();

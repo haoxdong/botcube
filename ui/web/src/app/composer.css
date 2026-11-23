@@ -253,13 +253,15 @@
   color: var(--color-text-muted);
 }
 
-/* The files attached with the +: chips inside the composer's box, above its text, wrapping as ChatGPT's do. */
+/* The files attached with the +: stock Attachments inside the composer's box, above its text. */
 .composer-files {
   order: -3;
   flex: 1 0 100%;
   align-self: stretch;
   /* One row that scrolls sideways, as ChatGPT's composer keeps its files: more files never push the chat up. */
   display: flex;
+  /* Each keeps its own height: an image tile stays 56px beside a taller card. */
+  align-items: flex-start;
   gap: var(--space-8);
   min-width: 0;
   margin: 0;
@@ -269,129 +271,13 @@
   list-style: none;
 }
 
-.composer-file {
-  display: flex;
-  align-items: center;
+/* Stock Attachment cards keep today's width in the row; image tiles keep their own 56px. */
+.composer-files > li {
   flex: 0 0 auto;
-  gap: var(--space-8);
-  width: min(240px, 75%);
-  padding: 6px var(--space-4) 6px 6px;
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-lg);
-  background: var(--color-white);
 }
 
-.composer-file-text {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: flex-start;
-  min-width: 0;
-}
-
-.composer-file-name {
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--color-text);
-  font-size: var(--font-body);
-  font-weight: var(--weight-semibold);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.composer-file-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  color: var(--color-text-muted);
-  font-size: var(--font-small);
-}
-
-.composer-file-bar {
-  height: 3px;
-  overflow: hidden;
-  border-radius: var(--radius-pill);
-  background: var(--color-line);
-}
-
-.composer-file-bar > span {
-  display: block;
-  height: 100%;
-  background: var(--color-text);
-  transition: width var(--motion-move) var(--ease);
-}
-
-.composer-file-error {
-  display: block;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  color: var(--color-red);
-  font-size: var(--font-small);
-}
-
-/* A file chip's Remove stays at the chip's top. */
-.composer-file-remove {
-  align-self: flex-start;
-}
-
-/* An uploading image dims under a ring of its progress; a failed one, under a red-ringed Retry. */
-.composer-image-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: inherit;
-  background: var(--scrim);
-}
-
-.composer-image-overlay > svg {
-  width: 24px;
-  height: 24px;
-}
-
-.composer-image-overlay circle {
-  fill: none;
-  stroke: var(--color-white);
-  stroke-opacity: 0.35;
-  stroke-width: 2.5;
-}
-
-.composer-image-overlay circle + circle {
-  stroke: var(--color-white);
-  stroke-linecap: round;
-  transform: rotate(-90deg);
-  transform-origin: center;
-  transition: stroke-dashoffset var(--motion-move) var(--ease);
-}
-
-/* An image's Remove sits on its top right corner. */
-.composer-image-remove {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-}
-
-/* Why each image failed to upload, under the chips, at most two lines each; the image keeps no text on it. */
-.composer-file-failures {
-  order: -3;
-  flex: 1 0 100%;
-  align-self: stretch;
-  min-width: 0;
-  padding: 6px var(--space-12) 0;
-}
-
-.composer-file-failures > p {
-  display: -webkit-box;
-  margin: 0;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  color: var(--color-red);
-  font-size: var(--font-small);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+.composer-file {
+  width: 248px;
 }
 
 /* ── Hide CopilotKit's built-in message action buttons (copy, etc.) ──

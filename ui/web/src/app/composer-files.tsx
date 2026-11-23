@@ -4,13 +4,12 @@ import { m as motionElement } from "motion/react";
 import { Presence, presenceMotion, CollapseList, FadeItem, useInstant } from "./collapse";
 
 import { useEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type RefObject } from "react";
-import { RotateCw, X } from "lucide-react";
+import { cn } from "cn";
+import { Attachment, AttachmentHoverCard, AttachmentHoverCardContent, AttachmentHoverCardTrigger, AttachmentInfo, AttachmentPreview, AttachmentRemove, Attachments, type AttachmentData } from "@/components/ui/attachments";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { fileExtension, FileTypeIcon, isImageName } from "../components/file-type-icon";
 import { attachmentAccountEpoch, subscribeAttachmentAccount } from "../plugin/file-account";
-
-const MotionButton = motionElement.create(Button);
 
 interface AttachmentStore {
   upload: (file: File, options: { onProgress: (fraction: number) => void; signal: AbortSignal }) => Promise<string>;
@@ -20,7 +19,7 @@ interface AttachmentStore {
 type ComposerFileState =
   | { status: "uploading"; progress: number }
   | { status: "uploaded"; path: string }
-  | { status: "failed"; error: string; undeletedPath?: string };
+  | { status: "failed"; error: string; hidden?: true; undeletedPath?: string };
 
 export interface ComposerFile {
   id: string;
@@ -34,7 +33,7 @@ export interface ComposerFiles {
   retry: (id: string) => void;
   remove: (id: string) => void;
   clear: () => void;
-    sendable: boolean;
+  sendable: boolean;
 }
 
 const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
@@ -73,7 +72,7 @@ export function useComposerFiles({ upload, discard }: AttachmentStore, accountId
   const start = (id: string, file: File) => {
     // The Harness keeps hidden files out of the agent's workspace, so the agent could never read one.
     if (file.name.startsWith(".")) {
-      settle(id, { status: "failed", error: `The agent can't read hidden files like ${file.name}. Rename it without the leading dot.` });
+      settle(id, { status: "failed", error: `The agent can't read hidden files like ${file.name}. Rename it without the leading dot.`, hidden: true });
       return;
     }
     const controller = new AbortController();
@@ -249,33 +248,20 @@ export function SentFileCards({ paths, fileUrl }: { paths: string[]; fileUrl?: (
   );
 }
 
-function useObjectUrl(file: File): string | null {
+/** A local object URL for `file`, revoked as it goes; none while `file` is null. */
+function useObjectUrl(file: File | null): string | null {
   const [url, setUrl] = useState<{ file: File; url: string } | null>(null);
   useEffect(() => {
+    if (!file) return;
     const created = URL.createObjectURL(file);
     setUrl({ file, url: created });
     return () => URL.revokeObjectURL(created);
   }, [file]);
-  return url?.file === file ? url.url : null;
+  return file && url?.file === file ? url.url : null;
 }
 
 type ChipProps = ComposerFile & { name: string; onRetry: (id: string) => void; onRemove: (id: string) => void };
 
-function ProgressRing({ progress }: { progress: number }) {
-  const length = 2 * Math.PI * 9;
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="9" />
-      <circle cx="12" cy="12" r="9" strokeDasharray={length} strokeDashoffset={length * (1 - progress)} />
-    </svg>
-  );
-}
-
-/**
- * An attached image, as ChatGPT shows one: its square thumbnail from the local file, a ring of its upload's progress
- * over it, or a red-ringed Retry once it failed (why, under the chips), and Remove on its corner. One the browser can't
- * show is `onBroken`, to take a file's chip.
- */
 const uploading = (name: string, progress: number) =>
   ({
     role: "progressbar",
@@ -285,80 +271,93 @@ const uploading = (name: string, progress: number) =>
     "aria-valuenow": Math.round(progress * 100),
   }) as const;
 
-function ImageChip({ id, file, state, name, onRetry, onRemove, onBroken }: ChipProps & { onBroken: () => void }) {
+/**
+ * Remove shows on hover or keyboard focus, as stock's tile does; with no hover (phones), always. Tailwind's `hover`
+ * variants apply only where the device can hover.
+ */
+const REVEAL_REMOVE = "opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100";
+
+/** The stock Attachment's data for an attached file: its picture by `url`, or none for its type's icon. */
+const attachmentOf = (id: string, name: string, file: File, url: string | null): AttachmentData => ({
+  id,
+  type: "file",
+  filename: name,
+  mediaType: url ? file.type : "",
+  url: url ?? "",
+});
+
+/** An attached image, as stock's square tile from the local file: it fades while it uploads. */
+function ImageTile({ id, file, state, name, onRemove, onBroken }: Omit<ChipProps, "onRetry"> & { onBroken: () => void }) {
   const url = useObjectUrl(file);
   return (
-    <FadeItem className="image-thumb composer-image" data-status={state.status} title={name}>
-      <Presence>{url && <motionElement.img {...presenceMotion} src={url} alt={name} onError={onBroken} />}</Presence>
-      <Presence>{state.status === "uploading" && (
-        <motionElement.span {...presenceMotion}
-          className="composer-image-overlay"
-          {...uploading(name, state.progress)}
-        >
-          <ProgressRing progress={state.progress} />
-        </motionElement.span>
-      )}</Presence>
-      <Presence>{state.status === "failed" && (
-        <motionElement.span {...presenceMotion} className="composer-image-overlay">
-          <Button type="button" variant="destructive" size="icon-xs" aria-label={`Retry ${name}`} onClick={() => onRetry(id)}>
-            <RotateCw aria-hidden="true" />
-          </Button>
-        </motionElement.span>
-      )}</Presence>
-      <Button type="button" variant="default" size="icon-xs" className="composer-image-remove" aria-label={`Remove ${name}`} onClick={() => onRemove(id)}>
-        <X aria-hidden="true" />
-      </Button>
+    <FadeItem className="composer-image" data-status={state.status} title={name}>
+      <Attachments variant="grid" className="contents">
+        <Attachment data={attachmentOf(id, name, file, url)} onRemove={() => onRemove(id)} onError={onBroken} className={cn("size-14", state.status === "uploading" && "opacity-50")}>
+          <AttachmentPreview />
+          <span className="sr-only" {...(state.status === "uploading" ? uploading(name, state.progress) : {})} />
+          <AttachmentRemove label={`Remove ${name}`} className={REVEAL_REMOVE} />
+        </Attachment>
+      </Attachments>
     </FadeItem>
   );
 }
 
-function FileChip({ id, state, name, onRetry, onRemove }: ChipProps) {
+/** A card's second line: its kind, its upload's progress, or, in red, why it failed, with Retry where Retry helps. */
+function SecondLine({ id, state, name, onRetry }: Omit<ChipProps, "file" | "onRemove">) {
+  if (state.status === "uploading") {
+    return <span className="block truncate text-muted-foreground text-xs" {...uploading(name, state.progress)}>{`Uploading… ${Math.round(state.progress * 100)}%`}</span>;
+  }
+  if (state.status === "uploaded") return <span className="block truncate text-muted-foreground text-xs">{kindOf(name)}</span>;
+  const said = state.hidden ? "Hidden file: rename it" : state.undeletedPath === undefined ? "Upload failed" : "Remove failed";
+  return (
+    <span className="flex min-w-0 text-destructive text-xs">
+      {/* The full reason: in stock's hover card on hover, and in the alert for a screen reader. Only it ellipsizes; Retry stays whole. */}
+      <AttachmentHoverCard>
+        <AttachmentHoverCardTrigger render={<span role="alert" className="min-w-0 truncate" />}>
+          {said}
+          <span className="sr-only">{`: ${state.error}`}</span>
+        </AttachmentHoverCardTrigger>
+        <AttachmentHoverCardContent>{state.error}</AttachmentHoverCardContent>
+      </AttachmentHoverCard>
+      {/* A hidden file needs renaming, not Retry. */}
+      <span className="shrink-0 whitespace-pre" hidden={state.hidden}>
+        {" · "}
+        <Button type="button" variant="link" size="xs" className="h-auto p-0 text-destructive underline" onClick={() => onRetry(id)}>Retry</Button>
+      </span>
+    </span>
+  );
+}
+
+/** An attached file, as stock's list card: our type icon, or a failed image's picture, then its name over its second line. */
+function FileCard({ id, file, state, name, picture, onRetry, onRemove, onBroken }: ChipProps & { picture: boolean; onBroken: () => void }) {
+  const url = useObjectUrl(picture ? file : null);
   return (
     <FadeItem className="composer-file" data-status={state.status}>
-      <FileIconBox name={name} />
-      <span className="composer-file-text">
-        <span className="composer-file-name" title={name}>{name}</span>
-        <Presence>{state.status === "uploading" && (
-          <motionElement.span {...presenceMotion}
-            className="composer-file-detail"
-            {...uploading(name, state.progress)}
-          >
-            {`Uploading… ${Math.round(state.progress * 100)}%`}
-            <span className="composer-file-bar">
-              <span style={{ width: `${state.progress * 100}%` }} />
-            </span>
-          </motionElement.span>
-        )}</Presence>
-        <Presence>{state.status === "uploaded" && <motionElement.span {...presenceMotion} className="composer-file-detail">{kindOf(name)}</motionElement.span>}</Presence>
-        <Presence>{state.status === "failed" && (
-          <>
-            <motionElement.span {...presenceMotion} key="0" className="composer-file-error" role="alert">{state.error}</motionElement.span>
-            <MotionButton {...presenceMotion} key="1" type="button" variant="link" size="sm" onClick={() => onRetry(id)}>Retry</MotionButton>
-          </>
-        )}</Presence>
-      </span>
-      <Button type="button" variant="ghost" size="icon-sm" className="composer-file-remove" aria-label={`Remove ${name}`} onClick={() => onRemove(id)}>
-        <X aria-hidden="true" />
-      </Button>
+      <Attachments variant="list" className="contents">
+        <Attachment data={attachmentOf(id, name, file, url)} onRemove={() => onRemove(id)} onError={onBroken} className={cn("p-2.5 text-sm", state.status === "failed" && "border-destructive", state.status === "uploading" && "opacity-50")}>
+          <AttachmentPreview fallbackIcon={<FileIconBox name={name} />} className="size-10 bg-transparent" />
+          <div className="min-w-0 flex-1">
+            <AttachmentInfo title={name} />
+            <SecondLine id={id} state={state} name={name} onRetry={onRetry} />
+          </div>
+          <AttachmentRemove label={`Remove ${name}`} className={REVEAL_REMOVE} />
+        </Attachment>
+      </Attachments>
     </FadeItem>
   );
 }
 
 /**
- * The attached files in the composer above its text: an image (by its name, as once sent) as its thumbnail, any other
- * file, or an image the browser can't show, as its chip; under them, one line for each thumbnail whose upload failed,
- * saying why.
+ * The attached files in the composer above its text, on stock AI Elements Attachments: an image (by its name, as once
+ * sent) as its tile until its upload fails, then as a card with its picture; any other file, or an image the browser
+ * can't show, as a card with its type's icon.
  */
 export function ComposerFileChips({ files, onRetry, onRemove }: { files: ComposerFile[]; onRetry: (id: string) => void; onRemove: (id: string) => void }) {
   const [broken, setBroken] = useState<ReadonlySet<string>>(new Set());
   const named = files.map((entry) => {
     const path = entry.state.status === "uploaded" ? entry.state.path : entry.state.status === "failed" ? entry.state.undeletedPath : undefined;
     const name = path === undefined ? entry.file.name : basename(path);
-    return { ...entry, name, thumbnail: isImageName(entry.file.name) && !broken.has(entry.id) };
-  });
-  const failedThumbnails = named.flatMap(({ id, name, thumbnail, state }) => {
-    if (!thumbnail || state.status !== "failed") return [];
-    return [{ id, line: state.undeletedPath === undefined ? `Couldn't upload ${name}: ${state.error}` : state.error }];
+    return { ...entry, name, picture: isImageName(entry.file.name) && !broken.has(entry.id) };
   });
   // The list outlives its last chip while that chip fades out, then leaves, and the composer shrinks after it.
   const instant = useInstant();
@@ -366,27 +365,19 @@ export function ComposerFileChips({ files, onRetry, onRemove }: { files: Compose
   if (files.length > 0 && !listed) setListed(true);
   const shown = files.length > 0 || (listed && !instant);
   return (
-    <>
-      <Presence>{shown && <motionElement.ul {...presenceMotion} className="composer-files" aria-label="Attached files">
-        {/* The list mounts with its first chip, which fades in as any later one does. */}
-        <CollapseList initial onExitComplete={() => setListed(false)}>
-          {named.map(({ thumbnail, ...entry }) =>
-            thumbnail ? (
-              <ImageChip key={entry.id} {...entry} onRetry={onRetry} onRemove={onRemove} onBroken={() => setBroken((current) => new Set(current).add(entry.id))} />
-            ) : (
-              <FileChip key={entry.id} {...entry} onRetry={onRetry} onRemove={onRemove} />
-            ),
-          )}
-        </CollapseList>
-      </motionElement.ul>}</Presence>
-      <Presence>{failedThumbnails.length > 0 && (
-        <motionElement.div {...presenceMotion} className="composer-file-failures">
-          {failedThumbnails.map(({ id, line }) => (
-            <p key={id} role="alert" title={line}>{line}</p>
-          ))}
-        </motionElement.div>
-      )}</Presence>
-    </>
+    <Presence>{shown && <motionElement.ul {...presenceMotion} className="composer-files" aria-label="Attached files">
+      {/* The list mounts with its first chip, which fades in as any later one does. */}
+      <CollapseList initial onExitComplete={() => setListed(false)}>
+        {named.map(({ picture, ...entry }) => {
+          const onBroken = () => setBroken((current) => new Set(current).add(entry.id));
+          return picture && entry.state.status !== "failed" ? (
+            <ImageTile key={entry.id} {...entry} onRemove={onRemove} onBroken={onBroken} />
+          ) : (
+            <FileCard key={entry.id} {...entry} picture={picture} onRetry={onRetry} onRemove={onRemove} onBroken={onBroken} />
+          );
+        })}
+      </CollapseList>
+    </motionElement.ul>}</Presence>
   );
 }
 

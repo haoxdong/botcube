@@ -209,10 +209,10 @@ describe('useComposerFiles', () => {
   it('refuses a hidden file without uploading it, as the agent would never see it in its workspace', () => {
     const { result, upload } = attached([new File(['KEY=1'], '.env')]);
 
-
     expect(result.current.files[0]?.state).toEqual({
       status: 'failed',
       error: "The agent can't read hidden files like .env. Rename it without the leading dot.",
+      hidden: true,
     });
     expect(result.current.sendable).toBe(false);
     expect(upload).not.toHaveBeenCalled();
@@ -345,48 +345,65 @@ describe('ComposerFileChips', () => {
     view.rerender(<ComposerFileChips files={[]} onRetry={vi.fn()} onRemove={vi.fn()} />);
 
     expect(chip('notes.md')).toHaveAttribute('inert');
-    await waitFor(() => expect(screen.queryByText('notes.md', { selector: '.composer-file-name' })).toBeNull());
+    await waitFor(() => expect(screen.queryByText('notes.md')).toBeNull());
     await waitFor(() => expect(screen.queryByRole('list', { name: 'Attached files' })).toBeNull());
   });
 
-  const chip = (name: string) => screen.getByText(name, { selector: '.composer-file-name' }).closest('li') as HTMLElement;
+  // A card's name, as stock AttachmentInfo shows it, and its card.
+  const chip = (name: string) => screen.getByText(name, { selector: 'span' }).closest('li') as HTMLElement;
+  // A card's second line: its kind, progress or failure; with no Remove label (stock's screen-reader text) in it.
+  const secondLine = (name: string) => (chip(name).querySelector('[title] + span') as HTMLElement).textContent;
   const files: ComposerFile[] = [
     { id: '1', file: report, state: { status: 'uploading', progress: 0.42 } },
     { id: '2', file: notes, state: { status: 'uploaded', path: '/notes.md' } },
     { id: '3', file: new File([''], 'Makefile'), state: { status: 'failed', error: 'A file named Makefile is already in Files' } },
   ];
 
-  it("shows each file's name in full on hover, and its upload: progress, its kind once uploaded, or why it failed", () => {
+  it("shows each file as a stock Attachment card: its name in full on hover, then its upload's progress, its kind, or that it failed", async () => {
     render(<ComposerFileChips files={files} onRetry={vi.fn()} onRemove={vi.fn()} />);
 
     expect(screen.getByRole('list', { name: 'Attached files' })).toBeInTheDocument();
-    expect(within(chip('report.csv')).getByText('report.csv')).toHaveAttribute('title', 'report.csv');
+    expect(chip('report.csv').querySelector('.group')).toHaveClass('border', 'rounded-lg', 'p-2.5', 'text-sm', 'opacity-50');
+    expect(screen.getByText('report.csv').parentElement).toHaveAttribute('title', 'report.csv');
     expect(within(chip('report.csv')).getByRole('progressbar', { name: 'Uploading report.csv' })).toHaveAttribute('aria-valuenow', '42');
-    expect(chip('report.csv')).toHaveTextContent('Uploading… 42%');
-    expect(chip('notes.md')).toHaveTextContent(/^mdnotes\.mdMD$/);
-    expect(within(chip('Makefile')).getByRole('alert')).toHaveTextContent('A file named Makefile is already in Files');
+    expect(secondLine('report.csv')).toBe('Uploading… 42%');
+    expect(secondLine('notes.md')).toBe('MD');
+    // The reason stays in the alert for a screen reader, and in stock's hover card; the line itself says it failed.
+    const alert = within(chip('Makefile')).getByRole('alert');
+    expect(alert).toHaveTextContent('Upload failed: A file named Makefile is already in Files');
+    await userEvent.hover(alert);
+    expect(await screen.findByText('A file named Makefile is already in Files', { selector: '[data-slot=hover-card-content]' })).toBeInTheDocument();
+    expect(within(chip('Makefile')).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(within(chip('report.csv')).queryByRole('button', { name: 'Retry' })).toBeNull();
-    // The sent card's labelled icon, so a file looks the same before and after it goes.
+    // Our type icons, with no box behind them, so a file looks the same before and after it goes.
     expect(['report.csv', 'notes.md', 'Makefile'].map((name) => chip(name).querySelector('.file-icon')?.textContent)).toEqual(['csv', 'md', '']);
+  });
+
+  it('says a hidden file must be renamed, with no Retry, since retrying cannot help', () => {
+    const state = { status: 'failed' as const, error: "The agent can't read hidden files like .env. Rename it without the leading dot.", hidden: true as const };
+    render(<ComposerFileChips files={[{ id: 'h', file: new File([''], '.env'), state }]} onRetry={vi.fn()} onRemove={vi.fn()} />);
+
+    expect(within(chip('.env')).getByRole('alert')).toHaveTextContent("Hidden file: rename it: The agent can't read hidden files like .env.");
+    expect(within(chip('.env')).queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 
   it('shows the stored copy name on the chip, tooltip and Remove and sends its canonical path', async () => {
     const onRemove = vi.fn();
     render(<ComposerFileChips files={[{ id: 'copy', file: report, state: { status: 'uploaded', path: '/report (2).csv' } }]} onRetry={vi.fn()} onRemove={onRemove} />);
-    expect(within(chip('report (2).csv')).getByText('report (2).csv')).toHaveAttribute('title', 'report (2).csv');
-    expect(chip('report (2).csv')).toHaveTextContent(/^csvreport \(2\)\.csvCSV$/);
+    expect(screen.getByText('report (2).csv').parentElement).toHaveAttribute('title', 'report (2).csv');
+    expect(secondLine('report (2).csv')).toBe('CSV');
     await userEvent.click(screen.getByRole('button', { name: 'Remove report (2).csv' }));
     expect(onRemove).toHaveBeenCalledWith('copy');
     expect(messageWithFiles('Read this', ['/report (2).csv'])).toBe('Read this\n\nAttached files:\n- /report (2).csv');
   });
 
-  it("says why Files wouldn't delete a removed image, by its stored name, with Retry on its thumbnail", () => {
+  it("says Files wouldn't delete a removed image, on its card by its stored name, with Retry", () => {
     const photo = new File(['png'], 'photo.png', { type: 'image/png' });
     const state = { status: 'failed' as const, error: "Couldn't remove photo (2).png from Files: Delete failed", undeletedPath: '/photo (2).png' };
     render(<ComposerFileChips files={[{ id: '1', file: photo, state }]} onRetry={vi.fn()} onRemove={vi.fn()} />);
 
-    expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(["Couldn't remove photo (2).png from Files: Delete failed"]);
-    expect(screen.getByRole('button', { name: 'Retry photo (2).png' })).toBeInTheDocument();
+    expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(["Remove failed: Couldn't remove photo (2).png from Files: Delete failed"]);
+    expect(within(chip('photo (2).png')).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 
   it('retries a failed file and removes any file', async () => {
@@ -401,50 +418,57 @@ describe('ComposerFileChips', () => {
     expect(onRemove).toHaveBeenCalledWith('1');
   });
 
-  it('shows an image as its thumbnail from the local file, its upload over it, and revokes the URL as it goes', () => {
+  it('hides Remove until hover or keyboard focus, and always shows it with no hover', () => {
+    render(<ComposerFileChips files={files} onRetry={vi.fn()} onRemove={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Remove notes.md' })).toHaveClass('opacity-0', 'group-hover:opacity-100', 'focus-visible:opacity-100', '[@media(hover:none)]:opacity-100');
+  });
+
+  it('shows an image as its stock tile from the local file, faded while it uploads, and revokes the URL as it goes', () => {
     const chart = new File(['png'], 'chart.png', { type: 'image/png' });
     const { unmount } = render(<ComposerFileChips files={[{ id: 'img', file: chart, state: { status: 'uploading', progress: 0.5 } }, files[1] as ComposerFile]} onRetry={vi.fn()} onRemove={vi.fn()} />);
 
-    expect(screen.getByRole('img', { name: 'chart.png' })).toHaveAttribute('src', 'blob:test/1');
+    const image = screen.getByRole('img', { name: 'chart.png' });
+    expect(image).toHaveAttribute('src', 'blob:test/1');
     expect(objectUrls.created).toEqual([chart]);
+    expect(image.closest('.group')).toHaveClass('size-14', 'opacity-50');
     expect(screen.getByRole('progressbar', { name: 'Uploading chart.png' })).toHaveAttribute('aria-valuenow', '50');
     expect(screen.queryByText('chart.png')).toBeNull();
-    // Other files keep their chip.
-    expect(chip('notes.md')).toHaveTextContent(/^mdnotes\.mdMD$/);
+    // Other files keep their card.
+    expect(secondLine('notes.md')).toBe('MD');
 
     unmount();
     expect(objectUrls.revoked).toEqual(['blob:test/1']);
   });
 
-  it('keeps a failed image its thumbnail with Retry on it, and says why in a line under the chips', async () => {
+  it('turns a failed image into a card with its picture, saying it failed on the card, with Retry', async () => {
     const onRetry = vi.fn();
     const chart = new File(['png'], 'chart.png', { type: 'image/png' });
     render(<ComposerFileChips files={[{ id: 'img', file: chart, state: { status: 'failed', error: 'Files are not configured' } }, files[2] as ComposerFile]} onRetry={onRetry} onRemove={vi.fn()} />);
 
-    const thumbnail = screen.getByRole('img', { name: 'chart.png' }).closest('li') as HTMLElement;
-    expect(thumbnail.textContent).toBe('');
-    expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(['A file named Makefile is already in Files', "Couldn't upload chart.png: Files are not configured"]);
-    await userEvent.click(within(thumbnail).getByRole('button', { name: 'Retry chart.png' }));
+    expect(within(chip('chart.png')).getByRole('img', { name: 'chart.png' })).toHaveAttribute('src', 'blob:test/1');
+    expect(chip('chart.png').querySelector('.group')).toHaveClass('border-destructive');
+    expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(['Upload failed: Files are not configured', 'Upload failed: A file named Makefile is already in Files']);
+    await userEvent.click(within(chip('chart.png')).getByRole('button', { name: 'Retry' }));
     expect(onRetry).toHaveBeenCalledWith('img');
-    expect(within(thumbnail).getByRole('button', { name: 'Remove chart.png' })).toBeInTheDocument();
+    expect(within(chip('chart.png')).getByRole('button', { name: 'Remove chart.png' })).toBeInTheDocument();
   });
 
-  it("takes a file's chip for an image the browser can't show, its failure said once, on the chip", () => {
+  it("shows an image the browser can't show with its type's icon", () => {
     const corrupt = new File([''], 'photo.png', { type: 'image/png' });
     render(<ComposerFileChips files={[{ id: 'bad', file: corrupt, state: { status: 'failed', error: 'Files are not configured' } }]} onRetry={vi.fn()} onRemove={vi.fn()} />);
-    expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(["Couldn't upload photo.png: Files are not configured"]);
 
     fireEvent.error(screen.getByRole('img', { name: 'photo.png' }));
 
-    expect(screen.getByRole('listitem')).toHaveTextContent(/^pngphoto\.pngFiles are not configuredRetry$/);
-    expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(['Files are not configured']);
+    expect(screen.queryByRole('img', { name: 'photo.png' })).toBeNull();
+    expect(chip('photo.png').querySelector('.file-icon')?.textContent).toBe('png');
+    expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(['Upload failed: Files are not configured']);
   });
 
-  it('shows a file as an image by its name, as once sent: an SVG is a thumbnail, a HEIC a chip', () => {
+  it('shows a file as an image by its name, as once sent: an SVG is a tile, a HEIC a card', () => {
     const files: ComposerFile[] = ([['logo.svg', 'image/svg+xml'], ['photo.heic', 'image/heic']] as const).map(([name, type], index) => ({ id: String(index), file: new File([''], name, { type }), state: { status: 'uploaded', path: `/${name}` } }));
     render(<ComposerFileChips files={files} onRetry={vi.fn()} onRemove={vi.fn()} />);
     expect(screen.getByRole('img', { name: 'logo.svg' })).toHaveAttribute('src', 'blob:test/1');
-    expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual(['', 'heicphoto.heicHEIC']);
+    expect(secondLine('photo.heic')).toBe('HEIC');
   });
 });
 
