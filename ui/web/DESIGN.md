@@ -24,19 +24,20 @@ dark theme.
 
 ## Motion
 
-Motion is calm, continuous and sparing, as on iOS and macOS. Five rules, each checkable in a frame strip:
+Motion is calm, continuous and sparing, as on iOS and macOS. Six rules, each seen in a frame strip:
 
+- **One motion per action**, at most: a tab or view switch is instant, and loading is one state.
 - **Little travels.** Only sheets, panes, the sidebar, drags and arriving messages move or resize; the rest fades or
   appears.
-- **Nothing snaps.** What moves settles with a spring, no cut or bounce; a change of state is a quick fade.
+- **Nothing snaps.** What moves settles with a spring, no cut or bounce.
 - **The finger leads.** A drag follows the finger; on release or a tap it settles with the move spring.
 - **Interrupted motion carries on** at its speed: a spring retargets, never restarts.
 - **What you read stays put.** New content never moves the line being read.
 
 Two mechanisms: `--motion-move` springs what moves or resizes; `--motion-quick` with `--ease` fades state.
 `--motion-loop` is the one ambient loop (Worklog shimmer, Marq's bob). Each moving element has one owner; an
-exiting one stays until its fade ends. Full motion always, Reduce Motion or not (the maintainer, 2026-11-03). A motion
-change ships with a frame strip at 390 and 1440 px beside today's.
+exiting one stays until its fade ends. Full motion always, Reduce Motion or not. A motion change ships with a frame
+strip at 390 and 1440 beside today's.
 
 ## Spacing
 
@@ -143,6 +144,6 @@ by `src/app/globals.test.tsx` and the Storybook play tests.
 Each is a real-world object the system doesn't draw, and the lock test names each one:
 
 - Marq's avatar is an illustration in his colours.
-- The Computer's simulated desktop scales with its screen (`cqw`); Chrome's dock icon keeps Google's colours.
+- The agent's computer copies Windows 11, motion included; no rule here applies inside it.
 - The composer's text stays 16px on a touch tablet, so iOS doesn't zoom into it.
 - Code blocks take Shiki's `github-light` syntax colours.
