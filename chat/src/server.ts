@@ -15,7 +15,7 @@ import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
 import { sleepComputersAtTaskStop } from './task-stop.js';
 import { cors } from './cors.js';
-import { sessionOperations } from './sessions.js';
+import { sessionAccessError, sessionOperations } from './sessions.js';
 import { purgeQueue } from './purges.js';
 import { sweepEvery } from './task-drain.js';
 import { sessionLifecycle } from './session-lifecycle.js';
@@ -192,7 +192,8 @@ export function createChatService(
     await next();
     if (c.res.status === 502 || c.res.status === 504) c.res = new Response(c.res.body, { status: 503, headers: c.res.headers });
   });
-  app.onError((error, c) => {
+  app.onError((cause, c) => {
+    const error = sessionAccessError(cause);
     if (!(error instanceof HttpError) || error.cause !== undefined) {
       console.error(`${c.req.method} ${c.req.path} failed`, error);
     }

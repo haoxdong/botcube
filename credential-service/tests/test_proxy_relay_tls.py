@@ -74,8 +74,9 @@ def test_relay_uses_one_command_until_client_certificate_refresh(
 ) -> None:
     printed = tmp_path / 'exec-credential.json'
     calls = tmp_path / 'calls'
-    expiry = datetime.now(UTC) + timedelta(seconds=40)
-    clock = [expiry.timestamp() - 40]
+    start = datetime.now(UTC)
+    expiry = start + timedelta(minutes=2)
+    clock = [start.timestamp()]
     monkeypatch.setattr(tls_module, 'time', lambda: clock[0])
 
     def write(name: str, expires_at: datetime) -> None:

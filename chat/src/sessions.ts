@@ -150,7 +150,7 @@ export function sessionOperations(
 
 export function assertIdleContinuable(session: Parameters<typeof assertContinuable>[0] & { turn_running_since?: unknown }): void {
   if (session.turn_running_since !== undefined) return;
-  try { assertContinuable(session); } catch (error) { throw sessionAccessError(error); }
+  assertContinuable(session);
 }
 
 export function sessionAccessError(error: unknown, agentName = ''): unknown {

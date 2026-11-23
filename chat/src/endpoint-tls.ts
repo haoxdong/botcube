@@ -31,7 +31,7 @@ function clientCertificate(seam: string, source: ClientCertificate, env: NodeJS.
   if ('command' in source) {
     const named = `${seam} client certificate (command ${source.command[0]})`;
     if (env[ALLOW_COMMAND_CREDENTIALS_ENV] !== '1') throw new EndpointTlsError(`${named}: a command runs only when ${ALLOW_COMMAND_CREDENTIALS_ENV}=1`);
-    const credentials = refreshingAhead(named, async () => execCertificate(await stdoutOf(source.command, source.timeoutSeconds)), Date.now, { boundMandatoryWindow: true });
+    const credentials = refreshingAhead(named, async () => execCertificate(await stdoutOf(source.command, source.timeoutSeconds)), Date.now);
     return async () => (await credentials.get().catch((error: unknown) => {
       throw new EndpointTlsError(error instanceof Error ? error.message : String(error));
     })).value;

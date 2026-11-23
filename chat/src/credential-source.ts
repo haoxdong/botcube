@@ -45,14 +45,14 @@ export function credentialSource(
   return refreshingAhead(named, adapted.read, now);
 }
 
-export function refreshingAhead<T extends Pick<Credential, 'expiresAt'>>(named: string, read: () => Promise<T>, now: () => number, { boundMandatoryWindow = false } = {}): { get(): Promise<T> } {
+export function refreshingAhead<T extends Pick<Credential, 'expiresAt'>>(named: string, read: () => Promise<T>, now: () => number): { get(): Promise<T> } {
   let cached: { credential: T; advisoryAt: number; mandatoryAt: number } | undefined;
   let refreshing: Promise<T> | undefined;
   const refresh = () => {
     if (refreshing) return refreshing;
     refreshing = read()
       .then((credential) => {
-        cached = { credential, ...refreshWindows(credential, now(), boundMandatoryWindow) };
+        cached = { credential, ...refreshWindows(credential, now()) };
         return credential;
       }, (error: unknown) => {
         throw new CredentialSourceError(`${named}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
@@ -71,13 +71,13 @@ export function refreshingAhead<T extends Pick<Credential, 'expiresAt'>>(named: 
   };
 }
 
-function refreshWindows({ expiresAt }: Pick<Credential, 'expiresAt'>, mintedAt: number, boundMandatoryWindow: boolean) {
+function refreshWindows({ expiresAt }: Pick<Credential, 'expiresAt'>, mintedAt: number) {
   if (expiresAt === undefined) return { advisoryAt: Infinity, mandatoryAt: Infinity };
   const expiry = expiresAt.getTime();
   const halfLifetime = (expiry - mintedAt) / 2;
   return {
     advisoryAt: expiry - Math.min(halfLifetime, ADVISORY_REFRESH_WINDOW_MAX_MS),
-    mandatoryAt: expiry - (boundMandatoryWindow ? Math.min(halfLifetime, MANDATORY_REFRESH_WINDOW_MS) : MANDATORY_REFRESH_WINDOW_MS),
+    mandatoryAt: expiry - MANDATORY_REFRESH_WINDOW_MS,
   };
 }
 

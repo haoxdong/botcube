@@ -11,7 +11,7 @@ import type { Requester } from './requester.js';
 import { warmingSessions, warmupTiming } from './warming-sessions.js';
 import { accountDefaultModel, accountModelList, requireAllowedModel } from './models.js';
 import { SessionOpeningError, SessionProviderError, SessionUnissuedError, type SessionMetadata, type PreparedTurn, type TurnFailure, type TurnActivity, type SessionPurge } from './session-metadata.js';
-import { assertIdleContinuable, sessionAccessError } from './sessions.js';
+import { assertIdleContinuable } from './sessions.js';
 import { SessionReadOnlyError } from './session-identity.js';
 import { forwardSnapshotEpoch, type sessionLifecycle } from './session-lifecycle.js';
 import { forwardTurnIdentity, type TurnIdentitySource } from './turn-identity.js';
@@ -348,7 +348,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
           return c.json({ error: 'AgentCore warmup failed', details: turnErrorDetails(failure, credentials) }, 502);
         }
       } catch (error) {
-        if (error instanceof SessionUnissuedError || error instanceof SessionReadOnlyError) throw sessionAccessError(error);
+        if (error instanceof SessionUnissuedError || error instanceof SessionReadOnlyError) throw error;
         console.warn('warmup failed', error);
         return c.json({ error: 'AgentCore warmup failed', details: String(error) }, 502);
       }

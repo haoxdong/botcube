@@ -130,7 +130,7 @@ def _certificate_loader(seam: str, source: FileCertificate | CommandCertificate 
             if env.get(ALLOW_COMMAND_CREDENTIALS_ENV) != '1':
                 raise EndpointTlsError(f'{named}: a command runs only when {ALLOW_COMMAND_CREDENTIALS_ENV}=1')
 
-            credentials = CredentialSource(named, lambda: _exec_certificate(stdout_of(command, timeout)), time, bound_mandatory_window=True)
+            credentials = CredentialSource(named, lambda: _exec_certificate(stdout_of(command, timeout)), time)
 
             def load_printed(context: ssl.SSLContext) -> None:
                 try:

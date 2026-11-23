@@ -59,7 +59,7 @@ export function botMemory(forwardedProps: Record<string, unknown>, settings: { m
 }
 
 export async function turnAccessError(error: unknown, documents: Promise<PromiseSettledResult<AgentDocumentSet>[]>, templates: AgentDocumentSet): Promise<unknown> {
-  if (!(error instanceof SessionBusyError)) return sessionAccessError(error);
+  if (!(error instanceof SessionBusyError)) return error;
   const [loaded] = await documents;
   return sessionAccessError(error, loaded?.status === 'fulfilled' ? loaded.value.agentIdentity.name : templates.agentIdentity.name);
 }

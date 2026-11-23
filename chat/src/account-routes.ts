@@ -10,7 +10,7 @@ import { isScheduledInstant } from './schedule-time.js';
 import type { ScheduledTasks, ScheduledTask, ScheduledTaskDefinition, TaskChanges } from './scheduled-tasks.js';
 import type { SessionMetadata } from './session-metadata.js';
 import type { SessionApi } from './session-api.js';
-import { sessionAccessError, type sessionOperations } from './sessions.js';
+import { type sessionOperations } from './sessions.js';
 
 const TASK_FIELDS = ['title', 'prompt', 'schedule', 'timezone'] as const;
 
@@ -152,7 +152,7 @@ export function accountRoutes(
 
   app.post('/threads', async (c) => {
     const { owner } = await bot.requester(c);
-    return c.json(await sessions.createSideChat(owner).catch((error: unknown) => { throw sessionAccessError(error); }), 201);
+    return c.json(await sessions.createSideChat(owner), 201);
   });
 
   app.get('/threads', async (c) => {
@@ -256,7 +256,7 @@ export function accountRoutes(
       if (typeof completedAt !== 'string' || !Number.isFinite(Date.parse(completedAt))) throw new HttpError(422, 'completedAt must be a timestamp');
       observed = completedAt;
     }
-    await sessionMetadata.markRead(owner, c.req.param('id'), observed).catch((error: unknown) => { throw sessionAccessError(error); });
+    await sessionMetadata.markRead(owner, c.req.param('id'), observed);
     return c.body(null, 204);
   });
 
@@ -271,7 +271,7 @@ export function accountRoutes(
     const body: unknown = await c.req.json().catch(() => undefined);
     const title = isRecord(body) ? body.title : undefined;
     if (typeof title !== 'string' || !title.trim()) throw new HttpError(422, 'title must be a non-empty string');
-    return c.json(await sessions.renameSideChat(owner, c.req.param('id'), title).catch((error: unknown) => { throw sessionAccessError(error); }));
+    return c.json(await sessions.renameSideChat(owner, c.req.param('id'), title));
   });
 
   // Fence the Session at once, then purge its events in the background (ADR 0067 §6).
