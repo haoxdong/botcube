@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -8,19 +9,28 @@ import pytest
 from deepagents.backends import LocalShellBackend
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.language_models import ModelProfile
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    ToolMessage,
+)
 from langchain_core.messages.utils import count_tokens_approximately
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field
 
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.session_agent import SessionAgent
-from botcube_harness_deepagents.turn_memory import collecting_turn_feeds
+from botcube_harness_deepagents.turn_memory import TurnFeeds, collecting_turn_feeds
 from conftest import ToolBindableFakeMessagesModel
 
 
 class CompactionModel(ToolBindableFakeMessagesModel):
+    profile: ModelProfile | None = {'max_input_tokens': 160_000}
     calls: list[list[BaseMessage]] = Field(default_factory=list)
     summary_calls: int = 0
     summary_started: Any = None
@@ -44,6 +54,12 @@ class CompactionModel(ToolBindableFakeMessagesModel):
         return ChatResult(generations=[ChatGeneration(message=AIMessage(answer))])
 
 
+class StreamingCompactionModel(CompactionModel):
+    def _stream(self, messages: list[BaseMessage], *_args: Any, **_kwargs: Any) -> Iterator[ChatGenerationChunk]:
+        self.calls.append(messages)
+        yield ChatGenerationChunk(message=AIMessageChunk(content='OK'))
+
+
 def _history() -> list[BaseMessage]:
     return [message for index in range(20) for message in (
         HumanMessage('Earlier copper question. ' * 600, id=f'q-{index}'),
@@ -51,70 +67,11 @@ def _history() -> list[BaseMessage]:
     )]
 
 
-def test_crossing_and_a_new_turn_never_wait_for_background_compaction(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        model = CompactionModel(responses=[], summary_started=asyncio.Event(), release_summary=asyncio.Event())
-        graph = build_agent(
-            model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
-            skills=[], checkpointer=InMemorySaver(),
-        )
-        config = {'configurable': {'thread_id': 'background-summary'}}
-        await graph.aupdate_state(config, {'messages': _history()}, as_node='model')
-        summary_start = asyncio.create_task(model.summary_started.wait())
-        work: asyncio.Task[None] | None = None
-        crossing: asyncio.Task[Any] | None = None
-        try:
-            with collecting_turn_feeds() as feeds:
-                crossing = asyncio.create_task(graph.ainvoke({'messages': [HumanMessage('Reply OK.')]}, config))
-                done, _ = await asyncio.wait([crossing, summary_start], return_when=asyncio.FIRST_COMPLETED)
-                assert crossing in done, 'Compaction started before the interactive answer returned'
-                assert (await crossing)['messages'][-1].content == 'OK'
-            assert count_tokens_approximately(model.calls[-1]) > 64000
-            assert not model.summary_started.is_set()
-
-            async def background() -> None:
-                for feed in feeds:
-                    await feed()
-
-            work = asyncio.create_task(background())
-            await summary_start
-            with collecting_turn_feeds():
-                second = await graph.ainvoke({'messages': [HumanMessage('Reply OK again.')]}, config)
-            assert second['messages'][-1].content == 'OK'
-            assert not work.done()
-            assert count_tokens_approximately(model.calls[-1]) > 64000
-            model.release_summary.set()
-            await work
-            assert model.summary_calls == 1
-            with collecting_turn_feeds():
-                third = await graph.ainvoke({'messages': [HumanMessage('Reply once more.')]}, config)
-            assert third['messages'][-1].content == 'OK'
-            assert count_tokens_approximately(model.calls[-1]) < 30000
-            assert len(third['messages']) == 46
-            assert third['messages'][0].content == _history()[0].content
-            state = (await graph.aget_state(config)).values
-            event = state['_summarization_event']
-            assert 'copper futures' in event['summary_message'].content
-            assert (tmp_path / event['file_path'].lstrip('/')).is_file()
-            reopened = build_agent(
-                model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
-                skills=[], checkpointer=graph.checkpointer,
-            )
-            with collecting_turn_feeds():
-                replayed = await reopened.ainvoke({'messages': [HumanMessage('Continue after reopening.')]}, config)
-            assert len(replayed['messages']) == 48
-            assert replayed['messages'][0].content == _history()[0].content
-            assert count_tokens_approximately(model.calls[-1]) < 30000
-            assert model.summary_calls == 1
-        finally:
-            model.release_summary.set()
-            summary_start.cancel()
-            if crossing is not None:
-                await crossing
-            if work is not None:
-                await work
-
-    asyncio.run(exercise())
+async def _checkpoint(graph: CompiledStateGraph, config: RunnableConfig, feeds: TurnFeeds) -> None:
+    assert feeds.compaction is not None
+    update = await feeds.compaction()
+    assert update is not None
+    await graph.aupdate_state(config, update, as_node='model')
 
 
 @pytest.mark.parametrize('edit_prefix', [False, True])
@@ -126,12 +83,11 @@ def test_a_staged_candidate_survives_append_but_never_replaces_an_edit(tmp_path:
             model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
             skills=[], checkpointer=InMemorySaver(),
         )
-        config = {'configurable': {'thread_id': 'edited-summary'}}
+        config: RunnableConfig = {'configurable': {'thread_id': 'edited-summary'}}
         await graph.aupdate_state(config, {'messages': _history()}, as_node='model')
         with collecting_turn_feeds() as feeds:
             await graph.ainvoke({'messages': [HumanMessage('Reply OK.')]}, config)
-        for feed in feeds:
-            await feed()
+        await _checkpoint(graph, config, feeds)
         if edit_prefix:
             await graph.aupdate_state(config, {'messages': [HumanMessage('Edited question', id='q-0')]}, as_node='model')
         else:
@@ -143,30 +99,6 @@ def test_a_staged_candidate_survives_append_but_never_replaces_an_edit(tmp_path:
         assert result['messages'][0].content == ('Edited question' if edit_prefix else _history()[0].content)
         assert any(message.content == ('Edited question' if edit_prefix else 'A new appended request') for message in result['messages'])
         assert model.summary_calls == 1
-
-    asyncio.run(exercise())
-
-
-def test_summary_failure_is_deferred_and_preserves_the_session(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        model = CompactionModel(responses=[], summary_started=asyncio.Event(), release_summary=asyncio.Event(), fail_summary=True)
-        model.release_summary.set()
-        graph = build_agent(
-            model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
-            skills=[], checkpointer=InMemorySaver(),
-        )
-        config = {'configurable': {'thread_id': 'failed-background-summary'}}
-        await graph.aupdate_state(config, {'messages': _history()}, as_node='model')
-        with collecting_turn_feeds() as feeds:
-            result = await graph.ainvoke({'messages': [HumanMessage('Reply OK.')]}, config)
-        assert result['messages'][-1].content == 'OK'
-        with pytest.raises(RuntimeError, match='Summary model unavailable'):
-            for feed in feeds:
-                await feed()
-        state = (await graph.aget_state(config)).values
-        assert not state.get('_summarization_event')
-        assert len(state['messages']) == 42
-        assert state['messages'][0].content == _history()[0].content
 
     asyncio.run(exercise())
 
@@ -200,22 +132,22 @@ def test_history_files_are_published_in_isolation_before_a_candidate_is_exposed(
             model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
             skills=[], checkpointer=InMemorySaver(),
         )
-        config = {'configurable': {'thread_id': 'published-history'}}
+        config: RunnableConfig = {'configurable': {'thread_id': 'published-history'}}
         await graph.aupdate_state(config, {'messages': _history()}, as_node='model')
         with turn_files(None, tmp_path, ()), collecting_turn_feeds() as feeds:
             result = await graph.ainvoke({'messages': [HumanMessage('Reply OK.')]}, config)
         assert result['messages'][-1].content == 'OK'
         if publication_fails:
             with pytest.raises(RuntimeError, match='Files publication unavailable'):
-                await feeds[0]()
+                await _checkpoint(graph, config, feeds)
         else:
-            await feeds[0]()
+            await _checkpoint(graph, config, feeds)
+        assert len(published) == 1
         with collecting_turn_feeds():
             await graph.ainvoke({'messages': [HumanMessage('Reply OK again.')]}, config)
         state = (await graph.aget_state(config)).values
         assert bool(state.get('_summarization_event')) is not publication_fails
         assert (tmp_path / 'interactive.txt').read_text() == 'An active tool owns this file'
-        assert len(published) == 1
         if not publication_fails:
             assert (tmp_path / state['_summarization_event']['file_path'].lstrip('/')).is_file()
 
@@ -235,40 +167,47 @@ def test_the_serving_lifecycle_surfaces_a_failed_compaction_on_the_next_turn(
     monkeypatch.setattr(serving, '_require_bot', lambda: SimpleNamespace(skills=()))
 
     async def exercise() -> None:
-        model = CompactionModel(responses=[], summary_started=asyncio.Event(), release_summary=asyncio.Event(), fail_summary=True)
+        model = StreamingCompactionModel(responses=[], summary_started=asyncio.Event(), release_summary=asyncio.Event(), fail_summary=True)
         graph = build_agent(
             model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
             skills=[], checkpointer=InMemorySaver(),
         )
-        config = {'configurable': {'thread_id': 'serving-compaction', 'actor_id': 'member'}}
+        config: RunnableConfig = {'configurable': {'thread_id': 'serving-compaction', 'actor_id': 'member'}}
         await graph.aupdate_state(config, {'messages': _history()}, as_node='model')
         agent = SessionAgent(name='background-regression', graph=graph)
         turns = serving._SessionTurns()
         session = ('member', 'serving-compaction')
 
-        async def turn(number: int) -> list[Any]:
+        first: dict[str, Any] = {}
+
+        async def turn(number: int, events: dict[str, Any]) -> None:
             request = RunAgentInput(
                 thread_id=session[1], run_id=f'run-{number}', state={}, tools=[], context=[], forwarded_props={},
                 messages=[UserMessage(id=f'question-{number}', content='Reply OK.')],
             )
-            return [event async for event in turns.stream(
+            async for event in turns.stream(
                 session, prepared(agent, tmp_path), request, None, serving._RequestContext(None),
-            )]
+            ):
+                events[event.type] = event
 
-        first = await turn(1)
-        assert first[-1].type == 'RUN_FINISHED'
-        await model.summary_started.wait()
-        work = turns._feeds[session]
-        second = await turn(2)
-        assert second[-1].type == 'RUN_FINISHED'
-        assert not work.done()
-        model.release_summary.set()
-        await asyncio.wait([work])
-        assert isinstance(work.exception(), RuntimeError)
+        answer = asyncio.create_task(turn(1, first))
+        started = asyncio.create_task(model.summary_started.wait())
+        try:
+            done, _ = await asyncio.wait([answer, started], return_when=asyncio.FIRST_COMPLETED)
+            assert done == {started}
+            assert first['TEXT_MESSAGE_CONTENT'].delta == 'OK'
+        finally:
+            started.cancel()
+            model.release_summary.set()
+            await answer
+        assert 'RUN_FINISHED' in first
+        await asyncio.sleep(0)
         with pytest.raises(RuntimeError, match='Summary model unavailable'):
-            await turn(3)
+            await turn(2, {})
         state = (await graph.aget_state(config)).values
-        assert len(state['messages']) == 44
+        assert len(state['messages']) == 42
+        assert state['messages'][0].content == _history()[0].content
+        assert not state.get('_pending_summary')
         assert not state.get('_summarization_event')
 
     asyncio.run(exercise())
@@ -276,7 +215,6 @@ def test_the_serving_lifecycle_surfaces_a_failed_compaction_on_the_next_turn(
 
 class DelegatingCompactionModel(CompactionModel):
     delegate: bool = False
-    background: Any = None
     child_calls: int = 0
 
     async def _agenerate(
@@ -288,8 +226,6 @@ class DelegatingCompactionModel(CompactionModel):
             self.child_calls += 1
         if self.delegate and metadata.get('lc_source') != 'summarization':
             self.delegate = False
-            self.release_summary.set()
-            await self.background
             return ChatResult(generations=[ChatGeneration(message=AIMessage('', tool_calls=[{
                 'name': 'task', 'args': {'subagent_type': 'general-purpose', 'description': 'Reply OK'}, 'id': 'delegate-call',
             }]))])
@@ -303,17 +239,12 @@ def test_an_inherited_subagent_never_consumes_the_parent_compaction_candidate(tm
             model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
             skills=[], checkpointer=InMemorySaver(),
         )
-        config = {'configurable': {'thread_id': 'parent-summary'}}
+        config: RunnableConfig = {'configurable': {'thread_id': 'parent-summary'}}
         await graph.aupdate_state(config, {'messages': _history()}, as_node='model')
+        model.release_summary.set()
         with collecting_turn_feeds() as feeds:
             await graph.ainvoke({'messages': [HumanMessage('Reply OK.')]}, config)
-
-        async def background() -> None:
-            for feed in feeds:
-                await feed()
-
-        model.background = asyncio.create_task(background())
-        await model.summary_started.wait()
+        await _checkpoint(graph, config, feeds)
         model.delegate = True
         with collecting_turn_feeds():
             result = await graph.ainvoke({'messages': [HumanMessage('Use a helper, then reply OK.')]}, config)
@@ -339,7 +270,7 @@ def test_native_budget_recovery_preserves_raw_tool_output(tmp_path: Path) -> Non
             model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
             skills=[], checkpointer=InMemorySaver(),
         )
-        config = {'configurable': {'thread_id': 'oversized-result'}}
+        config: RunnableConfig = {'configurable': {'thread_id': 'oversized-result'}}
         original = 'oversized result ' * 12000
         messages = [HumanMessage('Inspect the result.'), AIMessage('', tool_calls=[
             {'name': 'check_result', 'args': {}, 'id': 'large-result'},
@@ -370,7 +301,7 @@ def test_repeated_compaction_keeps_earlier_archives_reachable(tmp_path: Path, mo
             model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
             skills=[], checkpointer=InMemorySaver(),
         )
-        config = {'configurable': {'thread_id': 'repeated-archives'}}
+        config: RunnableConfig = {'configurable': {'thread_id': 'repeated-archives'}}
         early_fact = 'Original delivery reference: AMBER-ARCHIVE-73.'
         history = [HumanMessage(early_fact), AIMessage('Recorded.'), HumanMessage('Next question.'), AIMessage('Answered.')]
         await graph.aupdate_state(config, {'messages': history}, as_node='model')
@@ -378,8 +309,7 @@ def test_repeated_compaction_keeps_earlier_archives_reachable(tmp_path: Path, mo
         for turn in range(2):
             with collecting_turn_feeds() as feeds:
                 await graph.ainvoke({'messages': [HumanMessage(f'Continue {turn}.')]}, config)
-            for feed in feeds:
-                await feed()
+            await _checkpoint(graph, config, feeds)
             if turn == 1:
                 first_event = (await graph.aget_state(config)).values['_summarization_event']
         with collecting_turn_feeds():
@@ -428,7 +358,7 @@ def test_oversized_history_can_answer_without_a_ready_candidate(
         monkeypatch.setattr(agent_module, 'BackgroundCompaction', SummarizationMiddleware)
 
     async def exercise() -> None:
-        profile: ModelProfile = {'max_input_tokens': 60000 if failure == 'budget' else 2000000}
+        profile: ModelProfile = {'max_input_tokens': 60000 if failure == 'budget' else 200000 if native_control else 2000000}
         model_class = CompactionModel if failure == 'budget' else RejectOversizedAnswer
         model = model_class(
             responses=[], profile=profile, summary_started=asyncio.Event(), release_summary=asyncio.Event(),
@@ -438,7 +368,7 @@ def test_oversized_history_can_answer_without_a_ready_candidate(
             model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
             skills=[], checkpointer=InMemorySaver(),
         )
-        config = {'configurable': {'thread_id': 'oversized-resume'}}
+        config: RunnableConfig = {'configurable': {'thread_id': 'oversized-resume'}}
         history = _history() if failure == 'budget' else _history()[:12]
         await graph.aupdate_state(config, {'messages': history}, as_node='model')
         with collecting_turn_feeds():
@@ -497,7 +427,7 @@ def test_emergency_recovery_failure_preserves_raw_history(tmp_path: Path, failur
             model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
             skills=[], checkpointer=InMemorySaver(),
         )
-        config = {'configurable': {'thread_id': 'failed-recovery'}}
+        config: RunnableConfig = {'configurable': {'thread_id': 'failed-recovery'}}
         await graph.aupdate_state(config, {'messages': _history()}, as_node='model')
         error = 'Summary model unavailable' if failure == 'summary' else 'Files publication unavailable'
         with (
@@ -520,7 +450,7 @@ def test_emergency_recovery_after_prior_compaction_keeps_the_latest_request(
 ) -> None:
     async def exercise() -> None:
         model = CompactionModel(
-            responses=[], profile={'max_input_tokens': 2000000 if ready_candidate else 60000},
+            responses=[], profile={'max_input_tokens': 160000 if ready_candidate else 60000},
             summary_started=asyncio.Event(), release_summary=asyncio.Event(),
         )
         model.release_summary.set()
@@ -528,12 +458,12 @@ def test_emergency_recovery_after_prior_compaction_keeps_the_latest_request(
             model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
             skills=[], checkpointer=InMemorySaver(),
         )
-        config = {'configurable': {'thread_id': 'repeat-emergency'}}
+        config: RunnableConfig = {'configurable': {'thread_id': 'repeat-emergency'}}
         await graph.aupdate_state(config, {'messages': _history()}, as_node='model')
         with collecting_turn_feeds() as feeds:
             await graph.ainvoke({'messages': [HumanMessage('First request.')]}, config)
-        for feed in feeds:
-            await feed()
+        if ready_candidate:
+            await _checkpoint(graph, config, feeds)
         [first_archive] = list((tmp_path / 'conversation_history').glob('*.md'))
         model.profile = {'max_input_tokens': 60000}
         more_history = [message.model_copy(update={'id': f'new-{message.id}'}) for message in _history()]
@@ -580,7 +510,7 @@ def test_cancelled_emergency_waits_for_archive_publication_to_settle(tmp_path: P
             model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
             skills=[], checkpointer=InMemorySaver(),
         )
-        config = {'configurable': {'thread_id': 'cancelled-emergency'}}
+        config: RunnableConfig = {'configurable': {'thread_id': 'cancelled-emergency'}}
         await graph.aupdate_state(config, {'messages': _history()}, as_node='model')
         with turn_files(None, tmp_path, ()), collecting_turn_feeds():
             turn = asyncio.create_task(graph.ainvoke({'messages': [HumanMessage('Reply OK.')]}, config))
@@ -613,7 +543,7 @@ def test_native_emergency_overflow_still_propagates_when_recovery_cannot_fit(tmp
             model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
             skills=[], checkpointer=InMemorySaver(),
         )
-        config = {'configurable': {'thread_id': 'irreducible-recovery'}}
+        config: RunnableConfig = {'configurable': {'thread_id': 'irreducible-recovery'}}
         history = _history()[:12]
         await graph.aupdate_state(config, {'messages': history}, as_node='model')
         with collecting_turn_feeds(), pytest.raises(ContextOverflowError):

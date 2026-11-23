@@ -927,6 +927,33 @@ def test_a_sessions_memory_block_survives_a_restarted_harness(service: _Service,
     assert service.recorder.prompts[-1] == opened
 
 
+@pytest.mark.parametrize(('window', 'summarizes'), [(85_000, True), (200_000, False)])
+def test_a_restarted_harness_uses_the_previous_turns_compaction(
+    service: _Service, monkeypatch: pytest.MonkeyPatch, window: int, summarizes: bool,
+) -> None:
+    from test_history_compaction import StreamingCompactionModel
+
+    model = StreamingCompactionModel(responses=[], profile={'max_input_tokens': window},
+                            summary_started=asyncio.Event(), release_summary=asyncio.Event())
+    model.release_summary.set()
+    monkeypatch.setattr(serving, 'build_model', lambda **kwargs: model)
+
+    first = service.turn('Earlier copper question. ' * 8_000, message='earlier')[-1]
+    assert first['type'] == 'RUN_FINISHED', first
+    assert model.summary_calls == 0
+    assert service.turn('Tell me about copper. ' * 4_000, message='crossing')[-1]['type'] == 'RUN_FINISHED'
+    assert model.summary_calls == int(summarizes)
+    asyncio.run(session_api.post_message('user-1', 'thread-1', 'Copper note from a scheduled post.'))
+    for name, value in {'_AGENTS': {}, '_BACKEND_BY_AGENT': {}, '_BACKENDS': {},
+                        '_SESSION_TURNS': serving._SessionTurns()}.items():
+        monkeypatch.setattr(serving, name, value)
+
+    assert service.turn('Continue.', message='resume')[-1]['type'] == 'RUN_FINISHED'
+    assert any('copper futures' in message.text for message in model.calls[-1]) is summarizes
+    assert any('Copper note from a scheduled post.' in message.text for message in model.calls[-1])
+    assert model.summary_calls == int(summarizes)
+
+
 # -- Agent Identity and Soul -----------------------------------------------------
 
 IDENTITY = {'name': 'Ada Bot', 'character': 'A markets analyst', 'vibe': 'Calm and exact', 'avatar': ''}

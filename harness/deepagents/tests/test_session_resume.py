@@ -1217,11 +1217,6 @@ def test_a_session_recorded_with_a_resent_tool_result_answers_its_next_turn(
             'user', 'assistant', 'tool', 'assistant',
         ]
         if summarize:
-            from botcube_harness_deepagents import serving
-
-            feed = serving._SESSION_TURNS._feeds.get(('user-1', 'session-1'))
-            assert feed is not None
-            await feed
             following = await session.events([
                 *await session.replay(), {'id': 'user-message-3', 'role': 'user', 'content': 'Once more'},
             ])

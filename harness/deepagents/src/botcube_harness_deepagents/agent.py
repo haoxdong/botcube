@@ -31,7 +31,10 @@ from deepagents.middleware.skills import (
     SkillsState,
 )
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
-from deepagents.middleware.summarization import SummarizationMiddleware
+from deepagents.middleware.summarization import (
+    SummarizationMiddleware,
+    compute_summarization_defaults,
+)
 from deepagents.profiles.harness.harness_profiles import _harness_profile_for_model
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -53,7 +56,7 @@ from opentelemetry.instrumentation.utils import unwrap
 from typing_extensions import TypedDict
 
 from . import turn_timing
-from .compaction import BackgroundCompaction
+from .compaction import BackgroundCompaction, PendingSummary
 from .files import ARTIFACTS_DIRECTORY, HARNESS_DIRECTORY
 from .lazy_files import LazyFilesMiddleware
 from .llm import build_model
@@ -81,6 +84,7 @@ class PlainState(DeepAgentState):
     # Session record carries it, so a session API post keeps it in the next checkpoint.
     session_memory: NotRequired[Annotated[str, PrivateStateAttr]]
     last_model_call_at: NotRequired[Annotated[float, PrivateStateAttr]]
+    _pending_summary: NotRequired[Annotated[PendingSummary | None, PrivateStateAttr]]
 
 
 class _SkillsState(SkillsState):
@@ -400,7 +404,7 @@ def build_agent(
     kwargs['middleware'] = [
         compaction(
             model=resolved_model, backend=StateBackend() if backend is None else backend,
-            trigger=('tokens', 64000), keep=('tokens', 16000),
+            **compute_summarization_defaults(resolved_model),
             trim_tokens_to_summarize=None,
         ),
         _FilesMiddleware(backend=files_backend),

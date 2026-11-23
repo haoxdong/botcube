@@ -1,22 +1,22 @@
-"""Native compaction computed after a response and applied by a later normal graph run."""
+"""Checkpoint native compaction after an answer for the next Turn."""
 
 from __future__ import annotations
 
-import copy
 import json
 import logging
 from collections.abc import Awaitable, Callable, Generator
-from contextlib import contextmanager
-from dataclasses import dataclass
+from contextlib import contextmanager, suppress
 from functools import partial
+from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import perf_counter
-from typing import Any
+from typing import Any, TypedDict
 from uuid import uuid4
 
 from deepagents.backends import LocalShellBackend
 from deepagents.middleware.summarization import (
+    SummarizationEvent,
     SummarizationMiddleware,
     SummarizationState,
 )
@@ -33,17 +33,23 @@ from langgraph.types import Command
 from . import turn_timing
 from .lazy_files import TurnFiles, current_turn_files, finish_in_thread
 from .prompt_cache_observability import prompt_cache_turn
-from .turn_memory import answered_state, defer_turn_work
+from .turn_memory import answered_state, stage_turn_compaction
 
 log = logging.getLogger(__name__)
 _EVENT = '_summarization_event'
 
 
-@dataclass
-class _Candidate:
-    messages: list[AnyMessage]
-    previous_event: Any
-    update: dict[str, Any]
+class PendingSummary(TypedDict):
+    event: SummarizationEvent
+    session_id: str
+    prefix_hash: str
+
+
+def _prefix_hash(messages: list[AnyMessage], cutoff: int) -> str:
+    digest = sha256()
+    for message in messages[:cutoff]:
+        digest.update(json.dumps(message.model_dump(mode='json'), sort_keys=True).encode())
+    return digest.hexdigest()
 
 
 def _root(runtime: Runtime[Any]) -> bool:
@@ -61,28 +67,20 @@ class BackgroundCompaction(SummarizationMiddleware):
         super().__init__(model=model, backend=backend, **settings)
         self._workspace = Path(backend.cwd) if isinstance(backend, LocalShellBackend) else None
         self._settings = settings
-        self._request: ModelRequest[Any] | None = None
-        self._ready: _Candidate | None = None
-        self._running = False
 
     @property
     def name(self) -> str:
         return 'SummarizationMiddleware'
 
-    def _remember(self, request: ModelRequest[Any]) -> tuple[ModelRequest[Any], dict[str, Any] | None]:
+    def _prepare_request(self, request: ModelRequest[Any]) -> tuple[ModelRequest[Any], dict[str, Any] | None]:
         update = None
-        if _root(request.runtime):
-            candidate, self._ready = self._ready, None
-            if (candidate is not None and request.state.get(_EVENT) == candidate.previous_event
-                    and request.state['messages'][:len(candidate.messages)] == candidate.messages):
-                update = candidate.update
-                state: SummarizationState = {
-                    **request.state,
-                    '_summarization_event': update[_EVENT],
-                    '_summarization_session_id': update['_summarization_session_id'],
-                }
-                request = request.override(state=state)
-            self._request = request
+        pending = request.state.get('_pending_summary')
+        if _root(request.runtime) and pending is not None:
+            update = {'_pending_summary': None}
+            event = pending['event']
+            if pending['prefix_hash'] == _prefix_hash(request.state['messages'], event['cutoff_index']):
+                update.update({_EVENT: event, '_summarization_session_id': pending['session_id']})
+                request = request.override(state={**request.state, **update})
         effective = self._get_effective_messages(request)
         truncated, _ = self._truncate_args(
             effective, self._count_tokens(effective, request.system_message, request.tools),
@@ -90,87 +88,65 @@ class BackgroundCompaction(SummarizationMiddleware):
         return request.override(messages=truncated), update
 
     @staticmethod
-    def _response(response: ModelResponse[Any], update: dict[str, Any] | None) -> ModelResponse[Any] | ExtendedModelResponse[Any]:
-        if update is None:
-            return response
-        return ExtendedModelResponse(model_response=response, command=Command(update=update))
+    def _response(response: ModelResponse[Any] | ExtendedModelResponse[Any], update: dict[str, Any] | None) -> ModelResponse[Any] | ExtendedModelResponse[Any]:
+        answer = response.model_response if isinstance(response, ExtendedModelResponse) else response
+        return ExtendedModelResponse(model_response=answer, command=Command(update=update)) if update else answer
 
     def wrap_model_call(
         self, request: ModelRequest[Any], handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
     ) -> ModelResponse[Any] | ExtendedModelResponse[Any]:
-        # Budget recovery only changes model input; the full tool output remains replayable.
-        request, update = self._remember(request)
-        for emergency in (False, True):
-            try:
-                if emergency:
-                    with self._engine(request, emergency=True) as (native, raw, root):
-                        response = native.wrap_model_call(raw, handler)
-                        recovery = self._publish(response, raw, self._files(), root, emergency=True)
-                        answer = response.model_response if isinstance(response, ExtendedModelResponse) else response
-                        return self._answered(request, answer, recovery or update)
-                response, _ = self._call_with_budget(request, handler)
-                return self._answered(request, response, update)
-            except ContextOverflowError:
-                if emergency:
-                    raise
-        raise ContextOverflowError('Native emergency compaction could not reduce the request')
+        request, update = self._prepare_request(request)
+        with suppress(ContextOverflowError):
+            response, _ = self._call_with_budget(request, handler)
+            return self._response(response, update)
+        with self._engine(request, emergency=True) as (native, raw, root):
+            response = native.wrap_model_call(raw, handler)
+            recovery = self._publish(response, raw, self._files(), root, emergency=True)
+            return self._response(response, {**(update or {}), **(recovery or {})})
 
     async def awrap_model_call(
         self, request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any] | ExtendedModelResponse[Any]:
-        request, update = self._remember(request)
-        for emergency in (False, True):
-            try:
-                if emergency:
-                    with self._engine(request, emergency=True) as (native, raw, root):
-                        response = await native.awrap_model_call(raw, handler)
-                        recovery = await finish_in_thread(self._publish, response, raw, self._files(), root, emergency=True)
-                        answer = response.model_response if isinstance(response, ExtendedModelResponse) else response
-                        return self._answered(request, answer, recovery or update)
-                response, _ = await self._acall_with_budget(request, handler)
-                return self._answered(request, response, update)
-            except ContextOverflowError:
-                if emergency:
-                    raise
-        raise ContextOverflowError('Native emergency compaction could not reduce the request')
+        request, update = self._prepare_request(request)
+        with suppress(ContextOverflowError):
+            response, _ = await self._acall_with_budget(request, handler)
+            self._stage_compaction(request, response)
+            return self._response(response, update)
+        with self._engine(request, emergency=True) as (native, raw, root):
+            response = await native.awrap_model_call(raw, handler)
+            recovery = await finish_in_thread(self._publish, response, raw, self._files(), root, emergency=True)
+            return self._response(response, {**(update or {}), **(recovery or {})})
 
-    def _answered(
-        self, request: ModelRequest[Any], response: ModelResponse[Any], update: dict[str, Any] | None,
-    ) -> ModelResponse[Any] | ExtendedModelResponse[Any]:
-        if _root(request.runtime) and (state := answered_state(request, response)) is not None:
-            self._stage_compaction({**state, **(update or {})})
-        return self._response(response, update)
-
-    def _stage_compaction(self, state: Any) -> None:
-        if self._request is None or self._running:
+    def _stage_compaction(self, request: ModelRequest[Any], response: ModelResponse[Any]) -> None:
+        if not _root(request.runtime) or (state := answered_state(request, response)) is None:
             return
-        request = self._request.override(state=state, messages=state['messages'])
+        request = request.override(state={**request.state, 'messages': state['messages']}, messages=state['messages'])
         effective = self._get_effective_messages(request)
-        if not self._should_summarize(effective, self._count_tokens(effective, request.system_message, request.tools)):
-            return
-        snapshot = copy.deepcopy(state)
-        request = request.override(state=snapshot, messages=snapshot['messages'])
-        files = self._files()
-        timing = turn_timing.current()
-        defer_turn_work(partial(self._compact, request, files, timing.run_id if timing else None))
+        if self._should_summarize(effective, self._count_tokens(effective, request.system_message, request.tools)):
+            stage_turn_compaction(partial(self._compact, request, self._files()))
 
-    async def _compact(self, request: ModelRequest[Any], files: TurnFiles, parent_run: str | None) -> None:
-        if self._running or self._ready is not None:
-            return
-        if self._request is None or self._request.state.get(_EVENT) != request.state.get(_EVENT):
-            return
-        self._running = True
+    async def _compact(self, request: ModelRequest[Any], files: TurnFiles) -> dict[str, Any] | None:
+        parent = turn_timing.current()
         timing = turn_timing.TurnTiming(str(uuid4()), None, None, warmup=False, receipt=perf_counter())
         status = 'failed'
         try:
-            with turn_timing.use(timing), prompt_cache_turn():
-                await self._stage(request, files)
+            with turn_timing.use(timing), prompt_cache_turn(), self._engine(request) as (native, raw, root):
+                response = await native.awrap_model_call(raw, _no_answer)
+                update = await finish_in_thread(self._publish, response, raw, files, root)
             status = 'finished'
         finally:
-            self._running = False
             record = timing.record(perf_counter(), status)
-            log.info(json.dumps({**record, 'event': 'harness_compaction_timing', 'parentRunId': parent_run}))
+            log.info(json.dumps({**record, 'event': 'harness_compaction_timing',
+                                 'parentRunId': parent.run_id if parent else None}))
+        if update is None:
+            return None
+        event = update[_EVENT]
+        pending: PendingSummary = {
+            'event': event, 'session_id': update['_summarization_session_id'],
+            'prefix_hash': _prefix_hash(request.messages, event['cutoff_index']),
+        }
+        return {'_pending_summary': pending}
 
     def _files(self) -> TurnFiles:
         files = current_turn_files()
@@ -187,7 +163,7 @@ class BackgroundCompaction(SummarizationMiddleware):
             root = Path(directory)
             settings = self._settings.copy()
             if emergency:
-                settings['trigger'] = ('tokens', 1)
+                settings.update(trigger=('tokens', 1), keep=('messages', 2))
             native = SummarizationMiddleware(
                 model=request.model,
                 backend=LocalShellBackend(root_dir=root, virtual_mode=True, inherit_env=False),
@@ -217,10 +193,3 @@ class BackgroundCompaction(SummarizationMiddleware):
             archive.write_text(link + archive.read_text())
         files.publish_staged(root)
         return update
-
-    async def _stage(self, request: ModelRequest[Any], files: TurnFiles) -> None:
-        with self._engine(request) as (native, raw, root):
-            response = await native.awrap_model_call(raw, _no_answer)
-            update = await finish_in_thread(self._publish, response, raw, files, root)
-            if update is not None:
-                self._ready = _Candidate(request.messages, request.state.get(_EVENT), update)

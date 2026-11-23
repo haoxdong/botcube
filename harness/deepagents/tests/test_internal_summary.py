@@ -71,8 +71,7 @@ async def _run_summary_turns(graph: Any, config: RunnableConfig, cross_threshold
     )
     with collecting_turn_feeds() as feeds:
         events = [event.model_dump(exclude_none=True) async for event in agent.run(request)]
-    for feed in feeds:
-        await feed()
+    await feeds.checkpoint(agent, config, deadline=None, finished=True)
     following = request.model_copy(update={
         'run_id': 'following', 'messages': [UserMessage(id='follow-up', content='Reply OK again.')],
     })

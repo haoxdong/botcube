@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -9,12 +10,14 @@ from functools import partial
 from typing import Any
 from uuid import uuid4
 
+from ag_ui_langgraph import LangGraphAgent
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     ModelRequest,
     ModelResponse,
 )
 from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.store.base import BaseStore
 
 # AgentCore's CreateEvent takes at most this many characters of conversational text.
@@ -22,7 +25,33 @@ MESSAGE_TEXT_LIMIT = 100_000
 _FED_TYPES = ('human', 'ai', 'tool')
 
 TurnFeed = Callable[[], Awaitable[None]]
-_FEEDS: ContextVar[list[TurnFeed] | None] = ContextVar('turn_feeds', default=None)
+Compaction = Callable[[], Awaitable[dict[str, Any] | None]]
+
+
+class TurnFeeds(list[TurnFeed]):
+    compaction: Compaction | None = None
+
+
+    async def checkpoint(self, agent: LangGraphAgent, config: RunnableConfig, deadline: float | None, finished: bool) -> None:
+        if not finished or self.compaction is None:
+            return
+        compact = self.compaction
+
+        async def write() -> None:
+            async with asyncio.timeout_at(deadline):
+                update = await compact()
+            if update is not None:
+                await agent.graph.aupdate_state(config, update, as_node='model')
+
+        failure, = await asyncio.gather(write(), return_exceptions=True)
+        if isinstance(failure, Exception):
+            async def report() -> None:
+                raise failure
+
+            self.append(report)
+
+
+_FEEDS: ContextVar[TurnFeeds | None] = ContextVar('turn_feeds', default=None)
 
 
 class TurnFeedError(RuntimeError):
@@ -32,9 +61,9 @@ class TurnFeedError(RuntimeError):
 
 
 @contextmanager
-def collecting_turn_feeds() -> Generator[list[TurnFeed], None, None]:
+def collecting_turn_feeds() -> Generator[TurnFeeds, None, None]:
     """Collect the feeds of the graph runs started inside, for the caller to run after the response."""
-    feeds: list[TurnFeed] = []
+    feeds = TurnFeeds()
     token = _FEEDS.set(feeds)
     try:
         yield feeds
@@ -42,11 +71,18 @@ def collecting_turn_feeds() -> Generator[list[TurnFeed], None, None]:
         _FEEDS.reset(token)
 
 
+def turn_feeds() -> TurnFeeds:
+    if (feeds := _FEEDS.get()) is None:
+        raise TurnFeedError('A Turn ran outside collecting_turn_feeds')
+    return feeds
+
+
 def defer_turn_work(work: TurnFeed) -> None:
-    feeds = _FEEDS.get()
-    if feeds is None:
-        raise TurnFeedError('A Turn ran outside collecting_turn_feeds, so its deferred work would be lost')
-    feeds.append(work)
+    turn_feeds().append(work)
+
+
+def stage_turn_compaction(work: Compaction) -> None:
+    turn_feeds().compaction = work
 
 
 class AnswerMiddleware(AgentMiddleware):

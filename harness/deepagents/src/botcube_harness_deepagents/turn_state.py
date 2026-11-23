@@ -43,6 +43,7 @@ from . import message_times
 from .conversation import MESSAGE_TIMES
 from .lazy_files import TurnFiles
 from .steering import PendingSteering
+from .turn_memory import TurnFeeds
 
 log = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ class _Turn:
     finished: bool = False
     interrupted: bool = False
 
-    def publish(self, event: Any, *, put: Callable[[Any], None], files: TurnFiles) -> None:
+    def publish(self, event: Any, *, put: Callable[[Any], None], files: TurnFiles, feeds: TurnFeeds) -> None:
         self.used_tools |= event.type == EventType.TOOL_CALL_START
         if event.type == EventType.CUSTOM and getattr(event, 'name', None) == 'on_interrupt':
             self.interrupted = True
@@ -87,7 +88,7 @@ class _Turn:
             self.finished = event.type == EventType.RUN_FINISHED
             self.interrupted |= getattr(getattr(event, 'outcome', None), 'type', None) == 'interrupt'
             self.completion = event
-            if self.finished and not self.interrupted and not self.used_tools and not files.used:
+            if self.finished and not self.interrupted and not self.used_tools and not files.used and feeds.compaction is None:
                 self.release(put)
             return
         put(event)

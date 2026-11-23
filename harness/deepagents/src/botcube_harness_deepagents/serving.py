@@ -460,7 +460,6 @@ def _get_agent(
             'recursion_limit': graph.config['recursion_limit'],
             'configurable': {'actor_id': session_user_id},
         }
-        # The base adapter requires a name; its clone and naming endpoint are unused here.
         identity: dict[str, Any] = {'name': _require_bot().agent_name}  # pragma: no mutate: the name is never read
         with turn_timing.phase('stream_adapter'):
             agent = SessionAgent(**identity, graph=graph, config=config)
@@ -654,7 +653,6 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
                         auth: Any, session_user_id: str, documents: Any,
                         files: FilesMount | None, warmup: Any, turn_identity: TurnIdentity | None):
     session = (session_user_id, input_data.thread_id)
-    # The Bot Settings' Memory gate: a bot with Memory off keeps none for anyone.
     persistent_memory = (auth.persistent_memory and auth.actor_id != ANONYMOUS_ACTOR_ID and 'agentSystemPrompt' not in forwarded
                          and forwarded.get('botMemory') is not False)
     opening = forwarded.get('opening') is True
@@ -961,7 +959,7 @@ class _SessionTurns:
                 with turn_files(files, root, excluded_paths(_require_bot().skills)) as readiness:
                     readiness.prefetch()
                     with prompt_cache_turn(context.session_id), collecting_turn_feeds() as feeds:
-                        publish = partial(turn.publish, put=put, files=readiness)
+                        publish = partial(turn.publish, put=put, files=readiness, feeds=feeds)
                         turn.work = asyncio.create_task(_turn_events(agent, input_data, reply.watching(publish)))
                     limited = await wait_for_turn(turn.work, deadline, finished=lambda: turn.finished)
                     try:
@@ -981,9 +979,11 @@ class _SessionTurns:
                     await reply.finish_cancelled(agent, session, input_data, put, limited=limited and not turn.stopped)
                 elif turn.completion is not None:
                     await reply.keep_failed(turn.completion, agent, session, put)
+                    finished = turn.finished_without_interruption(agent)
+                    await feeds.checkpoint(agent, _session_config(session), deadline, finished)
                     turn.release(put)
                     self._feed(session, turn, feeds)
-                    _settle_finished_reuse(saver, turn.finished_without_interruption(agent))
+                    _settle_finished_reuse(saver, finished)
                 completed = turn.finished and not turn.stopped
         except Exception as failure:
             _settle_finished_reuse(saver, False)
