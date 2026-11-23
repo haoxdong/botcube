@@ -15,6 +15,15 @@ export function startOpeningRequests(chatServiceUrl: string): void {
     .then((response) => ({ response }), (error: unknown) => ({ error }))]));
 }
 
+export function peekOpeningResponse(url: string): Promise<OpeningResponse> | null {
+  if (typeof window === 'undefined') return null;
+  const pending = window.__botcubeOpeningRequests?.[url];
+  if (pending === undefined) return null;
+  return pending.then((result) => {
+    return 'error' in result ? result : { response: result.response.clone() };
+  });
+}
+
 export function takeOpeningResponse(url: string): Promise<Response> | null {
   if (typeof window === 'undefined') return null;
   const pending = window.__botcubeOpeningRequests?.[url];

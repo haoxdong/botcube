@@ -19,6 +19,7 @@ beforeEach(() => {
   vi.resetModules();
   state.auth.sessionStatus = 'loading';
   state.auth.accountId = undefined;
+  delete window.__botcubeOpeningRequests;
   vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
   state.gate = new Promise<void>((resolve) => { state.release = resolve; });
   vi.doMock('./chat-app', async () => {
@@ -188,4 +189,97 @@ it('surfaces a formatter module failure that occurred during code preload', asyn
   render(<OpeningFailure><Page /></OpeningFailure>);
   expect(await screen.findByRole('alert')).not.toBeEmptyDOMElement();
   expect(screen.queryByText('Formatted saved answer.')).toBeNull();
+});
+
+
+it('shows the first opening response before the live chat module and leaves it available to the live chat', async () => {
+  localStorage.clear();
+  performance.clearMeasures('latency:history-first-visit');
+  const body = { id: 'new-chat', messages: [{ id: 'first-answer', role: 'assistant', content: 'The first answer.' }] };
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(body)));
+  const { startOpeningRequests, takeOpeningResponse } = await import('../opening-requests');
+  startOpeningRequests('http://localhost:8123');
+  const { default: Page } = await import('./page');
+  const view = render(<Page />);
+  expect(screen.queryByText('The first answer.')).toBeNull();
+  state.auth.sessionStatus = 'ready';
+  state.auth.accountId = 'new-account';
+  view.rerender(<Page />);
+  expect(await screen.findByText('The first answer.')).toBeVisible();
+  expect(screen.queryByRole('status', { name: 'Live chat' })).toBeNull();
+  await waitFor(() => expect(performance.getEntriesByName('latency:history-first-visit', 'measure')).toHaveLength(1));
+  expect(await (await takeOpeningResponse('http://localhost:8123/main-chat'))?.json()).toEqual(body);
+  await act(async () => { state.release(); await vi.dynamicImportSettled(); });
+  expect(screen.getByRole('status', { name: 'Live chat' })).toHaveTextContent('new-account');
+});
+
+
+it('leaves unauthorized first-visit history to the live account recovery path', async () => {
+  localStorage.clear();
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 401 })));
+  const { startOpeningRequests, takeOpeningResponse } = await import('../opening-requests');
+  startOpeningRequests('http://localhost:8123');
+  const { default: Page } = await import('./page');
+  const view = render(<Page />);
+  state.auth.sessionStatus = 'ready';
+  state.auth.accountId = 'new-account';
+  await act(async () => { view.rerender(<Page />); });
+  expect(screen.getByRole('status', { name: 'Loading Main Chat' })).toBeVisible();
+  expect((await takeOpeningResponse('http://localhost:8123/main-chat'))?.status).toBe(401);
+  await act(async () => { state.release(); await vi.dynamicImportSettled(); });
+  expect(screen.getByRole('status', { name: 'Live chat' })).toHaveTextContent('new-account');
+});
+
+it('discards a first-visit answer when the account changes before it arrives', async () => {
+  localStorage.clear();
+  let answer: (response: Response) => void = () => {};
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => { answer = resolve; })));
+  const { startOpeningRequests } = await import('../opening-requests');
+  startOpeningRequests('http://localhost:8123');
+  const { default: Page } = await import('./page');
+  const view = render(<Page />);
+  state.auth.sessionStatus = 'ready';
+  state.auth.accountId = 'first-account';
+  view.rerender(<Page />);
+  state.auth.accountId = 'other-account';
+  view.rerender(<Page />);
+  await act(async () => { answer(Response.json({ id: 'main', messages: [{ id: 'answer', role: 'assistant', content: 'Previous account answer' }] })); });
+  expect(screen.queryByText('Previous account answer')).toBeNull();
+  await act(async () => { state.release(); await vi.dynamicImportSettled(); });
+  expect(screen.getByRole('status', { name: 'Live chat' })).toHaveTextContent('other-account');
+});
+
+
+it('leaves a failed first-visit read with the live Main Chat retry owner', async () => {
+  localStorage.clear();
+  const failure = new Error('Main Chat is offline');
+  vi.stubGlobal('fetch', vi.fn(async () => { throw failure; }));
+  const { startOpeningRequests, takeOpeningResponse } = await import('../opening-requests');
+  startOpeningRequests('http://localhost:8123');
+  const { default: Page } = await import('./page');
+  const view = render(<OpeningFailure><Page /></OpeningFailure>);
+  state.auth.sessionStatus = 'ready';
+  state.auth.accountId = 'new-account';
+  await act(async () => { view.rerender(<OpeningFailure><Page /></OpeningFailure>); });
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.getByRole('status', { name: 'Loading Main Chat' })).toBeVisible();
+  await expect(takeOpeningResponse('http://localhost:8123/main-chat')).rejects.toBe(failure);
+  await act(async () => { state.release(); await vi.dynamicImportSettled(); });
+  expect(screen.getByRole('status', { name: 'Live chat' })).toHaveTextContent('new-account');
+});
+
+it('discards the first preview after account initialization fails and is retried', async () => {
+  localStorage.clear();
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: 'old-main', messages: [{ id: 'answer', role: 'assistant', content: 'The discarded opening answer.' }] })));
+  const { startOpeningRequests } = await import('../opening-requests');
+  startOpeningRequests('http://localhost:8123');
+  const { default: Page } = await import('./page');
+  const view = render(<Page />);
+  await act(async () => { state.auth.sessionStatus = 'error'; view.rerender(<Page />); });
+  await act(async () => { state.auth.sessionStatus = 'loading'; view.rerender(<Page />); });
+  await act(async () => { state.auth.sessionStatus = 'ready'; state.auth.accountId = 'retried-account'; view.rerender(<Page />); });
+  expect(screen.queryByText('The discarded opening answer.')).toBeNull();
+  expect(screen.getByRole('status', { name: 'Loading Main Chat' })).toBeVisible();
+  await act(async () => { state.release(); await vi.dynamicImportSettled(); });
+  expect(screen.getByRole('status', { name: 'Live chat' })).toHaveTextContent('retried-account');
 });

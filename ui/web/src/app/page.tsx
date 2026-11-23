@@ -7,9 +7,9 @@ import { flushSync } from "react-dom";
 import { webUiPlugin } from "@bot-ui";
 import type { AuthUiState } from "../plugin/index.js";
 import { chatServiceUrl } from "../plugin/chat-service-url";
-import { openingMainChat, type StoredMainChatCopy } from "./main-chat-copy";
+import { openingMainChat, type MainChatCopy, type StoredMainChatCopy } from "./main-chat-copy";
 import { endOpeningMoment, type HistoryMoment } from "./latency";
-import { discardOpeningResponse } from "../opening-requests";
+import { discardOpeningResponse, peekOpeningResponse } from "../opening-requests";
 import { rumConfig, startRum } from "./rum";
 import { keepFileDropsInPage } from "./keep-file-drops";
 import { KeptChat, preloadKeptChat, prepareKeptChat } from "./kept-chat";
@@ -33,12 +33,12 @@ if (typeof window !== "undefined") {
   if (copy !== null) preloadKeptChat(copy.copy.messages);
 }
 
-function OpeningChat({ opening, latestShown }: { opening: StoredMainChatCopy | null; latestShown: RefObject<number> }) {
+function OpeningChat({ opening, latestShown, moment }: { opening: StoredMainChatCopy | null; latestShown: RefObject<number>; moment: HistoryMoment | null }) {
   useEffect(() => {
-    if (opening === null) return;
-    const frame = requestAnimationFrame(() => endOpeningMoment("history-returning"));
+    if (opening === null || moment === null) return;
+    const frame = requestAnimationFrame(() => endOpeningMoment(moment));
     return () => cancelAnimationFrame(frame);
-  }, [opening]);
+  }, [opening, moment]);
   return <SessionGate title={UI_CONFIG.title} agentName={UI_CONFIG.agentName} status="loading" loadFailure={undefined} chatServiceUrl={CHAT_SERVICE_URL}>
     <Swap state={opening?.accountId ?? "empty"} className="app-chat app-chat-opening">{opening === null ? <LoadingSkeleton label="Main Chat" /> : <div className="kept-chat" role="status" aria-label="Loading chat controls">
       <KeptChat messages={opening.copy.messages} running={opening.copy.running === true} disclaimer={UI_CONFIG.disclaimer} latestShown={latestShown} />
@@ -72,6 +72,7 @@ function Session({ auth }: { auth: AuthUiState }) {
   const [openingError, setOpeningError] = useState<Error | null>(null);
   const pageOpeningMoment = useRef<HistoryMoment | null>(null);
   const latestShown = useRef(1);
+  const firstVisitResponse = useRef<ReturnType<typeof peekOpeningResponse>>(null);
   const preparingOpening = useRef<{ accountId: string; active: boolean } | null>(null);
   useLayoutEffect(() => {
     const pending = preparingOpening.current;
@@ -85,6 +86,7 @@ function Session({ auth }: { auth: AuthUiState }) {
   useLayoutEffect(() => {
     const { copy, historyMoment: moment } = openingMainChat();
     pageOpeningMoment.current = moment;
+    if (moment === "history-first-visit") firstVisitResponse.current = peekOpeningResponse(`${CHAT_SERVICE_URL}/main-chat`);
     if (!loading) return;
     if (copy === null) { setOpening(null); return; }
     const prepared = prepareKeptChat(copy.copy.messages);
@@ -98,8 +100,29 @@ function Session({ auth }: { auth: AuthUiState }) {
     return () => { pending.active = false; preparingOpening.current = null; };
   }, []);
   useEffect(() => {
+    const response = firstVisitResponse.current;
+    if (response === null || auth.sessionStatus !== "ready" || auth.accountId === undefined) return;
+    firstVisitResponse.current = null;
+    const pending = { accountId: auth.accountId, active: true };
+    preparingOpening.current = pending;
+    void response.then(async (result) => {
+      if ("error" in result) return null;
+      const answered = result.response;
+      if (!answered.ok) return null;
+      const copy = await answered.json() as MainChatCopy;
+      if (copy.messages.length === 0) return null;
+      await prepareKeptChat(copy.messages);
+      return { accountId: pending.accountId, copy };
+    }).then(
+      (copy) => { if (pending.active && copy !== null && auth.isAccountCurrent?.(pending.accountId) !== false) { preparingOpening.current = null; flushSync(() => setOpening(copy)); } },
+      (error: Error) => { if (pending.active) { preparingOpening.current = null; setOpeningError(error); } },
+    );
+    return () => { pending.active = false; preparingOpening.current = null; };
+  }, [auth.sessionStatus, auth.accountId]);
+  useEffect(() => {
     if (auth.sessionStatus !== "loading" && auth.sessionStatus !== "ready") {
       pageOpeningMoment.current = null;
+      firstVisitResponse.current = null;
       discardOpeningResponse(`${CHAT_SERVICE_URL}/main-chat`);
     }
   }, [auth.sessionStatus]);
@@ -109,6 +132,6 @@ function Session({ auth }: { auth: AuthUiState }) {
   if (openingError !== null) throw openingError;
   const matchingOpening = loading || (auth.sessionStatus === "ready" && auth.accountId === opening?.accountId && auth.isAccountCurrent?.(auth.accountId) !== false) ? opening : null;
   return auth.sessionStatus === "ready" || (loading && opening !== null)
-    ? <Suspense fallback={<OpeningChat key={matchingOpening?.accountId ?? "empty"} opening={matchingOpening} latestShown={latestShown} />}><App auth={auth} opening={matchingOpening} historyMoment={pageOpeningMoment} keptChatLatestShown={latestShown} /></Suspense>
+    ? <Suspense fallback={<OpeningChat key={matchingOpening?.accountId ?? "empty"} opening={matchingOpening} latestShown={latestShown} moment={pageOpeningMoment.current} />}><App auth={auth} opening={matchingOpening} historyMoment={pageOpeningMoment} keptChatLatestShown={latestShown} /></Suspense>
     : <SessionGate title={UI_CONFIG.title} agentName={UI_CONFIG.agentName} status={auth.sessionStatus} loadFailure={auth.loadFailure} chatServiceUrl={CHAT_SERVICE_URL} />;
 }

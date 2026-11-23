@@ -82,9 +82,8 @@
     contain-intrinsic-block-size: auto none;
   }
 
-  /* A `content-visibility: auto` row lays out at zero height until its first paint. */
-  .copilotKitMessages > :not([data-chat-earlier]):has(~ .copilotKitUserMessage),
-  .copilotKitMessages > :not([data-chat-earlier]):has(~ .chat-message.is-user) {
+  .copilotKitMessages:not(.kept-chat *) > :not([data-chat-earlier]):has(~ .copilotKitUserMessage),
+  .copilotKitMessages:not(.kept-chat *) > :not([data-chat-earlier]):has(~ .chat-message.is-user) {
     contain: layout style;
     content-visibility: auto;
     overflow-clip-margin: 32px;

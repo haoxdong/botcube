@@ -1,7 +1,7 @@
 import { fetchMainChat } from './app/conversations';
 import { initializeAccountSession } from './account-session';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { startOpeningRequests, takeOpeningResponse, discardOpeningResponse } from './opening-requests';
+import { startOpeningRequests, peekOpeningResponse, takeOpeningResponse, discardOpeningResponse } from './opening-requests';
 
 beforeEach(() => { vi.stubGlobal('window', { location: { pathname: '/', search: '' } }); });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -62,4 +62,26 @@ it('propagates opening history errors and discards history when account startup 
   startOpeningRequests('https://chat.test');
   discardOpeningResponse('https://chat.test/main-chat');
   expect(takeOpeningResponse('https://chat.test/main-chat')).toBeNull();
+});
+
+
+it('shares a readable preview without consuming the live response or issuing another request', async () => {
+  const body = { id: 'main', messages: [{ id: 'answer', role: 'assistant', content: 'Saved answer' }] };
+  const fetch = vi.fn(async () => Response.json(body));
+  vi.stubGlobal('fetch', fetch);
+  startOpeningRequests('https://chat.test');
+  const preview = await peekOpeningResponse('https://chat.test/main-chat');
+  expect(preview).not.toBeNull();
+  if (preview === null || 'error' in preview) throw new Error('Expected the opening response');
+  expect(await preview.response.json()).toEqual(body);
+  expect(await (await takeOpeningResponse('https://chat.test/main-chat'))?.json()).toEqual(body);
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it('retains a preview error until the authenticated consumer can handle it', async () => {
+  const failure = new Error('offline');
+  vi.stubGlobal('fetch', async () => { throw failure; });
+  startOpeningRequests('https://chat.test');
+  expect(await peekOpeningResponse('https://chat.test/main-chat')).toEqual({ error: failure });
+  await expect(takeOpeningResponse('https://chat.test/main-chat')).rejects.toBe(failure);
 });
