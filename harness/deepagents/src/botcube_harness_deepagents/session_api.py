@@ -7,12 +7,12 @@ Service container, invoked only by the Chat Service's role; locally
 Service's local mode.
 
 Operations:
-- ``{"operation": "get", "sessionId", "userId", "paged"?, "before"?}`` -> ``{"messages": [...], "nextBefore"?}``,
+- ``{"operation": "get", "sessionId", "userId", "before"?, "limit"?}`` -> ``{"messages": [...], "nextBefore"?}``,
   the Session's conversation in AG-UI message shape, read from its latest
   checkpoint through LangGraph's state API. Each agent, reasoning and tool
   message the Harness timed carries ``metadata`` ``{"started_at", "ended_at"}``,
-  in epoch milliseconds (message_times.py). Clients opt in with ``paged: true``
-  during independent deployments. A Session with no record is
+  in epoch milliseconds (message_times.py). Pages are newest first, with an
+  exclusive message ID cursor and a limit of 1–80 (default 80). A Session with no record is
   ``SESSION_NOT_FOUND`` (HTTP 404).
 - ``{"operation": "post", "sessionId", "userId", "content", "messageId"?, "scheduledRun"?}`` -> ``{}``,
   after adding ``content`` to the Session as the agent's message, under
@@ -42,6 +42,7 @@ import os
 import uuid
 from collections.abc import Awaitable, Generator, Mapping
 from contextlib import contextmanager
+from itertools import dropwhile, islice
 from time import perf_counter
 from typing import Any
 
@@ -193,9 +194,8 @@ async def get_session(user_id: str, session_id: str) -> list[dict[str, Any]]:
     return conversation(await _session_messages(user_id, session_id, {}))
 
 
-REPLAY_PAGE_BYTES = 4_500_000
-REPLAY_PAGE_MESSAGES = 100
-INLINE_TOOL_BYTES = 64_000
+REPLAY_PAGE_MESSAGES = 80
+INLINE_MESSAGE_BYTES = 64_000  # 80 × 64 KB leaves room for the Lambda response envelope.
 
 
 class StaleReplayCursor(SessionApiError):
@@ -204,49 +204,30 @@ class StaleReplayCursor(SessionApiError):
 
 
 def _replay_message(message: dict[str, Any]) -> dict[str, Any]:
-    size = len(json.dumps(message, ensure_ascii=True))
-    if size <= (INLINE_TOOL_BYTES if message['role'] == 'tool' else REPLAY_PAGE_BYTES - 1024):
+    if len(json.dumps(message)) <= INLINE_MESSAGE_BYTES:
         return message
-    return {
-        **{key: message[key] for key in ('id', 'role', 'toolCallId') if key in message},
-        'content': 'Large message content is stored in the Session record.',
-        'metadata': {'contentRef': message['id']},
-    }
+    placeholder = 'Large message content is stored in the Session record.'
+    compact = {**message, 'content': placeholder}
+    if card := (message.get('metadata') or {}).get('scheduledRun'):
+        compact['metadata'] = {**message['metadata'], 'scheduledRun': {**card, 'text': placeholder}}
+    if len(json.dumps(compact)) <= INLINE_MESSAGE_BYTES:
+        return compact
+    return {key: compact[key] for key in ('id', 'role', 'toolCallId', 'content') if key in compact}
 
 
-def _replay_position(messages: list[BaseMessage], before: str | None) -> tuple[int, int | None]:
-    if before is None:
-        return len(messages) - 1, None
-    part, _, message_id = before.partition(':')
-    index = next((i for i, message in enumerate(messages) if message.id == message_id), -1)
-    if not part.isascii() or not part.isdecimal() or len(part) > 9 or index < 0:
-        raise StaleReplayCursor('The replay changed. Reopen the chat to read its history.')
-    return index, int(part)
-
-
-def _replay_page(messages: list[BaseMessage], before: str | None) -> dict[str, Any]:
-    start, offset = _replay_position(messages, before)
-    page: list[dict[str, Any]] = []
-    size = 0
-    for index in range(start, -1, -1):
-        source = messages[index]
-        group = conversation([source])
-        end = len(group) if offset is None else min(offset + 1, len(group))
-        offset = None
-        for part in range(end - 1, -1, -1):
-            message = _replay_message(group[part])
-            message_size = len(json.dumps(message, ensure_ascii=True)) + 2
-            if size + message_size > REPLAY_PAGE_BYTES or len(page) >= REPLAY_PAGE_MESSAGES:
-                return {'messages': page[::-1], 'nextBefore': f'{part}:{source.id}'}
-            page.append(message)
-            size += message_size
-    return {'messages': page[::-1]}
-
-
-async def _read_replay(user_id: str, session_id: str, before: str | None, paged: bool, phases: dict[str, float]) -> dict[str, Any]:
+async def _read_replay(
+    user_id: str, session_id: str, before: str | None, limit: int, phases: dict[str, float]
+) -> dict[str, Any]:
     messages = await _session_messages(user_id, session_id, phases)
     with _phase(phases, 'conversation'):
-        return _replay_page(messages, before) if paged or before is not None else {'messages': conversation(messages)}
+        replay = (row for message in reversed(messages) for row in reversed(conversation([message])))
+        if before is not None:
+            replay = dropwhile(lambda row: row['id'] != before, replay)
+            if next(replay, None) is None:
+                raise StaleReplayCursor('The replay changed. Reopen the chat to read its history.')
+        page = [_replay_message(row) for row in islice(replay, limit)]
+        cursor = {'nextBefore': page[-1]['id']} if next(replay, None) is not None else {}
+        return {'messages': page[::-1], **cursor}
 
 
 class _SessionRead(BaseCheckpointSaver[str]):
@@ -378,7 +359,10 @@ async def _handle(event: Mapping[str, Any], phases: dict[str, float]) -> dict[st
     if operation == 'get':
         user_id, session_id = _required(event, 'userId'), _required(event, 'sessionId')
         before = _optional(event, 'before')
-        return await _read(session_id, _read_replay(user_id, session_id, before, event.get('paged') is True, phases))
+        limit = event.get('limit', REPLAY_PAGE_MESSAGES)
+        if type(limit) is not int or not 1 <= limit <= REPLAY_PAGE_MESSAGES:
+            raise SessionApiError(f'limit must be an integer from 1 to {REPLAY_PAGE_MESSAGES}')
+        return await _read(session_id, _read_replay(user_id, session_id, before, limit, phases))
     if operation == 'post':
         user_id, session_id = _required(event, 'userId'), _required(event, 'sessionId')
         content, message_id = _required(event, 'content'), _optional(event, 'messageId')

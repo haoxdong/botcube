@@ -1,5 +1,3 @@
-export const REPLAY_HEADERS = { accept: 'application/vnd.botcube.replay+json' };
-
 type OpeningResponse = { response: Response } | { error: unknown };
 
 declare global {
@@ -13,7 +11,7 @@ export function startOpeningRequests(chatServiceUrl: string): void {
   const urls = [`${chatServiceUrl}/account/session`, `${chatServiceUrl}/main-chat`]
     .filter(() => window.location.pathname === '/')
     .filter((url) => !url.endsWith('/main-chat') || !new URLSearchParams(window.location.search).has('chat'));
-  window.__botcubeOpeningRequests = Object.fromEntries(urls.map((url) => [url, fetch(url, { credentials: 'include', cache: 'no-store', ...(url.endsWith('/main-chat') && { headers: REPLAY_HEADERS }) })
+  window.__botcubeOpeningRequests = Object.fromEntries(urls.map((url) => [url, fetch(url, { credentials: 'include', cache: 'no-store' })
     .then((response) => ({ response }), (error: unknown) => ({ error }))]));
 }
 

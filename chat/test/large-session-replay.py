@@ -24,7 +24,7 @@ async def invoke(request: Request) -> Response:
         config = {'configurable': {'actor_id': event['userId'], 'thread_id': event['sessionId']}}
         await graph.aupdate_state(config, {'messages': []}, as_node='model')
         await graph.aupdate_state(config, {'messages': [
-            *(HumanMessage(str(i) * 1_000_000, id=f'm{i}') for i in range(7)),
+            *(HumanMessage("x" * 60_000, id=f'm{i}') for i in range(100)),
             ToolMessage('x' * 6_100_000, id='result', tool_call_id='call'),
         ]}, as_node='model')
     result = await asyncio.to_thread(session_api.lambda_handler, event, None)

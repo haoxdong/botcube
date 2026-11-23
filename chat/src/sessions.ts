@@ -17,7 +17,7 @@ const threadSummary = ({ session_id, title, created_at, updated_at, scheduled_ta
   ...(scheduled_task_id === undefined ? {} : { scheduled: true }),
 });
 
-type ReplayQuery = { before?: string; paged?: true };
+type ReplayQuery = { before?: string; limit?: number };
 
 export const MAX_RUNNING_TURN_AGE_MS = 3_600_000;
 

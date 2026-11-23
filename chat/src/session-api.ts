@@ -10,7 +10,7 @@ import { HttpError } from './http-error.js';
  */
 type SessionApiEvent =
   /** Read a page of history from the Session's latest checkpoint. */
-  | { operation: 'get'; sessionId: string; userId: string; before?: string; paged?: true }
+  | { operation: 'get'; sessionId: string; userId: string; before?: string; limit?: number }
   | { operation: 'purge'; sessionId: string; userId: string }
   /** Add `content` to the Session as the agent's message, under `messageId`, with the run card a scheduled run shows as. */
   | { operation: 'post'; sessionId: string; userId: string; content: string; messageId: string; scheduledRun?: ScheduledRunCard }

@@ -355,17 +355,20 @@ def test_each_post_replays_under_its_own_message_id(local_record: None) -> None:
     assert len({message['id'] for message in replayed}) == len(replayed)
 
 
-def test_a_scheduled_runs_post_replays_with_its_run_card(local_record: None) -> None:
+@pytest.mark.parametrize('answer', ['The 10y yield fell 5bp.', 'x' * 40_000])
+def test_a_scheduled_runs_post_replays_with_its_run_card(local_record: None, answer: str) -> None:
     """The card is stored with the message, so it shows after a reload and after the chat's next Turn."""
     card = {
         'sideChat': 'task-1', 'messageId': 'run-request-1', 'title': 'Rates brief',
-        'ranAt': '2026-10-12T07:00:00.000Z', 'status': 'done', 'text': 'The 10y yield fell 5bp.',
+        'ranAt': '2026-10-12T07:00:00.000Z', 'status': 'done', 'text': answer,
     }
+
+    content = f'Scheduled task "Rates brief": {answer}'
 
     async def scenario() -> list[dict[str, Any]]:
         await session_api.handle({
             'operation': 'post', 'sessionId': 'session-1', 'userId': 'user-1',
-            'content': 'Scheduled task "Rates brief": The 10y yield fell 5bp.', 'messageId': 'post-1', 'scheduledRun': card,
+            'content': content, 'messageId': 'post-1', 'scheduledRun': card,
         })
         await _post('Plain brief')
         await _turn(HumanMessage('hello', id='user-message-1'))
@@ -373,11 +376,13 @@ def test_a_scheduled_runs_post_replays_with_its_run_card(local_record: None) -> 
 
     replayed = asyncio.run(scenario())
 
+    placeholder = 'Large message content is stored in the Session record.'
+    expected_text = placeholder if len(answer) == 40_000 else answer
     assert [(message['id'], message.get('metadata')) for message in replayed if message['role'] == 'assistant'][:2] == [
-        ('post-1', {'scheduledRun': card}),
+        ('post-1', {'scheduledRun': {**card, 'text': expected_text}}),
         (replayed[1]['id'], None),
     ]
-    assert replayed[0]['content'] == 'Scheduled task "Rates brief": The 10y yield fell 5bp.'
+    assert replayed[0]['content'] == (placeholder if expected_text == placeholder else content)
 
 
 def test_a_post_opens_a_session_that_had_no_turns(local_record: None) -> None:
@@ -472,25 +477,6 @@ def test_the_function_entrypoint_serves_repeated_invocations(local_record: None)
 
     assert session_api.lambda_handler(event, None)['statusCode'] == 404
     assert session_api.lambda_handler(event, None)['statusCode'] == 404
-
-
-def test_page_negotiation_preserves_history_for_clients_without_paging(local_record: None) -> None:
-    async def record_and_read() -> tuple[dict[str, Any], dict[str, Any]]:
-        config = {'configurable': {'thread_id': 'session-1', 'actor_id': 'user-1'}}
-        graph = session_api._graph()
-        await graph.aupdate_state(config, {'messages': []}, as_node='model')
-        await graph.aupdate_state(config, {'messages': [
-            HumanMessage(str(i), id=f'm{i}') for i in range(101)
-        ]}, as_node='model')
-        return await session_api.handle(GET), await session_api.handle({**GET, 'paged': True})
-
-    legacy, paged = asyncio.run(record_and_read())
-
-    assert list(legacy) == ['messages']
-    assert legacy['messages'][0]['id'] == 'm0'
-    assert len(legacy['messages']) == 101
-    assert paged['messages'] == legacy['messages'][1:]
-    assert paged['nextBefore']
 
 
 def test_session_api_timing_splits_history_reads_without_logging_content(

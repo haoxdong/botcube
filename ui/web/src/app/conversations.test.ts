@@ -87,7 +87,7 @@ describe('Chat Service requests', () => {
 
     expect(await fetchMainChat({ chatServiceUrl: SERVICE, fetchImpl })).toEqual(mainChat);
     expect(calls).toEqual([
-      { url: `${SERVICE}/main-chat`, init: { cache: 'no-store', credentials: 'include', headers: { accept: 'application/vnd.botcube.replay+json' } } },
+      { url: `${SERVICE}/main-chat`, init: { cache: 'no-store', credentials: 'include' } },
     ]);
   });
 
@@ -103,7 +103,7 @@ describe('Chat Service requests', () => {
       messages: replayed,
     });
     expect(calls).toEqual([
-      { url: `${SERVICE}/threads/thread-42`, init: { cache: 'no-store', credentials: 'include', headers: { accept: 'application/vnd.botcube.replay+json' } } },
+      { url: `${SERVICE}/threads/thread-42`, init: { cache: 'no-store', credentials: 'include' } },
     ]);
   });
 

@@ -2,7 +2,7 @@
 
 import { UNANSWERED_CALL } from "botcube-ui-web/interrupted-call";
 
-import { REPLAY_HEADERS, takeOpeningResponse } from "botcube-ui-web/opening-requests";
+import { takeOpeningResponse } from "botcube-ui-web/opening-requests";
 
 import { tap } from "rxjs";
 import { clockSubscriber, validateClockEvent } from "botcube-ui-web/worklog-clock";
@@ -181,7 +181,7 @@ export async function fetchMainChat({
   const opening = takeOpeningResponse(url);
   const answered = opening === null ? null : await opening;
   // A browser without an account cookie must first let /account/session create it.
-  const response = answered !== null && answered.status !== 401 ? answered : await request(fetchImpl, url, "open the Main Chat", { headers: REPLAY_HEADERS });
+  const response = answered !== null && answered.status !== 401 ? answered : await request(fetchImpl, url, "open the Main Chat");
   if (!response.ok) throw new ChatServiceError("open the Main Chat", response.status);
   return withRunningCallsUnanswered((await response.json()) as ReplayedSession & { id: string });
 }
@@ -210,7 +210,7 @@ export async function openConversation({
 }): Promise<ReplayedSession> {
   const url = `${chatServiceUrl}/threads/${encodeURIComponent(id)}`;
   const page = async (cursor?: string) => {
-    const response = await request(fetchImpl, cursor === undefined ? url : `${url}?before=${encodeURIComponent(cursor)}`, "replay thread", { headers: REPLAY_HEADERS });
+    const response = await request(fetchImpl, cursor === undefined ? url : `${url}?before=${encodeURIComponent(cursor)}`, "replay thread");
     return await response.json() as ReplayedSession;
   };
   if (before !== undefined) return page(before);

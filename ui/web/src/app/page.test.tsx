@@ -2402,10 +2402,10 @@ describe('Main Chat', () => {
 
     it('fetches older replay from the server only when the reader reaches the loaded history boundary', async () => {
       service.mainChat = { id: 'main-1', messages: service.mainChat.messages.slice(-4) };
-      const olderUrl = 'http://chat.test/threads/main-1?before=0%3Am82';
+      const olderUrl = 'http://chat.test/threads/main-1?before=m83';
       fetchMock.mockImplementation(async (url, init) => {
         if (url === olderUrl) return answer(200, { messages: [{ id: 'm82', role: 'user', content: 'Older question' }] });
-        if (url === 'http://chat.test/main-chat') return answer(200, { ...service.mainChat, nextBefore: '0:m82' });
+        if (url === 'http://chat.test/main-chat') return answer(200, { ...service.mainChat, nextBefore: 'm83' });
         return chatService(url, init);
       });
 
