@@ -42,7 +42,7 @@ import { PlotlyPrefetch } from "../components/plotly-bundle";
 import { shows, useSteering, type PendingMessage, type Withdrawal } from "./steering";
 import { WaitingMessages } from "./waiting-steering";
 import { MessageEntranceRow, MessageEntranceHistory, type MessageEntrances } from "./message-entrance";
-import { useAgentRunning } from "./agent-running";
+import { useAgentRunning, useRunEnded } from "./agent-running";
 import { ThreadScrollView } from "./conversation-thread";
 
 const MotionButton = motionElement.create(Button);
@@ -243,6 +243,8 @@ interface TurnFailure {
 const RunError = createContext<TurnFailure | null>(null);
 
 const RunStarted = createContext(false);
+/** The current run has sent its end; its stream may still be closing. */
+const RunEnded = createContext(false);
 
 const OpensAt = createContext<string | null>(null);
 
@@ -346,10 +348,13 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
   const runError = useContext(RunError);
   const started = useContext(RunStarted);
   const { running: onServer } = useContext(ServerTurn);
+  const ended = useContext(RunEnded);
   return (
     <>
       <CopilotChatMessageView {...props} {...props.messages && { messages: props.messages.filter(shows) }} assistantMessage={ASSISTANT_MESSAGE_SLOT} userMessage={USER_MESSAGE} reasoningMessage={REASONING_MESSAGE}>
-        {({ messageElements, messages, isRunning, interruptElement }) => {
+        {({ messageElements, messages, isRunning: streaming, interruptElement }) => {
+          // The Worklog, the Artifact cards and the finished answer settle together at the run's end event, not at its stream close.
+          const isRunning = streaming && !ended;
           const last = messages.at(-1);
           return (
             <div ref={attachList} data-copilotkit data-testid="copilot-message-list" className="copilotKitMessages cpk:flex cpk:flex-col">
@@ -496,6 +501,7 @@ function ChatThread({
   accountRef.current = { models, isAccountCurrent, selectedModel };
   const modelsReady = () => accountRef.current.isAccountCurrent() && accountRef.current.models.loaded;
   const [agentRunning] = useAgentRunning(agent);
+  const runEnded = useRunEnded(agent);
   const [openingRunning, setOpeningRunning] = useState(false);
   const running = turnRunning || agentRunning || openingRunning;
   const subscribeRun = useCallback((listener: () => void) => {
@@ -620,6 +626,7 @@ function ChatThread({
       <ReadOnlyChat.Provider value={startNewChat}>
         <RunError.Provider value={runError}>
         <RunStarted.Provider value={started}>
+        <RunEnded.Provider value={runEnded}>
           <CopilotChat
             agentId={AGENT_ID}
             threadId={threadId}
@@ -643,6 +650,7 @@ function ChatThread({
               });
             }}
           />
+        </RunEnded.Provider>
         </RunStarted.Provider>
         </RunError.Provider>
       </ReadOnlyChat.Provider>
