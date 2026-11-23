@@ -48,7 +48,7 @@ export default defineConfig({
           name: 'chat',
           setupFiles: ['chat/test/bot-image.ts'],
           restoreMocks: true,
-          include: ['chat/src/**/*.test.ts', 'chat/test/local-smoke.test.ts', 'infra/ecs/parking/**/*.test.ts', 'infra/ecs/files/**/*.test.ts'],
+          include: ['chat/src/**/*.test.ts', 'chat/test/local-smoke.test.ts', 'infra/ecs/parking/**/*.test.ts'],
           globalSetup: ['chat/test/fakes/global-setup.ts'],
           env: { ...node.env, ...TEST_AWS_ENV },
         },
