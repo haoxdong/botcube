@@ -3,14 +3,20 @@ from __future__ import annotations
 import posixpath
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from functools import cache
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, NotRequired
 
 from botocore.exceptions import BotoCoreError, ClientError
 from deepagents import create_deep_agent
 from deepagents._models import resolve_model
-from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend
+from deepagents.backends import (
+    CompositeBackend,
+    FilesystemBackend,
+    StateBackend,
+    StoreBackend,
+)
 from deepagents.backends.protocol import (
+    BackendProtocol,
     DeleteResult,
     EditResult,
     FileUploadResponse,
@@ -40,6 +46,7 @@ from langgraph.constants import CONFIG_KEY_CHECKPOINTER
 from langgraph.errors import GraphBubbleUp
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt.tool_node import ToolCallRequest
+from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 from openai import APIError
 from opentelemetry.instrumentation.utils import unwrap
@@ -257,12 +264,10 @@ def _restore_middleware_hook_dispatch() -> None:
 
 
 TOOL_SKILLS = 'skills'
-"""The key in a tool's `metadata` for the skill sources that teach it: each source's path, to its folder on disk."""
+IMAGE_TOOL_SKILLS = 'image_skills'
 
 
-class _ReadOnlyFolder(FilesystemBackend):
-    """A folder on disk the agent's file tools read but never change."""
-
+class _ReadOnlyFiles:
     def write(self, file_path: str, content: str) -> WriteResult:
         return WriteResult(error=f'{file_path} is read-only')
 
@@ -276,19 +281,60 @@ class _ReadOnlyFolder(FilesystemBackend):
         return [FileUploadResponse(path=path, error='permission_denied') for path, _ in files]
 
 
+class _ReadOnlyFolder(_ReadOnlyFiles, FilesystemBackend):
+    pass
+
+
+def _image_skill_files(folder: Path) -> Iterable[Path]:
+    for path in sorted(folder.iterdir()):
+        if path.is_symlink():
+            continue
+        if path.is_dir():
+            yield from _image_skill_files(path)
+        elif path.is_file():
+            yield path
+
+
+class _ImageSkills(_ReadOnlyFiles, StoreBackend):
+    def __init__(self, root: Path) -> None:
+        super().__init__(store=InMemoryStore(), namespace=lambda _: ('image-skills',))
+        StoreBackend.upload_files(self, [
+            (f'/{path.relative_to(root).as_posix()}', path.read_bytes())
+            for path in _image_skill_files(root)
+        ])
+
+    awrite = BackendProtocol.awrite
+    aedit = BackendProtocol.aedit
+    adelete = BackendProtocol.adelete
+
+
+@cache
+def _image_skill_folder(root: Path) -> BackendProtocol:
+    return _ImageSkills(root)
+
+
 @cache
 def _static_skill_folder(folder: str) -> _ReadOnlyFolder:
     return _ReadOnlyFolder(root_dir=folder, virtual_mode=True)
 
 
-def tool_skills(tools: Iterable[Any]) -> dict[str, Any]:
-    """The skill sources `tools` bring, by path, each served read-only from its folder."""
-    return {
-        source: (_static_skill_folder(str(folder)) if PurePosixPath(folder).is_absolute()
-                 else _ReadOnlyFolder(root_dir=folder, virtual_mode=True))
-        for tool in tools if isinstance(tool, BaseTool)
-        for source, folder in (tool.metadata or {}).get(TOOL_SKILLS, {}).items()
-    }
+def tool_skills(tools: Iterable[Any]) -> dict[str, BackendProtocol]:
+    """The read-only skill sources `tools` bring, by virtual path."""
+    routes: dict[str, BackendProtocol] = {}
+    for tool in tools:
+        if not isinstance(tool, BaseTool):
+            continue
+        metadata = tool.metadata or {}
+        routes.update({
+            source: (_static_skill_folder(str(folder)) if PurePosixPath(folder).is_absolute()
+                     else _ReadOnlyFolder(root_dir=folder, virtual_mode=True))
+            for source, folder in metadata.get(TOOL_SKILLS, {}).items()
+        })
+        routes.update({
+            source: _image_skill_folder(Path(folder))
+            for source, folder in metadata.get(IMAGE_TOOL_SKILLS, {}).items()
+        })
+    return routes
 
 
 def _route_tool_skills(
@@ -296,7 +342,7 @@ def _route_tool_skills(
 ) -> tuple[Any, list[str], list[dict[str, Any]]]:
     """The files backend, the agent's skill sources and the subagent specs, with the skills `tools` bring.
 
-    A tool can bring the skills that teach it (TOOL_SKILLS): sources with a backend of their own, routed by their
+    A tool can bring the skills that teach it: sources with a backend of their own, routed by their
     path beside the workspace's `skills`, for the agent and each subagent that shares its tools.
     """
     skill_routes = tool_skills(tools)

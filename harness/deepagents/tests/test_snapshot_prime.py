@@ -214,3 +214,104 @@ def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_n
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout.strip().splitlines()[-1]) == []
+
+
+def test_new_actor_discovers_and_reads_primed_artifact_skills_without_filesystem_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import os
+    import sys
+    from unittest.mock import patch
+
+    from langchain_core.messages import AIMessage, ToolMessage
+    from langchain_core.runnables import RunnableConfig
+
+    from botcube_harness_deepagents import artifact, serving
+    from botcube_harness_deepagents.agent import tool_skills
+    from botcube_harness_deepagents.definition import (
+        HarnessDefinition,
+        InvocationAuth,
+        ModelRelay,
+    )
+    from conftest import ToolBindableFakeMessagesModel
+
+    skills = tmp_path / 'image-skills'
+    guide = skills / 'artifacts' / 'SKILL.md'
+    guide.parent.mkdir(parents=True)
+    content = '---\nname: artifacts\ndescription: Publish an artifact.\n---\nGuide text.\n'
+    guide.write_text(content)
+    (guide.parent / 'guide.md').write_text('Artifact guidance from the image.')
+    monkeypatch.setattr(artifact, 'SKILLS', skills)
+    workspace = tmp_path / 'user-workspace'
+    monkeypatch.setenv('BOTCUBE_WORKSPACE', str(workspace))
+    for name in ('_AGENTS', '_BACKENDS', '_BACKEND_BY_AGENT', '_MODEL_RELAYS'):
+        monkeypatch.setattr(serving, name, {})
+    for name in ('_bot', '_CHECKPOINTER', '_STORE'):
+        monkeypatch.setattr(serving, name, None)
+    serving.configure_harness_definition(HarnessDefinition(
+        skills=[], agent_name='snapshot-fixture', system_prompt='Fixture instructions.',
+        prepare_invocation=lambda _: InvocationAuth(None, False, None),
+        prepare_root=lambda _: None, session_id_env_var='TEST_SESSION_ID',
+        environment_cache_key=lambda _: (),
+    ))
+    monkeypatch.setattr(serving.restore_prime, 'prime', lambda _: None)
+    monkeypatch.setattr(serving.agentcore_memory_backend, 'prime_memory_client', lambda _: None)
+    monkeypatch.setattr(serving.aws_clients, 'prime', lambda _: None)
+    monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', '')
+    monkeypatch.setattr(serving, 'build_model', lambda **_: ToolBindableFakeMessagesModel(responses=[
+        AIMessage(content='', tool_calls=[{
+            'name': 'read_file', 'args': {'file_path': f'{artifact.SKILLS_SOURCE}artifacts/guide.md'}, 'id': 'guide',
+        }]),
+        AIMessage(content='ok'),
+    ]))
+
+    async def answer(*_):
+        pass
+
+    monkeypatch.setattr(serving, 'answer_once', answer)
+    serving._prime_snapshot()
+
+    touched = []
+    observing = True
+
+    def record(event, path):
+        if observing and isinstance(path, (str, bytes, Path)) and Path(os.fsdecode(path)).is_relative_to(skills):
+            touched.append((event, os.fsdecode(path)))
+
+    def audit(event, args):
+        if event in ('open', 'os.listdir', 'os.scandir'):
+            record(event, args[0])
+
+    def observe(operation):
+        original = getattr(os, operation)
+
+        def wrapped(path, *args, **kwargs):
+            record(operation, path)
+            return original(path, *args, **kwargs)
+
+        return wrapped
+
+    sys.addaudithook(audit)
+    try:
+        with patch.multiple(os, stat=observe('stat'), lstat=observe('lstat'), readlink=observe('readlink')):
+            relay = ModelRelay(base_url='https://turn.invalid/v1', token='turn', headers={}, session_id='turn')
+            agent = serving._get_agent(
+                actor_id='turn', session_user_id='turn', thread_id='turn', persistent_memory=False,
+                model=serving._SNAPSHOT_MODEL, model_relay=relay, syncs_files=True,
+            )
+            config: RunnableConfig = {'configurable': {'thread_id': 'turn', 'actor_id': 'turn'}}
+            state = asyncio.run(agent.graph.ainvoke({'messages': [('user', 'Reply ok.')]}, config))
+            assert state['messages'][-1].content == 'ok'
+            tool_reply, = (message for message in state['messages'] if isinstance(message, ToolMessage))
+            assert 'Artifact guidance from the image.' in tool_reply.content
+            checkpoint = agent.graph.get_state(config)
+            assert [skill['name'] for skill in checkpoint.values['skills_metadata']] == ['artifacts']
+            folder = tool_skills([artifact.artifact_tool(workspace)])[artifact.SKILLS_SOURCE]
+            guide_file, missing = asyncio.run(folder.adownload_files(['/artifacts/SKILL.md', '/missing.md']))
+            assert guide_file.content == content.encode()
+            assert missing.error == 'file_not_found'
+            assert asyncio.run(folder.awrite('/artifacts/SKILL.md', 'changed')).error
+    finally:
+        observing = False
+    assert touched == []

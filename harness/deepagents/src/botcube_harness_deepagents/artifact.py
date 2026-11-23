@@ -26,7 +26,7 @@ from typing import Any
 
 from langchain_core.tools import BaseTool, StructuredTool
 
-from .agent import TOOL_SKILLS
+from .agent import IMAGE_TOOL_SKILLS
 from .artifact_check import CHECKER
 from .artifact_types import NAMED, PUBLISHES, TYPES, ArtifactType
 from .files import ARTIFACTS_DIRECTORY, HARNESS_DIRECTORY, excluded_paths, is_files_path
@@ -80,7 +80,7 @@ def artifact_tool(root: Path, skills: Iterable[str] = ()) -> BaseTool:
 
     return StructuredTool.from_function(
         artifact, coroutine=aartifact, name='Artifact', description=DESCRIPTION, response_format='content_and_artifact',
-        metadata={TOOL_SKILLS: {SKILLS_SOURCE: str(SKILLS)}},
+        metadata={IMAGE_TOOL_SKILLS: {SKILLS_SOURCE: str(SKILLS)}},
     )
 
 

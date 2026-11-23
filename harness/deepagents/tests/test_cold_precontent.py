@@ -48,7 +48,8 @@ def test_static_skill_roots_survive_snapshot_but_user_roots_still_resolve(
     assert skills not in resolved, 'The restored graph resolved the static skill folder again'
     assert roots[1] in resolved, 'The User Files root must still resolve for its Turn'
     folder = agent.tool_skills([status])['/skills/static/']
-    assert folder.read('/guide.txt').file_data['content'] == 'static guide'
+    guide = folder.read('/guide.txt').file_data
+    assert guide is not None and guide['content'] == 'static guide'
     assert folder.write('/guide.txt', 'changed').error
     outside = tmp_path / 'outside.txt'
     outside.write_text('private')
@@ -70,4 +71,5 @@ def test_relative_skill_roots_follow_the_turn_workspace(tmp_path: Path, monkeypa
         (root / 'skills/guide.txt').write_text(name)
         monkeypatch.chdir(root)
         folder = agent.tool_skills([status])['/skills/']
-        assert folder.read('/guide.txt').file_data['content'] == name
+        guide = folder.read('/guide.txt').file_data
+        assert guide is not None and guide['content'] == name
