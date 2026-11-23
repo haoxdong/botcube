@@ -75,7 +75,6 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
   const lastQuestion = messages.findLastIndex(({ role }) => role === "user");
   const asked = messages[lastQuestion]?.id;
   const latest = messages.at(-1);
-  const answering = latest?.role === "assistant" && parts.get(latest.id) === "shown" && !latest.toolCalls?.length && latest.metadata?.scheduledRun === undefined;
   const out: ReactElement[] = [];
   let work: ReactElement[] = [];
   let shown: ReactElement[] = [];
@@ -91,7 +90,7 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
       const turn = messages.slice(first, next < 0 ? undefined : next);
       const question = messages.findLast((m, i) => i < first && m.role === "user");
       out.push(
-        <Worklog key={worklogKey(turnKey)} id={id} advanceClock={advanceClock} turn={turn} question={question} took={spanOf(turn)} startedAt={startOf(turn)} running={isRunning && started && first > lastQuestion} expanding={isRunning && started && first > lastQuestion && !answering} asked={asked}>
+        <Worklog key={worklogKey(turnKey)} id={id} advanceClock={advanceClock} turn={turn} question={question} took={spanOf(turn)} startedAt={startOf(turn)} running={isRunning && started && first > lastQuestion} asked={asked}>
           {work}
         </Worklog>,
       );
@@ -136,8 +135,14 @@ function stepsOf(row: ReactElement, message: TurnMessage | undefined, names: Rea
 const ARTIFACT_CALL = new Set(["Artifact"]);
 
 function workRow(row: ReactElement, message: TurnMessage | undefined, steps: Steps): ReactElement[] {
+  if (message?.role === "assistant" && !message.toolCalls?.length && text(message) !== "") return [<NoteStep key={row.key} id={message.id}>{row}</NoteStep>];
   if (steps.rendering === "saved") return [row, ...stepsOf(row, message, SHOWN_CALLS, steps)];
   return message?.toolCalls?.some((call) => call.function.name === "Artifact") ? stepsOf(row, message, ARTIFACT_CALL, steps) : [row];
+}
+
+/** Text a tool call followed, timed in the steps' column. */
+function NoteStep({ id, children }: { id: string; children: ReactNode }) {
+  return <div className="worklog-step worklog-note" data-step-id={id} data-kind="note" data-state="done"><div className="worklog-step-label worklog-note-text">{children}</div><span className="worklog-step-time">{useStepTime(id)}</span></div>;
 }
 
 /** A shown row: a card shows without its ToolStep, and an answer shows the cards of the Artifacts its Turn published; a card the answer shows has no row. */
@@ -171,23 +176,22 @@ const lineStatus = (running: boolean) => (running ? { status: "running" as const
 const StepTimes = createContext<{ each: ReadonlyMap<string, number> | undefined; arriving: boolean }>({ each: undefined, arriving: true });
 
 /**
- * Open while its Turn works, folded while its answer streams or once it ends. A tap overrides the current phase
- * until work resumes, an answer starts, the run ends or the user asks again (`asked`, their latest message's id).
+ * Open while its Turn runs, so text written mid-Turn never folds it, and folded once it ends. A tap holds until the
+ * run ends or the user asks again (`asked`, their latest message's id).
  * Live, it times the Turn itself, carrying on the clock of the head its Turn showed under `asked` before any row, else from its first replayed step (`startedAt`), as after a reload mid-Turn; replayed, its messages' stamps (`took`). With no rows it has nothing to open.
  */
-export function Worklog({ id, turn, question, took, startedAt, running, expanding = running, asked, children, advanceClock = true }: {
+export function Worklog({ id, turn, question, took, startedAt, running, asked, children, advanceClock = true }: {
   id: string;
   turn?: readonly TurnMessage[] | undefined;
   question?: TurnMessage | undefined;
   took?: number | undefined;
   startedAt?: number | undefined;
   running: boolean;
-  expanding?: boolean | undefined;
   advanceClock?: boolean | undefined;
   asked: string | undefined;
   children?: ReactNode;
 }) {
-  const phase = running ? expanding ? "working" : "answering" : "finished";
+  const phase = running ? "working" : "finished";
   const [chosen, setChosen] = useState<{ open: boolean; phase: typeof phase; asked: string | undefined } | null>(null);
   const current = chosen?.phase === phase && chosen.asked === asked;
   if (chosen && !current) setChosen(null);

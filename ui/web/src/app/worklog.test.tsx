@@ -168,14 +168,16 @@ describe('a Worklog', () => {
     expect(head()).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('collapses at the first answer token while its Turn still runs', () => {
-    render(<Chat messages={turn('answering')} running />);
-
+  it('stays open while its answer streams and folds once, when the run ends', () => {
+    const view = render(<Chat messages={turn('answering')} running />);
+    expect(head()).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('2s10s steepened to +45bp.')).toBeVisible();
+    view.rerender(<Chat messages={turn('answering')} running={false} />);
     expect(head()).toHaveAttribute('aria-expanded', 'false');
     expect(screen.getByText('2s10s steepened to +45bp.')).toBeVisible();
   });
 
-  it('resets manual expansion only when work, answer or completion phases change', () => {
+  it('keeps a manual fold through mid-Turn text and tools, and resets it when the run ends', () => {
     vi.useFakeTimers({ now: START });
     const [question, note, result, answer] = unstamped(turn('phases'));
     assert(question && note && result && answer, 'the Turn');
@@ -200,19 +202,18 @@ describe('a Worklog', () => {
     expect(screen.getByText("I'll check the rates skill first.")).toBeVisible();
     const next = { id: 'phases-next-answer', role: 'assistant', content: 'Swaps rose.' };
     view.rerender(<Chat messages={[...work, toolNote, next]} running />);
-    expect(head()).toHaveAttribute('aria-expanded', 'false');
+    expect(head()).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('Swaps rose.')).toBeVisible();
     expect(head()).toHaveTextContent(/^Working · 0s$/);
-    fireEvent.click(head());
     view.rerender(<Chat messages={[...work, toolNote, next]} running={false} />);
     expect(head()).toHaveAttribute('aria-expanded', 'false');
     expect(head()).toHaveTextContent(/^Worked for 0s$/);
   });
 
-  it('reopens for reasoning after an answer and keeps work open beside a proposal', () => {
+  it('stays open through text, reasoning after it and a proposal', () => {
     const messages = turn('resume');
     const view = render(<Chat messages={messages} running />);
-    expect(head()).toHaveAttribute('aria-expanded', 'false');
+    expect(head()).toHaveAttribute('aria-expanded', 'true');
     const reasoning = { id: 'resume-reasoning', role: 'reasoning', content: 'Check the benchmark.' };
     view.rerender(<Chat messages={[...messages, reasoning]} running />);
     expect(head()).toHaveAttribute('aria-expanded', 'true');
@@ -597,7 +598,6 @@ describe("a Worklog's step times", () => {
     const view = render(<StepsChat messages={messages} running />);
     expect(heads()).toHaveLength(1);
     for (const header of heads()) expect(header).toHaveTextContent(/^Working · 8s$/);
-    for (const header of heads()) fireEvent.click(header);
     for (const header of heads()) {
       const group = header.closest('.worklog');
       assert(group, 'a Worklog group');
@@ -607,7 +607,6 @@ describe("a Worklog's step times", () => {
     const diagnosticIds = [...document.querySelectorAll('.worklog-step')].map(step => step.getAttribute('data-step-id'));
     expect(new Set(diagnosticIds).size).toBe(diagnosticIds.length);
     expect(screen.queryByTestId('card-card-clock-card')).toBeNull();
-    fireEvent.click(head());
     act(() => { vi.advanceTimersByTime(1000); });
     if (canonical) view.rerender(<StepsChat messages={messages.map(message => message.role === 'user' ? { ...message, metadata: { ...message.metadata, worklog_clock: { version: 1, at: START + 9000 } } } : message)} running />);
     for (const header of heads()) expect(header).toHaveTextContent(/^Working · 9s$/);
@@ -643,7 +642,6 @@ describe("a Worklog's step times", () => {
     act(() => { vi.advanceTimersByTime(2000); });
     verify(6, ['2s', '2s', '2s']);
     view.rerender(<StepsChat messages={[...continued, queryResult, { ...answer, ...stamp(6, 6) }]} running />);
-    fireEvent.click(head());
     verify(6, ['2s', '2s', '2s', '0s']);
     act(() => { vi.advanceTimersByTime(2000); });
     view.rerender(<StepsChat messages={[...continued, queryResult, answer]} running />);
@@ -1572,4 +1570,44 @@ it('keeps a saved question independent of another question server clock', () => 
   expect(head()).toHaveTextContent(/^Worked for 13m 15s$/);
   act(() => { agent.setState({ worklog_clock: { version: 1, question_id: 'other-question', at: START + 3000000 } }); });
   expect(head()).toHaveTextContent(/^Worked for 13m 15s$/);
+});
+
+it('keeps text a tool call followed on its own timed row, so its time never moves', () => {
+  vi.useFakeTimers({ now: START });
+  const at = (seconds: number) => START + seconds * 1000;
+  type Clocks = Record<string, { started_at: number; ended_at?: number }>;
+  const asked = (now: number, steps: Clocks) => ({ id: 'interim-u', role: 'user', content: 'Compare markets', metadata: {
+    worklog_clock: { version: 1, question_id: 'interim-u', started_at: START, at: at(now), steps },
+  } });
+  const timedCall = (id: string, command: string, began: number) => ({ ...call(id, 'execute', { command }), metadata: { timing_id: id, worklog_started_at: at(began) } });
+  const first = { id: 'interim-a1', role: 'assistant', content: '', toolCalls: [timedCall('interim-c1', 'rates', 0)] };
+  const firstResult = { id: 'interim-t1', role: 'tool', toolCallId: 'interim-c1', content: 'Done' };
+  const interim = { id: 'interim-text', role: 'assistant', content: 'Rates are in; checking equities next.', metadata: { timing_id: 'interim-lane-0' } };
+  const helper = { id: 'interim-a2', role: 'assistant', content: '', toolCalls: [timedCall('interim-helper', 'helper', 8)] };
+  const answer = { id: 'interim-answer', role: 'assistant', content: 'Compared', metadata: { timing_id: 'interim-lane-1' } };
+  const done = { 'interim-c1': { started_at: at(0), ended_at: at(2) } };
+  const working = { ...done, 'interim-lane-0': { started_at: at(2), ended_at: at(8) }, 'interim-helper': { started_at: at(8) } };
+  const frames: [number, Clocks, TurnMessage[]][] = [
+    ...[3, 5, 8].map((now): [number, Clocks, TurnMessage[]] => [now, { ...done, 'interim-lane-0': { started_at: at(2) } }, [first, firstResult, interim]]),
+    ...[9, 12, 16, 20].map((now): [number, Clocks, TurnMessage[]] => [now, working, [first, firstResult, interim, helper]]),
+    ...[20, 21].map((now): [number, Clocks, TurnMessage[]] => [now, { ...working, 'interim-lane-1': { started_at: at(20) } }, [first, firstResult, interim, helper, answer]]),
+  ];
+  const view = render(<StepsChat messages={[asked(0, {}), first]} running />);
+  const timeOf = (id: string) => document.querySelector(`.worklog-step[data-step-id^="${id}"] .worklog-step-time`)?.textContent;
+  let previous: { now: number; times: Map<string, number> } | undefined;
+  for (const [now, steps, turn] of frames) {
+    act(() => { vi.advanceTimersByTime(at(now) - Date.now()); });
+    view.rerender(<StepsChat messages={[asked(now, steps), ...turn]} running />);
+    expect(head(), `open at ${now}s`).toHaveAttribute('aria-expanded', 'true');
+    const times = new Map(['interim-c1', 'interim-text', 'interim-helper'].map(id => [id, secondsIn(timeOf(id))]));
+    for (const [id, seconds] of previous?.times ?? []) {
+      const shown = times.get(id);
+      if (shown === undefined || Number.isNaN(shown) || Number.isNaN(seconds) || !previous) continue;
+      expect(shown, `${id} at ${now}s`).toBeGreaterThanOrEqual(seconds);
+      expect(shown - seconds, `${id} at ${now}s`).toBeLessThanOrEqual(now - previous.now + 1);
+    }
+    previous = { now, times };
+  }
+  expect(timeOf('interim-text')).toBe('6s');
+  expect(timeOf('interim-helper')).toBe('13s');
 });

@@ -316,6 +316,23 @@ button.worklog-step-head {
   color: inherit;
 }
 
+/* Text a tool call followed reads as it did, with its time on its first line in the steps column. */
+.worklog-note {
+  display: flex;
+  align-items: baseline;
+  font-size: inherit;
+}
+
+.worklog-note-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.worklog-note > .worklog-step-time {
+  font-size: var(--font-small);
+  color: var(--color-text-muted);
+}
+
 /* One live line shimmers, colourless, Reduce Motion or not: the thought or call under way while the Worklog is open,
    else the Turn's clock. Muted grey text with a light band sweeping left to right. The gradient is 2.5 times the
    words' width, the band its middle fifth; sliding the gradient from its right end to its left carries the band from

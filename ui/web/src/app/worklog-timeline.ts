@@ -4,8 +4,8 @@ import { withStorage } from "./main-chat-copy";
 /** A message as the timeline reads it. */
 type TimelineMessage = Stamped & { id: string; role: string; content?: unknown; toolCalls?: readonly { id: string; metadata?: Record<string, unknown> }[] | undefined };
 
-/** A step of a Turn's work on its timeline: when it began here (live) and when it ended, or neither while unknown. */
-export type TimedStep = { id: string; timingId?: string; kind: "start" | "thought" | "tool" | "answer"; began?: number | undefined; ended: number | undefined; finished?: boolean };
+/** A step of a Turn's work on its timeline: when it began here (live) and when it ended, or neither while unknown. A note is text a tool call followed. */
+export type TimedStep = { id: string; timingId?: string; kind: "start" | "thought" | "tool" | "note" | "answer"; began?: number | undefined; ended: number | undefined; finished?: boolean };
 
 /** "9s", "1m 12s". */
 export const seconds = (whole: number) => (whole < 60 ? `${whole}s` : `${Math.floor(whole / 60)}m ${whole % 60}s`);
@@ -83,11 +83,15 @@ function observedStep(kept: TurnTiming | undefined, id: string, running: boolean
 
 function stepsOf(turn: readonly TimelineMessage[], startId: string, running: boolean, kept: TurnTiming | undefined, now: number): TimedStep[] {
   const lastCall = turn.findLastIndex((message) => message.toolCalls?.length);
-  const texts = turn.filter((message, index) => message.role === "assistant" && !message.toolCalls?.length && hasText(message) && index > lastCall);
-  const answer = texts.at(-1) ?? turn.findLast((message) => message.role === "assistant" && !message.toolCalls?.length && hasText(message));
+  const said = (message: TimelineMessage) => message.role === "assistant" && !message.toolCalls?.length && hasText(message);
+  const answer = turn.filter((message, index) => said(message) && index > lastCall).at(-1);
   const work = turn.flatMap((message, index): TimedStep[] => {
     const next = !running ? turn.slice(index + 1).find((candidate) => candidate.role !== "tool" && stampsOf(candidate) !== undefined) : undefined;
     const observedEnd = (next && stampsOf(next)?.[0]) ?? now;
+    if (said(message) && index < lastCall) {
+      const clock = observedStep(kept, message.id, false, observedEnd);
+      return [{ id: message.id, kind: "note", finished: clock === undefined, began: stampsOf(message)?.[0] ?? clock?.started, ended: stampsOf(message)?.[1] ?? (!running && next ? stampsOf(next)?.[0] : undefined) ?? clock?.ended }];
+    }
     if (message.role === "reasoning") {
       const clock = observedStep(kept, message.id, running && message === turn.at(-1), observedEnd);
       return [{ id: message.id, kind: "thought", finished: clock === undefined && message !== turn.at(-1), began: stampsOf(message)?.[0] ?? clock?.started, ended: stampsOf(message)?.[1] ?? (!running && next ? stampsOf(next)?.[0] : undefined) ?? clock?.ended }];
