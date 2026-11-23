@@ -2,7 +2,7 @@
 // @vitest-environment jsdom
 import { HttpAgent, type Message } from '@ag-ui/client';
 import { CopilotChatConfigurationProvider, CopilotChatMessageView, CopilotKitProvider, useAgent } from '@copilotkit/react-core/v2';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { downloadAs } from './download-menu.testing';
 import { check, describe as describeError } from 'botcube-artifact-check';
@@ -163,7 +163,7 @@ describe('while the agent writes a deck', () => {
     await until(TURN_ENDS + 300);
     expect(screen.queryByRole('region')).toBeNull();
     await act(() => screen.getByRole('button', { name: /Q3 Operating Review/ }).click());
-    expect(screen.getByRole('region', { name: 'Q3 Operating Review' })).toHaveTextContent('Slides · version 1');
+    expect(within(screen.getByRole('region', { name: 'Q3 Operating Review' })).getByRole('button', { name: /^Edited by BotCube/ })).toBeInTheDocument();
   });
 });
 
@@ -372,6 +372,20 @@ describe("the User's edit of a published deck's text", () => {
     return { panel, posted, agentPublishes, unmount };
   }
 
+  /** The text of the version the panel's history menu marks Current, read by opening the menu and closing it again. */
+  async function currentVersion(panel: HTMLElement) {
+    await act(() => within(panel).getByRole('button', { name: /^Edited by/ }).click());
+    const item = await waitFor(() => {
+      const found = screen.getAllByRole('menuitem').find((menuitem) => menuitem.textContent.includes('Current'));
+      if (!found) throw new Error('no version is marked Current');
+      return found;
+    });
+    const text = item.textContent;
+    await act(() => fireEvent.keyDown(item, { key: 'Escape' }));
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    return text;
+  }
+
   async function editCover(panel: HTMLElement, typed: string) {
     await userEvent.click(within(panel).getByRole('button', { name: 'Edit text' }));
     type(within(within(panel).getByRole('group', { name: 'Slide 1: cover' })).getByRole('textbox', { name: 'Paragraph 1' }));
@@ -390,7 +404,7 @@ describe("the User's edit of a published deck's text", () => {
     await waitFor(() => expect(lastSlides(posted)[0]?.html).toContain('Checked: Where we landed</p>'));
     await userEvent.click(within(panel).getByRole('button', { name: 'Save' }));
 
-    await waitFor(() => expect(within(panel).getByText('Slides · version 2 · saved by you')).toBeVisible());
+    await waitFor(() => expect(within(panel).getByRole('button', { name: /^Edited by you/ })).toBeVisible());
     expect(saves).toEqual([{ id: '/decks/q3', version: 1, files: { 'project/slides/cover.html': VALID_COVER.replace('Where we landed</p>', 'Checked: Where we landed</p>') } }]);
     expect(stored[`${V2}/slides/cover.html`]).toContain('<aside>Open with the number.</aside>');
     expect(within(panel).queryByRole('button', { name: 'Save' })).toBeNull();
@@ -401,15 +415,16 @@ describe("the User's edit of a published deck's text", () => {
     const { stored, saves } = deckInFiles();
     const first = await openDeck();
     await editCover(first.panel, 'Saved: ');
-    await waitFor(() => expect(within(first.panel).getByText('Slides · version 2 · saved by you')).toBeVisible());
+    await waitFor(() => expect(within(first.panel).getByRole('button', { name: /^Edited by you/ })).toBeVisible());
     first.unmount();
 
     const { panel, posted } = await openDeck();
 
-    await waitFor(() => expect(within(panel).getByText('Slides · version 2 · saved by you')).toBeVisible());
+    await waitFor(() => expect(within(panel).getByRole('button', { name: /^Edited by you/ })).toBeVisible());
     await waitFor(() => expect(lastSlides(posted)[0]?.html).toContain('Saved: Where we landed'));
     await editCover(panel, 'Again: ');
-    await waitFor(() => expect(within(panel).getByText('Slides · version 3 · saved by you')).toBeVisible());
+    await waitFor(() => expect(within(panel).queryByRole('button', { name: 'Save' })).toBeNull());
+    expect(await currentVersion(panel)).toMatch(/^You.*Version 3/);
     expect(saves.map(({ version }) => version)).toEqual([1, 2]);
     expect(stored[`${V2.replace('/2/', '/3/')}/slides/cover.html`]).toContain('Again: Saved: Where we landed');
     expect(within(panel).queryByRole('alert')).toBeNull();
@@ -438,7 +453,7 @@ describe("the User's edit of a published deck's text", () => {
 
     expect(await within(panel).findByRole('alert')).toHaveTextContent("Couldn't save: Version 2 of /decks/q3 is newer than the version 1 you edited. Open the newest and edit again.");
     expect(within(panel).getAllByRole('textbox')[0]).toHaveTextContent('Draft: Q3 Operating Review');
-    expect(within(panel).getByText('Slides · version 1')).toBeVisible();
+    expect(within(panel).getByRole('button', { name: /^Edited by BotCube/ })).toBeVisible();
   });
 
   it("keeps the User's draft on the version they edit when the agent publishes a newer one, until they discard it", async () => {
@@ -464,7 +479,6 @@ describe("the User's edit of a published deck's text", () => {
     expect(lastSlides(posted)[0]?.html).not.toContain('Draft:');
     expect(within(panel).queryByRole('status')).toBeNull();
     expect(within(panel).queryByRole('textbox')).toBeNull();
-    expect(within(panel).getByText('Slides · version 2')).toBeVisible();
   });
 
   it('downloads the version the User is editing as a PowerPoint, without their unsaved edits, when the agent publishes a newer one', async () => {

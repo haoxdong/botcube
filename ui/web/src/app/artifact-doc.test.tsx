@@ -363,7 +363,7 @@ describe("the User's edit of a published Doc", () => {
     await userEvent.keyboard('Public ');
     await userEvent.click(within(panel).getByRole('button', { name: 'Save' }));
 
-    await waitFor(() => expect(within(panel).getByText('Doc · version 2 · saved by you')).toBeVisible());
+    await waitFor(() => expect(within(panel).getByRole('button', { name: /^Edited by you/ })).toBeVisible());
     expect(saves).toHaveLength(1);
     const [{ id, version, files } = { id: '', version: 0, files: {} }] = saves;
     expect([id, version, Object.keys(files)]).toEqual(['/plans/q4.md', 1, ['q4.md']]);
@@ -438,7 +438,7 @@ describe("the User's edit of a published Doc", () => {
 
     expect(await within(panel).findByRole('alert')).toHaveTextContent("Couldn't save: Version 2 of /plans/q4.md is newer than the version 1 you edited. Open the newest and edit again.");
     expect(within(doc).getByRole('heading', { level: 1 })).toHaveTextContent('Draft Q4 plan');
-    expect(within(panel).getByText('Doc · version 1')).toBeVisible();
+    expect(within(panel).getByRole('button', { name: /^Edited by BotCube/ })).toBeVisible();
   });
 });
 

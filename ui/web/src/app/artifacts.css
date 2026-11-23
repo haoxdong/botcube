@@ -108,10 +108,16 @@
   margin-left: auto;
 }
 
-/* The Download menu opens from the phone's Artifact sheet, which sits at 500 over the page, so its positioner (the
-   stock part's 50) rises above it. */
-:has(> .artifact-download-menu) {
+/* The Download and version menus open from the phone's Artifact sheet, which sits at 500 over the page, so their
+   positioners (the stock part's 50) rise above it. */
+:has(> .artifact-download-menu, > .artifact-history-menu) {
   z-index: 501;
+}
+
+/* A version's avatar keeps its own size: the stock item sizes every icon inside it to 16px. */
+.artifact-history-menu .avatar svg {
+  width: 100%;
+  height: 100%;
 }
 
 .artifact-export-note {

@@ -1,6 +1,6 @@
 import { HttpAgent } from '@ag-ui/client';
 import { CopilotChatConfigurationProvider, CopilotChatMessageView, CopilotKitProvider, useAgent } from '@copilotkit/react-core/v2';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -42,15 +42,21 @@ function Chat({ messages = reply(), accountId = "pane-test" }: { messages?: Retu
   );
 }
 
+/** Version `n`'s record, `<n>.json` beside it: the agent published it. */
+const record = (n: number) => JSON.stringify({ author: 'agent', title: PUBLISHED.title, description: `${PUBLISHED.description} ${n}` });
+
 function files() {
   const fetchImpl = vi.fn(async (input: string) => {
-    if (new URL(input).pathname === '/files') return Response.json({ files: [1, 2].map((version) => ({ name: `artifacts/reports/q3.html.versions/${version}.html`, size: 1, lastModified: '2026-11-15T18:00:00Z' })) });
+    // The versions' records, for the panel's history; listing no version's page keeps the chat's newest the newest.
+    if (new URL(input).pathname === '/files') return Response.json({ files: [1, 2].map((version) => ({ name: `artifacts/reports/q3.html.versions/${version}.json`, size: 1, lastModified: '2026-11-15T18:00:00Z' })) });
     if (input === 'https://files.test/2.html') return new Response(PAGE);
     if (input === 'https://files.test/1.html') return new Response(PAGE_1);
+    if (input === 'https://files.test/2.json') return new Response(record(2));
+    if (input === 'https://files.test/1.json') return new Response(record(1));
     const name = new URL(input).searchParams.get('name');
-    const version = /^artifacts\/reports\/q3\.html\.versions\/([12])\.html$/.exec(name ?? '')?.[1];
+    const [, version, kind] = /^artifacts\/reports\/q3\.html\.versions\/([12])\.(html|json)$/.exec(name ?? '') ?? [];
     return version
-      ? Response.json({ url: `https://files.test/${version}.html` })
+      ? Response.json({ url: `https://files.test/${version}.${kind}` })
       : Response.json({ detail: `No file named ${name}` }, { status: 404 });
   });
   vi.stubGlobal('fetch', fetchImpl);
@@ -80,6 +86,23 @@ function sandboxReady(frame: HTMLIFrameElement, posted = vi.fn()) {
   Object.defineProperty(frame, 'contentWindow', { value: sandbox, configurable: true });
   void act(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'artifact-sandbox-ready' }, origin: 'null', source: sandbox })));
   return posted;
+}
+
+/**
+ * The text of the version the panel's history menu marks Current, read by opening the menu and closing it again.
+ * `until` waits for a check to pass; under fake timers, where `waitFor` stalls, it moves the clock instead.
+ */
+async function currentVersion(panel: HTMLElement, until: <T>(check: () => T) => Promise<T> = (check) => waitFor(check)) {
+  await act(() => within(panel).getByRole('button', { name: /^Edited by/ }).click());
+  const item = await until(() => {
+    const found = screen.getAllByRole('menuitem').find((menuitem) => menuitem.textContent.includes('Current'));
+    if (!found) throw new Error('no version is marked Current');
+    return found;
+  });
+  const text = item.textContent;
+  await act(() => fireEvent.keyDown(item, { key: 'Escape' }));
+  await until(() => expect(screen.queryByRole('menu')).toBeNull());
+  return text;
 }
 
 beforeEach(files);
@@ -193,7 +216,6 @@ it('switches an open panel to the new version when the agent publishes an update
   view.rerender(<Chat messages={[...reply(JSON.stringify(first)), ...reply(JSON.stringify(PUBLISHED), '2')]} />);
 
   const panel = screen.getByRole('region', { name: 'Q3 revenue by month' });
-  await waitFor(() => expect(within(panel).getByText('Page · version 2')).toBeInTheDocument());
   const updated = sandboxReady(within(panel).getByTitle<HTMLIFrameElement>('Q3 revenue by month'));
   await waitFor(() => expect(updated).toHaveBeenCalledWith({ type: 'artifact-page', position: { left: 0, top: 0 }, html: PAGE }, '*'));
 
@@ -201,7 +223,7 @@ it('switches an open panel to the new version when the agent publishes an update
   const [older] = screen.getAllByRole('button', { name: /Q3 revenue by month/ });
   if (!older) throw new Error('the first card is gone');
   await userEvent.click(older);
-  expect(within(screen.getByRole('region', { name: 'Q3 revenue by month' })).getByText('Page · version 2')).toBeInTheDocument();
+  expect(await currentVersion(screen.getByRole('region', { name: 'Q3 revenue by month' }))).toContain('Version 2');
 });
 
 it('shows a read or a list of Artifacts as a line of the reply, not as a card or an error', async () => {
@@ -285,9 +307,14 @@ describe('while the agent writes', () => {
       'reports/q3.html': EDITED,
       'artifacts/reports/q3.html.versions/1.html': WRITTEN,
       'artifacts/reports/q3.html.versions/2.html': EDITED,
+      'artifacts/reports/q3.html.versions/1.json': record(1),
+      'artifacts/reports/q3.html.versions/2.json': record(2),
     };
+    // Files lists the versions' records, for the panel's history; no version shows newer than the chat's.
+    const listed = Object.keys(files).filter((name) => name.endsWith('.json')).map((name) => ({ name, size: 1, lastModified: '1970-01-01T00:00:00Z' }));
     vi.stubGlobal('fetch', vi.fn(async (input: string) => {
       if (input === 'https://chat.test/agent') return new Response(turnStream(events), { headers: { 'content-type': 'text/event-stream' } });
+      if (new URL(input).pathname === '/files') return Response.json({ files: listed });
       if (input.startsWith('https://files.test/')) return new Response(files[decodeURIComponent(input.slice('https://files.test/'.length))]);
       const name = new URL(input).searchParams.get('name') ?? '';
       return name in files
@@ -369,7 +396,12 @@ describe('while the agent writes', () => {
     expect(sent).toEqual([]);
     await act(() => screen.getAllByRole('button', { name: /Q3 revenue by month/ })[0]?.click());
     await until(TURN_ENDS + 100);
-    expect(screen.getByRole('region', { name: 'Q3 revenue by month' })).toHaveTextContent('Page · version 2');
+    let at = TURN_ENDS + 100;
+    const later = async <T,>(check: () => T) => {
+      await until(at += 100);
+      return check();
+    };
+    expect(await currentVersion(screen.getByRole('region', { name: 'Q3 revenue by month' }), later)).toContain('Version 2');
   });
 
   it('keeps another Artifact open while the Turn creates and updates an Artifact', async () => {
@@ -400,14 +432,12 @@ describe('while the agent writes', () => {
     await run();
 
     await until(REPUBLISHED - 5);
-    expect(screen.getByRole('region', { name: 'Q3 revenue by month' })).toHaveTextContent('Page · version 1');
     expect(previews(sent)).toEqual([]);
     expect(pages(sent)).toHaveLength(1);
 
     await until(REPUBLISHED + 50);
     expect(screen.getByRole('region', { name: 'Q3 revenue by month' })).toBe(panel);
     expect(panel.scrollTop).toBe(120);
-    expect(screen.getByRole('region', { name: 'Q3 revenue by month' })).toHaveTextContent('Page · version 2');
     expect(sent.at(-1)?.message).toEqual({ type: 'artifact-page', position: { left: 0, top: 0 }, html: EDITED });
   });
 
@@ -448,7 +478,8 @@ it("keeps the chat's version open and says why when Files can't say whether a ne
 
   const panel = screen.getByRole('region', { name: 'Q3 revenue by month' });
   expect(await within(panel).findByRole('alert')).toHaveTextContent("Couldn't look for a newer version in Files: Files is unavailable");
-  expect(within(panel).getByText('Page · version 2')).toBeVisible();
+  const posted = sandboxReady(within(panel).getByTitle<HTMLIFrameElement>('Q3 revenue by month'));
+  await waitFor(() => expect(posted).toHaveBeenCalledWith({ type: 'artifact-page', position: { left: 0, top: 0 }, html: PAGE }, '*'));
 });
 
 it.each([

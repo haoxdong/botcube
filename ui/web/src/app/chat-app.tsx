@@ -128,7 +128,7 @@ export default function App({
   }, [activeId, mainChatId, mainChatError]);
 
   const [loadedAgentProfile, setAgentProfile] = useState<{ accountId: typeof accountId; profile: AgentProfileData } | null>(null);
-  const agentProfile = loadedAgentProfile !== null && loadedAgentProfile.accountId === accountId ? loadedAgentProfile.profile : null;
+  const agentProfile = loadedAgentProfile?.accountId === accountId ? loadedAgentProfile?.profile ?? null : null;
   const [agentProfileError, setAgentProfileError] = useState<string | null>(null);
   const [profileKept, setProfileKept] = useState(false);
   const [chatStop, setChatStop] = useState<ChatStop | null>(null);
@@ -318,7 +318,7 @@ export default function App({
           >
             {(ChatThread) => <>
             <ChatAlerts errors={activeId === null ? [] : [auth.error, mainChatRefreshError, stopError, choiceError, warmupError?.accountId === accountId ? warmupError?.message : null]} failure={activeId === null || mainChatError === null ? null : { error: mainChatError, retry: () => void openMainChat() }} />
-            <ChatColumn agent={agent} accountId={accountId} header={headerInPane ? chatHeader : undefined} request={artifactRequest}>
+            <ChatColumn agent={agent} profile={agentProfile} accountId={accountId} header={headerInPane ? chatHeader : undefined} request={artifactRequest}>
             <Presence>{activeId === null ? noChat : (
             <motionElement.div {...presenceMotion} className={covered ? "app-chat app-chat-opening" : "app-chat"}>
               <TurnStart.Provider value={runningSince}>

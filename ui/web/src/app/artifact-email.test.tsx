@@ -172,7 +172,7 @@ describe('an Email in the panel', () => {
     draftInFiles();
     const { panel } = await openDraft();
 
-    expect(within(panel).getByText('Email · version 1')).toBeVisible();
+    expect(within(panel).getByRole('button', { name: /^Edited by BotCube/ })).toBeVisible();
     expect(within(panel).getByRole('textbox', { name: 'Cc' })).toHaveValue('finance@example.com');
     expect(within(panel).getByRole('textbox', { name: 'Subject' })).toHaveValue('Q3 numbers for review');
     expect(within(panel).getByRole('textbox', { name: 'Body' })).toHaveTextContent('Hi Dana,The Q3 review is attached.');
@@ -188,7 +188,7 @@ describe('an Email in the panel', () => {
     await typeInto(within(panel).getByRole('textbox', { name: 'Body' }), 'Updated: ');
     await userEvent.click(within(panel).getByRole('button', { name: 'Save' }));
 
-    await waitFor(() => expect(within(panel).getByText('Email · version 2 · saved by you')).toBeVisible());
+    await waitFor(() => expect(within(panel).getByRole('button', { name: /^Edited by you/ })).toBeVisible());
     expect(saves).toHaveLength(1);
     const [save] = saves;
     expect({ id: save?.id, version: save?.version, names: Object.keys(save?.files ?? {}) }).toEqual({ id: '/drafts/q3.email.json', version: 1, names: ['q3.email.json'] });
@@ -217,7 +217,7 @@ describe('an Email in the panel', () => {
     ]);
     expect(saves).toEqual([]);
     expect(within(panel).getByRole('textbox', { name: 'Cc' })).toHaveValue('finance@example.com, Lee <lee@example.com>');
-    expect(within(panel).getByText('Email · version 1')).toBeVisible();
+    expect(within(panel).getByRole('button', { name: /^Edited by BotCube/ })).toBeVisible();
   });
 
   it("keeps the User's edits on the version they edit when the agent publishes a newer one, until they discard them", async () => {

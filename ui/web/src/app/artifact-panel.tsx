@@ -3,7 +3,7 @@
 import { contentToText, type AbstractAgent } from "@ag-ui/client";
 import { useRenderTool } from "@copilotkit/react-core/v2";
 import { AnimatePresence, domAnimation, LazyMotion, m as motionElement, useIsPresent } from "motion/react";
-import { Maximize2Icon, Minimize2Icon, PanelLeftIcon, PanelRightIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, Maximize2Icon, Minimize2Icon, PanelLeftIcon, PanelRightIcon, XIcon } from "lucide-react";
 import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type Dispatch,
   type ComponentProps, type ReactNode, type SetStateAction,
@@ -11,13 +11,18 @@ import {
 import { usePanelRef } from "react-resizable-panels";
 import { z } from "zod";
 
+import { webUiPlugin } from "@bot-ui";
+
+import { listFiles } from "../computer/files-service";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../components/ui/resizable";
 import { Sheet } from "../components/ui/sheet";
+import { chatServiceUrl } from "../plugin/chat-service-url";
 import { agentFiles } from "./agent-files";
 import { Refusal, useExports } from "./artifact-exports";
 import { readBytes, readFile } from "./artifact-files";
 import { newestInFiles, useNewestInFiles } from "./artifact-newest";
 import { ArtifactFace } from "./artifact-face";
+import { agoOf, byDay, historyOf, timeOf, type HistoryVersion } from "./artifact-history";
 import { AnswerCards, Published, publishedOf } from "./artifact-published";
 import { useArtifactRequest, type ArtifactRequest } from "./artifact-request";
 import { TYPES } from "./artifact-types";
@@ -25,8 +30,13 @@ import type { ArtifactEdit, ViewerProps } from "./artifact-viewer";
 import { withStorage } from "./main-chat-copy";
 import { Layout } from "./collapse";
 import { motionTokens } from "./motion-tokens";
+import type { AgentProfileData } from "./agent-profile";
+import { Avatar } from "./avatar";
+import { reason } from "./composer-files";
 import { useIsPhone } from "./phone-query";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 /** The harness `Artifact` tool's arguments (botcube_harness_deepagents/artifact.py). */
 const ArtifactCall = z.object({
@@ -43,6 +53,8 @@ type Opened = { id: string; full: boolean };
 type Open = Dispatch<SetStateAction<Opened | null>>;
 type Shown = { artifact: Published; full: boolean };
 const Panel = createContext<{
+  /** The agent as a version's author: its name, and its picture or emoji when it has one. */
+  agent: { name: string; picture?: string | undefined; avatar?: string | undefined };
   shown: Shown | null;
   open: Open;
   /** A published version, from a card or the agent's publish, so the panel and every card of its Artifact open the newest. */
@@ -72,9 +84,6 @@ const publishes = (args: string) => (ArtifactCall.parse(JSON.parse(args)).action
 
 const typeOf = (type: Published["type"]) => TYPES[type ?? "page"];
 
-const kindOf = (artifact: Published) =>
-  `${typeOf(artifact.type).label} · version ${artifact.version}${artifact.author === "user" ? " · saved by you" : ""}`;
-
 const titleOf = (shown: Shown) => shown.artifact.title;
 const pathOf = (shown: Shown) => shown.artifact.id;
 
@@ -91,7 +100,7 @@ function useKept(shown: Shown | null) {
   return kept;
 }
 
-export function ArtifactLayout({ agent, children, header, accountId = "", request }: { agent: AbstractAgent; children: ReactNode; header?: ReactNode; accountId?: string | undefined; request?: ArtifactRequest | undefined }) {
+export function ArtifactLayout({ agent, profile = null, children, header, accountId = "", request }: { agent: AbstractAgent; profile?: AgentProfileData | null; children: ReactNode; header?: ReactNode; accountId?: string | undefined; request?: ArtifactRequest | undefined }) {
   const [opened, open] = useState<Opened | null>(null);
   const [newest, setNewest] = useState<Readonly<Record<string, Published>>>({});
   const seen = useCallback((artifact: Published) => setNewest((known) =>
@@ -119,7 +128,8 @@ export function ArtifactLayout({ agent, children, header, accountId = "", reques
       );
     },
   }, []);
-  const panel = { shown, open, seen, failures };
+  const author = { name: profile?.name ?? webUiPlugin.config.agentName, picture: profile?.picture ?? undefined, avatar: profile?.avatar };
+  const panel = { agent: author, shown, open, seen, failures };
   return (
     <Panel.Provider value={panel}>
       <ArtifactSplit phone={phone} accountId={accountId} shown={phone ? null : shown} close={() => open(null)}><div className="artifact-chat-column">{header}{children}</div></ArtifactSplit>
@@ -197,7 +207,7 @@ function ArtifactSplit({ shown, close, children, accountId, phone }: { phone: bo
 /** The phone Sheet's body. Nothing is kept before the first open, while Base UI hasn't mounted the Sheet's popup. */
 function SheetView({ shown }: { shown: Shown | null }) {
   if (shown === null) return null;
-  return <ArtifactView key={pathOf(shown)} shown={shown} heading={<span className="sent-file-kind"><Kind shown={shown} /></span>} />;
+  return <ArtifactView key={pathOf(shown)} shown={shown} heading={<History shown={shown} />} />;
 }
 
 function ArtifactSide(props: ComponentProps<typeof motionElement.div>) {
@@ -251,13 +261,65 @@ function DesktopHeading({ shown }: { shown: Shown }) {
   return (
     <span className="sent-file-text">
       <span className="sent-file-name">{titleOf(shown)}</span>
-      <span className="sent-file-kind"><Kind shown={shown} /></span>
+      <History shown={shown} />
     </span>
   );
 }
 
-function Kind({ shown }: { shown: Shown }) {
-  return kindOf(shown.artifact);
+/** Every stored version of the shown Artifact, newest first, from Files; or why Files couldn't list them. */
+function useHistory({ id, version }: Published) {
+  const [history, setHistory] = useState<{ of: string; versions: HistoryVersion[] } | { of: string; failure: string }>();
+  const of = `${id} ${version}`;
+  useEffect(() => {
+    let current = true;
+    listFiles({ chatServiceUrl: chatServiceUrl() }).then((files) => historyOf(id, version, files, readFile)).then(
+      (versions) => current && setHistory({ of, versions }),
+      (error: unknown) => current && setHistory({ of, failure: `Couldn't list the versions: ${reason(error)}` }),
+    );
+    return () => {
+      current = false;
+    };
+  }, [id, version, of]);
+  return history?.of === of ? history : undefined;
+}
+
+/** The panel head's subtitle: who saved the newest version and when; it opens every version, grouped by day. */
+function History({ shown }: { shown: Shown }) {
+  const { agent } = usePanel();
+  const { artifact } = shown;
+  const history = useHistory(artifact);
+  const phone = useIsPhone();
+  const versions = history && "versions" in history ? history.versions : [];
+  const now = new Date();
+  const newest = versions[0];
+  const when = newest?.version === artifact.version ? ` ${agoOf(newest.at, now)}` : "";
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button type="button" variant="secondary" size="xs" className="artifact-history self-center font-normal text-muted-foreground" />}>
+        Edited by {artifact.author === "user" ? "you" : agent.name}{when}<ChevronDownIcon data-icon="inline-end" aria-hidden />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align={phone ? "start" : "center"} className="artifact-history-menu w-auto min-w-72">
+        {history && "failure" in history && <DropdownMenuLabel role="alert">{history.failure}</DropdownMenuLabel>}
+        {byDay(versions, now).map(({ day, versions: inDay }) => (
+          <DropdownMenuGroup key={day}>
+            <DropdownMenuLabel>{day}</DropdownMenuLabel>
+            {inDay.map(({ version, author, at }) => (
+              <DropdownMenuItem key={version} className="gap-2.5">
+                {author === "user"
+                  ? <Avatar size={32} />
+                  : <Avatar size={32} agent picture={agent.picture} emoji={agent.avatar} />}
+                <span className="flex flex-col">
+                  <span>{author === "user" ? "You" : agent.name}</span>
+                  <span className="text-xs text-muted-foreground">Version {version} · {timeOf(at)}</span>
+                </span>
+                {version === artifact.version && <Badge variant="outline" className="ml-auto">Current</Badge>}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuGroup>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 function DesktopControls({ shown, position, switchSide }: { shown: Shown; position: "left" | "right"; switchSide: () => void }) {
