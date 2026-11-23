@@ -184,21 +184,6 @@
     inset: -7px;
   }
 
-  .chat-model-picker .mep-pill {
-    border-top: 6px solid transparent;
-    border-bottom: 6px solid transparent;
-    background-clip: padding-box !important;
-  }
-}
-
-/* A desktop's composer is one 46px row: the 36px text inside the box's 4px padding and 1px border, stock's 32px +
-   and Send centred on it. */
-@media (min-width: 768px) {
-  /* Over shell.css's 44px phone target. */
-  .chat-composer .composer-end .mep-pill {
-    min-width: 36px;
-    min-height: 36px;
-  }
 }
 
 [data-copilotkit] [data-testid="copilot-scroll-to-bottom"] {

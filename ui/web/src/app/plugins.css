@@ -218,8 +218,7 @@
     box-shadow: inset 0 0 0 2px var(--color-white);
   }
 
-  .agent-profile-tab,
-  .mep-pill {
+  .agent-profile-tab {
     min-height: 44px;
   }
 }
@@ -233,10 +232,6 @@
 
   .sidebar-expanded {
     height: calc(100dvh / var(--ui-zoom));
-  }
-
-  .chat-model-picker .mep-dropdown {
-    max-height: calc(100dvh / var(--ui-zoom) - 100% - var(--chat-header-height) - 4rem);
   }
 
   .add-menu {

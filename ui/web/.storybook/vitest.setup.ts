@@ -72,7 +72,7 @@ afterEach(async (context) => {
     if (renderingProof?.viewport) await expect(window.innerWidth).toBe(renderingProof.viewport.width);
   }
   await document.fonts.ready;
-  await animationsSettled(document, inject('visualCompare') ? [...document.querySelectorAll('[role=region], .mep-dropdown, .mep-dropdown *, .mep-pill, .mep-pill *')] : []);
+  await animationsSettled(document, inject('visualCompare') ? [...document.querySelectorAll('[role=region], [data-slot=popover-content], [data-slot=popover-content] *, .chat-model-picker, .chat-model-picker *')] : []);
   if (inject('visualCompare')) {
     await expect(document.documentElement).toMatchScreenshot(context.task.name.replace(/[^a-zA-Z0-9-]+/g, '-'));
   }

@@ -17,10 +17,12 @@ it("keeps an older selected chat model while hiding it from choices", async () =
   const onModelChange = vi.fn();
   render(<ModelSelector models={{ loaded: true, accountId: "account", models }} model={models[0]?.key} effort="medium" loadingLabel={undefined} onModelChange={onModelChange} onEffortChange={vi.fn()} />);
   await userEvent.click(screen.getByRole("button", { name: "Model GPT-6-Luna, reasoning Medium" }));
-  expect(screen.queryByRole("radio", { name: "GPT-6-Luna" })).toBeNull();
-  expect(screen.queryByRole("radio", { name: "GPT-6-Sol" })).toBeNull();
+  await userEvent.click(screen.getByRole("combobox", { name: "Model GPT-6-Luna" }));
+  await screen.findByRole("listbox");
+  expect(screen.queryByRole("option", { name: "GPT-6-Luna" })).toBeNull();
+  expect(screen.queryByRole("option", { name: "GPT-6-Sol" })).toBeNull();
   expect(onModelChange).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole("radio", { name: "GPT-6.1-Sol" }));
+  await userEvent.click(screen.getByRole("option", { name: "GPT-6.1-Sol" }));
   expect(onModelChange).toHaveBeenCalledWith("openai-plan:gpt-6.1-sol");
 });
 

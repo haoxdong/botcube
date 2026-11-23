@@ -550,54 +550,6 @@
 
 
 
-.mep {
-  position: relative;
-  display: inline-grid;
-  align-items: center;
-  min-width: 0;
-}
-
-.mep-pill {
-  appearance: none;
-  background: var(--color-line);
-  border: none;
-  border-radius: var(--radius-pill);
-  padding: var(--space-8) var(--space-16);
-  font-size: var(--font-small);
-  color: var(--color-text);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  font-family: inherit;
-  transition: background var(--motion-quick) var(--ease);
-}
-
-@media (hover: hover) {
-    .mep-pill:hover {
-      background: var(--color-line);
-    }
-}
-
-.mep-pill-effort {
-  color: var(--color-text-muted);
-  font-weight: var(--weight-regular);
-}
-
-.mep-dropdown {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  background: var(--color-white);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-lg);
-  padding: 6px 0;
-  width: 280px;
-  max-width: calc(100vw - 40px);
-  box-shadow: var(--shadow-float);
-  z-index: 100;
-}
-
 .standard-popup-positioner,
 [data-side]:has(> .user-menu-dropdown) {
   z-index: 300;
@@ -608,7 +560,7 @@
   transition: opacity var(--motion-quick) var(--ease);
 }
 
-:is(.user-menu-dropdown, .mep-dropdown).standard-popup {
+.user-menu-dropdown.standard-popup {
   position: relative;
   inset: auto;
   max-width: var(--available-width);
@@ -623,45 +575,14 @@
   opacity: 0;
 }
 
-.mep-option {
-  appearance: none;
-  background: none;
-  border: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: var(--space-12) var(--space-16);
-  cursor: pointer;
-  font-family: inherit;
-  text-align: left;
-  transition: background var(--motion-quick) var(--ease);
-  gap: var(--space-16);
-  color: var(--color-text);
+/* No coloured ring on focus in the model and effort card: its Reset, model and effort thumb read `--ring`, clear here.
+   A focused Reset or model takes its stock hover look (their focus-visible classes); the focused thumb floats. */
+.model-card {
+  --ring: transparent;
 }
 
-@media (hover: hover) {
-    .mep-option:hover {
-      background: var(--color-fill);
-    }
-}
-
-.mep-option-name {
-  font-size: var(--font-body);
-  color: var(--color-text);
-}
-
-.mep-option-desc {
-  overflow-wrap: anywhere;
-  font-size: var(--font-small);
-  color: var(--color-text-muted);
-  margin-top: 2px;
-}
-
-.mep-check {
-  display: flex;
-  flex-shrink: 0;
-  color: var(--color-blue);
+.model-card [data-slot="slider-thumb"]:has(:focus-visible) {
+  box-shadow: var(--shadow-float);
 }
 
 
@@ -716,136 +637,5 @@
   height: 100%;
 }
 
-.mep-option[data-highlighted] {
-  background: var(--color-fill);
-}
-
-.mep-option-right {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  color: var(--color-text-muted);
-  font-size: var(--font-small);
-}
-
-.mep-back {
-  gap: var(--space-8);
-  justify-content: flex-start;
-  color: var(--color-text-muted);
-}
-
-.mep-separator {
-  height: 1px;
-  background: var(--color-line);
-  margin: 6px var(--space-16);
-}
-
-.mep::after {
-  content: "Loading models… Medium";
-  visibility: hidden;
-  grid-area: 1 / 1;
-  padding: 0 var(--space-16);
-  font-size: var(--font-small);
-  white-space: nowrap;
-}
-
-.mep > .mep-pill,
-.chat-model-picker .mep > .mep-pill {
-  transition: none;
-  position: relative;
-  grid-area: 1 / 1;
-  justify-self: end;
-  justify-content: flex-start;
-  background: transparent;
-}
-
-.mep-spring.standard-popup {
-  transition: none;
-  display: block;
-  gap: 0;
-  animation: none;
-  font-size: var(--font-body);
-  line-height: var(--leading);
-}
-
-.mep-spring.standard-popup[data-starting-style],
-.mep-spring.standard-popup[data-ending-style] {
-  opacity: unset;
-}
-
-.mep-spring .mep-option {
-  transition: none;
-}
 
 
-.mep-pill-background {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  gap: inherit;
-  max-width: 100%;
-  padding: 0 var(--space-24) 0 6px;
-  border-radius: inherit;
-  pointer-events: none;
-}
-
-.mep-pill-background::before,
-.mep-pill-background::after {
-  visibility: hidden;
-  white-space: nowrap;
-}
-
-.mep-pill-background::before {
-  content: attr(data-model);
-}
-
-.mep-pill-background::after {
-  content: attr(data-effort);
-}
-
-@media (max-width: 767px) {
-  .mep-pill-background {
-    padding: 0 var(--space-8);
-  }
-
-  .mep-pill-background::before {
-    content: attr(data-phone-model);
-  }
-}
-
-.mep > .mep-pill:focus-visible {
-  outline: none !important;
-}
-
-.mep-pill:focus-visible .mep-pill-background {
-  outline: 2px solid var(--color-text);
-  outline-offset: 2px;
-}
-
-@media (hover: hover) {
-  .mep-pill:hover .mep-pill-background {
-    background: var(--color-fill);
-  }
-}
-
-.mep-pill:active .mep-pill-background {
-  background: var(--color-fill);
-}
-
-@media (hover: none) {
-  .mep-pill[aria-expanded="true"] .mep-pill-background {
-    background: var(--color-fill);
-  }
-}
-
-
-.mep-choices { display:block;gap:0; }
-.mep-choices .mep-option { height:auto;aspect-ratio:auto;border-radius:0; }
-
-
-.mep-choices .mep-option::after {
-  content: none;
-}
