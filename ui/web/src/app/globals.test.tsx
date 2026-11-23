@@ -811,9 +811,13 @@ it("shows the agent's name in a capsule over the avatar's bottom edge (Muse/dots
   expect(name.backgroundColor).toBe('#fff');
 });
 
-it("leaves the agent's hover, press and focus to the stock ghost Button", () => {
-  // Stock gives no hover here (the app's background: none), its 1px press and its ring round the whole button.
-  expect(sheet).not.toMatch(/\.chat-header-agent[^{,]*:(?:hover|active|focus-visible)/);
+it("floats the agent's name capsule on keyboard focus and mouse hover, with no coloured ring, as the composer does", () => {
+  // happy-dom applies no :hover or :focus-visible, so these read the sheet. Press stays stock's 1px.
+  expect(sheet).toMatch(/\.chat-header-agent \{\s*--ring: transparent;/);
+  expect(sheet).toMatch(/\.chat-header-agent \.chat-header-name \{\s*transition: box-shadow var\(--motion-quick\) var\(--ease\);/);
+  expect(sheet).toMatch(/\.chat-header-agent:focus-visible \.chat-header-name \{\s*box-shadow: var\(--shadow-float\);/);
+  expect(sheet).toMatch(/@media \(hover: hover\) \{\s*\.chat-header-agent:hover:not\(:disabled\) \.chat-header-name \{\s*box-shadow: var\(--shadow-float\);/);
+  expect(sheet).not.toMatch(/\.chat-header-agent[^{,]*:active/);
   const agent = sheet.match(/\.chat-header-agent\[data-slot="button"\] \{[^}]*\}/g)?.join('\n') ?? '';
   expect(agent).not.toMatch(/box-shadow|translate|border-radius|transform/);
 });

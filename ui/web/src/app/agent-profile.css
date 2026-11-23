@@ -1,3 +1,23 @@
+/* No coloured ring; shadow instead, as the composer does (composer.css): keyboard focus and a mouse over the agent
+   float its name capsule. */
+.chat-header-agent {
+  --ring: transparent;
+}
+
+.chat-header-agent .chat-header-name {
+  transition: box-shadow var(--motion-quick) var(--ease);
+}
+
+.chat-header-agent:focus-visible .chat-header-name {
+  box-shadow: var(--shadow-float);
+}
+
+@media (hover: hover) {
+  .chat-header-agent:hover:not(:disabled) .chat-header-name {
+    box-shadow: var(--shadow-float);
+  }
+}
+
 /* The name in a frosted capsule over the avatar's bottom edge, as dots (Fig 7) and Muse (Fig 11) show it: a button, not a heading. */
 .chat-header-name {
   position: relative;
