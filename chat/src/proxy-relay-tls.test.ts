@@ -1,4 +1,5 @@
-import { copyFileSync, writeFileSync } from 'node:fs';
+import { X509Certificate } from 'node:crypto';
+import { copyFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -76,23 +77,34 @@ describe('the proxy relay to a proxy with TLS', () => {
     expect(proxy.clients()).toEqual(['client-a', 'client-b']);
   });
 
-  it('presents the certificate a command prints as an ExecCredential, run again for each connection', async () => {
+  it.each([true, false])('runs one command until the certificate needs refresh (explicit expiry: %s)', async (explicitExpiry) => {
     const printed = join(certificates.dir, 'exec-credential.json');
-    const print = (name: 'clientA' | 'clientB') => {
+    const calls = join(certificates.dir, 'certificate-command-calls');
+    writeFileSync(calls, '');
+    const start = Date.now();
+    const expiry = explicitExpiry ? start + 40_000 : new X509Certificate(certificates.pem('clientA').cert).validToDate.getTime();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(start);
+    const print = (name: 'clientA' | 'clientB', expiresAt: number) => {
       const { cert, key } = certificates.pem(name);
-      writeFileSync(printed, JSON.stringify({ kind: 'ExecCredential', status: { clientCertificateData: cert, clientKeyData: key } }));
+      const status = { clientCertificateData: cert, clientKeyData: key, ...(explicitExpiry && { expirationTimestamp: new Date(expiresAt).toISOString() }) };
+      writeFileSync(printed, JSON.stringify({ kind: 'ExecCredential', status }));
     };
-    print('clientA');
+    print('clientA', expiry);
+    const command = [process.execPath, '-e', 'const fs = require("node:fs"); fs.appendFileSync(process.argv[1], "x"); process.stdout.write(fs.readFileSync(process.argv[2]));', calls, printed] as const;
     const proxy = new FakeMtlsProxy(certificates);
-    const relay = await relayThrough(proxy, { clientCertificate: { command: ['/bin/cat', printed], timeoutSeconds: 5 }, serverIdentity: SERVER_IDENTITY }, {
+    const relay = await relayThrough(proxy, { clientCertificate: { command: [...command], timeoutSeconds: 5 }, serverIdentity: SERVER_IDENTITY }, {
       BOTCUBE_ALLOW_COMMAND_CREDENTIALS: '1',
     });
 
     await tunnel(relay);
-    print('clientB');
+    print('clientB', expiry + 600_000);
     await tunnel(relay);
+    expect(proxy.clients()).toEqual(['client-a', 'client-a']);
 
-    expect(proxy.clients()).toEqual(['client-a', 'client-b']);
+    clock.mockReturnValue(expiry - 10_000);
+    await Promise.all([tunnel(relay), tunnel(relay)]);
+    expect(proxy.clients()).toEqual(['client-a', 'client-a', 'client-b', 'client-b']);
+    expect(readFileSync(calls, 'utf8')).toBe('xx');
   });
 
   it('refuses a proxy carrying another identity before sending it anything, naming the expected and received identities', async () => {

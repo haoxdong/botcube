@@ -2,8 +2,8 @@
 
 botcube/harness/deepagents holds a byte-identical copy of botcube/credential-service's, where its behaviour is tested.
 
-The client certificate an Endpoint presents is read again for each new connection, so a rotated one is used without a
-restart, and the server identity it expects, a URI or SPIFFE ID, is matched against the server certificate's URI SAN
+Mounted certificates are read on each connection and command certificates are refreshed before expiry. The server
+identity, a URI or SPIFFE ID, is matched against the server certificate's URI SAN
 in place of its hostname; the chain is still verified against the trust roots. The environment carries only the
 certificate's paths or command: a key printed by a command lives in an anonymous file only while it is loaded.
 """
@@ -15,11 +15,14 @@ import os
 import socket
 import ssl
 from collections.abc import Callable, Generator, Mapping
+from time import time
 from typing import Annotated, Literal
 
+from cryptography import x509
 from pydantic import (
     AfterValidator,
     AnyUrl,
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
@@ -27,7 +30,13 @@ from pydantic import (
     model_validator,
 )
 
-from .credential_source import ALLOW_COMMAND_CREDENTIALS_ENV, stdout_of
+from .credential_source import (
+    ALLOW_COMMAND_CREDENTIALS_ENV,
+    Credential,
+    CredentialSource,
+    CredentialSourceError,
+    stdout_of,
+)
 
 log = logging.getLogger(__name__)
 
@@ -121,12 +130,15 @@ def _certificate_loader(seam: str, source: FileCertificate | CommandCertificate 
             if env.get(ALLOW_COMMAND_CREDENTIALS_ENV) != '1':
                 raise EndpointTlsError(f'{named}: a command runs only when {ALLOW_COMMAND_CREDENTIALS_ENV}=1')
 
+            credentials = CredentialSource(named, lambda: _exec_certificate(stdout_of(command, timeout)), time, bound_mandatory_window=True)
+
             def load_printed(context: ssl.SSLContext) -> None:
                 try:
-                    pem = _exec_certificate(stdout_of(command, timeout))
-                    with _private_file(pem) as path:
+                    with _private_file(credentials.get().value) as path:
                         context.load_cert_chain(path)
-                except (OSError, ValueError, RuntimeError) as error:
+                except CredentialSourceError as error:
+                    raise EndpointTlsError(str(error)) from None
+                except OSError as error:
                     raise EndpointTlsError(f'{named}: {_reason(error)}') from None
 
             return load_printed
@@ -138,6 +150,7 @@ _MALFORMED = 'the command did not print a Kubernetes ExecCredential with status.
 class _ExecStatus(BaseModel):
     client_certificate_data: str = Field(alias='clientCertificateData', min_length=1)
     client_key_data: str = Field(alias='clientKeyData', min_length=1)
+    expiration_timestamp: AwareDatetime | None = Field(alias='expirationTimestamp', default=None)
 
 
 class _ExecCredential(BaseModel):
@@ -147,13 +160,20 @@ class _ExecCredential(BaseModel):
     status: _ExecStatus
 
 
-def _exec_certificate(stdout: str) -> str:
+def _exec_certificate(stdout: str) -> Credential:
     """The printed certificate and key as one PEM; a malformed print is refused without echoing it, as it may hold the key."""
     try:
         status = _ExecCredential.model_validate_json(stdout).status
     except ValidationError:
         raise ValueError(_MALFORMED) from None
-    return f'{status.client_key_data.rstrip()}\n{status.client_certificate_data.rstrip()}\n'
+    pem = f'{status.client_key_data.rstrip()}\n{status.client_certificate_data.rstrip()}\n'
+    try:
+        with _private_file(pem) as path:
+            ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_cert_chain(path)
+        expiry = status.expiration_timestamp or x509.load_pem_x509_certificate(status.client_certificate_data.encode()).not_valid_after_utc
+    except (OSError, ValueError):
+        raise ValueError('the command printed an invalid client certificate or key') from None
+    return Credential(pem, expiry.timestamp())
 
 
 def _reason(error: BaseException) -> str:

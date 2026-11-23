@@ -4,10 +4,14 @@ import json
 import logging
 import socket
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from cryptography import x509
 
+from botcube_credential_service import endpoint_tls as tls_module
 from botcube_credential_service.botcube_config import load_botcube_config
 from botcube_credential_service.endpoint_tls import EndpointTlsError, endpoint_tls
 from botcube_credential_service.proxy_relay import (
@@ -64,18 +68,38 @@ def test_relay_presents_a_replaced_certificate_on_the_next_connection_without_a_
         assert proxy.clients() == ['client-a', 'client-b']
 
 
-def test_relay_presents_the_certificate_a_command_prints_run_again_for_each_connection(certs: Certificates, tmp_path: Path) -> None:
+@pytest.mark.parametrize('explicit_expiry', [True, False])
+def test_relay_uses_one_command_until_client_certificate_refresh(
+    certs: Certificates, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit_expiry: bool,
+) -> None:
     printed = tmp_path / 'exec-credential.json'
-    printed.write_text(certs.exec_credential('client_a'))
-    command = [sys.executable, '-c', f'import sys; sys.stdout.write(open({str(printed)!r}).read())']
+    calls = tmp_path / 'calls'
+    expiry = datetime.now(UTC) + timedelta(seconds=40)
+    clock = [expiry.timestamp() - 40]
+    monkeypatch.setattr(tls_module, 'time', lambda: clock[0])
+
+    def write(name: str, expires_at: datetime) -> None:
+        record = json.loads(certs.exec_credential(name))
+        if explicit_expiry:
+            record['status']['expirationTimestamp'] = expires_at.isoformat()
+        printed.write_text(json.dumps(record))
+
+    write('client_a', expiry)
+    if not explicit_expiry:
+        expiry = x509.load_pem_x509_certificate(Path(certs.files('client_a')['certificate']).read_bytes()).not_valid_after_utc
+    command = [sys.executable, '-c', f'from pathlib import Path; Path({str(calls)!r}).open("a").write("x"); print(Path({str(printed)!r}).read_text())']
     with mtls_proxy(certs) as proxy:
         relay = _relay(proxy.url, {'clientCertificate': {'command': command, 'timeoutSeconds': 10}, 'serverIdentity': SERVER_IDENTITY}, _OPT_IN)
-
         tunnel(relay)
-        printed.write_text(certs.exec_credential('client_b'))
+        write('client_b', expiry + timedelta(minutes=10))
         tunnel(relay)
+        assert proxy.clients() == ['client-a', 'client-a']
 
-        assert proxy.clients() == ['client-a', 'client-b']
+        clock[0] = expiry.timestamp() - 10
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(tunnel, [relay, relay]))
+        assert proxy.clients() == ['client-a', 'client-a', 'client-b', 'client-b']
+        assert calls.read_text() == 'xx'
 
 
 def test_relay_refuses_another_identity_before_sending_anything_naming_both(certs: Certificates, caplog: pytest.LogCaptureFixture) -> None:

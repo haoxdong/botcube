@@ -1,4 +1,4 @@
-import { assertIdleContinuable } from './sessions.js';
+import { assertIdleContinuable, sessionAccessError } from './sessions.js';
 import type { Hono } from 'hono';
 import { z } from 'zod';
 import type { RequesterSource } from './requester.js';
@@ -32,7 +32,7 @@ export function steeringRoutes(
     if (metadata === null) throw new HttpError(404, 'Session not found');
     if (metadata.turn_preparing === true) return c.json(missed(sessionId, parsed.data.id));
     assertIdleContinuable(metadata);
-    const complete = await sessionMetadata.beginDispatch(owner, sessionId);
+    const complete = await sessionMetadata.beginDispatch(owner, sessionId).catch((error: unknown) => { throw sessionAccessError(error); });
     const response = await upstream.invokeRegistered(JSON.stringify({
       threadId: sessionId, runId: parsed.data.id,
       messages: [{ ...parsed.data, role: 'user' }],
@@ -56,7 +56,7 @@ export function steeringRoutes(
     if (metadata === null) throw new HttpError(404, 'Session not found');
     if (metadata.turn_preparing === true) return c.json({ withdrawn: true });
     assertIdleContinuable(metadata);
-    const complete = await sessionMetadata.beginDispatch(owner, sessionId);
+    const complete = await sessionMetadata.beginDispatch(owner, sessionId).catch((error: unknown) => { throw sessionAccessError(error); });
     const response = await upstream.invokeRegistered(JSON.stringify({
       threadId: sessionId, runId: messageId,
       messages: [], tools: [], context: [], state: {},

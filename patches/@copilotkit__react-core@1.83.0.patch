@@ -14,25 +14,11 @@ index b9e461e9b2c9956bd60dad15dba095a73aa9be56..8f3f09f07cd3b09512efc1d83a76717b
  	return useCoagentStateRenderBridge(props.agentId, props);
  }
  
-diff --git a/dist/copilotkit-C765tOUi.d.mts b/dist/copilotkit-C765tOUi.d.mts
-index c15154c7ab50d12060b6ad957f016a6cf61ca39b..9e1e2f543b1273c54de3125f0054f644bfeb6629 100644
---- a/dist/copilotkit-C765tOUi.d.mts
-+++ b/dist/copilotkit-C765tOUi.d.mts
-@@ -1584,6 +1584,9 @@ declare function CopilotChatView({
- }: CopilotChatViewProps): react_jsx_runtime0.JSX.Element;
- declare namespace CopilotChatView {
-   const ScrollView: React$1.FC<React$1.HTMLAttributes<HTMLDivElement> & {
-+    instance?: import("use-stick-to-bottom").StickToBottomInstance;
-+    resize?: import("use-stick-to-bottom").StickToBottomOptions["resize"] | false;
-+    initial?: import("use-stick-to-bottom").StickToBottomOptions["initial"];
-     autoScroll?: AutoScrollMode | boolean;
-     scrollThreadId?: string;
-     scrollToBottomButton?: SlotValue<React$1.FC<React$1.ButtonHTMLAttributes<HTMLButtonElement>>>;
 diff --git a/dist/copilotkit-DyxwF9wL.mjs b/dist/copilotkit-DyxwF9wL.mjs
 index 67a5d449238d247b372ae5f885ce355739440a90..561d6cf0e520ef44f21e2fe2c80eb873201cdf4f 100644
 --- a/dist/copilotkit-DyxwF9wL.mjs
 +++ b/dist/copilotkit-DyxwF9wL.mjs
-@@ -15400,6 +15400,11 @@ function useCoagentStateRenderBridge(agentId, props) {
+@@ -15400,5 +15400,10 @@ function useCoagentStateRenderBridge(agentId, props) {
  	]);
  }
  function CoAgentStateRenderBridge(props) {
@@ -43,18 +29,3 @@ index 67a5d449238d247b372ae5f885ce355739440a90..561d6cf0e520ef44f21e2fe2c80eb873
 +function CoAgentStateRenderBridgeActive(props) {
  	return useCoagentStateRenderBridge(props.agentId, props);
  }
- 
-diff --git a/dist/copilotkit-wqaNanhw.d.cts b/dist/copilotkit-wqaNanhw.d.cts
-index b5d0b1761a531cc35085e670962c4138d0abce43..0b4cca186ec4a875415e18c3a891444abde53f98 100644
---- a/dist/copilotkit-wqaNanhw.d.cts
-+++ b/dist/copilotkit-wqaNanhw.d.cts
-@@ -1583,6 +1583,9 @@ declare function CopilotChatView({
- }: CopilotChatViewProps): react_jsx_runtime0.JSX.Element;
- declare namespace CopilotChatView {
-   const ScrollView: React$1.FC<React$1.HTMLAttributes<HTMLDivElement> & {
-+    instance?: import("use-stick-to-bottom").StickToBottomInstance;
-+    resize?: import("use-stick-to-bottom").StickToBottomOptions["resize"] | false;
-+    initial?: import("use-stick-to-bottom").StickToBottomOptions["initial"];
-     autoScroll?: AutoScrollMode | boolean;
-     scrollThreadId?: string;
-     scrollToBottomButton?: SlotValue<React$1.FC<React$1.ButtonHTMLAttributes<HTMLButtonElement>>>;

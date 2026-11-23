@@ -105,10 +105,13 @@ class _CachedCredential:
 
 
 class CredentialSource:
-    def __init__(self, named: str, read: Callable[[], Credential], now: Callable[[], float]) -> None:
+    def __init__(
+        self, named: str, read: Callable[[], Credential], now: Callable[[], float], *, bound_mandatory_window: bool = False,
+    ) -> None:
         self._named = named
         self._read = read
         self._now = now
+        self._bound_mandatory_window = bound_mandatory_window
         self._cached: _CachedCredential | None = None
         self._refreshing: Future[Credential] | None = None
         self._lock = threading.Lock()
@@ -142,7 +145,7 @@ class CredentialSource:
             refreshing.set_exception(failure)
             return
         with self._lock:
-            self._cached = _with_refresh_windows(credential, self._now())
+            self._cached = _with_refresh_windows(credential, self._now(), self._bound_mandatory_window)
             self._refreshing = None
         refreshing.set_result(credential)
 
@@ -152,12 +155,13 @@ def _log_refresh_failure(refreshing: Future[Credential]) -> None:
         log.warning('Credential refresh failed: %s', failure)
 
 
-def _with_refresh_windows(credential: Credential, minted_at: float) -> _CachedCredential:
+def _with_refresh_windows(credential: Credential, minted_at: float, bound_mandatory_window: bool) -> _CachedCredential:
     if credential.expires_at is None:
         return _CachedCredential(credential, float('inf'), float('inf'))
     expiry = credential.expires_at
-    advisory_window = min((expiry - minted_at) / 2, ADVISORY_REFRESH_WINDOW_MAX_SECONDS)
-    return _CachedCredential(credential, expiry - advisory_window, expiry - MANDATORY_REFRESH_WINDOW_SECONDS)
+    half_lifetime = (expiry - minted_at) / 2
+    mandatory_window = min(half_lifetime, MANDATORY_REFRESH_WINDOW_SECONDS) if bound_mandatory_window else MANDATORY_REFRESH_WINDOW_SECONDS
+    return _CachedCredential(credential, expiry - min(half_lifetime, ADVISORY_REFRESH_WINDOW_MAX_SECONDS), expiry - mandatory_window)
 
 
 def credential_source(

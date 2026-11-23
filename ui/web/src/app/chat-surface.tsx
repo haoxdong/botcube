@@ -184,7 +184,7 @@ function ComposerInput(props: CopilotChatInputProps) {
   const compose = useContext(Compose);
   const text = useRef("");
   text.current = value;
-  const onChange = (next: string) => { setDraft(next); props.onChange?.(next); compose(); };
+  const onChange = (next: string) => { setDraft(next); props.onChange?.(next); if (next) compose(); };
   useLendComposer(text, onChange, stopTurn);
   const send = () => {
     if (sendFiles) {

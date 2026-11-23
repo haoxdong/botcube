@@ -45,14 +45,14 @@ export function credentialSource(
   return refreshingAhead(named, adapted.read, now);
 }
 
-function refreshingAhead(named: string, read: () => Promise<Credential>, now: () => number): CredentialSource {
-  let cached: { credential: Credential; advisoryAt: number; mandatoryAt: number } | undefined;
-  let refreshing: Promise<Credential> | undefined;
+export function refreshingAhead<T extends Pick<Credential, 'expiresAt'>>(named: string, read: () => Promise<T>, now: () => number, { boundMandatoryWindow = false } = {}): { get(): Promise<T> } {
+  let cached: { credential: T; advisoryAt: number; mandatoryAt: number } | undefined;
+  let refreshing: Promise<T> | undefined;
   const refresh = () => {
     if (refreshing) return refreshing;
     refreshing = read()
       .then((credential) => {
-        cached = { credential, ...refreshWindows(credential, now()) };
+        cached = { credential, ...refreshWindows(credential, now(), boundMandatoryWindow) };
         return credential;
       }, (error: unknown) => {
         throw new CredentialSourceError(`${named}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
@@ -71,10 +71,14 @@ function refreshingAhead(named: string, read: () => Promise<Credential>, now: ()
   };
 }
 
-function refreshWindows({ expiresAt }: Credential, mintedAt: number) {
+function refreshWindows({ expiresAt }: Pick<Credential, 'expiresAt'>, mintedAt: number, boundMandatoryWindow: boolean) {
   if (expiresAt === undefined) return { advisoryAt: Infinity, mandatoryAt: Infinity };
   const expiry = expiresAt.getTime();
-  return { advisoryAt: expiry - Math.min((expiry - mintedAt) / 2, ADVISORY_REFRESH_WINDOW_MAX_MS), mandatoryAt: expiry - MANDATORY_REFRESH_WINDOW_MS };
+  const halfLifetime = (expiry - mintedAt) / 2;
+  return {
+    advisoryAt: expiry - Math.min(halfLifetime, ADVISORY_REFRESH_WINDOW_MAX_MS),
+    mandatoryAt: expiry - (boundMandatoryWindow ? Math.min(halfLifetime, MANDATORY_REFRESH_WINDOW_MS) : MANDATORY_REFRESH_WINDOW_MS),
+  };
 }
 
 type Adapter = { readonly about: string; readonly read: () => Promise<Credential> } | { readonly about: string; readonly refused: string };

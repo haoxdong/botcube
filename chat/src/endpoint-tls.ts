@@ -1,8 +1,9 @@
+import { X509Certificate } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import type { ConnectionOptions, PeerCertificate } from 'node:tls';
+import { createSecureContext, type ConnectionOptions, type PeerCertificate } from 'node:tls';
 import { ALLOW_COMMAND_CREDENTIALS_ENV, type EndpointTls as EndpointTlsConfig } from 'botcube-config/blocks';
 import { z } from 'zod';
-import { stdoutOf } from './credential-source.js';
+import { refreshingAhead, stdoutOf } from './credential-source.js';
 
 /** The TLS options of one new connection; a key lives only here, never in an error or a log. */
 export type TlsConnectOptions = Pick<ConnectionOptions, 'cert' | 'key' | 'checkServerIdentity'>;
@@ -30,9 +31,10 @@ function clientCertificate(seam: string, source: ClientCertificate, env: NodeJS.
   if ('command' in source) {
     const named = `${seam} client certificate (command ${source.command[0]})`;
     if (env[ALLOW_COMMAND_CREDENTIALS_ENV] !== '1') throw new EndpointTlsError(`${named}: a command runs only when ${ALLOW_COMMAND_CREDENTIALS_ENV}=1`);
-    return async () => execCertificate(await stdoutOf(source.command, source.timeoutSeconds).catch((error: unknown) => {
-      throw new EndpointTlsError(`${named}: ${error instanceof Error ? error.message : String(error)}`);
-    }), named);
+    const credentials = refreshingAhead(named, async () => execCertificate(await stdoutOf(source.command, source.timeoutSeconds)), Date.now, { boundMandatoryWindow: true });
+    return async () => (await credentials.get().catch((error: unknown) => {
+      throw new EndpointTlsError(error instanceof Error ? error.message : String(error));
+    })).value;
   }
   const read = (path: string) => readFile(path, 'utf8').catch((error: unknown) => {
     throw new EndpointTlsError(`${seam} client certificate (file ${path}): ${error instanceof Error ? error.message : String(error)}`);
@@ -46,20 +48,26 @@ function clientCertificate(seam: string, source: ClientCertificate, env: NodeJS.
 /** A Kubernetes `ExecCredential` carrying a client certificate, as a credential plugin prints it. */
 const ExecCredential = z.object({
   kind: z.literal('ExecCredential'),
-  status: z.object({ clientCertificateData: z.string().min(1), clientKeyData: z.string().min(1) }),
+  status: z.object({
+    clientCertificateData: z.string().min(1),
+    clientKeyData: z.string().min(1),
+    expirationTimestamp: z.iso.datetime({ offset: true }).optional(),
+  }),
 });
 
-function execCertificate(stdout: string, named: string): { cert: string; key: string } {
-  const malformed = new EndpointTlsError(`${named}: the command did not print a Kubernetes ExecCredential with status.clientCertificateData and status.clientKeyData`);
+function execCertificate(stdout: string) {
+  const malformed = new Error('the command did not print a Kubernetes ExecCredential with status.clientCertificateData and status.clientKeyData');
   let printed: unknown;
-  try {
-    printed = JSON.parse(stdout);
-  } catch {
-    throw malformed;
-  }
+  try { printed = JSON.parse(stdout); } catch { throw malformed; }
   const parsed = ExecCredential.safeParse(printed);
   if (!parsed.success) throw malformed;
-  return { cert: parsed.data.status.clientCertificateData, key: parsed.data.status.clientKeyData };
+  const { clientCertificateData: cert, clientKeyData: key, expirationTimestamp } = parsed.data.status;
+  try {
+    createSecureContext({ cert, key });
+    return { value: { cert, key }, expiresAt: expirationTimestamp === undefined ? new X509Certificate(cert).validToDate : new Date(expirationTimestamp) };
+  } catch {
+    throw new Error('the command printed an invalid client certificate or key');
+  }
 }
 
 const ALT_NAME = /([^:,]+):("(?:[^"\\]|\\.)*"|[^,]*)(?:, |$)/y;

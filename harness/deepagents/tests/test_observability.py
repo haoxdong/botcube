@@ -24,7 +24,8 @@ def exported_spans_by_session() -> dict[str, list[dict[str, Any]]]:
         'OTEL_TRACES_EXPORTER': 'console',
         'OTEL_TRACES_SAMPLER': 'always_on',
         'OTEL_METRICS_EXPORTER': 'none',
-        'OTEL_LOGS_EXPORTER': 'none',
+        'OTEL_LOGS_EXPORTER': 'console',
+        'OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED': 'true',
         'TRACELOOP_TRACE_CONTENT': 'false',
         'LANGSMITH_TRACING': 'true',
         'LANGCHAIN_TRACING_V2': 'true',
@@ -38,13 +39,14 @@ def exported_spans_by_session() -> dict[str, list[dict[str, Any]]]:
     decoder = json.JSONDecoder()
     remaining = result.stdout.strip()
     spans: list[dict[str, Any]] = []
+    logs: list[dict[str, Any]] = []
     while remaining:
-        span, end = decoder.raw_decode(remaining)
-        spans.append(span)
+        record, end = decoder.raw_decode(remaining)
+        (logs if 'body' in record else spans).append(record)
         remaining = remaining[end:].lstrip()
     assert spans, result.stderr
     assert any('session.id' in span['attributes'] for span in spans), result.stderr
-    return {'all': spans, **{
+    return {'all': spans, 'logs': logs, **{
         session: [span for span in spans if span['attributes'].get('session.id') == session]
         for session in ('agentcore-success', 'agentcore-tool-error', 'agentcore-model-error', 'agentcore-disconnect', 'cli-success', 'cli-failure',
                         'cli-failed-turn')
@@ -91,14 +93,25 @@ def test_automatic_adot_exports_error_status(
 def test_automatic_adot_omits_conversation_content(
     exported_spans_by_session: dict[str, list[dict[str, Any]]],
 ) -> None:
-    for spans in exported_spans_by_session.values():
-        for span in spans:
-            assert not any(key.startswith((
-                'gen_ai.prompt', 'gen_ai.completion', 'gen_ai.input.messages', 'gen_ai.output.messages',
-                'gen_ai.task.input', 'gen_ai.task.output', 'traceloop.entity.input', 'traceloop.entity.output',
-            )) for key in span['attributes'])
-            assert not any(event['name'] in ('gen_ai.content.prompt', 'gen_ai.content.completion')
-                           for event in span['events'])
+    logs = exported_spans_by_session['logs']
+    assert any('harness_turn_timing' in str(record['body']) for record in logs)
+    for record in logs:
+        assert not str(record.get('event_name', '')).startswith('gen_ai.content.')
+        body = str(record['body'])
+        contents = json.dumps(record)
+        assert 'sensitive-model-input' not in contents
+        # ADR 0085 retains the app's own redacted output records.
+        if not body.startswith(('{"event":"harness_shell_output",', '{"event":"harness_turn_output",')):
+            assert 'sensitive-model-output' not in contents
+            assert 'private-' not in contents
+            assert 'private search' not in contents
+    for span in exported_spans_by_session['all']:
+        assert not any(key.startswith((
+            'gen_ai.prompt', 'gen_ai.completion', 'gen_ai.input.messages', 'gen_ai.output.messages',
+            'gen_ai.task.input', 'gen_ai.task.output', 'traceloop.entity.input', 'traceloop.entity.output',
+        )) for key in span['attributes'])
+        assert not any(event['name'] in ('gen_ai.content.prompt', 'gen_ai.content.completion')
+                       for event in span['events'])
 
 
 @pytest.mark.parametrize(('session', 'trace_id'), [

@@ -527,6 +527,8 @@ def test_serving_turn_logs_delegated_usage_and_starts_fresh_on_reuse(
     monkeypatch.setattr(serving, 'build_model', lambda **kwargs: fake_bedrock_model(client, streaming=True))
     caplog.set_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache')
 
+    caplog.set_level(logging.INFO, logger='botcube_harness_deepagents.turn_timing')
+
     for multiplier in (1, 2):
         client.multiplier = multiplier
         events = service.turn('Check the result.', session='cache-session')
@@ -538,6 +540,8 @@ def test_serving_turn_logs_delegated_usage_and_starts_fresh_on_reuse(
                                   'cache_read_input_tokens', 'cache_creation_input_tokens')]
             for entry in logged] == [[300, 30, 330, 120, 60], [600, 60, 660, 240, 120]]
     assert [entry['agentcore_session_id'] for entry in logged] == ['cache-session', 'cache-session']
+    timings = [json.loads(record.message) for record in caplog.records if record.name.endswith('.turn_timing') and json.loads(record.message)['event'] == 'harness_turn_timing']
+    assert [(line['outputTokens'], line['cacheWriteInputTokens']) for line in timings] == [(30, 60), (60, 120)]
 
 
 # -- The sandbox -----------------------------------------------------------------

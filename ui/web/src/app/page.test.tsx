@@ -3168,6 +3168,7 @@ describe('warming a chat as the user composes', () => {
     await renderPage();
     await type();
     await sendMessage('hello');
+    expect(warmups()).toHaveLength(1);
 
     await type('n');
     await type('next');

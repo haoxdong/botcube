@@ -170,7 +170,7 @@ overrides:
   chainsaw>traverse: 0.3.9
 
 patchedDependencies:
-  '@copilotkit/react-core@1.83.0': 01d4ce1f68fd89de75cd2e701aba590a4b993824d818eeac783a913c72aa4a01
+  '@copilotkit/react-core@1.83.0': c984ed54aaf9e5354deedc2dd05ff9f75f4cf4c96bc81f7da1055a6e094e4a7d
   bedrock-agentcore@0.4.5: ceb1c4bf0f995838f206eb50040f4d891158402531ed30aa62242258b5c1af9d
   streamdown@2.7.0: 52ee8629f5ca8db1e00729a91639522abd7ee62313da8333e40d173ed9ca5129
 
@@ -481,7 +481,7 @@ importers:
         version: 1.0.71
       '@copilotkit/react-core':
         specifier: ^1.80.0
-        version: 1.83.0(patch_hash=01d4ce1f68fd89de75cd2e701aba590a4b993824d818eeac783a913c72aa4a01)(@cfworker/json-schema@4.1.1)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-is@18.3.1)(react@19.3.1)(redux@5.0.1)(supports-color@7.2.0)(zod@4.6.7)
+        version: 1.83.0(patch_hash=c984ed54aaf9e5354deedc2dd05ff9f75f4cf4c96bc81f7da1055a6e094e4a7d)(@cfworker/json-schema@4.1.1)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-is@18.3.1)(react@19.3.1)(redux@5.0.1)(supports-color@7.2.0)(zod@4.6.7)
       '@copilotkit/shared':
         specifier: ^1.83.0
         version: 1.83.0(@ag-ui/core@1.0.2(zod@4.6.7))
@@ -10876,7 +10876,7 @@ snapshots:
       - react-dom
       - supports-color
 
-  '@copilotkit/react-core@1.83.0(patch_hash=01d4ce1f68fd89de75cd2e701aba590a4b993824d818eeac783a913c72aa4a01)(@cfworker/json-schema@4.1.1)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-is@18.3.1)(react@19.3.1)(redux@5.0.1)(supports-color@7.2.0)(zod@4.6.7)':
+  '@copilotkit/react-core@1.83.0(patch_hash=c984ed54aaf9e5354deedc2dd05ff9f75f4cf4c96bc81f7da1055a6e094e4a7d)(@cfworker/json-schema@4.1.1)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-is@18.3.1)(react@19.3.1)(redux@5.0.1)(supports-color@7.2.0)(zod@4.6.7)':
     dependencies:
       '@a2ui/web_core': 0.10.4
       '@ag-ui/client': 1.0.2

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
 from collections.abc import Awaitable, Callable, Iterator, Sequence
@@ -37,6 +38,8 @@ from botcube_harness_deepagents.definition import HarnessDefinition
 from botcube_harness_deepagents.session_agent import SessionAgent
 from conftest import ToolBindableFakeMessagesModel, prepared
 
+_MODEL_INPUT = 'sensitive-model-input'
+
 
 @tool
 async def lookup(value: str) -> str:
@@ -53,8 +56,8 @@ async def exercise(session_id: str, mode: str) -> None:
 
     async def reply(state: Any) -> dict[str, Any]:
         entered.set()
-        model = FakeListChatModel(responses=['answer'], error_on_chunk_number=0 if mode == 'model-error' else None)
-        async for _chunk in model.astream('question'):
+        model = FakeListChatModel(responses=['sensitive-model-output'], error_on_chunk_number=0 if mode == 'model-error' else None)
+        async for _chunk in model.astream(_MODEL_INPUT):
             await asyncio.sleep(0.001)
         result = await lookup.ainvoke({'value': mode})
         return {'messages': [AIMessage(result)]}
@@ -270,5 +273,6 @@ async def main() -> None:
 
 
 if __name__ == '__main__':
+    logging.getLogger(turn_timing.__name__).setLevel(logging.INFO)
     asyncio.run(main())
     cast(TracerProvider, trace.get_tracer_provider()).force_flush()

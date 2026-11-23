@@ -13,6 +13,7 @@ import logging
 import resource
 import sys
 import threading
+from collections import Counter
 from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -22,6 +23,8 @@ from typing import Any, Literal
 from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.messages import AIMessage
+from langchain_core.messages.ai import UsageMetadata
 from langchain_core.outputs import LLMResult
 from langchain_core.tracers.context import register_configure_hook
 from opentelemetry import trace
@@ -98,9 +101,7 @@ class _Call:
     # A plan model's HTTP request: its Inference Latency starts here rather than at `start`.
     dispatch: float | None = None
     end: float | None = None
-    # The provider's input token usage, from the call's final message.
-    input_tokens: int | None = None
-    cached_input_tokens: int = 0
+    usage: UsageMetadata | None = None
 
     @property
     def sent(self) -> float:
@@ -118,10 +119,19 @@ def _call_intervals(calls: list[_Call], receipt: float, last: float, end: float,
 
 
 def _token_usage(calls: list[_Call]) -> dict[str, int | None]:
-    reported = [call for call in calls if call.input_tokens is not None]
+    reported = [call.usage for call in calls if call.usage is not None]
+    if not reported:
+        return {'inputTokens': None, 'outputTokens': None, 'cachedInputTokens': None}
+    details: Counter[str] = Counter()
+    for usage in reported:
+        details.update({key: value for key, value in (usage.get('input_token_details') or {}).items() if isinstance(value, int)})
+    writes = [value for key, value in details.items()
+              if key.endswith('cache_creation') or key in ('ephemeral_5m_input_tokens', 'ephemeral_1h_input_tokens')]
     return {
-        'inputTokens': sum(call.input_tokens or 0 for call in reported) if reported else None,
-        'cachedInputTokens': sum(call.cached_input_tokens for call in reported) if reported else None,
+        'inputTokens': sum(usage['input_tokens'] for usage in reported),
+        'outputTokens': sum(usage['output_tokens'] for usage in reported),
+        'cachedInputTokens': sum(value for key, value in details.items() if key.endswith('cache_read')),
+        **({'cacheWriteInputTokens': sum(writes)} if writes else {}),
     }
 
 
@@ -176,12 +186,9 @@ class TurnTiming(BaseCallbackHandler):
         self._end(self._models, run_id)
         call = self._models.get(str(run_id))
         generation = response.generations[0][0] if response.generations and response.generations[0] else None
-        usage = getattr(getattr(generation, 'message', None), 'usage_metadata', None)
-        if call is not None and usage:
-            call.input_tokens = usage['input_tokens']
-            # OpenAI's `cached_tokens` and Bedrock's cache reads; a priority or flex tier prefixes the key.
-            details = usage.get('input_token_details') or {}
-            call.cached_input_tokens = sum(v or 0 for k, v in details.items() if k.endswith('cache_read'))
+        message = getattr(generation, 'message', None)
+        if call is not None and isinstance(message, AIMessage):
+            call.usage = message.usage_metadata
 
     def on_llm_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
         self._end(self._models, run_id)
