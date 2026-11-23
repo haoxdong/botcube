@@ -39,7 +39,7 @@ export function useExports(exports: readonly Export[], { newest, ...artifact }: 
           </motionElement.span>
         )}</Presence>
         <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-lg" className="artifact-download" aria-label="Download" title="Download" />}>
+          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-lg" aria-label="Download" title="Download" />}>
             <DownloadIcon aria-hidden />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="artifact-download-menu w-auto">
@@ -52,7 +52,7 @@ export function useExports(exports: readonly Export[], { newest, ...artifact }: 
     ),
     failure: (
       <Refusal message={failure && `Couldn't make ${failure.exported.failed}: ${failure.reason}.`} keyed>
-        {" "}<button type="button" className="artifact-instead" hidden={instead === undefined} onClick={() => instead && download(instead)}>Download as {instead?.label}</button>
+        {" "}<Button type="button" variant="link" hidden={instead === undefined} onClick={() => instead && download(instead)}>Download as {instead?.label}</Button>
       </Refusal>
     ),
     shows,

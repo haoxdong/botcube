@@ -4,6 +4,7 @@ import { domMax, LazyMotion, m as motionElement } from "motion/react";
 import { Presence, presenceMotion, zoomMotion } from "../app/collapse";
 import { ClipboardPaste, Copy, Folder, Keyboard, Laptop, MousePointer2, X, type LucideIcon } from 'lucide-react';
 import { createPortal } from 'react-dom';
+import { Button } from "@/components/ui/button";
 import { useCallback, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode, type ComponentType } from 'react';
 
 import { BrowserLiveFrame, type LiveViewConnection, type BrowserLiveFrameProps } from './browser-live-frame';
@@ -11,6 +12,8 @@ import { failureDetail } from './failure-detail';
 import { FOLDER_ICON } from './files-app';
 import { motionTokens } from '../app/motion-tokens';
 import { Terminal, type ShellCommand } from './terminal';
+
+const MotionButton = motionElement.create(Button);
 
 /**
  * The chat's Agent Computer: its browser and who drives it while awake, and its last screenshot either way. An awake
@@ -220,9 +223,9 @@ export function AgentComputer({
       {layer !== null && createPortal(<Presence>{sheet && <motionElement.div {...presenceMotion} className="agent-computer-sheet-backdrop" />}</Presence>, layer)}
       <Presence>{sheet && (
         <motionElement.div {...presenceMotion} className="agent-computer-sheet-head">
-          <button type="button" className="agent-computer-sheet-close" aria-label="Close computer" title="Close computer" onClick={() => zoom(false)}>
+          <Button variant="ghost" size="icon" className="agent-computer-sheet-close" aria-label="Close computer" title="Close computer" onClick={() => zoom(false)}>
             <X aria-hidden="true" />
-          </button>
+          </Button>
           <span className="agent-computer-sheet-title"><Laptop aria-hidden="true" />{title}</span>
         </motionElement.div>
       )}</Presence>
@@ -278,7 +281,7 @@ export function AgentComputer({
               </motionElement.section>
             )}</Presence>
             <Presence>{app === 'Files' && <motionElement.section {...zoomMotion} className="agent-computer-app" aria-label="Files">{files}</motionElement.section>}</Presence>
-            <Presence>{!sheet && app === 'Chrome' && <motionElement.button {...presenceMotion} type="button" className="agent-computer-screen-open" aria-label="View computer" disabled={!active} onClick={() => zoom(true)} />}</Presence>
+            <Presence>{!sheet && app === 'Chrome' && <MotionButton {...presenceMotion} variant="link" className="agent-computer-screen-open" aria-label="View computer" disabled={!active} onClick={() => zoom(true)} />}</Presence>
           </div>
         </div>
         <nav className="agent-computer-dock" aria-label="Dock">
@@ -305,17 +308,17 @@ export function AgentComputer({
           <motionElement.span {...presenceMotion} className="agent-computer-pill">
             {control === 'agent' ? `${agentName} has control` : 'You have control'}
             <span aria-hidden="true"> · </span>
-            <button type="button" className="agent-computer-control" disabled={busy || !active} onClick={() => {
+            <Button size="sm" disabled={busy || !active} onClick={() => {
                 if (control === 'agent') {
                   zoom(true);
                   onTakeOver(browserSessionId);
                 } else handBack(browserSessionId);
               }}>
               {control === 'agent' ? 'Take over' : 'Return control'}
-            </button>
+            </Button>
           </motionElement.span>
         )}</Presence>
-        <Presence>{running && <motionElement.button {...presenceMotion} type="button" className="agent-computer-stop" disabled={!active || onStop === null} onClick={onStop ?? undefined}>Stop</motionElement.button>}</Presence>
+        <Presence>{running && <MotionButton {...presenceMotion} variant="outline" size="sm" disabled={!active || onStop === null} onClick={onStop ?? undefined}>Stop</MotionButton>}</Presence>
       </div>
       <Presence>{active && sheet && browserSessionId !== null && control === 'user' && (
         <motionElement.div {...presenceMotion} className="agent-computer-touch-slot"><TouchToolbar connection={connection} busy={busy} /></motionElement.div>
@@ -352,9 +355,9 @@ function TouchTool({
   onClick: () => void;
 }) {
   return (
-    <button type="button" className="agent-computer-touch-tool" aria-label={label} title={label} disabled={disabled} aria-pressed={pressed} onClick={onClick}>
+    <Button variant={pressed ? "secondary" : "default"} size="icon-lg" aria-label={label} title={label} disabled={disabled} aria-pressed={pressed} onClick={onClick}>
       <Icon aria-hidden="true" />
-    </button>
+    </Button>
   );
 }
 

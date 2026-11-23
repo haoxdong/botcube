@@ -195,8 +195,7 @@
     inset: -6px 0;
   }
 
-  .header-btn,
-  .artifact-download {
+  .header-btn {
     min-width: 44px;
     min-height: 44px;
   }

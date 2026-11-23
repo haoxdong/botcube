@@ -758,20 +758,16 @@ it('hides the kept Agent Profile when closed and shows it again at each viewport
   }
 });
 
-// a scheduled task's edit fields had no border or background, so they read as static text.
-it("shows a scheduled task's Title and instructions as fields, and its schedule as settings rows after Codex's", () => {
+// A scheduled task's Title and instructions are the stock Input and Textarea, which draw their own box; no app rule
+// restyles a text field, in the task's sheet or in a Field.
+it("leaves a scheduled task's Title and instructions to the stock fields, and shows its schedule as settings rows after Codex's", () => {
+  expect(sheet).not.toMatch(/\.settings-text\b/);
+  expect(sheet).not.toMatch(/\[data-slot="field"\] (input|textarea)/);
   const form = document.createElement('div');
   form.innerHTML =
-    '<input class="settings-text" value="Morning brief" /><textarea class="settings-text"></textarea>' +
     '<div class="settings-group"><label class="settings-row"><span>Repeat</span><span class="settings-select"><select></select></span></label></div>';
   document.body.append(form);
 
-  for (const control of ['input', 'textarea']) {
-    expect(styleOf(form, control).borderStyle).toBe('solid');
-    expect(styleOf(form, control).backgroundColor).toBe('#fff');
-    expect(styleOf(form, control).borderRadius).toBe('12px');
-  }
-  expect(styleOf(form, 'textarea').minHeight).toBe('120px');
   expect([styleOf(form, '.settings-group').borderStyle, styleOf(form, '.settings-group').borderRadius]).toEqual(['solid', '12px']);
   expect([styleOf(form, '.settings-row').minHeight, styleOf(form, '.settings-row').padding]).toEqual(['48px', '8px 20px']);
   expect(styleOf(form, '.settings-row').color).toBe('#202020');
@@ -1185,7 +1181,7 @@ it('gives Side Chats space and phone sidebar controls full targets', () => {
         <aside className="sidebar sidebar-expanded">
           <div className="sidebar-brand" />
           <nav className="sidebar-nav sidebar-main" />
-          <div className="sidebar-section-header"><button className="sidebar-side-chats-toggle">Side chats</button><button className="header-btn sidebar-new-chat"><svg /></button></div>
+          <div className="sidebar-section-header"><button className="sidebar-side-chats-toggle">Side chats</button><button data-slot="button" className="sidebar-new-chat"><svg /></button></div>
           <div className="sidebar-list" />
           <div className="sidebar-bottom"><button className="user-menu-trigger"><span className="user-avatar" /></button></div>
         </aside>,
@@ -1193,12 +1189,11 @@ it('gives Side Chats space and phone sidebar controls full targets', () => {
       try {
         // Side chats sit right under their header on both (Muse/dots north star Fig 21)
         expect(zero(styleOf(container, '.sidebar-list').paddingTop)).toBe('0px');
-        for (const selector of ['.sidebar-new-chat']) {
-          expect(styleOf(container, selector).width).toBe('44px');
-          expect(styleOf(container, selector).height).toBe('44px');
-          // A phone's plus is as light as the rows' icons
-          expect(styleOf(container, `${selector} svg`).width).toBe('20px');
-        }
+        // The plus is the stock icon-lg Button: the app only keeps it from shrinking, and gives it no size of its own.
+        const plus = styleOf(container, '.sidebar-new-chat');
+        expect(plus.flexShrink).toBe('0');
+        expect([plus.width, plus.height]).not.toContain('44px');
+        expect(styleOf(container, '.sidebar-new-chat svg').width).not.toBe('20px');
         // On a phone, the Muse/dots north star's Fig 21 drawer
         if (width === 440) {
           expect(styleOf(container, '.sidebar-main').paddingBottom).toBe('10px');
@@ -1417,7 +1412,7 @@ const desktopApp = (sidebar: 'sidebar-collapsed' | 'sidebar-expanded') => (
       <div className="sidebar-recents">
         <div className="sidebar-section-header">
           <button className="sidebar-side-chats-toggle"><span>Side chats</span></button>
-          <button className="header-btn sidebar-new-chat"><svg /></button>
+          <button data-slot="button" className="sidebar-new-chat"><svg /></button>
         </div>
         <div className="sidebar-list">
           <div className="sidebar-item sidebar-item-active"><button className="sidebar-item-btn">Rates</button><button className="sidebar-item-more"><svg /></button></div>
@@ -1495,10 +1490,11 @@ it("lays out the desktop sidebar as the phone drawer: a 44px pitch, a grey Side 
       // ChatGPT Mac's Recents: a grey semibold `body` heading in sentence case.
       expect({ size: label.fontSize, weight: label.fontWeight, spacing: label.letterSpacing || 'normal', transform: label.textTransform || 'none', color: label.color })
         .toEqual({ size: '14px', weight: '600', spacing: 'normal', transform: 'none', color: '#646464' });
+      // The plus is the stock ghost Button: no app colour, fill or icon size reaches it.
       const plus = styleOf(container, '.sidebar-new-chat');
-      expect({ shadow: plus.boxShadow || 'none', color: plus.color }).toEqual({ shadow: 'none', color: '#646464' });
+      expect(plus.color).not.toBe('#646464');
       expect(plus.backgroundColor || 'transparent').toMatch(/^(transparent|none|rgba\(0, 0, 0, 0\))$/);
-      expect(styleOf(container, '.sidebar-new-chat svg').width).toBe('20px');
+      expect(styleOf(container, '.sidebar-new-chat svg').width).not.toBe('20px');
       // Every row a 40px fill inset 2px in its 44px slot, so no two fills touch; Side chats across the nav pills' width.
       for (const selector of ['.sidebar-nav-item', '.sidebar-item']) {
         expect({ height: styleOf(container, selector).height, margin: styleOf(container, selector).margin }).toEqual({ height: '40px', margin: '2px 0px' });
@@ -1525,17 +1521,16 @@ it("lays out the desktop sidebar as the phone drawer: a 44px pitch, a grey Side 
   }
 });
 
-// The menu, plus and Close buttons were 8px squares, the account row and the name field rectangles among pill rows, and
+// The menu, plus and Close buttons were 8px squares, the account row a rectangle among pill rows, and
 // a Side Chat's row icons sat on their buttons' left edge (DESIGN.md: buttons and sidebar rows are round).
 it("rounds the sidebar's buttons and rows, and centres a Side Chat's actions icon in its button", () => {
   // The row is held, as with its menu open, so a mouse shows its actions button.
   const { container, unmount } = render(
     <aside className="sidebar sidebar-expanded">
       <div className="sidebar-brand"><button className="sidebar-logo-btn"><svg /></button></div>
-      <div className="sidebar-section-header"><button className="header-btn sidebar-new-chat"><svg /></button></div>
+      <div className="sidebar-section-header"><button className="header-btn"><svg /></button></div>
       <div className="sidebar-list">
         <div className="sidebar-item sidebar-item-held"><button className="sidebar-item-btn">Rates</button><button className="sidebar-item-more"><svg /></button></div>
-        <div className="sidebar-item"><input className="sidebar-item-name" /></div>
       </div>
       <div className="sidebar-bottom"><button className="user-menu-trigger" /></div>
     </aside>,
@@ -1543,7 +1538,7 @@ it("rounds the sidebar's buttons and rows, and centres a Side Chat's actions ico
   try {
     // The menu toggle is the stock Button, rounded by its own rounded-full.
     expect(styleOf(container, '.header-btn').borderRadius).toBe('9999px');
-    for (const selector of ['.user-menu-trigger', '.sidebar-item-name', '.sidebar-item-more']) {
+    for (const selector of ['.user-menu-trigger', '.sidebar-item-more']) {
       expect(styleOf(container, selector).borderRadius).toBe('9999px');
     }
     const more = styleOf(container, '.sidebar-item-more');

@@ -14,6 +14,7 @@ import { CodeWords } from "./code-words";
 import KeptMarkdown from "./kept-markdown";
 import { useIsPhone } from "./phone-query";
 import { SHIKI_THEMES } from "./shiki-themes";
+import { Button } from "@/components/ui/button";
 
 type Section = { label: string; text: string; look: "prose" | "markdown" | "shell" | "code"; heading?: string | undefined; badge?: string | undefined };
 
@@ -105,12 +106,12 @@ function Copy({ label, text }: { label: string; text: string }) {
   const Icon = state.status === "copied" && state.text === text ? CheckIcon : CopyIcon;
   return (
     <>
-      <button type="button" className="header-btn step-section-copy" aria-label={`Copy ${label.toLowerCase()}`} onClick={() => void navigator.clipboard.writeText(text).then(
+      <Button type="button" variant="ghost" size="icon" className="step-section-copy" aria-label={`Copy ${label.toLowerCase()}`} onClick={() => void navigator.clipboard.writeText(text).then(
         () => setState({ status: "copied", text }),
         () => setState({ status: "failed" }),
       )}>
         <Icon size={14} aria-hidden />
-      </button>
+      </Button>
       <Presence>{state.status === "failed" && <motionElement.span {...presenceMotion} className="step-copy-error" role="alert">Copy failed. Select the text to copy it manually, or try again.</motionElement.span>}</Presence>
     </>
   );

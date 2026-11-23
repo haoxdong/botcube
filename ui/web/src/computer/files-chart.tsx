@@ -1,4 +1,5 @@
 'use client';
+import { Button } from "@/components/ui/button";
 
 import { m as motionElement } from 'motion/react';
 import { useEffect, useState } from 'react';
@@ -54,8 +55,8 @@ function ChartFile({ path, name, fileUrl, onDownload, onClose }: {
     <>
       <div className="agent-computer-files-chart-bar">
         <span>{name}</span>
-        <button type="button" onClick={onDownload}>Download</button>
-        <button type="button" onClick={onClose}>Close</button>
+        <Button type="button" variant="ghost" size="sm" onClick={onDownload}>Download</Button>
+        <Button type="button" variant="ghost" size="sm" onClick={onClose}>Close</Button>
       </div>
       <Swap state={shown === null ? 'loading' : 'text' in shown ? 'chart' : 'failed'} className="agent-computer-files-chart-body">
         {shown === null ? null : 'text' in shown ? (

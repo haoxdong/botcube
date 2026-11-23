@@ -12,6 +12,7 @@ import { reason } from "./composer-files";
 import type { Grid, GridPosition } from "./sheet-grid";
 import { readImports } from "./sheet-import";
 import { editsOf, replay, univerDataOf, type ImportedSheets } from "./sheet-model";
+import { Button } from "@/components/ui/button";
 
 type Opened = { sheet: Sheet; imported: ImportedSheets };
 type Loaded = (Opened & { version: ArtifactVersion }) | { error: string } | null;
@@ -152,13 +153,13 @@ export function SheetVersion({ artifact: newest, read, readBytes, save, shows }:
         <motionElement.p {...presenceMotion} role="alert" className="artifact-refused">Couldn&apos;t open {shownVersion.title}: {failure}</motionElement.p>
       )}</Presence>
       <div className="artifact-edit-bar">
-        <button type="button" className="header-btn artifact-edit-action" disabled={!changed || busy} onClick={() => void submit()}>Save</button>
-        <button type="button" className="header-btn artifact-edit-action" disabled={!changed || busy} onClick={drop}>Cancel</button>
+        <Button type="button" variant="ghost" size="sm" disabled={!changed || busy} onClick={() => void submit()}>Save</Button>
+        <Button type="button" variant="ghost" size="sm" disabled={!changed || busy} onClick={drop}>Cancel</Button>
       </div>
       <Presence>{held !== null && !busy && newest.version > held.version && (
         <motionElement.div {...presenceMotion} role="status" className="artifact-edit-newer">
           <span>Version {newest.version} arrived while you edited version {held.version}. Your edits are kept.</span>
-          <button type="button" className="header-btn artifact-edit-action" onClick={drop}>Discard edits and open version {newest.version}</button>
+          <Button type="button" variant="ghost" size="sm" onClick={drop}>Discard edits and open version {newest.version}</Button>
         </motionElement.div>
       )}</Presence>
       <Presence>{failures.map((text) => (

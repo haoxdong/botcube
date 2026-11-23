@@ -778,7 +778,7 @@ describe('FilesApp', () => {
     await act(async () => file?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })));
     await click(host, 'Rename');
     await act(async () => {
-      const input = host.querySelector<HTMLInputElement>('.agent-computer-file-rename');
+      const input = host.querySelector<HTMLInputElement>('.agent-computer-file [data-slot="input"]');
       if (input === null) throw new Error('no name field');
       input.value = 'plan v2.md';
       input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' }));
@@ -1219,7 +1219,7 @@ describe('FilesApp', () => {
       if (file === undefined) throw new Error(`no ${label} row`);
       await act(async () => file.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })));
       await click(host, 'Rename');
-      const input = host.querySelector<HTMLInputElement>('.agent-computer-file-rename');
+      const input = host.querySelector<HTMLInputElement>('.agent-computer-file [data-slot="input"]');
       if (input === null) throw new Error('no name field');
       return input;
     };
@@ -1257,7 +1257,7 @@ describe('FilesApp', () => {
         'renamed reports/q3.pdf to reports/q3 final.pdf',
         'GET https://chat.test/files',
       ]);
-      expect(host.querySelector('.agent-computer-file-rename')).toBeNull();
+      expect(host.querySelector('.agent-computer-file [data-slot="input"]')).toBeNull();
       expect(names(host)).toEqual(['q2.pdf', 'q3 final.pdf']);
     });
 
@@ -1277,7 +1277,7 @@ describe('FilesApp', () => {
       });
 
       expect(renames()).toEqual([]);
-      expect(host.querySelector('.agent-computer-file-rename')).toBe(input);
+      expect(host.querySelector('.agent-computer-file [data-slot="input"]')).toBe(input);
       expect(document.activeElement).toBe(input);
     });
 
@@ -1300,11 +1300,11 @@ describe('FilesApp', () => {
       const input = await rename(host, 'q3.pdf');
       await type(input, 'q4.pdf', 'Escape');
       await blur(input);
-      expect(host.querySelector('.agent-computer-file-rename')).toBeNull();
+      expect(host.querySelector('.agent-computer-file [data-slot="input"]')).toBeNull();
       expect(names(host)).toEqual(['q2.pdf', 'q3.pdf']);
 
       await type(await rename(host, 'q3.pdf'), 'q3.pdf', 'Enter');
-      expect(host.querySelector('.agent-computer-file-rename')).toBeNull();
+      expect(host.querySelector('.agent-computer-file [data-slot="input"]')).toBeNull();
       expect(calls).toEqual(['GET https://chat.test/files', 'GET https://chat.test/files']);
     });
 

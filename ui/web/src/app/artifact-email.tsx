@@ -13,6 +13,8 @@ import {
 } from "./artifact-viewer";
 import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 /**
  * An Email (ADR 0087): a draft in Gmail's draft fields, shown as Gmail shows one, with header fields and Tiptap on the
@@ -187,13 +189,13 @@ function DraftForm({ version, newest, loaded, edits, close, save }: {
   return (
     <>
       <div className="artifact-edit-bar">
-        <button type="button" className="header-btn artifact-edit-action" disabled={!edited || busy} onClick={() => void submit()}>Save</button>
-        <button type="button" className="header-btn artifact-edit-action" disabled={!edited || busy} onClick={close}>Cancel</button>
+        <Button type="button" variant="ghost" size="sm" disabled={!edited || busy} onClick={() => void submit()}>Save</Button>
+        <Button type="button" variant="ghost" size="sm" disabled={!edited || busy} onClick={close}>Cancel</Button>
       </div>
       <Presence>{edited && !busy && newest.version > version.version && (
         <motionElement.div {...presenceMotion} role="status" className="artifact-edit-newer">
           <span>Version {newest.version} arrived while you edited version {version.version}. Your edits are kept.</span>
-          <button type="button" className="header-btn artifact-edit-action" onClick={close}>Discard edits and open version {newest.version}</button>
+          <Button type="button" variant="ghost" size="sm" onClick={close}>Discard edits and open version {newest.version}</Button>
         </motionElement.div>
       )}</Presence>
       <Presence>{failures.map((failure) => (
@@ -203,13 +205,13 @@ function DraftForm({ version, newest, loaded, edits, close, save }: {
         {RECIPIENTS.map((field) => (
           <label key={field} className="artifact-email-field">
             <span>{LABELS[field]}</span>
-            <input type="text" aria-label={LABELS[field]} value={recipients[field]}
+            <Input type="text" aria-label={LABELS[field]} value={recipients[field]}
               onChange={(event) => setRecipients((current) => ({ ...current, [field]: event.target.value }))} />
           </label>
         ))}
         <label className="artifact-email-field">
           <span>Subject</span>
-          <input type="text" aria-label="Subject" value={subject} onChange={(event) => setSubject(event.target.value)} />
+          <Input type="text" aria-label="Subject" value={subject} onChange={(event) => setSubject(event.target.value)} />
         </label>
       </div>
       <EditorContent editor={editor} className="artifact-email-editor" />

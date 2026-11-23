@@ -141,8 +141,7 @@
   pointer-events: none;
 }
 
-/* Interval's Every, as Codex's: the count bare and edited in place, then minutes, muted. No box or ring at any
-   state, focus among them: only the caret shows. */
+/* Interval's Every: the count's stock field, as wide as its digits, then minutes, muted. */
 .settings-every {
   display: flex;
   align-items: baseline;
@@ -150,42 +149,9 @@
   color: var(--color-text-muted);
 }
 
-.settings-every input {
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  font: inherit;
-  font-size: var(--font-body);
-  text-align: right;
-  color: var(--color-text);
-  background: none;
-  box-shadow: none;
-  outline: none;
-  appearance: none;
-}
-
-/* More, as Codex's, in Edit and a task's sheet: muted words and a chevron under the card, which turns up while open. */
+/* More sits at the start of its column, under the card. */
 .settings-more {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
   align-self: flex-start;
-  min-height: 44px;
-  padding: 0 var(--space-16);
-  border: none;
-  font: inherit;
-  font-size: var(--font-body);
-  color: var(--color-text-muted);
-  background: none;
-  cursor: pointer;
-}
-
-.settings-more svg {
-  transition: rotate var(--motion-move) var(--ease);
-}
-
-.settings-more[aria-expanded="true"] svg {
-  rotate: 180deg;
 }
 
 /* More's section spans the sheet as the card above it does, and takes its 16px gap inside its collapse, so the gap
@@ -205,64 +171,28 @@
   text-align: right;
 }
 
-.settings-when input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  border: none;
-  font-size: var(--font-body);
-  opacity: 0;
-  appearance: none;
-  cursor: pointer;
-}
-
-.settings-when input:disabled {
-  cursor: default;
-}
-
 .settings-when:has(input:focus-visible) {
   outline: auto;
   outline-offset: -2px;
 }
 
-/* Ends' picker lies unseen under the row, where On a date… opens it; the menu takes the tap. */
-.settings-ends input {
+/* The native date and time pickers lie unseen across their row: over When's, to take the tap. */
+.settings-picker {
   position: absolute;
   inset: 0;
-  width: 100%;
   height: 100%;
+  margin: 0;
   opacity: 0;
+}
+
+/* Ends' picker lies unseen under the row, where On a date… opens it; the menu takes the tap. */
+.settings-ends .settings-picker {
   pointer-events: none;
 }
 
 /* Where On a date… can't open the picker, the picker takes the row's taps, so the next tap opens it. */
-.settings-ends-direct input {
+.settings-ends-direct .settings-picker {
   pointer-events: auto;
-  cursor: pointer;
-}
-
-/* Title and the instructions: Codex's box, `radius-lg` with a `border` edge; the instructions 120px tall. */
-.settings-text {
-  padding: var(--space-16) var(--space-20);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-lg);
-  font: inherit;
-  font-size: var(--font-body);
-  color: var(--color-text);
-  background: var(--color-white);
-}
-
-textarea.settings-text {
-  min-height: 120px;
-  padding: var(--space-20);
-  resize: vertical;
-}
-
-.settings-text::placeholder {
-  color: var(--color-text-muted);
 }
 
 /* Cancel then Save, pills at the right 12px apart, at least Codex's 36px tall. */

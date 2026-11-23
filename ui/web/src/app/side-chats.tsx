@@ -14,6 +14,7 @@ import { SideChatNameField } from "./side-chat-name-field";
 import { UnreadDot } from "./unread-dot";
 import type { AuthUiState } from "../plugin/index.js";
 import type { useSessionNavigation } from "./session-navigation";
+import { Button } from "@/components/ui/button";
 
 const NATIVE_SIDE_CHAT_BODY = process.env.NEXT_PUBLIC_NATIVE_SIDE_CHAT_BODY === "1";
 const SideChatsBody = NATIVE_SIDE_CHAT_BODY ? "div" : motionElement.div;
@@ -130,9 +131,9 @@ export function SideChats({ accountId, activeId, pluginsOpen, visible, entries: 
               <span>Side chats</span>
               <Presence>{sideChatsCollapsed ? <MotionChevronRight {...presenceMotion} key="0" aria-hidden /> : <MotionChevronDown {...presenceMotion} key="1" aria-hidden />}</Presence>
             </button>
-            <button className="header-btn sidebar-new-chat" onClick={() => { showChat(); void handleNewConversation(); }} aria-label="New side chat" title="New side chat">
+            <Button type="button" variant="ghost" size="icon-lg" className="sidebar-new-chat" onClick={() => { showChat(); void handleNewConversation(); }} aria-label="New side chat" title="New side chat">
               <Plus aria-hidden />
-            </button>
+            </Button>
           </div>
           <Collapse open={sideChatsError !== null}>
             <div className="sidebar-error" role="alert" hidden={!visible}>{lastError}</div>

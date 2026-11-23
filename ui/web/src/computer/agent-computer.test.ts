@@ -265,7 +265,9 @@ describe('AgentComputer', () => {
   it('disables the control buttons while a change is in flight', () => {
     const html = render({ busy: true });
 
-    expect(html).toContain('<button type="button" class="agent-computer-control" disabled="">Take over</button>');
+    const control = html.match(/<button[^>]*>Take over<\/button>/)?.[0];
+    expect(control).toContain('data-slot="button"');
+    expect(control).toMatch(/\sdisabled(="")?[\s>]/);
   });
 
   it('says why a control change failed', () => {

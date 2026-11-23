@@ -7,6 +7,7 @@ import { ArtifactFace } from "./artifact-face";
 import type { Published } from "./artifact-published";
 import { Swap } from "./collapse";
 import { reason } from "./composer-files";
+import { Button } from "@/components/ui/button";
 
 type Result = { accountId: string | undefined } & ({ artifacts: Published[] } | { error: string });
 
@@ -28,7 +29,7 @@ export function ArtifactLibrary({ accountId, onSelect }: { accountId: string | u
     <Swap key={accountId} state={shown === null ? "loading" : "error" in shown ? "error" : shown.artifacts.length === 0 ? "empty" : "list"}>
     {shown === null ? <p role="status">Loading Artifacts…</p> : "error" in shown ? <>
       <p role="alert">{shown.error}</p>
-      <button type="button" className="btn" onClick={() => retry((value) => value + 1)}>Try again</button>
+      <Button type="button" variant="secondary" onClick={() => retry((value) => value + 1)}>Try again</Button>
     </> : shown.artifacts.length === 0 ? <p>No Artifacts yet. Artifacts you make in chat appear here.</p> : (
       <ul aria-label="Artifacts, newest first" className="m-0 flex max-w-2xl list-none flex-col gap-1 p-0">
         {shown.artifacts.map((artifact) => <li key={artifact.id}>

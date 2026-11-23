@@ -15,6 +15,7 @@ import {
 } from "./artifact-viewer";
 import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
+import { Button } from "@/components/ui/button";
 
 const EXTENSIONS = [
   // StarterKit 3 underlines on Mod-U, and @tiptap/markdown writes an underline as <u>, HTML a Doc does not keep.
@@ -95,13 +96,13 @@ export function EditableDoc({ artifact: newest, read, save, shows }: ViewerProps
   return (
     <>
       <div className="artifact-edit-bar">
-        <button type="button" className="header-btn artifact-edit-action" disabled={edit === null || saving} onClick={() => void submit()}>Save</button>
-        <button type="button" className="header-btn artifact-edit-action" disabled={edit === null || saving} onClick={stop}>Discard</button>
+        <Button type="button" variant="ghost" size="sm" disabled={edit === null || saving} onClick={() => void submit()}>Save</Button>
+        <Button type="button" variant="ghost" size="sm" disabled={edit === null || saving} onClick={stop}>Discard</Button>
       </div>
       <Presence>{edit !== null && !saving && newest.version > edit.version.version && (
         <motionElement.div {...presenceMotion} role="status" className="artifact-edit-newer">
           <span>Version {newest.version} arrived while you edited version {edit.version.version}. Your edits are kept.</span>
-          <button type="button" className="header-btn artifact-edit-action" onClick={stop}>Discard edits and open version {newest.version}</button>
+          <Button type="button" variant="ghost" size="sm" onClick={stop}>Discard edits and open version {newest.version}</Button>
         </motionElement.div>
       )}</Presence>
       <Presence>{failures.map((failure) => (

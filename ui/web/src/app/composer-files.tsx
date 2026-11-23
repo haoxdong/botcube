@@ -5,9 +5,12 @@ import { Presence, presenceMotion, CollapseList, FadeItem, useInstant } from "./
 
 import { useEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type RefObject } from "react";
 import { RotateCw, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { fileExtension, FileTypeIcon, isImageName } from "../components/file-type-icon";
 import { attachmentAccountEpoch, subscribeAttachmentAccount } from "../plugin/file-account";
+
+const MotionButton = motionElement.create(Button);
 
 interface AttachmentStore {
   upload: (file: File, options: { onProgress: (fraction: number) => void; signal: AbortSignal }) => Promise<string>;
@@ -297,14 +300,14 @@ function ImageChip({ id, file, state, name, onRetry, onRemove, onBroken }: ChipP
       )}</Presence>
       <Presence>{state.status === "failed" && (
         <motionElement.span {...presenceMotion} className="composer-image-overlay">
-          <button type="button" className="composer-image-retry" aria-label={`Retry ${name}`} onClick={() => onRetry(id)}>
+          <Button type="button" variant="destructive" size="icon-xs" aria-label={`Retry ${name}`} onClick={() => onRetry(id)}>
             <RotateCw aria-hidden="true" />
-          </button>
+          </Button>
         </motionElement.span>
       )}</Presence>
-      <button type="button" className="composer-image-remove" aria-label={`Remove ${name}`} onClick={() => onRemove(id)}>
+      <Button type="button" variant="default" size="icon-xs" className="composer-image-remove" aria-label={`Remove ${name}`} onClick={() => onRemove(id)}>
         <X aria-hidden="true" />
-      </button>
+      </Button>
     </FadeItem>
   );
 }
@@ -330,13 +333,13 @@ function FileChip({ id, state, name, onRetry, onRemove }: ChipProps) {
         <Presence>{state.status === "failed" && (
           <>
             <motionElement.span {...presenceMotion} key="0" className="composer-file-error" role="alert">{state.error}</motionElement.span>
-            <motionElement.button {...presenceMotion} key="1" type="button" className="composer-file-retry" onClick={() => onRetry(id)}>Retry</motionElement.button>
+            <MotionButton {...presenceMotion} key="1" type="button" variant="link" size="sm" onClick={() => onRetry(id)}>Retry</MotionButton>
           </>
         )}</Presence>
       </span>
-      <button type="button" className="composer-file-remove" aria-label={`Remove ${name}`} onClick={() => onRemove(id)}>
+      <Button type="button" variant="ghost" size="icon-sm" className="composer-file-remove" aria-label={`Remove ${name}`} onClick={() => onRemove(id)}>
         <X aria-hidden="true" />
-      </button>
+      </Button>
     </FadeItem>
   );
 }

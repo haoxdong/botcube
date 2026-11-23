@@ -34,18 +34,6 @@
   font-size: var(--font-small);
   color: var(--color-text);
 }
-.agent-computer-control,
-.agent-computer-stop {
-  padding: var(--space-4) var(--space-12);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-pill);
-  background: var(--color-white);
-  font-size: var(--font-small);
-  cursor: pointer;
-}
-
-.agent-computer-control { background: var(--color-text); color: var(--color-white); border-color: transparent; }
-.agent-computer-control:disabled { opacity: 0.5; cursor: default; }
 .agent-computer-error { margin: 0; font-size: var(--font-small); color: var(--color-red); }
 
 
@@ -156,6 +144,9 @@
   z-index: 1;
   transform: translate(-50%, -50%);
   margin: 0;
+}
+
+.agent-computer-starting {
   padding: var(--space-8) var(--space-20);
   border-radius: var(--radius-pill);
   background: var(--color-white);
@@ -312,34 +303,6 @@
   border-bottom: 0.5px solid var(--color-line);
   background: var(--color-white);
 }
-.agent-computer-files-toolbar > button {
-  position: relative;
-  isolation: isolate;
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-/* A round 28px hover, inside however big a target the button is. */
-.agent-computer-files-toolbar > button::before {
-  content: '';
-  position: absolute;
-  z-index: -1;
-  top: 50%;
-  left: 50%;
-  width: 28px;
-  height: 28px;
-  translate: -50% -50%;
-  border-radius: var(--radius-pill);
-}
-.agent-computer-files-toolbar > button:disabled { color: var(--color-line); cursor: default; }
-.agent-computer-files-toolbar > button svg { width: 16px; height: 16px; }
 
 /*
  * The location field: a rounded grey box, drawn behind its folders, whose buttons stand taller than it so each is a
@@ -387,7 +350,6 @@
   cursor: pointer;
 }
 @media (hover: hover) {
-  .agent-computer-files-toolbar > button:not(:disabled):hover::before { background: var(--color-fill); }
   .agent-computer-files-crumbs button:hover { color: var(--color-text); }
 }
 .agent-computer-files-crumbs [aria-current='true'] { color: var(--color-text); font-weight: var(--weight-semibold); }
@@ -453,17 +415,6 @@
 /* The selected item: a `selected` tile, and its name on blue. */
 .agent-computer-file[aria-selected='true'] { background: var(--color-line); }
 .agent-computer-file[aria-selected='true'] .agent-computer-file-name { background: var(--color-blue); color: var(--color-white); }
-/* A file's name edited under its icon: a field over the name, dark text even on the selected item. */
-.agent-computer-file-rename {
-  width: 100%;
-  padding: 0 2px;
-  border: 1px solid var(--color-blue);
-  border-radius: var(--radius-sm);
-  background: var(--color-white);
-  color: var(--color-text);
-  font: inherit;
-  text-align: center;
-}
 
 /* Thunar's status bar: what the open place holds, or the selected file's name and size. */
 .agent-computer-files-status {
@@ -481,10 +432,9 @@
   white-space: nowrap;
 }
 
-/* A phone's targets are a finger's: the toolbar's and the sidebar's 44px, around a taller location field. */
+/* A phone's targets are a finger's: the sidebar's 44px, around a taller location field. */
 @media (max-width: 640px) {
   .agent-computer-files-toolbar { height: 44px; }
-  .agent-computer-files-toolbar > button { width: 44px; height: 44px; }
   .agent-computer-files-path::before { height: 30px; }
   .agent-computer-files-crumbs button { min-width: 44px; height: 44px; }
   .agent-computer-files-sidebar button { height: 44px; }
@@ -509,23 +459,12 @@
   box-shadow: var(--shadow-float);
 }
 .agent-computer-files-sheet p { flex: 1 1 100%; margin: 0; overflow-wrap: anywhere; }
-.agent-computer-files-sheet button {
-  min-width: 44px;
-  min-height: 44px;
-  padding: 2px var(--space-8);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
-  background: var(--color-white);
-  color: var(--color-text);
-  font: inherit;
-  cursor: pointer;
-}
-.agent-computer-files-sheet .agent-computer-files-delete { border-color: var(--color-red); background: var(--color-red); color: var(--color-white); }
 
 /* Take-over by touch: shown on phones only; desktops use their own keyboard and mouse. */
 .agent-computer-touch { display: none; }
 
-.agent-computer-screen-open { position: absolute; inset: 0; border: 0; background: transparent; cursor: zoom-in; z-index: 5; }
+/* The screen's zoom target: a stock ghost button over the whole screen, its own height giving way to the inset. */
+.agent-computer-screen-open { position: absolute; inset: 0; z-index: 5; height: auto; }
 
 .agent-computer-sheet-head {
   position: absolute;
@@ -534,16 +473,6 @@
   right: 0;
   display: flex;
   align-items: center;
-}
-
-.agent-computer-sheet-close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-pill);
-  cursor: pointer;
 }
 
 .agent-computer-sheet-title { display: inline-flex; align-items: center; gap: var(--space-8); font-size: var(--font-body); font-weight: var(--weight-semibold); }
@@ -555,11 +484,6 @@
   .agent-computer-sheet { min-height: 0; padding: calc(var(--space-32) * 2) var(--space-24) var(--space-24); }
 
   .agent-computer-sheet-head { gap: var(--space-8); min-height: 52px; padding: var(--space-8) var(--space-16); border-bottom: 1px solid var(--color-line); }
-  .agent-computer-sheet-close { width: 32px; height: 32px; background: none; color: var(--color-text); }
-  @media (hover: hover) {
-  .agent-computer-sheet-close:hover { background: var(--color-fill); }
-  }
-  .agent-computer-sheet-close svg { width: 18px; height: 18px; }
   .agent-computer-sheet-title svg { width: 18px; height: 18px; }
 }
 
@@ -604,23 +528,6 @@
 
   .agent-computer-touch-tools { flex-basis: 100%; display: flex; justify-content: flex-end; gap: var(--space-8); }
 
-  .agent-computer-touch-tool {
-    width: 44px;
-    height: 44px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    border: none;
-    border-radius: var(--radius-pill);
-    background: var(--color-text);
-    color: var(--color-white);
-    box-shadow: var(--shadow-rest);
-  }
-
-  .agent-computer-touch-tool svg { width: 20px; height: 20px; }
-  .agent-computer-touch-tool[aria-pressed='true'] { background: var(--color-blue); }
-  .agent-computer-touch-tool:disabled { opacity: 0.4; }
   .agent-computer-touch > .agent-computer-error { flex-basis: 100%; }
 
   /* The sheet: the computer on black over the whole screen, its title at the top and its tools at the bottom (dots Fig 8). */
@@ -633,13 +540,9 @@
   .agent-computer-sheet-close {
     position: absolute;
     left: 16px;
-    width: 44px;
-    height: 44px;
-    background: var(--color-text);
-    color: var(--color-white);
   }
 
-  .agent-computer-sheet-head svg { width: 22px; height: 22px; }
+  .agent-computer-sheet-title svg { width: 22px; height: 22px; }
 
   .agent-computer-sheet .agent-computer-touch {
     position: absolute;
@@ -649,13 +552,9 @@
     padding-bottom: max(var(--space-12), env(safe-area-inset-bottom));
   }
 
-  .agent-computer-sheet .agent-computer-touch-tool { background: var(--color-text); }
-  .agent-computer-sheet .agent-computer-touch-tool[aria-pressed='true'] { background: var(--color-blue); }
 
   /* A finger's 44px target at the least (Apple HIG; the regression): the dock apps keep their 30px icons. */
   .agent-computer-dock-app { width: 44px; height: 44px; }
-  .agent-computer-control,
-  .agent-computer-stop { min-height: 44px; }
 
   .agent-computer:not(.agent-computer-sheet) { --agent-computer-chrome: 136px; }
 }
@@ -669,7 +568,6 @@
 }
 
 .browser-live-released { background: var(--agent-deepest); }
-.browser-live-watch { min-height: 44px; border: 0; cursor: pointer; }
 
 .browser-live-view { position: absolute; inset: 0; }
 

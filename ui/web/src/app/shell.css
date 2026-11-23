@@ -274,15 +274,9 @@
   flex: 1;
 }
 
+/* New side chat keeps its place at the header's end. */
 .sidebar-new-chat {
-  width: 44px;
-  height: 44px;
-  padding: 0;
-}
-
-.sidebar-new-chat svg {
-  width: 20px;
-  height: 20px;
+  flex: none;
 }
 
 .sidebar-collapsed .sidebar-brand-text {
@@ -448,10 +442,6 @@
     justify-content: space-between;
     gap: var(--space-8);
     padding: var(--sidebar-pad-y) var(--space-12) 0 var(--space-20);
-  }
-
-  .sidebar-expanded .sidebar-new-chat {
-    flex-shrink: 0;
   }
 }
 

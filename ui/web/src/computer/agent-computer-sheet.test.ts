@@ -98,8 +98,11 @@ const styleOf = (selector: string) => {
   return getComputedStyle(element);
 };
 
+// Who drives: the stock Button in the bar's pill, Take over or Return control.
+const whoDrives = () => container.querySelector<HTMLButtonElement>('.agent-computer-pill [data-slot="button"]');
+
 const takeOver = () => {
-  const control = container.querySelector<HTMLButtonElement>('.agent-computer-control');
+  const control = whoDrives();
   if (control === null) throw new Error('no Take over button');
   act(() => control.click());
 };
@@ -167,10 +170,10 @@ describe('full-view ownership', () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     expect(container.querySelector('[role="toolbar"]')).toBeNull();
     expect(button('View computer')?.disabled).toBe(true);
-    expect(container.querySelector<HTMLButtonElement>('.agent-computer-control')?.disabled).toBe(true);
+    expect(whoDrives()?.disabled).toBe(true);
     act(() => {
       button('View computer')?.click();
-      container.querySelector<HTMLButtonElement>('.agent-computer-control')?.click();
+      whoDrives()?.click();
     });
     expect(onTakeOver).not.toHaveBeenCalled();
     expect(onHandBack).not.toHaveBeenCalled();
@@ -194,7 +197,7 @@ describe('full-view ownership', () => {
     expect(container.querySelector('[role="dialog"]')).not.toBeNull();
     expect(container.querySelector('.agent-computer-touch')).toBeNull();
     renderComputer('user', { onHandBack });
-    act(() => container.querySelector<HTMLButtonElement>('.agent-computer-control')?.click());
+    act(() => whoDrives()?.click());
     expect(onHandBack).toHaveBeenCalledWith('browser-1');
     renderComputer('user', { busy: true });
     expect(container.querySelector('[role="dialog"]')).not.toBeNull();
@@ -202,7 +205,7 @@ describe('full-view ownership', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('Hand back failed');
     expect(container.querySelector('[role="dialog"]')).not.toBeNull();
     renderComputer('user', { onHandBack });
-    act(() => container.querySelector<HTMLButtonElement>('.agent-computer-control')?.click());
+    act(() => whoDrives()?.click());
     renderComputer('agent');
     expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
@@ -210,7 +213,7 @@ describe('full-view ownership', () => {
   it('keeps a reopened watching view open when an earlier return finishes', () => {
     renderComputer('user');
     act(() => button('View computer')?.click());
-    act(() => container.querySelector<HTMLButtonElement>('.agent-computer-control')?.click());
+    act(() => whoDrives()?.click());
     act(() => button('Close computer')?.click());
     act(() => button('View computer')?.click());
     renderComputer('agent');
@@ -306,7 +309,7 @@ describe("the Agent Computer's preview in the profile on a phone, while the agen
 describe("the Agent Computer's Files on a phone", () => {
   inWindow({ width: 390, height: 844 });
 
-  it('packs files and folders into columns 60px wide at least, under 34px icons, with 44px toolbar and sidebar targets', () => {
+  it('packs files and folders into columns 60px wide at least, under 34px icons, with a 44px toolbar and sidebar targets', () => {
     const files = [
       { name: 'prices.csv', size: 1, lastModified: '2026-10-01T09:00:00.000Z' },
       { name: 'reports/q3.pdf', size: 1, lastModified: '2026-10-01T09:00:00.000Z' },
@@ -323,7 +326,10 @@ describe("the Agent Computer's Files on a phone", () => {
     // A wide folder beside a page.
     expect(icons.map(({ width, height }) => [width, height])).toEqual([['28px', '34px'], ['42px', '34px']]);
     expect([styleOf('.agent-computer-files-toolbar').height, styleOf('.agent-computer-files-sidebar button').height]).toEqual(['44px', '44px']);
-    expect([styleOf('.agent-computer-files-toolbar > button').width, styleOf('.agent-computer-files-crumbs button').height]).toEqual(['44px', '44px']);
+    expect(styleOf('.agent-computer-files-crumbs button').height).toBe('44px');
+    // Back and Forward are the stock icon Button, at its own size.
+    expect(['Back', 'Forward'].map((name) => button(name)?.dataset.slot)).toEqual(['button', 'button']);
+    expect(styleOf('.agent-computer-files-toolbar > button').width).not.toBe('44px');
   });
 });
 
@@ -352,6 +358,9 @@ describe('the Agent Computer on a desktop (dots Fig 6)', () => {
     renderComputer();
 
     expect(styleOf('.agent-computer-screen-open').display).not.toBe('none');
+    // The stock Button covers the whole screen, its own height giving way to the inset.
+    const open = styleOf('.agent-computer-screen-open');
+    expect([open.position, open.inset, open.height]).toEqual(['absolute', '0', 'auto']);
     act(() => button('View computer')?.click());
 
     const pane = styleOf('.agent-computer-sheet');

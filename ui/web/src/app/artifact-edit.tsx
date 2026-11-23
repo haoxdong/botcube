@@ -10,6 +10,7 @@ import { useVersionFiles, VersionDeck, type DeckFile } from "./artifact-slides";
 import type { ArtifactVersion, ViewerProps } from "./artifact-viewer";
 import { Presence, presenceMotion, Swap } from "./collapse";
 import { reason } from "./composer-files";
+import { Button } from "@/components/ui/button";
 
 const TEXT_BLOCKS = "h1, h2, h3, p, li, th, td";
 const KINDS: Record<string, string> = { h1: "Heading", h2: "Heading", h3: "Heading", p: "Paragraph", li: "List item", th: "Cell", td: "Cell" };
@@ -110,22 +111,22 @@ export function EditableDeck({ artifact: newest, read, save, frame, shows }: Vie
     <>
       <Swap state={edit === null ? "reading" : "editing"} className="artifact-edit-bar">
         {edit === null ? (
-          <button type="button" className="header-btn artifact-edit-action" disabled={files.length === 0} onClick={() => setEdit({ version: newest, drafts: {} })}>
+          <Button type="button" variant="ghost" size="sm" disabled={files.length === 0} onClick={() => setEdit({ version: newest, drafts: {} })}>
             <PencilIcon aria-hidden />Edit text
-          </button>
+          </Button>
         ) : (
           <>
-            <button type="button" className="header-btn artifact-edit-action" disabled={!edited || saving} onClick={() => void submit()}>Save</button>
-            <button type="button" className="header-btn artifact-edit-action" disabled={saving} onClick={stop}>Cancel</button>
+            <Button type="button" variant="ghost" size="sm" disabled={!edited || saving} onClick={() => void submit()}>Save</Button>
+            <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={stop}>Cancel</Button>
           </>
         )}
       </Swap>
       <Presence>{edit !== null && !saving && newest.version > edit.version.version && (
         <motionElement.div {...presenceMotion} role="status" className="artifact-edit-newer">
           <span>Version {newest.version} arrived while you edited version {edit.version.version}. Your edits are kept.</span>
-          <button type="button" className="header-btn artifact-edit-action" disabled={saving} onClick={stop}>
+          <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={stop}>
             Discard edits and open version {newest.version}
-          </button>
+          </Button>
         </motionElement.div>
       )}</Presence>
       <Presence>{failures.map((failure) => (

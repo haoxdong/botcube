@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { RemoteViewport } from './remote-viewport';
 
 import { fetchBrowserLiveViewSignedUrl } from './browser-live-view-url';
+import { Button } from "@/components/ui/button";
 
 /** Loads the live view's code, the DCV Web Client among it; once loaded, it is not loaded again. */
 export const loadLiveView = () => import('bedrock-agentcore/browser/live-view').then((mod) => mod.BrowserLiveView);
@@ -105,11 +106,11 @@ function BrowserLiveFrameSession(props: BrowserLiveFrameProps) {
   if (phase === 'released') return (
     <div className="browser-live-host browser-live-released">
       <Presence>{props.lastScreen && <motionElement.img {...presenceMotion} className="agent-computer-screenshot" src={props.lastScreen} alt="The last screen" />}</Presence>
-      <button type="button" className="browser-live-watch" onClick={() => {
+      <Button type="button" variant="secondary" className="browser-live-watch" onClick={() => {
         if (document.hidden) return;
         active.current = true;
         setPhase('viewing');
-      }}>Watch here</button>
+      }}>Watch here</Button>
     </div>
   );
   return <ConnectedLiveFrame {...props} active={active} />;

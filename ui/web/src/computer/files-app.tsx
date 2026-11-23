@@ -16,6 +16,8 @@ import { Thumbnail } from './thumbnail';
 import { deleteFile, fileDownloadUrl, listFiles, renameFile, type FileEntry } from './files-service';
 
 import { LoadingSkeleton } from 'botcube-ui-web/load-state';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 const MotionClock = motionElement.create(Clock);
 const MotionFolder = motionElement.create(Folder);
@@ -229,12 +231,12 @@ export function FilesWindow({
       </nav>
       <div className="agent-computer-files-main">
         <div className="agent-computer-files-toolbar">
-          <button type="button" aria-label="Back" title="Back" disabled={back.length === 0} onClick={goBack}>
+          <Button type="button" variant="ghost" size="icon" aria-label="Back" title="Back" disabled={back.length === 0} onClick={goBack}>
             <ChevronLeft aria-hidden="true" />
-          </button>
-          <button type="button" aria-label="Forward" title="Forward" disabled={forward.length === 0} onClick={goForward}>
+          </Button>
+          <Button type="button" variant="ghost" size="icon" aria-label="Forward" title="Forward" disabled={forward.length === 0} onClick={goForward}>
             <ChevronRight aria-hidden="true" />
-          </button>
+          </Button>
           {/* The location field: the open place, its folders from workspace down, the leading ones giving way first. */}
           <nav className="agent-computer-files-path" aria-label="Path">
             <Presence>{place === null ? <MotionClock {...presenceMotion} key="0" aria-hidden="true" /> : <MotionFolder {...presenceMotion} key="1" aria-hidden="true" />}</Presence>
@@ -261,13 +263,13 @@ export function FilesWindow({
               return [...(view.current?.querySelectorAll<HTMLElement>(".agent-computer-file") ?? [])].find((row) => row.dataset.filePath === target?.path) ?? view.current;
             }}>
               <p>{`Delete “${deleting?.row.name}”? This can't be undone.`}</p>
-              <AlertDialog.Close render={<button type="button" />}>Cancel</AlertDialog.Close>
-              <button type="button" className="agent-computer-files-delete" onClick={() => {
+              <AlertDialog.Close render={<Button type="button" variant="outline" />}>Cancel</AlertDialog.Close>
+              <Button type="button" variant="destructive" onClick={() => {
                 closeSheet();
                 if (deleting === null) return;
                 const { path } = deleting.row;
                 void Promise.resolve(onDelete(path)).catch(() => setRefocus(path));
-              }}>Delete</button>
+              }}>Delete</Button>
             </AlertDialog.Popup>
           </AlertDialog.Portal>
         </AlertDialog.Root>
@@ -283,9 +285,8 @@ export function FilesWindow({
             {items.map((item) => <FileMenu key={item.path} container={view} row={item} actions={menuItems} onOpen={() => setSelected(item.path)}><Presence>{item.path === renaming?.path ? (
               <motionElement.div {...presenceMotion} key={item.path} role="option" aria-selected={item.path === selected} className="agent-computer-file" data-file-path={item.path} data-kind={kindOf(item)}>
                 {icon(item)}
-                <input
+                <Input
                   ref={nameField}
-                  className="agent-computer-file-rename"
                   aria-label={`Rename ${item.name}`}
                   defaultValue={item.name}
                   onKeyDown={(event) => {

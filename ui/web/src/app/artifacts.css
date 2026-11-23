@@ -52,16 +52,6 @@
   overflow-wrap: anywhere;
 }
 
-.artifact-instead {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-decoration: underline;
-  cursor: pointer;
-}
-
 .artifact-side {
   display: flex;
   flex: 1;
@@ -124,27 +114,6 @@
   z-index: 501;
 }
 
-/* The Download trigger is the stock ghost button in the head's own look: muted, round, a 24px icon. */
-.artifact-download {
-  border-radius: var(--radius-pill);
-}
-
-/* Muted at rest only: hover and an open menu keep the stock ghost button's foreground. */
-.artifact-download:not([aria-expanded="true"]) {
-  color: var(--color-text-muted);
-}
-
-@media (hover: hover) {
-  .artifact-download:hover {
-    color: var(--color-text);
-  }
-}
-
-.artifact-download svg {
-  width: 24px;
-  height: 24px;
-}
-
 .artifact-export-note {
   align-self: center;
   margin-right: var(--space-8);
@@ -197,16 +166,6 @@
   gap: var(--space-4);
   padding: var(--space-4) var(--space-8);
   border-bottom: 1px solid var(--color-line);
-}
-
-.artifact-edit-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  width: auto;
-  padding: 0 var(--space-8);
-  font: inherit;
-  font-size: var(--font-small);
 }
 
 .artifact-edit-failure {
@@ -371,22 +330,17 @@
   border-bottom: 1px solid var(--color-line);
 }
 
+.artifact-email-field input {
+  flex: 1;
+  min-width: 0;
+}
+
 .artifact-email-field span {
   flex: 0 0 56px;
   color: var(--color-text-muted);
   font-size: var(--font-small);
 }
 
-.artifact-email-field input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  background: none;
-  color: var(--color-text);
-  font: inherit;
-}
-
-.artifact-email-field input:focus-visible,
 .artifact-email-body:focus-visible {
   outline: 2px solid var(--color-blue);
 }

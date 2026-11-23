@@ -9,6 +9,7 @@ import { motionTokens } from "./motion-tokens";
 import { sentFilesOf } from "./composer-files";
 import { MessageEntranceHistory } from "./message-entrance";
 import type { PendingMessage, Withdrawal } from "./steering";
+import { Button } from "@/components/ui/button";
 
 type Closing = { message: PendingMessage; after: string | null };
 type Row = { message: PendingMessage; shown: boolean };
@@ -85,10 +86,10 @@ function WaitingMessage({ message, shown, last, onClosed, open, onToggle, onSend
         <div className="waiting-message-actions">
           <Fade open={outcome === "failed"} className="waiting-message-note">Your message is still waiting.</Fade>
           <span className="waiting-message-swap">
-            <button type="button" className="waiting-message-send-now" onClick={onSendNow}>Send now</button>
+            <Button type="button" variant="ghost" size="sm" className="waiting-message-send-now" onClick={onSendNow}>Send now</Button>
             <span className="waiting-message-icons">
-              <button type="button" className="waiting-message-icon" aria-label={`Edit ${text}`} onClick={onEdit}><Pencil aria-hidden="true" /></button>
-              <button type="button" className="waiting-message-icon" aria-label={`Cancel ${text}`} onClick={onCancel}><X aria-hidden="true" /></button>
+              <Button type="button" variant="ghost" size="icon-sm" className="waiting-message-icon" aria-label={`Edit ${text}`} onClick={onEdit}><Pencil aria-hidden="true" /></Button>
+              <Button type="button" variant="ghost" size="icon-sm" className="waiting-message-icon" aria-label={`Cancel ${text}`} onClick={onCancel}><X aria-hidden="true" /></Button>
             </span>
           </span>
         </div>

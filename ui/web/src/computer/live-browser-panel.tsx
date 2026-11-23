@@ -9,6 +9,7 @@ import { popOut, screenUrl } from './screenshots';
 import { useLiveViewEvents } from './live-view-events';
 import { Swap } from '../app/collapse';
 import { Screen } from './screen';
+import { Button } from "@/components/ui/button";
 
 const CHAT_SERVICE_URL = chatServiceUrl();
 
@@ -37,18 +38,19 @@ export function LiveBrowserPanel({ agentId, conversation }: AuxiliaryPanelHostPr
         }
         actions={
           <span className="computer-screen-actions">
-            <button
+            <Button
               type="button"
-              className="computer-screen-action"
+              variant="ghost"
+              size="icon-xs"
               aria-label="Pop out"
               title="Pop out"
               onClick={() => popOut(live.sessionId)}
             >
               <ExternalLink aria-hidden="true" />
-            </button>
-            <button type="button" className="computer-screen-action" aria-label="Close live browser" title="Close" onClick={() => setLive(null)}>
+            </Button>
+            <Button type="button" variant="ghost" size="icon-xs" aria-label="Close live browser" title="Close" onClick={() => setLive(null)}>
               <X aria-hidden="true" />
-            </button>
+            </Button>
           </span>
         }
         onAsleep={() => setLive(null)}

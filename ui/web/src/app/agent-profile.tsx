@@ -15,6 +15,8 @@ import { Avatar } from "./avatar";
 import { LoadFailed, LoadingSkeleton, useLoad, type LoadState } from "./load-state";
 import { PictureField } from "./picture-field";
 import { throwIfRefused } from "./refusal";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 const MotionButton = motionElement.create(Button);
 const MotionField = motionElement.create(Field);
@@ -315,7 +317,7 @@ function IdentityFile({
       {IDENTITY_FIELDS.map((field) => (
         <Field key={field}>
           <FieldLabel htmlFor={`${id}-${field}`}>{fieldLabel(field)}</FieldLabel>
-          <input
+          <Input
             id={`${id}-${field}`}
             value={draft.identity[field]}
             onChange={(event) => setDraft({ ...draft, identity: { ...draft.identity, [field]: event.target.value } })}
@@ -351,7 +353,7 @@ function SoulFile({
       ) : (
         <MotionField {...presenceMotion} key="1">
           <FieldLabel htmlFor={id}>Soul</FieldLabel>
-          <textarea id={id} rows={12} value={draft} onChange={(event) => setDraft(event.target.value)} />
+          <Textarea id={id} rows={12} value={draft} onChange={(event) => setDraft(event.target.value)} />
         </MotionField>
       )}</Presence>
     </FileDocument>
@@ -417,7 +419,7 @@ function MemoryFile({
       <Presence>{addition && (
         <MotionField {...presenceMotion}>
           <FieldLabel htmlFor={additionId}>New Memory</FieldLabel>
-          <input id={additionId} autoFocus required value={addition.text} disabled={addition.saving}
+          <Input id={additionId} autoFocus required value={addition.text} disabled={addition.saving}
             onChange={(event) => setAddition({ ...addition, text: event.target.value })} />
         </MotionField>
       )}</Presence>
@@ -435,7 +437,7 @@ function MemoryFile({
         <motionElement.ol {...presenceMotion} className="agent-memory">
           {draft.map((line, index) => (
             <li key={line.id} className="agent-memory-line">
-              <input
+              <Input
                 aria-label={`Memory line ${index + 1}`}
                 value={line.text}
                 disabled={line.id.startsWith("pending:")}

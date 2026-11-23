@@ -92,8 +92,6 @@
 
 .step-section-copy {
   margin-left: auto;
-  padding: var(--space-4);
-  border-radius: var(--radius-md);
 }
 
 .step-copy-error {

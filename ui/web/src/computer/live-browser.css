@@ -53,32 +53,6 @@
   margin-left: auto;
 }
 
-.computer-screen-action {
-  appearance: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-
-@media (hover: hover) {
-  .computer-screen-action:hover {
-    background: var(--color-fill);
-  }
-}
-
-.computer-screen-action svg {
-  width: 14px;
-  height: 14px;
-}
-
 /* The browser's 16:10 viewport, whether it shows the screen or the cover. */
 .computer-screen-glass {
   display: grid;
@@ -192,17 +166,6 @@
   .live-browser-panel .computer-screen-lights i:not(:first-child),
   .live-browser-panel .computer-screen-glass {
     display: none;
-  }
-
-  .live-browser-panel .computer-screen-action {
-    width: 36px;
-    height: 36px;
-    border-radius: var(--radius-pill);
-  }
-
-  .live-browser-panel .computer-screen-action svg {
-    width: 16px;
-    height: 16px;
   }
 }
 

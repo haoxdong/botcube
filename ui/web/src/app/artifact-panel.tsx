@@ -26,6 +26,7 @@ import { withStorage } from "./main-chat-copy";
 import { Layout } from "./collapse";
 import { motionTokens } from "./motion-tokens";
 import { useIsPhone } from "./phone-query";
+import { Button } from "@/components/ui/button";
 
 /** The harness `Artifact` tool's arguments (botcube_harness_deepagents/artifact.py). */
 const ArtifactCall = z.object({
@@ -268,11 +269,11 @@ function DesktopControls({ shown, position, switchSide }: { shown: Shown; positi
   const SideIcon = position === "left" ? PanelRightIcon : PanelLeftIcon;
   return (
     <>
-      <button type="button" className="header-btn" aria-label={move} title={move} onClick={switchSide}><SideIcon aria-hidden /></button>
-      <button type="button" className="header-btn" aria-label={label} title={label} onClick={() => open((current) => current && { ...current, full: !full })}>
+      <Button type="button" variant="ghost" size="icon-lg" aria-label={move} title={move} onClick={switchSide}><SideIcon aria-hidden /></Button>
+      <Button type="button" variant="ghost" size="icon-lg" aria-label={label} title={label} onClick={() => open((current) => current && { ...current, full: !full })}>
         <FullIcon aria-hidden />
-      </button>
-      <button type="button" className="header-btn" aria-label="Close" title="Close" onClick={() => open(null)}><XIcon aria-hidden /></button>
+      </Button>
+      <Button type="button" variant="ghost" size="icon-lg" aria-label="Close" title="Close" onClick={() => open(null)}><XIcon aria-hidden /></Button>
     </>
   );
 }

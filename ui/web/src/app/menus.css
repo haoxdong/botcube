@@ -182,10 +182,6 @@
     padding-left: 10px;
   }
 
-  .sidebar-item-name {
-    padding-left: var(--space-8);
-  }
-
   .sidebar-expanded .sidebar-nav-item {
     gap: 18px;
     padding: var(--space-8) 10px;
@@ -214,11 +210,6 @@
   .sidebar-collapsed .sidebar-section-header,
   .sidebar-collapsed .sidebar-bottom {
     display: none;
-  }
-
-  /* New side chat keeps its 44px; the rows' ⋯ centre under it */
-  .sidebar-new-chat {
-    flex: none;
   }
 
   /* Over the peeking chat, which lets taps through to it: a tap on the strip closes the drawer */

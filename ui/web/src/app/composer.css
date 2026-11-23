@@ -257,15 +257,6 @@
   font-size: var(--font-small);
   color: var(--color-text-muted);
 }
-.guest-notice-sign-in {
-  appearance: none;
-  border: none;
-  background: none;
-  padding: 0;
-  color: var(--color-blue);
-  cursor: pointer;
-  font-size: inherit;
-}
 
 /* The files attached with the +: chips inside the composer's box, above its text, wrapping as ChatGPT's do. */
 .composer-files {
@@ -344,41 +335,9 @@
   font-size: var(--font-small);
 }
 
-.composer-file-retry {
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--color-text);
-  font-size: var(--font-small);
-  text-decoration: underline;
-  cursor: pointer;
-}
-
+/* A file chip's Remove stays at the chip's top. */
 .composer-file-remove {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
   align-self: flex-start;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-
-@media (hover: hover) {
-    .composer-file-remove:hover {
-      background: var(--color-fill);
-    }
-}
-
-.composer-file-remove svg {
-  width: 16px;
-  height: 16px;
 }
 
 /* An uploading image dims under a ring of its progress; a failed one, under a red-ringed Retry. */
@@ -412,42 +371,11 @@
   transition: stroke-dashoffset var(--motion-move) var(--ease);
 }
 
-.composer-image-retry {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 2.5px solid var(--color-red);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--color-white);
-  cursor: pointer;
-}
-
-.composer-image-retry svg,
-.composer-image-remove svg {
-  width: 12px;
-  height: 12px;
-  stroke-width: 3;
-}
-
+/* An image's Remove sits on its top right corner. */
 .composer-image-remove {
   position: absolute;
   top: 4px;
   right: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-pill);
-  background: var(--color-text);
-  color: var(--color-white);
-  cursor: pointer;
 }
 
 /* Why each image failed to upload, under the chips, at most two lines each; the image keeps no text on it. */
@@ -469,37 +397,6 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
-}
-
-/* Phones: Remove and Retry are a finger's 44px target; the chip keeps its look. */
-@media (max-width: 767px) {
-  .composer-file-remove {
-    width: 44px;
-    height: 44px;
-    margin: calc(-1 * var(--space-8)) calc(-1 * var(--space-4)) calc(-1 * var(--space-8)) calc(-1 * var(--space-8));
-    align-self: center;
-  }
-
-  .composer-file-retry {
-    min-height: 44px;
-    margin: calc(-1 * var(--space-12)) 0;
-  }
-
-  /* Remove grows only up and right, off the image, so it never covers Retry; painted after Retry, it keeps its own circle. */
-  .composer-image-remove::before,
-  .composer-image-retry::before {
-    position: absolute;
-    inset: -12px;
-    content: "";
-  }
-
-  .composer-image-remove::before {
-    inset: -12px -12px 0 0;
-  }
-
-  .composer-image-retry {
-    position: relative;
-  }
 }
 
 /* ── Hide CopilotKit's built-in message action buttons (copy, etc.) ──

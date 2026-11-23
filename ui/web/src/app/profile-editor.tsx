@@ -6,6 +6,7 @@ import { Button } from "../components/pill-button";
 import { Field, FieldLabel } from "../components/ui/field";
 import { PictureField } from "./picture-field";
 import { Fade } from "./collapse";
+import { Input } from "@/components/ui/input";
 
 /** The user's display name and photo, edited in the account menu: `onSaved` after a save, `onCancel` without one. */
 export function ProfileEditor({
@@ -42,7 +43,7 @@ export function ProfileEditor({
       <PictureField picture={shown} name={name} noun="photo" onChange={setPhoto} onError={setError} />
       <Field>
         <FieldLabel htmlFor={nameId}>Display name</FieldLabel>
-        <input id={nameId} value={name} onChange={(event) => setName(event.target.value)} />
+        <Input id={nameId} value={name} onChange={(event) => setName(event.target.value)} />
       </Field>
       <Fade open={error !== null} className="profile-editor-error" role="alert">{error}</Fade>
       <div className="profile-editor-actions">

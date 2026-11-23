@@ -39,58 +39,13 @@
   grid-area: 1 / 1;
 }
 
-.waiting-message-send-now {
-  height: 28px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  outline: none;
-}
-
-.waiting-message-send-now:focus-visible,
-.waiting-message-icon:focus-visible {
-  background: var(--color-fill);
-  outline: 2px solid var(--color-blue);
-  outline-offset: -2px;
-}
-
 .waiting-message-icons {
   display: flex;
   gap: 2px;
-  /* stylelint-disable-next-line declaration-property-value-allowed-list -- the 17px glyph's edge on the text's, in its 28px target */
-  margin-inline-end: calc((17px - 28px) / 2);
+  /* stylelint-disable-next-line declaration-property-value-allowed-list -- the 16px glyph's edge on the text's, in its 28px button */
+  margin-inline-end: calc((16px - 28px) / 2);
   opacity: 0;
   pointer-events: none;
-}
-
-.waiting-message-icon {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  outline: none;
-}
-
-.waiting-message-icon svg {
-  width: 17px;
-  height: 17px;
-}
-
-@media (hover: hover) {
-  .waiting-message-icon:hover {
-    background: var(--color-fill);
-    color: var(--color-text);
-  }
 }
 
 .waiting-message:is([data-open], :has(.waiting-message-icon:focus-visible)) .waiting-message-icons {
@@ -101,32 +56,6 @@
 .waiting-message:is([data-open], :has(.waiting-message-icon:focus-visible)) .waiting-message-send-now {
   opacity: 0;
   pointer-events: none;
-}
-
-@media (max-width: 767px) {
-  .waiting-message-actions,
-  .waiting-message-send-now,
-  .waiting-message-icon {
-    height: 44px;
-  }
-
-  .waiting-message-actions {
-    margin-top: 2px;
-  }
-
-  .waiting-message-icon {
-    width: 44px;
-  }
-
-  .waiting-message-icon svg {
-    width: 20px;
-    height: 20px;
-  }
-
-  .waiting-message-icons {
-    /* stylelint-disable-next-line declaration-property-value-allowed-list -- the 20px glyph's edge on the text's, in its 44px target */
-    margin-inline-end: calc((20px - 44px) / 2);
-  }
 }
 
 .waiting-message:has(.waiting-message-send-now:focus-visible) .waiting-message-send-now {

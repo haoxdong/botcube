@@ -14,10 +14,7 @@
   --button-height: 2rem;
 }
 
-[data-slot="field"] input,
-[data-slot="field"] textarea,
-[data-slot="field"] select,
-.agent-memory-line input {
+[data-slot="field"] select {
   padding: var(--space-12);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
@@ -246,19 +243,10 @@
   white-space: nowrap;
 }
 
-/* The row's name being edited, across the whole fill: a field (DESIGN.md), as tall as it, its text where the title's was */
+/* The row's name being edited: the stock field, across the row */
 .sidebar-item-name {
   flex: 1;
-  align-self: stretch;
   min-width: 0;
-  padding: 0 var(--space-12);
-  border: 1px solid var(--color-line);
-  /* Inline, it takes its row's pill */
-  border-radius: var(--radius-pill);
-  background: var(--color-white);
-  font-size: var(--font-body);
-  font-family: inherit;
-  color: var(--color-text);
 }
 
 /* A scheduled task's Side Chat: a muted clock before its title, on the text's line */

@@ -5874,9 +5874,11 @@ describe('agent profile', () => {
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
 
-    // Every minute is an Interval of 1 minute, the count bare, with no box.
+    // Every minute is an Interval of 1 minute, the count in the stock field.
     expect(inSheet.getByLabelText('Repeat')).toHaveDisplayValue('Interval');
     expect(inSheet.getByLabelText('Every')).toHaveValue('1');
+    // Title, the instructions and Every are the stock Input and Textarea.
+    expect(['Title', 'Prompt', 'Every'].map((label) => inSheet.getByLabelText(label).dataset.slot)).toEqual(['input', 'textarea', 'input']);
     expect(inSheet.getByText('minute')).toBeInTheDocument();
     await more(inSheet);
     // The sheet is named for what it does while the Title field shows the title.

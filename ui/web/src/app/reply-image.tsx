@@ -10,6 +10,7 @@ import { reason } from './composer-files';
 import { keepSize, sizeOf, type Size } from './late-boxes';
 import { replyFilePath } from './reply-file-path';
 import { useReplyFile } from './use-reply-file';
+import { Button } from "@/components/ui/button";
 
 /** An image's box before its size is known: the bubble's width at 16:9, a chart's usual shape. */
 const UNSIZED: Size = { width: 1600, height: 900 };
@@ -84,14 +85,15 @@ export function ReplyImage({ src, alt, title }: ComponentProps<'img'>) {
               <div data-testid="reply-image-scrim" className="h-full rounded-lg bg-(--scrim) opacity-30" />
             </motionElement.div>
             <motionElement.div {...presenceMotion} key="2" className="absolute right-2 bottom-2">
-              <button
-                className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-border bg-background/90 shadow-sm backdrop-blur-sm transition-all duration-(--motion-quick) ease-(--ease) hover:bg-background opacity-0 group-hover:opacity-100"
+              <Button
+                variant="outline"
+                size="icon"
                 onClick={download}
                 title="Download image"
                 type="button"
               >
                 <DownloadIcon size={14} />
-              </button>
+              </Button>
             </motionElement.div>
           </>
         )}</Presence>

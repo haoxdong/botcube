@@ -12,6 +12,9 @@ import type { AgentModel } from "./conversations";
 import { DAY_NAMES, WEEKDAYS, clock, dayName, dayTime, stopInstant, unitOf, wallWords, zoneName, type Weekday } from "./schedule";
 import { RUN_STATUS, type ScheduledTask, type TaskChanges } from "./scheduled-task";
 import { ownWords, pickedSchedule, draftOf, endingOf, edited, modelChoices, countedWall, type Repeat, type Frequency, type Ends, type Draft } from "./scheduled-task-draft";
+import { Button as StockButton } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 const MotionButton = motionElement.create(Button);
 
@@ -88,10 +91,10 @@ function TaskDetails({ task, models, modelsFailed, runsOn }: {
 function More({ open, onToggle, children }: { open: boolean; onToggle: () => void; children: ReactNode }) {
   return (
     <>
-      <button type="button" className="settings-more" aria-expanded={open} onClick={onToggle}>
+      <StockButton type="button" variant="ghost" className="settings-more" aria-expanded={open} onClick={onToggle}>
         More
         <ChevronDown size={16} aria-hidden />
-      </button>
+      </StockButton>
       <Collapse open={open}>{children}</Collapse>
     </>
   );
@@ -146,7 +149,8 @@ function WhenRow({ label, value, time = false, timezone, disabled, onChange }: {
         <span>{whenWords(value, timezone, time)}</span>
         <ChevronDown size={16} />
       </span>
-      <input
+      <Input
+        className="settings-picker"
         type={time ? "time" : "datetime-local"}
         aria-label={label}
         disabled={disabled}
@@ -183,12 +187,13 @@ function EveryRow({ value, disabled, onChange }: { value: Repeat; disabled: bool
     <label className="settings-row">
       <span>Every</span>
       <span className="settings-every">
-        <input
+        <Input
           aria-label="Every"
           inputMode="numeric"
           disabled={disabled}
           value={value.every}
-          style={{ width: `${Math.max(value.every.length, 1) + 0.5}ch` }}
+          // As wide as its digits, plus the stock field's 10px padding and 1px border each side.
+          style={{ width: `calc(${Math.max(value.every.length, 1) + 0.5}ch + 22px)` }}
           onChange={(event) => onChange({ ...value, every: event.target.value.replace(/\D/g, "") })}
         />
         <span>{unitOf("minute", Number(value.every))}</span>
@@ -268,7 +273,8 @@ function EndsRow({ value, counted, timezone, disabled, onChange }: {
         </select>
         <ChevronDown size={16} aria-hidden />
       </span>
-      <input
+      <Input
+        className="settings-picker"
         ref={picker}
         type="datetime-local"
         aria-label="End date"
@@ -299,9 +305,8 @@ function TaskEditForm({ task, models, modelsFailed, runsOn, notices, onChange, o
   const { frequency } = draft.repeat;
   return (
     <div className="scheduled-sheet-body scheduled-edit">
-      <input className="settings-text" aria-label="Title" placeholder="Title" disabled={saving} value={draft.title} onChange={(event) => set({ title: event.target.value })} />
-      <textarea
-        className="settings-text"
+      <Input aria-label="Title" placeholder="Title" disabled={saving} value={draft.title} onChange={(event) => set({ title: event.target.value })} />
+      <Textarea
         aria-label="Prompt"
         placeholder="Instructions…"
         rows={4}

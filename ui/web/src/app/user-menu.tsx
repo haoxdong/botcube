@@ -13,6 +13,7 @@ import { ProfileEditor } from "./profile-editor";
 import { LoadFailed } from "./load-state";
 import { useIsPhone } from "./phone-query";
 import { Sheet } from "../components/ui/sheet";
+import { Button } from "@/components/ui/button";
 const UI_CONFIG = webUiPlugin.config;
 const GUEST_NOTE = "Your work lives in this browser until you save it.";
 
@@ -20,7 +21,7 @@ export function GuestNotice({ onSignIn }: { onSignIn: () => void }) {
   return (
     <p className="guest-notice" role="note">
       {GUEST_NOTE}{" "}
-      <button type="button" className="guest-notice-sign-in" onClick={onSignIn}>{UI_CONFIG.loginLabel}</button>
+      <Button type="button" variant="link" size="sm" onClick={onSignIn}>{UI_CONFIG.loginLabel}</Button>
     </p>
   );
 }
