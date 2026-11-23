@@ -25,16 +25,14 @@ MetricSpec = tuple[str, str, dict[str, str], 'StatisticType', int]
 
 
 def expected_alarms(outputs: dict[str, str]) -> dict[str, MetricSpec]:
-    cluster = outputs['ClusterName']
-    service = outputs['ServiceName']
     alb = outputs['LoadBalancerArn'].split(':loadbalancer/')[1]
     target = outputs['TargetGroupArn'].split(':')[-1]
-    tasks = {'ClusterName': cluster, 'ServiceName': service}
+    target_dimensions = {'LoadBalancer': alb, 'TargetGroup': target}
     return {
-        'task-deficit': ('AWS/ECS', 'CPUUtilization', tasks, 'SampleCount', 60),
+        'task-deficit': ('AWS/ApplicationELB', 'HealthyHostCount', target_dimensions, 'Maximum', 60),
         'alb-5xx': ('AWS/ApplicationELB', 'HTTPCode_ELB_5XX_Count', {'LoadBalancer': alb}, 'Sum', 60),
-        'target-5xx': ('AWS/ApplicationELB', 'HTTPCode_Target_5XX_Count', {'LoadBalancer': alb, 'TargetGroup': target}, 'Sum', 60),
-        'unhealthy-hosts': ('AWS/ApplicationELB', 'UnHealthyHostCount', {'LoadBalancer': alb, 'TargetGroup': target}, 'Minimum', 60),
+        'target-5xx': ('AWS/ApplicationELB', 'HTTPCode_Target_5XX_Count', target_dimensions, 'Sum', 60),
+        'unhealthy-hosts': ('AWS/ApplicationELB', 'UnHealthyHostCount', target_dimensions, 'Minimum', 60),
     }
 
 
@@ -51,7 +49,7 @@ def require_alarm_semantics(alarm: MetricAlarmTypeDef, name: str, deficit: bool,
     require(alarm.get('Threshold') == (1 if deficit else 0)
             and alarm.get('ComparisonOperator') == ('LessThanThreshold' if deficit else 'GreaterThanThreshold')
             and alarm.get('EvaluationPeriods') == alarm.get('DatapointsToAlarm') == 3
-            and alarm.get('TreatMissingData') == ('breaching' if deficit else 'notBreaching'), f'Alarm semantics differ: {name}')
+            and alarm.get('TreatMissingData') == 'notBreaching', f'Alarm semantics differ: {name}')
 
 
 def verify_configuration(outputs: dict[str, str],

@@ -221,8 +221,12 @@ export class PrivateCredentialService extends Construct {
     });
     const alarm = new cloudwatch.Alarm(this, 'ErrorAlarm', {
       ...optionalPhysicalName('alarmName', props.errorAlarmName),
-      metric: errors.metric({ period: Duration.seconds(props.errorAlarmPeriodSeconds ?? 300), statistic: 'Sum' }),
-      threshold: props.errorAlarmThreshold ?? 1, evaluationPeriods: 1, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      metric: new cloudwatch.MathExpression({
+        expression: 'FILL(errors, 0)',
+        usingMetrics: { errors: errors.metric({ statistic: 'Sum' }) },
+        period: Duration.seconds(props.errorAlarmPeriodSeconds ?? 300),
+      }),
+      threshold: props.errorAlarmThreshold ?? 1, evaluationPeriods: 3, datapointsToAlarm: 2, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
     const monitoringCondition = parkState(this).credentialCondition;
     const topic = sns.Topic.fromTopicArn(this, 'Alerts', stack.formatArn({ service: 'sns', resource: props.alertsTopicName }));

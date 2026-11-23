@@ -88,7 +88,6 @@ test('application errors publish ALARM and recovery to the existing topic', () =
   const alarm = only(template, 'AWS::CloudWatch::Alarm').Properties;
   expect(alarm.AlarmActions).toEqual(alarm.OKActions);
   expect(JSON.stringify(alarm.AlarmActions)).toContain('existing-alerts');
-  expect(alarm.Statistic).toBe('Sum');
   expect(alarm.Threshold).toBe(1);
 });
 
@@ -287,7 +286,7 @@ test('the service registers as credentials with a 10-second A record and rolls b
   template.hasResourceProperties('AWS::ServiceDiscovery::Service', { Name: 'credentials', DnsConfig: Match.objectLike({ DnsRecords: [{ TTL: 10, Type: 'A' }] }) });
 });
 
-test('logged errors count in the cluster namespace and alarm on the first in five minutes', () => {
+test('a lone startup error is separated from sustained errors by zero-filled five-minute periods', () => {
   const template = synth();
   const namespace = { 'Fn::Join': ['', [{ Ref: only(template, 'AWS::ECS::Cluster').id }, '/CredentialService']] };
   expect(only(template, 'AWS::Logs::MetricFilter').Properties).toMatchObject({
@@ -295,7 +294,13 @@ test('logged errors count in the cluster namespace and alarm on the first in fiv
     MetricTransformations: [{ DefaultValue: 0, MetricName: 'Errors', MetricNamespace: namespace, MetricValue: '1' }],
   });
   expect(only(template, 'AWS::CloudWatch::Alarm').Properties).toMatchObject({
-    MetricName: 'Errors', Namespace: namespace, Period: 300, EvaluationPeriods: 1, TreatMissingData: 'notBreaching',
+    EvaluationPeriods: 3, DatapointsToAlarm: 2, Threshold: 1, TreatMissingData: 'notBreaching',
+    Metrics: expect.arrayContaining([
+      expect.objectContaining({ Id: 'errors', ReturnData: false, MetricStat: {
+        Metric: { MetricName: 'Errors', Namespace: namespace }, Period: 300, Stat: 'Sum',
+      } }),
+      expect.objectContaining({ Expression: 'FILL(errors, 0)', ReturnData: true }),
+    ]),
   });
 });
 

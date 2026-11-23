@@ -23,7 +23,7 @@ def configured() -> list[dict[str, Any]]:
         alarm = {'AlarmName': f'preview-preview-{suffix}', 'ActionsEnabled': True,
                  'AlarmActions': [OUTPUTS['AlertsTopicArn']], 'OKActions': [OUTPUTS['AlertsTopicArn']],
                  'Threshold': 1 if deficit else 0, 'ComparisonOperator': 'LessThanThreshold' if deficit else 'GreaterThanThreshold',
-                 'EvaluationPeriods': 3, 'DatapointsToAlarm': 3, 'TreatMissingData': 'breaching' if deficit else 'notBreaching',
+                 'EvaluationPeriods': 3, 'DatapointsToAlarm': 3, 'TreatMissingData': 'notBreaching',
                  'Namespace': namespace, 'MetricName': name, 'Dimensions': [{'Name': k, 'Value': v} for k, v in dims.items()],
                  'Period': period, 'Statistic': statistic}
         result.append(alarm)
@@ -36,7 +36,7 @@ class PreviewAlarmsTest(unittest.TestCase):
 
     def test_drift_fails(self):
         changes = [('ActionsEnabled', False), ('AlarmActions', ['arn:wrong']), ('OKActions', []),
-                   ('Threshold', 0), ('TreatMissingData', 'notBreaching'), ('EvaluationPeriods', 1)]
+                   ('Threshold', 0), ('TreatMissingData', 'breaching'), ('EvaluationPeriods', 1)]
         for field, value in changes:
             with self.subTest(field=field):
                 values = configured()

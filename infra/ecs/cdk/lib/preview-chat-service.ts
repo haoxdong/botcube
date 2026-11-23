@@ -217,12 +217,6 @@ export class PreviewChatService extends Construct {
       value.addAlarmAction(new actions.SnsAction(topic));
       value.addOkAction(new actions.SnsAction(topic));
     };
-    // Every running task reports CPU each minute, so no datapoint means no running task. This free
-    // metric replaces Container Insights' task counts, about $20/month of custom metrics.
-    alarm('task-deficit', new cloudwatch.Metric({
-      namespace: 'AWS/ECS', metricName: 'CPUUtilization', statistic: 'SampleCount', period,
-      dimensionsMap: { ClusterName: cluster.clusterName, ServiceName: service.serviceName },
-    }), cloudwatch.TreatMissingData.BREACHING, 1, cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD);
     const failures = (id: string, filter: keyof NonNullable<PreviewChatServiceProps['metricFilterNames']>, suffix: Parameters<typeof alarm>[0], line: string) => {
       const filterResource = new logs.MetricFilter(this, id, {
         ...optionalPhysicalName('filterName', props.metricFilterNames?.[filter]),
@@ -311,6 +305,15 @@ export class PreviewChatService extends Construct {
     }
     attachIngress(this, service, target, props, alb, providedOrigin);
     if (providedOrigin) parkServiceIngress(service, target, providedOrigin, this.container.containerName, port);
+    const availabilityMetric = providedOrigin
+      ? target.metrics.healthyHostCount({ statistic: 'Maximum', period })
+      : new cloudwatch.Metric({
+        namespace: 'AWS/ECS', metricName: 'CPUUtilization', statistic: 'SampleCount', period,
+        dimensionsMap: { ClusterName: cluster.clusterName, ServiceName: service.serviceName },
+      });
+    alarm('task-deficit', availabilityMetric,
+      providedOrigin ? cloudwatch.TreatMissingData.NOT_BREACHING : cloudwatch.TreatMissingData.BREACHING,
+      1, cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD);
     addIngressAlarms(alarm, target, alb.loadBalancer, period, providedOrigin !== undefined);
     new CfnOutput(outputScope, 'TargetGroupArn', { value: target.targetGroupArn });
   }

@@ -242,8 +242,8 @@ test('availability alarms use free metrics and publish only to the existing aler
   }
   const deficit = alarms.find(alarm => alarm.AlarmName.endsWith('-task-deficit'));
   expect(deficit).toMatchObject({
-    Namespace: 'AWS/ECS', MetricName: 'CPUUtilization', Statistic: 'SampleCount', Period: 60, TreatMissingData: 'breaching',
-    Dimensions: [{ Name: 'ClusterName', Value: { Ref: expect.any(String) } }, { Name: 'ServiceName', Value: { 'Fn::GetAtt': [expect.any(String), 'Name'] } }],
+    Namespace: 'AWS/ApplicationELB', MetricName: 'HealthyHostCount', Statistic: 'Maximum', Period: 60, TreatMissingData: 'notBreaching',
+    Dimensions: expect.arrayContaining([expect.objectContaining({ Name: 'LoadBalancer' }), expect.objectContaining({ Name: 'TargetGroup' })]),
   });
   for (const name of ['HTTPCode_ELB_5XX_Count', 'HTTPCode_Target_5XX_Count', 'UnHealthyHostCount']) {
     const alarm = alarms.find(value => value.MetricName === name);
