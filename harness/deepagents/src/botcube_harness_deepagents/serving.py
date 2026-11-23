@@ -78,9 +78,9 @@ from .botcube_config import botcube_config_from_env
 from .definition import HarnessDefinition, InvocationAuth, ModelRelay
 from .files import (
     FilesBindingError,
+    absolute_attachment_paths,
     excluded_paths,
     files_prompt,
-    import_finished_files,
     pop_files_mount,
 )
 from .files_mount import FilesMount, FilesMountError
@@ -220,7 +220,7 @@ def configure_harness_definition(definition: HarnessDefinition, default_model: s
         definition.prepare_root(root)
         return WorkerShellBackend(
             root_dir=root,
-            virtual_mode=True,
+            virtual_mode=False,
             env={**environment, 'PYTHONDONTWRITEBYTECODE': '1'},
             trace_relay_endpoint=harness_trace_relay(),
             inherit_env=True,
@@ -333,17 +333,19 @@ def _build_checkpointer() -> Any:
 
 
 def _workspace() -> Path:
-    root = Path(os.getenv('BOTCUBE_WORKSPACE', '').strip() or Path.home())
+    root = Path(os.path.abspath(os.getenv('BOTCUBE_WORKSPACE', '').strip() or Path.home()))
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
-def _user_prompt(profile: str, synced_skills: Sequence[str] | None, documents: AgentDocuments | None) -> str:
+def _user_prompt(
+    profile: str, root: Path, skills: Sequence[str], syncs_files: bool, documents: AgentDocuments | None,
+) -> str:
     return '\n\n'.join(
         part
         for part in (
             profile and f'<user_profile>\n{profile}\n</user_profile>',
-            synced_skills is not None and f'<files>\n{files_prompt(excluded_paths(synced_skills))}\n</files>',
+            syncs_files and f'<files>\n{files_prompt(root, excluded_paths(skills))}\n</files>',
             documents.prompt() if documents else '',
         )
         if part
@@ -376,7 +378,8 @@ def _get_agent(
         conversation_id = thread_id or 'default'
         resolved_model = resolve_model(model)
         resolved_effort = resolve_effort(effort)
-        environment_key = _require_bot().environment_cache_key(
+        bot = _require_bot()
+        environment_key = bot.environment_cache_key(
             {name: value for name, value in (environment or {}).items() if name != 'AGENT_BROWSER_CDP'}
         )
         key = _AgentKey(
@@ -409,6 +412,8 @@ def _get_agent(
         with turn_timing.phase('workspace'):
             backend = _backend_for((conversation_id, session_user_id, actor_id, environment_key), environment)
 
+        root = Path(backend.cwd)
+
         with turn_timing.phase('model_client'):
             m = build_model(
                 model=model,
@@ -429,7 +434,7 @@ def _get_agent(
         ]
         tools: list[Any] = [] if scheduled_run else [propose_scheduled_task]
         if syncs_files:
-            tools.append(artifact_tool(Path(backend.cwd), _require_bot().skills))
+            tools.append(artifact_tool(root, bot.skills))
         if persistent_memory:
             memory_tools, memory_middleware = _memory_tools(store, actor_id, conversation_id)
             tools.extend(memory_tools)
@@ -437,12 +442,11 @@ def _get_agent(
         middleware.append(_TodayMiddleware())
         if documents:
             tools.extend(agent_document_tools(documents))
-        bot = _require_bot()
         bot_prompt = _bot_instructions(bot, bot_system_prompt)
         system_prompt = '\n\n'.join(
             part for part in (agent_system_prompt, bot_prompt) if part
         )
-        user_prompt = _user_prompt(invocation_prompt, bot.skills if syncs_files else None, documents)
+        user_prompt = _user_prompt(invocation_prompt, root, bot.skills, syncs_files, documents)
         with turn_timing.phase('graph_build'):
             graph = build_agent(
                 model=m,
@@ -451,7 +455,7 @@ def _get_agent(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 backend=backend,
-                skills=_require_bot().skills,
+                skills=bot.skills,
                 subagents=[general_purpose_subagent(bot_prompt, bot.skills)] if bot_prompt else None,
                 checkpointer=_CHECKPOINTER,
                 store=store if persistent_memory else None,
@@ -460,7 +464,7 @@ def _get_agent(
             'recursion_limit': graph.config['recursion_limit'],
             'configurable': {'actor_id': session_user_id},
         }
-        identity: dict[str, Any] = {'name': _require_bot().agent_name}  # pragma: no mutate: the name is never read
+        identity: dict[str, Any] = {'name': bot.agent_name}  # pragma: no mutate: the name is never read
         with turn_timing.phase('stream_adapter'):
             agent = SessionAgent(**identity, graph=graph, config=config)
         _AGENTS[key] = agent
@@ -591,6 +595,7 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
         if 'preparationScope' in forwarded:
             _require_session_user_id(session_user_id)
         return
+    absolute_attachment_paths(input_data.messages, _workspace)
     if forwarded.get('steering'):
         session_user_id = _require_session_user_id(session_user_id)
         accepted = _SESSION_TURNS.steer((session_user_id, input_data.thread_id), input_data)
@@ -968,7 +973,6 @@ class _SessionTurns:
                         if not turn.work.cancelled():
                             turn.work.result()
                             readiness.raise_if_failed()
-                            await import_finished_files(files, root, readiness.used, turn.completion, reply.text, _require_bot().skills)
                     finally:
                         if turn.work.cancelled():
                             await reply.keep(agent, session)

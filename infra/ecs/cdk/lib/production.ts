@@ -49,6 +49,7 @@ interface OriginInput {
   clientVersion: string;
   turnIdentityKeysVersion?: string;
   runtimeArn: string;
+  filesWorkspace?: string;
 }
 
 /** The serving origin and BotCube's services in it, beside which a product adds resources of its own. */
@@ -221,6 +222,7 @@ function defineStacks(app: App, options: ProductionOptions) {
     ...withoutBotCubeConfig(options.chat),
   });
   addBotCubeConfig(chat.container, options.chat?.botcubeConfig);
+  if (input.filesWorkspace) chat.container.addEnvironment('BOTCUBE_WORKSPACE', input.filesWorkspace);
   addSmokePolicy(origin, identity, storage, options.chat?.runtimeArn ?? input.runtimeArn);
   const agentNetwork = new ec2.SecurityGroup(origin, 'AgentNetwork', { vpc: chat.cluster.vpc, ...optionalPhysicalName('securityGroupName', options.originConfig?.agentNetworkSecurityGroupName) });
   new ssm.StringParameter(origin, 'AgentSecurityGroupParameter', {

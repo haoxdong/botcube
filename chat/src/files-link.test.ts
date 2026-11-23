@@ -31,7 +31,7 @@ afterEach(async () => {
 });
 
 /** The Chat Service's Files routes over one EFS root, the caller named by its `x-user` header. */
-function chatService() {
+function chatService(workspace?: string) {
   const records = new AccountResources('chat', memoryDocuments());
   const files = accountFilesEfs({
     root, mountTargetIp: () => Promise.resolve('192.0.2.12'), fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0abc',
@@ -47,12 +47,13 @@ function chatService() {
     history: { owns: async () => true },
     computers: { state: async () => { throw new Error('unused'); }, wake: async () => { throw new Error('unused'); } },
     files: () => files,
+    workspace,
   }));
   return {
-    linkFor: async (user: string, route: 'upload-url' | 'download-url', name: string) => {
+    linkFor: async (user: string, route: 'upload-url' | 'download-url', name: string, reply = false) => {
       const response = route === 'upload-url'
         ? await app.request(`${ORIGIN}/files/upload-url`, { method: 'POST', headers: { 'x-user': user, 'content-type': 'application/json' }, body: JSON.stringify({ name }) })
-        : await app.request(`${ORIGIN}/files/download-url?${new URLSearchParams({ name })}`, { headers: { 'x-user': user } });
+        : await app.request(`${ORIGIN}/files/download-url?${new URLSearchParams(reply ? { name, reply: 'true' } : { name })}`, { headers: { 'x-user': user } });
       expect(response.status).toBe(200);
       return ((await response.json()) as { url: string }).url;
     },
@@ -63,6 +64,28 @@ function chatService() {
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
 describe('a signed Files link the Chat Service serves', () => {
+  it.each([
+    ['/mnt/workspace', 'mnt/workspace'],
+    ['/mnt/workspace/files', 'mnt/workspace/files'],
+    ['/mnt/corporate/files', 'mnt/corporate/files'],
+  ])('opens an answer link under the Harness workspace %s', async (workspace, prefix) => {
+    const service = chatService(workspace);
+    const dir = path.join(root, ALICE_DIRECTORY, 'charts');
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'closing rates.svg'), 'chart bytes');
+
+    const name = `${prefix}/charts/closing rates.svg`;
+    const nested = path.join(root, ALICE_DIRECTORY, name);
+    await mkdir(path.dirname(nested), { recursive: true });
+    await writeFile(nested, 'nested file bytes');
+
+    const download = await service.linkFor('acct_alice', 'download-url', name, true);
+    const response = await service.fetch(download);
+    expect([response.status, await response.text()]).toEqual([200, 'chart bytes']);
+    const direct = await service.linkFor('acct_alice', 'download-url', name);
+    expect(await (await service.fetch(direct)).text()).toBe('nested file bytes');
+  });
+
   it('uploads in chunks as the web UI sends them, then downloads the file whole and by range', async () => {
     const service = chatService();
     const upload = await service.linkFor('acct_alice', 'upload-url', 'reports/q3.bin');

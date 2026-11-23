@@ -52,7 +52,7 @@ def test_a_publish_over_a_version_the_user_saved_is_refused_until_read_and_then_
     assert str(refused.value) == (
         'Refused: the User saved Artifact Version 2 after your last read (Artifact Version 1). '
         "Read it first (action: 'read'), redo your change on what the User saved, then publish. "
-        'Changed: /decks/q3/project/slides/cover.html'
+        f'Changed: {tmp_path}/decks/q3/project/slides/cover.html'
     )
     assert not (tmp_path / 'artifacts/decks/q3.versions/3').exists()
 
@@ -74,7 +74,7 @@ def test_a_stale_write_over_the_users_save_is_refused_and_read_returns_what_the_
     user_saves(tmp_path, '/decks/q3', 1, {'project/slides/cover.html': USERS_COVER})
     write_deck(tmp_path, DECK, {'cover': COVER.replace('Q3 Operating Review</h1>', 'Q3 Review</h1>')})
 
-    with pytest.raises(ValueError, match=r'Changed: /decks/q3/project/slides/cover\.html$'):
+    with pytest.raises(ValueError, match=rf'Changed: {tmp_path}/decks/q3/project/slides/cover\.html$'):
         call(tmp_path, file_path='/decks/q3')
 
     read = json.loads(str(call(tmp_path, action='read', file_path='/decks/q3').content))
@@ -93,7 +93,7 @@ def test_a_users_save_the_agent_never_read_refuses_its_publish_naming_every_file
 
     assert 'after your last read (none)' in str(refused.value)
     assert str(refused.value).endswith(
-        'Changed: /decks/q3/project/deck.json, /decks/q3/project/slides/agenda.html, /decks/q3/project/slides/cover.html',
+        f'Changed: {tmp_path}/decks/q3/project/deck.json, {tmp_path}/decks/q3/project/slides/agenda.html, {tmp_path}/decks/q3/project/slides/cover.html',
     )
     listed = json.loads(str(call(tmp_path, action='list').content))['artifacts']
     assert [(artifact['version'], artifact['read']) for artifact in listed] == [(2, 0)]
@@ -124,7 +124,7 @@ def test_a_user_save_landing_while_the_publish_is_checked_refuses_the_publish(
     assert str(refused.value) == (
         'Refused: the User saved Artifact Version 2 after your last read (Artifact Version 1). '
         "Read it first (action: 'read'), redo your change on what the User saved, then publish. "
-        'Changed: /decks/q3/project/slides/cover.html'
+        f'Changed: {tmp_path}/decks/q3/project/slides/cover.html'
     )
     versions = tmp_path / 'artifacts/decks/q3.versions'
     assert sorted(path.name for path in versions.iterdir()) == ['1', '1.json', '2', '2.json', 'read.json']
@@ -165,7 +165,7 @@ def test_a_users_sheet_save_refuses_the_agents_publish_until_read_and_the_next_p
     # A stale write over the Source, from before the agent read the User's save.
     write_sheet(tmp_path, BUDGET)
 
-    with pytest.raises(ValueError, match=r'Refused: the User saved Artifact Version 2 .* Changed: /sheets/budget\.sheet\.json$'):
+    with pytest.raises(ValueError, match=rf'Refused: the User saved Artifact Version 2 .* Changed: {tmp_path}/sheets/budget\.sheet\.json$'):
         call(tmp_path, file_path='/sheets/budget.sheet.json')
     assert not (tmp_path / 'artifacts/sheets/budget.sheet.json.versions/3.sheet.json').exists()
 

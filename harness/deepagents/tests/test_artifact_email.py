@@ -78,10 +78,10 @@ def test_a_draft_publishes_as_an_email_and_read_returns_its_fields(tmp_path: Pat
 
     assert published == {
         'id': '/drafts/q3.email.json', 'type': 'email', 'title': 'Q3 numbers for review', 'description': 'Q3 to Dana',
-        'version': 1, 'path': f'/{VERSIONS}/1.email.json',
+        'version': 1, 'path': f'{tmp_path}/{VERSIONS}/1.email.json',
     }
     assert (read['type'], read['version'], read['author'], read['email']) == ('email', 1, 'agent', DRAFT)
-    assert [kept['from'] for kept in read['imports']] == ['/reports/q3.pdf']
+    assert [kept['from'] for kept in read['imports']] == [f'{tmp_path}/reports/q3.pdf']
     assert sorted(path.name for path in (tmp_path / VERSIONS).iterdir()) == ['1.email.json', '1.json', 'imports', 'read.json']
 
 
@@ -157,7 +157,7 @@ def test_a_version_keeps_a_copy_of_each_attachment_as_it_was_at_the_publish(tmp_
     assert (tmp_path / copy.lstrip('/')).read_bytes() == b'%PDF-1.7'
     assert read['version'] == 2
     assert read['imports'] == [{
-        'edit': 0, 'from': '/reports/q3.pdf', 'path': f'/{VERSIONS}/imports/{hashlib.sha256(b"%PDF-1.7 changed").hexdigest()}.pdf',
+        'edit': 0, 'from': f'{tmp_path}/reports/q3.pdf', 'path': f'{tmp_path}/{VERSIONS}/imports/{hashlib.sha256(b"%PDF-1.7 changed").hexdigest()}.pdf',
     }]
 
 
@@ -239,7 +239,7 @@ def test_a_publish_over_a_draft_the_user_saved_is_refused_until_read(tmp_path: P
     saved = user_saves(tmp_path, '/drafts/q3.email.json', 1, {'q3.email.json': json.dumps(users)})
     assert (saved['type'], saved['version'], saved['path']) == ('email', 2, f'/{VERSIONS}/2.email.json')
 
-    with pytest.raises(ValueError, match=r'Version 2 after your last read.*Changed: /drafts/q3\.email\.json$'):
+    with pytest.raises(ValueError, match=rf'Version 2 after your last read.*Changed: {tmp_path}/drafts/q3\.email\.json$'):
         call(tmp_path, file_path='/drafts/q3.email.json')
     assert json.loads(str(call(tmp_path, action='read', file_path='/drafts/q3.email.json').content))['email'] == users
     assert json.loads(str(call(tmp_path, file_path='/drafts/q3.email.json').content))['version'] == 3

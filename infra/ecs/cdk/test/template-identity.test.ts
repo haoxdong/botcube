@@ -206,7 +206,7 @@ test.each([true, false])('composition names adopter-owned networks and browser r
       agentComputerBrowserRoleName: 'adopter-browser-role',
     },
     origin: {
-      input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
+      input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', filesWorkspace: '/mnt/corporate/files', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
       images: { chat: ContainerImage.fromRegistry('template-chat'), credential: registryCredentialImage('template-credentials') },
       commit: 'local-fixture',
     },
@@ -232,6 +232,11 @@ test.each([true, false])('composition names adopter-owned networks and browser r
     .filter(({ Name }) => Name === 'chat-service')
     .flatMap(({ Environment }) => (Environment ?? []).map(({ Name }) => Name));
   expect(chatEnvironment).toContain('BOTCUBE_PUBLIC_ORIGIN');
+  origin.hasResourceProperties('AWS::ECS::TaskDefinition', {
+    ContainerDefinitions: Match.arrayWith([Match.objectLike({ Name: 'chat-service', Environment: Match.arrayWith([
+      { Name: 'BOTCUBE_WORKSPACE', Value: '/mnt/corporate/files' },
+    ]) })]),
+  });
   expect(chatEnvironment).not.toContain('BOTCUBE_CONFIG');
 });
 

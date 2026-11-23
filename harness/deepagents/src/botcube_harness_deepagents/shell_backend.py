@@ -162,10 +162,19 @@ def _run_worker(request: Request) -> Result:
 class WorkerShellBackend(LocalShellBackend):
     """deepagents' local shell, run in a per-command worker process."""
 
-    def __init__(self, *, trace_relay_endpoint: str | None = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    def __init__(self, *, root_dir: str | Path | None = None, trace_relay_endpoint: str | None = None, **kwargs: Any) -> None:
+        super().__init__(root_dir=root_dir, **kwargs)
+        if root_dir and not self.virtual_mode:
+            self.cwd = Path(os.path.abspath(root_dir))
         self._trace_relay_endpoint = trace_relay_endpoint
         self._held_credentials: set[str] = set()
+
+    def _resolve_path(self, key: str) -> Path:
+        path = super()._resolve_path(key).resolve()
+        root = self.cwd.resolve()
+        if not path.is_relative_to(root):
+            raise PermissionError(f'{key} is outside the working directory {self.cwd}')
+        return self.cwd / path.relative_to(root)
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         result = super().read(file_path, offset, limit)
@@ -244,7 +253,7 @@ class WorkerShellBackend(LocalShellBackend):
             return _err(error)
 
     def _command_env(self) -> dict[str, str]:
-        env = dict(self._env)
+        env = {**self._env, 'PWD': str(self.cwd)}
         self._held_credentials.update(self._credentials())
         if python_path := env.get('PYTHONPATH'):
             instrumentation = str(Path(auto_instrumentation.__file__).parent)

@@ -65,12 +65,12 @@ def artifact_tool(root: Path, skills: Iterable[str] = ()) -> BaseTool:
         if (readiness := current_turn_files()) is not None:
             readiness.ensure()
         if action == 'list':
-            return _list(root.resolve())
+            return _list(root)
         if action == 'read':
-            return _read(root.resolve(), excluded, _read_identity(url, file_path))
+            return _read(root, excluded, _read_identity(url, file_path))
         if not file_path:
             raise ValueError('Name the page to publish with file_path.')
-        return _publish(root.resolve(), excluded, file_path, title, description)
+        return _publish(root, excluded, file_path, title, description)
 
     async def aartifact(
         file_path: str | None = None, action: str = 'publish', title: str | None = None,
@@ -112,7 +112,7 @@ def _publish(
         'title': record['title'],
         'description': record['description'],
         'version': version,
-        'path': _path(root, versions, version),
+        'path': _stored(versions, version).as_posix(),
     }
     return json.dumps(published), published
 
@@ -214,7 +214,7 @@ def _refuse_unread(root: Path, versions: Path) -> int:
 
 
 def _unread(root: Path, versions: Path, read: int, saved: int) -> ValueError:
-    identity = f"/{versions.relative_to(root / ARTIFACTS_DIRECTORY).as_posix().removesuffix('.versions')}"
+    identity = str(root / versions.relative_to(root / ARTIFACTS_DIRECTORY).as_posix().removesuffix('.versions'))
     since = f'Artifact Version {read}' if read else 'none'
     return ValueError(
         f'Refused: the User saved Artifact Version {saved} after your last read ({since}). '
@@ -245,11 +245,17 @@ def _read(root: Path, excluded: tuple[str, ...], named: str) -> tuple[str, dict[
     if not numbers:
         raise FileNotFoundError(f"No Artifact {identity}. List them with action 'list'.")
     _write_json(versions / 'read.json', {'version': numbers[-1]})
+    source = _type(versions, numbers[-1]).read(_stored(versions, numbers[-1]))
+    if 'imports' in source:
+        source['imports'] = [
+            {**entry, 'from': str(_in_files(root, entry['from'])), 'path': str(_in_files(root, entry['path']))}
+            for entry in source['imports']
+        ]
     found = {
         **_summary(root, identity),
-        **_type(versions, numbers[-1]).read(_stored(versions, numbers[-1])),
+        **source,
         'versions': [
-            {'version': number, 'author': _record(versions, number)['author'], 'path': _path(root, versions, number)}
+            {'version': number, 'author': _record(versions, number)['author'], 'path': _stored(versions, number).as_posix()}
             for number in numbers
         ],
     }
@@ -277,7 +283,7 @@ def _summary(root: Path, identity: str) -> dict[str, Any]:
         'description': record['description'],
         'version': latest,
         'author': record['author'],
-        'path': _path(root, versions, latest),
+        'path': _stored(versions, latest).as_posix(),
         'read': _read_mark(versions),
     }
 
@@ -290,14 +296,16 @@ def _in_files(root: Path, file_path: str) -> Path:
 
 def _files_name(root: Path, excluded: tuple[str, ...], resolved: Path) -> str | None:
     """The Files name of a resolved path, or None past the root or outside the agent's files."""
-    name = resolved.relative_to(root).as_posix() if resolved.is_relative_to(root) else None
+    physical = root.resolve()
+    name = resolved.relative_to(physical).as_posix() if resolved.is_relative_to(physical) else None
     return name if name is not None and is_files_path(name, excluded) else None
 
 
 def _file_in(root: Path, excluded: tuple[str, ...], file_path: str) -> Path | None:
     """The file in the agent's Files that `file_path` names, resolved; None when there is none."""
     resolved = _in_files(root, file_path).resolve()
-    return resolved if resolved.is_file() and _files_name(root, excluded, resolved) is not None else None
+    name = _files_name(root, excluded, resolved)
+    return root / name if name is not None and resolved.is_file() else None
 
 
 def _versions(root: Path, identity: str) -> Path:
@@ -332,10 +340,6 @@ def _read_mark(versions: Path) -> int:
     """The newest version the agent published or read; 0 before it has done either."""
     mark = versions / 'read.json'
     return json.loads(mark.read_text())['version'] if mark.exists() else 0
-
-
-def _path(root: Path, versions: Path, number: int) -> str:
-    return f'/{_stored(versions, number).relative_to(root).as_posix()}'
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:

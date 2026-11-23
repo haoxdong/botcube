@@ -16,14 +16,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-// The agent writes `/chart.svg` to its files as `chart.svg`, and a reply embeds it by that path, which
-// markdown hands over percent-encoded.
 it("gives a reply's file path the download URL of the file it names in Files", async () => {
   const fetchImpl = vi.fn(async () => Response.json({ url: 'https://s3.test/chart.svg?signed' }));
   vi.stubGlobal('fetch', fetchImpl);
 
-  expect(await agentFiles.url('/spx%20closes.svg')).toBe('https://s3.test/chart.svg?signed');
-  expect(fetchImpl).toHaveBeenCalledWith('http://chat.test/files/download-url?name=spx+closes.svg', { method: 'GET', credentials: 'include' });
+  expect(await agentFiles.url('/mnt/workspace/files/spx%20closes.svg')).toBe('https://s3.test/chart.svg?signed');
+  expect(fetchImpl).toHaveBeenCalledWith('http://chat.test/files/download-url?name=mnt%2Fworkspace%2Ffiles%2Fspx+closes.svg&reply=true', { method: 'GET', credentials: 'include' });
 });
 
 // A file the user attaches in the chat goes to the top of Files, which the agent reads as `/name`.

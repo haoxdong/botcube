@@ -33,8 +33,8 @@ export async function listFiles(options: ChatServiceOptions): Promise<FileEntry[
 }
 
 /** A short-lived URL that downloads one file. */
-export async function fileDownloadUrl(name: string, options: ChatServiceOptions): Promise<string> {
-  const path = `/files/download-url?${new URLSearchParams({ name })}`;
+export async function fileDownloadUrl(name: string, options: ChatServiceOptions & { reply?: boolean }): Promise<string> {
+  const path = `/files/download-url?${new URLSearchParams(options.reply ? { name, reply: 'true' } : { name })}`;
   return (await chatService(path, { method: 'GET' }, 'Download failed', options)).url as string;
 }
 

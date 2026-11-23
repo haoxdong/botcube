@@ -209,7 +209,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
       routes: new Hono()
         .route('/', config.liveView.kind === 'none' ? refusingLiveView() : new Hono())
         .route('/', computer.routes)
-        .route('/', computerFilesRoutes({ requester, history, computers: config.liveView.kind === 'none' ? withoutLiveView(computer) : computer, files: () => files() }))
+        .route('/', computerFilesRoutes({ requester, history, computers: config.liveView.kind === 'none' ? withoutLiveView(computer) : computer, files: () => files(), workspace: env.BOTCUBE_WORKSPACE?.trim() || undefined }))
         .route('/account/plan-usage/openai', plan.routes)
         .route('/', accounts.routes)
         .route('/', testUserConnector)

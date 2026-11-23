@@ -25,6 +25,7 @@ def test_large_tool_results_stay_readable_but_out_of_files(
     (tmp_path / 'calculation.py').write_text(
         "from pathlib import Path\nPath('report.txt').write_text('user report')\n"
     )
+    stored = tmp_path / 'botcube-harness-deepagents/large_tool_results/call_large'
     model = ToolBindableFakeMessagesModel(responses=[
         AIMessage(content='', tool_calls=[{
             'id': 'call_python', 'name': 'execute',
@@ -33,7 +34,7 @@ def test_large_tool_results_stay_readable_but_out_of_files(
         AIMessage(content='', tool_calls=[{'id': 'call_large', 'name': 'large_result', 'args': {}}]),
         AIMessage(content='', tool_calls=[{
             'id': 'call_read', 'name': 'read_file',
-            'args': {'file_path': '/botcube-harness-deepagents/large_tool_results/call_large', 'limit': 1},
+            'args': {'file_path': str(stored), 'limit': 1},
         }]),
         AIMessage(content='Done.'),
     ])
@@ -47,9 +48,9 @@ def test_large_tool_results_stay_readable_but_out_of_files(
     assert keys == ['calculation.py', 'report.txt']
     assert (tmp_path / 'report.txt').read_bytes() == b'user report'
 
-    assert '/botcube-harness-deepagents/large_tool_results/call_large' in messages[1].content
+    assert str(stored) in messages[1].content
     assert 'result data' in messages[2].content
-    assert (tmp_path / 'botcube-harness-deepagents/large_tool_results/call_large').read_text() == 'result data\n' * 15000
+    assert stored.read_text() == 'result data\n' * 15000
 
 
 @pytest.fixture

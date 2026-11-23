@@ -192,11 +192,11 @@ def test_a_sheet_publishes_as_version_1_and_read_returns_its_edits(tmp_path: Pat
 
     assert published == {
         'id': '/sheets/budget.sheet.json', 'type': 'sheet', 'title': 'budget.sheet.json', 'description': 'Monthly costs',
-        'version': 1, 'path': '/artifacts/sheets/budget.sheet.json.versions/1.sheet.json',
+        'version': 1, 'path': f'{tmp_path}/artifacts/sheets/budget.sheet.json.versions/1.sheet.json',
     }
     read = json.loads(str(call(tmp_path, action='read', url='/sheets/budget.sheet.json').content))
     assert json.loads(read['sheet']) == BUDGET
     assert read['versions'] == [
-        {'version': 1, 'author': 'agent', 'path': '/artifacts/sheets/budget.sheet.json.versions/1.sheet.json'},
+        {'version': 1, 'author': 'agent', 'path': f'{tmp_path}/artifacts/sheets/budget.sheet.json.versions/1.sheet.json'},
     ]
 

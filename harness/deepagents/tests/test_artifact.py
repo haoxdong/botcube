@@ -40,7 +40,7 @@ def test_publishing_an_html_file_saves_it_in_files_as_artifact_version_1(tmp_pat
     published = {
         'id': '/reports/q3.html', 'type': None, 'title': 'Q3 revenue by month',
         'description': 'Monthly revenue against plan', 'version': 1,
-        'path': '/artifacts/reports/q3.html.versions/1.html',
+        'path': f'{tmp_path}/artifacts/reports/q3.html.versions/1.html',
     }
     assert json.loads(str(result.content)) == published
     assert result.artifact == published
@@ -57,13 +57,13 @@ def test_publishing_the_same_file_again_makes_the_next_version_and_read_finds_ev
     second = json.loads(str(call(tmp_path, file_path=str(source)).content))
     read = json.loads(str(call(tmp_path, action='read', file_path='/q3.html').content))
 
-    assert (second['id'], second['version'], second['path']) == ('/q3.html', 2, '/artifacts/q3.html.versions/2.html')
+    assert (second['id'], second['version'], second['path']) == ('/q3.html', 2, f'{tmp_path}/artifacts/q3.html.versions/2.html')
     assert read == {
         'id': '/q3.html', 'type': None, 'title': 'Q3 revenue', 'description': '', 'version': 2, 'author': 'agent',
-        'path': '/artifacts/q3.html.versions/2.html', 'read': 2, 'html': revised.decode(),
+        'path': f'{tmp_path}/artifacts/q3.html.versions/2.html', 'read': 2, 'html': revised.decode(),
         'versions': [
-            {'version': 1, 'author': 'agent', 'path': '/artifacts/q3.html.versions/1.html'},
-            {'version': 2, 'author': 'agent', 'path': '/artifacts/q3.html.versions/2.html'},
+            {'version': 1, 'author': 'agent', 'path': f'{tmp_path}/artifacts/q3.html.versions/1.html'},
+            {'version': 2, 'author': 'agent', 'path': f'{tmp_path}/artifacts/q3.html.versions/2.html'},
         ],
     }
     assert (tmp_path / 'artifacts/q3.html.versions/1.html').read_bytes() == PAGE
@@ -131,7 +131,7 @@ def test_list_and_read_find_an_artifact_published_in_another_chat_of_the_account
 
     assert listed == {'artifacts': [{
         'id': '/dashboard.html', 'type': None, 'title': 'Sales dashboard', 'description': 'Weekly sales by region',
-        'version': 1, 'author': 'agent', 'path': '/artifacts/dashboard.html.versions/1.html', 'read': 1,
+        'version': 1, 'author': 'agent', 'path': f'{today}/artifacts/dashboard.html.versions/1.html', 'read': 1,
     }]}
     assert (read['id'], read['version'], read['html']) == ('/dashboard.html', 1, PAGE.decode())
 

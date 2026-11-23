@@ -16,7 +16,7 @@ export async function recordOf(path: string, read: (path: string) => Promise<str
 }
 
 /** An Artifact Version as the panel knows it: `path` is where Files stores it. */
-type Known = { version: number; path: string };
+type Known = { id: string; version: number; path: string };
 
 /**
  * The Artifact's newest version in Files, from a version the chat has seen: a User's save is no message, so a reloaded
@@ -26,9 +26,9 @@ type Known = { version: number; path: string };
 export async function newestInFiles<T extends Known>(known: T, stored: string, read: (path: string) => Promise<string>): Promise<T> {
   const folder = known.path.slice(0, known.path.lastIndexOf("/") + 1);
   const suffix = known.path.slice(folder.length).replace(/^\d+/, "");
-  const files = new Set((await listFiles({ chatServiceUrl: chatServiceUrl() })).map(({ name }) => `/${name}`));
+  const files = new Set((await listFiles({ chatServiceUrl: chatServiceUrl() })).map(({ name }) => name));
   let version = known.version;
-  while (files.has(`${folder}${version + 1}${suffix}${stored}`)) version += 1;
+  while (files.has(`artifacts${known.id}.versions/${version + 1}${suffix}${stored}`)) version += 1;
   if (version === known.version) return known;
   const path = `${folder}${version}${suffix}`;
   const { author, title, description } = await recordOf(path, read);

@@ -1,17 +1,11 @@
 from __future__ import annotations
 
-import asyncio
-import logging
-import os
-import re
 import shutil
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path, PurePosixPath
-from time import perf_counter
 from typing import Any
-from urllib.parse import unquote
 
-from ag_ui.core import EventType, RunErrorEvent, RunFinishedEvent
+from ag_ui.core import Message
 
 from .files_mount import FilesMount
 
@@ -43,51 +37,29 @@ def is_files_path(name: str, excluded: tuple[str, ...]) -> bool:
     return not any(parts[: len(PurePosixPath(prefix).parts)] == PurePosixPath(prefix).parts for prefix in excluded)
 
 
-_LINKED_PATH = re.compile(r'\]\(\s*<?(/[^\s)>]+)')
-
-
-def import_linked_files(root: Path, answer: str, excluded: Iterable[str], filesystem: Path = Path('/')) -> None:
-    skip = tuple(excluded)
-    workspace = root.resolve()
-    for link in dict.fromkeys(_LINKED_PATH.findall(answer)):
-        name = unquote(link).lstrip('/')
-        if '..' in PurePosixPath(name).parts or not is_files_path(name, skip):
-            continue
-        local, real = root / name, filesystem / name
-        source = real.resolve()
-        allowed = (is_files_path(source.relative_to(workspace).as_posix(), skip)
-                   if source.is_relative_to(workspace) else source.is_relative_to(filesystem.resolve() / 'mnt/data'))
-        if not allowed:
-            logging.getLogger(__name__).warning('Skipping linked file outside artifact directories')
-            continue
-        if os.path.lexists(local) or real.is_symlink() or not real.is_file():
-            continue
-        local.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(real, local)
-
-
-async def import_finished_files(
-    files: FilesMount | None, root: Path, ready: bool, completion: RunFinishedEvent | RunErrorEvent | None, answer: str, skills: Iterable[str],
-) -> None:
-    """After a finished Turn, copies each file its answer links into Files, so a link to a saved file opens."""
-    if files is None or not ready or completion is None or completion.type != EventType.RUN_FINISHED:
-        return
-    started = perf_counter()
-    await asyncio.to_thread(import_linked_files, root, answer, excluded_paths(skills))
-    logging.getLogger(__name__).info('Harness Files import timing run_id=%s import_ms=%.3f',
-                                     completion.run_id, (perf_counter() - started) * 1000)
-
-
 def excluded_paths(skills: Iterable[str]) -> tuple[str, ...]:
     """The workspace paths that are not the agent's files: scratch space, the Harness's directory and the skill sources."""
     return (SCRATCH_DIRECTORY, HARNESS_DIRECTORY, *(skill.strip('/') for skill in skills))
 
 
-def files_prompt(excluded: Iterable[str]) -> str:
-    folders = ', '.join(f'`/{path}`' for path in excluded)
+def files_prompt(root: Path, excluded: Iterable[str]) -> str:
+    folders = ', '.join(f'`{root / path}`' for path in excluded)
     return (
-        f"The user's Files are your working directory (`/` to your file tools); hidden files and anything under {folders} aren't saved."
+        f"The user's Files are at `{root}`, your working directory. Use full paths there in file tools, "
+        f"shell commands, and Markdown file links. Hidden files and anything under {folders} aren't saved."
     )
+
+
+def absolute_attachment_paths(messages: Iterable[Message], workspace: Callable[[], Path]) -> None:
+    for message in messages:
+        if message.role != 'user' or not isinstance(message.content, str):
+            continue
+        text, heading, files = message.content.rpartition('\n\nAttached files:\n')
+        lines = files.splitlines()
+        if heading and lines and all(line.startswith('- /') for line in lines):
+            root = workspace()
+            paths = (root / line[2:].lstrip('/') if not Path(line[2:]).is_relative_to(root) else Path(line[2:]) for line in lines)
+            message.content = text + heading + '\n'.join(f'- {path}' for path in paths)
 
 
 def pop_files_mount(forwarded: dict[str, Any]) -> FilesMount | None:

@@ -103,7 +103,7 @@ class _FilesMiddleware(FilesystemMiddleware):
         self, request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
     ) -> ToolMessage | Command[Any]:
-        if refused := _version_store_write(request):
+        if refused := _version_store_write(request, self.backend):
             return refused
         return super().wrap_tool_call(request, lambda call: LazyFilesMiddleware().wrap_tool_call(call, handler))
 
@@ -111,7 +111,7 @@ class _FilesMiddleware(FilesystemMiddleware):
         self, request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
-        if refused := _version_store_write(request):
+        if refused := _version_store_write(request, self.backend):
             return refused
         return await super().awrap_tool_call(request, lambda call: LazyFilesMiddleware().awrap_tool_call(call, handler))
 
@@ -150,17 +150,23 @@ def _tool_error(request: ToolCallRequest, error: Exception) -> ToolMessage:
     return ToolMessage(content=f'Error: {error}', name=call['name'], tool_call_id=call['id'], status='error')
 
 
-def _version_store_write(request: ToolCallRequest) -> ToolMessage | None:
+def _version_store_write(request: ToolCallRequest, backend: Any) -> ToolMessage | None:
     """Refuse a file tool's change to the Artifact version store: a published version never changes."""
     call = request.tool_call
     path = call['args'].get('file_path')
     if call['name'] not in _FILE_WRITES or not isinstance(path, str):
         return None
-    parts = PurePosixPath(posixpath.normpath('/' + path.lstrip('/'))).parts
-    if parts[1:2] != (ARTIFACTS_DIRECTORY,):
+    default = backend.default if isinstance(backend, CompositeBackend) else backend
+    if isinstance(default, FilesystemBackend) and not default.virtual_mode:
+        store = default.cwd / ARTIFACTS_DIRECTORY
+        protected = Path(path).resolve().is_relative_to(store.resolve())
+    else:
+        store = Path('/') / ARTIFACTS_DIRECTORY
+        protected = PurePosixPath(posixpath.normpath('/' + path.lstrip('/'))).is_relative_to(store)
+    if not protected:
         return None
     return ToolMessage(
-        content=f'Error: Only the Artifact tool writes /{ARTIFACTS_DIRECTORY}; publish the page again to make a new version.',
+        content=f'Error: Only the Artifact tool writes {store}; publish the page again to make a new version.',
         name=call['name'], tool_call_id=call['id'], status='error',
     )
 
@@ -345,16 +351,17 @@ def tool_skills(tools: Iterable[Any]) -> dict[str, BackendProtocol]:
 def _route_tool_skills(
     backend: Any, skills: Sequence[str], tools: Sequence[Any], subagents: Sequence[dict[str, Any]],
 ) -> tuple[Any, list[str], list[dict[str, Any]]]:
-    """The files backend, the agent's skill sources and the subagent specs, with the skills `tools` bring.
-
-    A tool can bring the skills that teach it: sources with a backend of their own, routed by their
-    path beside the workspace's `skills`, for the agent and each subagent that shares its tools.
-    """
+    """Route Skills beside the workspace for the agent and subagents that share its tools."""
     skill_routes = tool_skills(tools)
     if skill_routes and backend is None:
         raise ValueError('A tool that brings skills needs a workspace backend to route them beside')
+    root = Path('/')
+    local_routes = {}
+    if isinstance(backend, FilesystemBackend) and not backend.virtual_mode:
+        root = backend.cwd
+        local_routes = {source: _static_skill_folder(str(backend.cwd / source.strip('/'))) for source in skills}
     files_backend = (
-        CompositeBackend(default=backend, routes=skill_routes, artifacts_root=f'/{HARNESS_DIRECTORY}')
+        CompositeBackend(default=backend, routes={**local_routes, **skill_routes}, artifacts_root=str(root / HARNESS_DIRECTORY))
         if backend is not None else None
     )
     specs = [

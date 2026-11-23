@@ -28,11 +28,11 @@ def test_publishing_a_markdown_file_makes_a_doc_titled_by_its_first_heading(tmp_
 
     assert published == {
         'id': '/plans/q4.md', 'type': 'doc', 'title': 'Q4 plan', 'description': 'The Q4 plan', 'version': 1,
-        'path': '/artifacts/plans/q4.md.versions/1.md',
+        'path': f'{tmp_path}/artifacts/plans/q4.md.versions/1.md',
     }
     assert (tmp_path / 'artifacts/plans/q4.md.versions/1.md').read_text(encoding='utf-8') == PLAN
     assert (read['type'], read['markdown'], read['versions']) == (
-        'doc', PLAN, [{'version': 1, 'author': 'agent', 'path': '/artifacts/plans/q4.md.versions/1.md'}],
+        'doc', PLAN, [{'version': 1, 'author': 'agent', 'path': f'{tmp_path}/artifacts/plans/q4.md.versions/1.md'}],
     )
 
 
@@ -47,7 +47,7 @@ def test_a_doc_the_user_saved_refuses_the_agents_publish_until_read(tmp_path: Pa
     (versions / '2.md').write_text(users, encoding='utf-8')
     (versions / '2.json').write_text(json.dumps({'author': 'user', 'title': 'Q4 plan', 'description': ''}))
 
-    with pytest.raises(ValueError, match=r'Version 2 after your last read \(Artifact Version 1\).*Changed: /q4\.md$'):
+    with pytest.raises(ValueError, match=rf'Version 2 after your last read \(Artifact Version 1\).*Changed: {tmp_path}/q4\.md$'):
         call(tmp_path, file_path='/q4.md')
     read = json.loads(str(call(tmp_path, action='read', file_path='/q4.md').content))
     assert (read['author'], read['markdown']) == ('user', users)

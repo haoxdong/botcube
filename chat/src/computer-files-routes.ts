@@ -1,3 +1,4 @@
+import { posix } from 'node:path';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { browserOrigin } from './account-cookies.js';
@@ -11,10 +12,11 @@ import type { AgentComputerState } from './agent-computer.js';
 import { jsonPayload } from './payload.js';
 
 /** The reusable UI routes; account authentication and sandbox ownership are existing by the bot. */
-export function computerFilesRoutes({ requester, history, computers, files }: {
+export function computerFilesRoutes({ requester, history, computers, files, workspace }: {
   requester(c: Context): Promise<Requester>;
   history: Pick<AccountHistory, 'owns'>;
   computers: { state(owner: string, threadId: string): Promise<AgentComputerState>; wake(owner: string, threadId: string): Promise<AgentComputerState> };
+  workspace?: string | undefined;
   files(c: Context): Pick<AccountFiles, 'list' | 'downloadUrl' | 'link' | 'remove' | 'rename' | 'uploadUrl' | 'saveArtifact' | 'restoreArtifact'>;
 }): Hono {
   const routes = new Hono();
@@ -35,9 +37,13 @@ export function computerFilesRoutes({ requester, history, computers, files }: {
   };
   routes.get('/files', async (c) => c.json({ files: await files(c).list((await requester(c)).owner) }));
   const linkUrl = (c: Context, link: string) => new URL(link, browserOrigin(c)).toString();
-  routes.get('/files/download-url', async (c) =>
-    c.json({ url: linkUrl(c, await files(c).downloadUrl((await requester(c)).owner, fileName(c.req.query('name')))) }),
-  );
+  const workspacePrefix = workspace && `${posix.resolve(workspace).slice(1)}/`;
+  routes.get('/files/download-url', async (c) => {
+    const { owner } = await requester(c);
+    const name = fileName(c.req.query('name'));
+    const relative = workspacePrefix && c.req.query('reply') === 'true' && name.startsWith(workspacePrefix) ? name.slice(workspacePrefix.length) : name;
+    return c.json({ url: linkUrl(c, await files(c).downloadUrl(owner, relative)) });
+  });
   routes.delete('/files', async (c) => {
     await files(c).remove((await requester(c)).owner, fileName(c.req.query('name')));
     return c.body(null, 204);

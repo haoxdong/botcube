@@ -1,5 +1,8 @@
+import io
+import json
 import runpy
 import sys
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import boto3
@@ -36,6 +39,33 @@ def test_service_entrypoint_parses_help_before_cloud_access(capsys: pytest.Captu
         assert result.value.code == 0
         client.assert_not_called()
     assert '--replacement-evidence' in capsys.readouterr().out
+
+
+def test_origin_deploy_reads_the_files_root_from_its_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    output = tmp_path / 'origin.json'
+    monkeypatch.setenv('PREVIEW_ORIGIN_INPUT', str(output))
+    monkeypatch.setenv('CLOUDFLARE_ORIGIN_API_TOKEN', 'test-token')
+    names = {'originTokenSecretName': 'token', 'originPullClientSecretName': 'client',
+             'apiHealthStackName': 'health', 'turnIdentityKeysSecretName': 'keys'}
+    arn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/corporate-runtime'
+    outputs = [{}, {'VersionId': 'revision'}, {'Parameter': {'Value': arn}},
+               {'environmentVariables': {'BOTCUBE_WORKSPACE': '/mnt/corporate/files'}},
+               {'VersionIdsToStages': {'keys-revision': ['AWSCURRENT']}}]
+    ranges = io.BytesIO(b'{"success": true, "result": {"ipv4_cidrs": ["192.0.2.0/24"]}}')
+    with (
+        patch('deploy_identity.load_deployment', return_value={'name': 'corporate'}),
+        patch('deploy_identity.deployment_names', return_value=names),
+        patch('deploy_identity.owned_egress', return_value=None),
+        patch('urllib.request.urlopen', return_value=ranges),
+        patch('subprocess.run', return_value=Mock(returncode=0)),
+        patch('subprocess.check_output', side_effect=[json.dumps(value) for value in outputs]) as aws,
+    ):
+        runpy.run_path(str(DEPLOY_ECS / 'prepare-origin.py'), run_name='__main__')
+
+    aws.assert_any_call(['aws', 'bedrock-agentcore-control', 'get-agent-runtime',
+                         '--agent-runtime-id', 'corporate-runtime', '--output', 'json'])
+    prepared = json.loads(output.read_text())
+    assert (prepared['runtimeArn'], prepared['filesWorkspace']) == (arn, '/mnt/corporate/files')
 
 
 @pytest.mark.parametrize('kind,physical,data', [

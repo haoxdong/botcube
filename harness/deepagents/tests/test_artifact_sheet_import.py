@@ -73,7 +73,10 @@ def test_a_sheet_importing_an_xlsx_and_a_csv_keeps_a_copy_of_each_named_by_its_v
     assert (tmp_path / copy_of(CSV, 'csv').lstrip('/')).read_bytes() == CSV
     read = json.loads(str(call(tmp_path, action='read', url='/sheets/q4.sheet.json').content))
     assert json.loads(read['sheet']) == {'edits': IMPORTS}
-    assert read['imports'] == record['imports']
+    assert read['imports'] == [
+        {'edit': 0, 'from': f'{tmp_path}/data/orders.xlsx', 'path': f"{tmp_path}{copy_of(XLSX, 'xlsx')}"},
+        {'edit': 1, 'from': f'{tmp_path}/data/regions.csv', 'path': f"{tmp_path}{copy_of(CSV, 'csv')}"},
+    ]
 
 
 def test_an_import_naming_a_missing_file_is_refused_with_the_edit_and_the_path_and_nothing_is_saved(tmp_path: Path) -> None:
@@ -117,4 +120,5 @@ def test_a_version_keeps_its_import_after_the_file_changes_or_is_deleted(tmp_pat
     assert (tmp_path / copy_of(XLSX, 'xlsx').lstrip('/')).read_bytes() == XLSX
     read = json.loads(str(call(tmp_path, action='read', url='/sheets/q4.sheet.json').content))
     assert read['version'] == 2
-    assert read['imports'] == [{'edit': 0, 'from': '/data/orders.xlsx', 'path': copy_of(b'PK\x03\x04 recomputed', 'xlsx')}]
+    copy = copy_of(b'PK\x03\x04 recomputed', 'xlsx')
+    assert read['imports'] == [{'edit': 0, 'from': f'{tmp_path}/data/orders.xlsx', 'path': f'{tmp_path}{copy}'}]

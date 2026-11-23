@@ -255,34 +255,6 @@ def test_replacement_after_completion_does_not_cancel_iterator_cleanup(
     asyncio.run(exercise())
 
 
-def test_an_errored_graph_does_not_import_linked_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from ag_ui.core import RunErrorEvent
-
-    from botcube_harness_deepagents import files
-
-    def forbidden(*args: Any, **kwargs: Any) -> None:
-        raise AssertionError('An errored graph imported linked Files')
-
-    monkeypatch.setattr(files, 'import_linked_files', forbidden)
-
-    class Agent:
-        async def run(self, input: RunAgentInput):
-            _use_workspace()
-            yield RunErrorEvent(message='Graph failed', code='GRAPH_FAILED')
-
-
-    monkeypatch.setattr(serving, '_require_bot', lambda: SimpleNamespace(skills=()))
-    files = cast(FilesMount, SimpleNamespace(pull=lambda *args: None))
-
-    async def exercise() -> None:
-        events = [event async for event in serving._SessionTurns().stream(
-            ('owner', 'session'), prepared(cast(LangGraphAgent, Agent()), tmp_path), _input(), files, serving._RequestContext(None),
-        )]
-        assert [(event.type, event.code) for event in events] == [(EventType.RUN_ERROR, 'GRAPH_FAILED')]
-
-    asyncio.run(exercise())
-
-
 def test_an_errored_stream_drains_background_files_before_eof(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:

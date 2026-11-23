@@ -94,7 +94,7 @@ def test_the_fixed_deck_publishes_as_slides_version_1(tmp_path: Path) -> None:
 
     published = {
         'id': '/decks/q3', 'type': 'slides', 'title': 'Q3 Operating Review', 'description': 'Q3 against plan',
-        'version': 1, 'path': '/artifacts/decks/q3.versions/1',
+        'version': 1, 'path': f'{tmp_path}/artifacts/decks/q3.versions/1',
     }
     assert json.loads(str(result.content)) == published
     version = tmp_path / 'artifacts/decks/q3.versions/1/project'
@@ -109,7 +109,7 @@ def test_publishing_the_deck_again_makes_version_2_and_keeps_version_1(tmp_path:
 
     second = json.loads(str(call(tmp_path, file_path='/decks/q3').content))
 
-    assert (second['id'], second['version'], second['path']) == ('/decks/q3', 2, '/artifacts/decks/q3.versions/2')
+    assert (second['id'], second['version'], second['path']) == ('/decks/q3', 2, f'{tmp_path}/artifacts/decks/q3.versions/2')
     assert 'Agenda' in (tmp_path / 'artifacts/decks/q3.versions/1/project/slides/agenda.html').read_text()
     assert 'Today' in (tmp_path / 'artifacts/decks/q3.versions/2/project/slides/agenda.html').read_text()
 
@@ -149,15 +149,15 @@ def test_a_deck_lists_and_reads_as_slides_with_each_versions_author(tmp_path: Pa
 
     latest = {
         'id': '/decks/q3', 'type': 'slides', 'title': 'Q3 review', 'description': '', 'version': 2, 'author': 'user',
-        'path': '/artifacts/decks/q3.versions/2',
+        'path': f'{tmp_path}/artifacts/decks/q3.versions/2',
     }
     assert listed == {'artifacts': [{**latest, 'read': 1}]}
     assert read == {
         **latest, 'read': 2,
         'files': {'project/deck.json': json.dumps(DECK), 'project/slides/agenda.html': AGENDA.replace('Agenda', 'Today')},
         'versions': [
-            {'version': 1, 'author': 'agent', 'path': '/artifacts/decks/q3.versions/1'},
-            {'version': 2, 'author': 'user', 'path': '/artifacts/decks/q3.versions/2'},
+            {'version': 1, 'author': 'agent', 'path': f'{tmp_path}/artifacts/decks/q3.versions/1'},
+            {'version': 2, 'author': 'user', 'path': f'{tmp_path}/artifacts/decks/q3.versions/2'},
         ],
     }
     assert json.loads((versions / 'read.json').read_text()) == {'version': 2}
@@ -247,7 +247,7 @@ def test_a_publish_that_lands_while_this_one_is_checked_keeps_its_number(
     monkeypatch.setattr(artifact_check, 'errors', check_while_another_publishes)
     published = json.loads(str(call(tmp_path, file_path='/decks/q3').content))
 
-    assert (published['version'], published['path']) == (2, '/artifacts/decks/q3.versions/2')
+    assert (published['version'], published['path']) == (2, f'{tmp_path}/artifacts/decks/q3.versions/2')
     assert (other / 'deck.json').read_text() == '{"title": "the other publish"}'
     assert stored(tmp_path) == [
         '1.json', '1/project/deck.json', '2.json', '2/project/deck.json', '2/project/slides/agenda.html',

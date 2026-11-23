@@ -39,6 +39,7 @@ if not cidrs or any(ipaddress.ip_network(cidr).version != 4 for cidr in cidrs):
     raise SystemExit('Cloudflare IPv4 ranges missing or invalid')
 client = aws('secretsmanager', 'get-secret-value', '--secret-id', NAMES['originPullClientSecretName'])
 runtime_arn = aws('ssm', 'get-parameter', '--name', f"/{identity['name']}/agentcore/runtime-arn")['Parameter']['Value']
+workspace = aws('bedrock-agentcore-control', 'get-agent-runtime', '--agent-runtime-id', runtime_arn.rsplit('/', 1)[1])['environmentVariables']['BOTCUBE_WORKSPACE']
 # The API health check: the observability dashboard reads its ID, so it
 # is imported once (your infrastructure ownership procedure), never created.
 
@@ -80,7 +81,7 @@ egress = owned_egress(identity)
 owned_network = owned_egress_network(egress) if egress else None
 Path(os.environ['PREVIEW_ORIGIN_INPUT']).write_text(json.dumps({
     'turnIdentityKeysVersion': next(version for version, stages in aws('secretsmanager', 'describe-secret', '--secret-id', NAMES['turnIdentityKeysSecretName'])['VersionIdsToStages'].items() if 'AWSCURRENT' in stages),
-    'cloudflareCidrs': cidrs, 'clientVersion': client['VersionId'], 'runtimeArn': runtime_arn,
+    'cloudflareCidrs': cidrs, 'clientVersion': client['VersionId'], 'runtimeArn': runtime_arn, 'filesWorkspace': workspace,
     **({'network': owned_network} if owned_network else {}),
 }))
 print('Prepared current Cloudflare ranges and client certificate revision')

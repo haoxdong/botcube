@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import threading
 import time
 import tomllib
@@ -198,7 +199,7 @@ class _ScriptedModel(BaseChatModel):
         # One `ls` per step, then an answer: each step is a model call and a tool call.
         done = sum(isinstance(message, ToolMessage) for message in messages[turn_start:])
         if done < steps:
-            return _call('ls', {'path': '/'}, len(messages))
+            return _call('ls', {'path': str(serving._workspace())}, len(messages))
         return _text(f'Done after {done} steps')
 
 
@@ -654,7 +655,7 @@ def test_serving_turn_logs_delegated_usage_and_starts_fresh_on_reuse(
 
 
 def test_the_sandbox_is_the_home_directory_the_bot_prepared(service: _Service) -> None:
-    events = service.turn('ls: /')
+    events = service.turn(f'ls: {serving._workspace()}')
 
     assert service.prepared == [service.home]
     assert '/prepared.txt' in _tool_output(events)
@@ -1338,7 +1339,7 @@ def test_a_tool_that_raises_fails_the_turn_before_any_result_needs_timing(
         raise FilesMountError('EFS unavailable')
     monkeypatch.setattr(FilesMount, 'pull', unavailable)
 
-    events = service.turn('ls: /', files=_files())
+    events = service.turn(f'ls: {serving._workspace()}', files=_files())
 
     # The raise fails the Turn, so the record keeps the timed call and no result to time.
     assert events[-1]['type'] == 'RUN_ERROR'
@@ -1774,14 +1775,56 @@ def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> Pa
 def test_the_sandbox_is_the_workspace_the_runtime_names(service: _Service, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workspace = _workspace(tmp_path, monkeypatch, 'session-storage')
 
-    events = service.turn('ls: /')
+    events = service.turn(f'ls: {workspace}')
 
     assert service.prepared == [workspace]
-    assert '/prepared.txt' in _tool_output(events)
+    assert str(workspace / 'prepared.txt') in _tool_output(events)
+
+
+@pytest.mark.parametrize('symlink', [False, True])
+def test_answer_links_open_files_written_by_the_shell_and_file_tools(
+    service: _Service, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, symlink: bool,
+) -> None:
+    files_bucket = MountedFiles(tmp_path / 'files')
+    files_bucket.write('uploaded.txt', b'uploaded')
+    root = files_bucket.root
+    if symlink:
+        root = tmp_path / 'linked-files'
+        root.symlink_to(files_bucket.root, target_is_directory=True)
+    monkeypatch.setenv('BOTCUBE_WORKSPACE', str(root))
+    monkeypatch.setattr(FilesMount, 'pull', lambda mount, name, excluded=(): files_bucket.mount(mount, name, excluded))
+    shell, tool = root / 'shell.txt', root / 'tool.txt'
+    replies = iter([
+        _call('execute', {'command': f'test "$(pwd)" = {shlex.quote(str(root))} && printf shell > {shlex.quote(str(shell))}'}, 1),
+        _call('write_file', {'file_path': str(tool), 'content': 'file tool'}, 2),
+        _text(f'[Shell]({shell}) [File tool]({tool})'),
+    ])
+    monkeypatch.setattr(_ScriptedModel, '_reply', lambda *_: next(replies))
+
+    question = 'Write two files and link them.\n\nAttached files:\n- '
+    events = service.turn(question + '/uploaded.txt', files=_files())
+
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    links = re.findall(r'\]\(([^)]+)\)', _said(events))
+    assert links == [f'{root}/shell.txt', f'{root}/tool.txt']
+    assert [files_bucket.read(Path(link).relative_to(root).as_posix()) for link in links] == [b'shell', b'file tool']
+    assert f'Files are at `{root}`' in service.recorder.prompts[0]
+    assert service.recorder.heard[0] == [question + f'{root}/uploaded.txt']
+    assert _keys(files_bucket) == ['prepared.txt', 'shell.txt', 'tool.txt', 'uploaded.txt']
+
+
+def test_file_tools_reject_paths_outside_files(service: _Service, files_bucket: MountedFiles) -> None:
+    outside = files_bucket.root.parent / 'outside.txt'
+    outside.write_text('outside')
+
+    events = service.turn(f'read: {outside}', files=_files())
+
+    assert 'outside the working directory' in _tool_output(events)
+    assert _keys(files_bucket) == ['prepared.txt']
 
 
 def test_a_file_the_agent_writes_reaches_the_accounts_files(service: _Service, files_bucket: Any) -> None:
-    events = service.turn('write: /report.csv: date,close', files=_files())
+    events = service.turn(f'write: {serving._workspace()}/report.csv: date,close', files=_files())
 
     assert events[-1]['type'] == 'RUN_FINISHED'
     body = files_bucket.read('report.csv')
@@ -1792,10 +1835,10 @@ def test_a_file_from_one_chat_returns_in_a_new_chat_on_fresh_session_storage(
     service: _Service, files_bucket: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _workspace(tmp_path, monkeypatch, 'first-chat')
-    service.turn('write: /notes/plan.txt: buy low', thread='chat-a', files=_files())
+    service.turn(f'write: {serving._workspace()}/notes/plan.txt: buy low', thread='chat-a', files=_files())
     _workspace(tmp_path, monkeypatch, 'after-version-update')
 
-    events = service.turn('read: /notes/plan.txt', thread='chat-b', files=_files())
+    events = service.turn(f'read: {serving._workspace()}/notes/plan.txt', thread='chat-b', files=_files())
 
     assert 'buy low' in _tool_output(events)
     assert files_bucket.read('notes/plan.txt') == b'buy low'
@@ -1804,7 +1847,7 @@ def test_a_file_from_one_chat_returns_in_a_new_chat_on_fresh_session_storage(
 def test_a_file_put_in_files_reaches_the_agent(service: _Service, files_bucket: Any) -> None:
     files_bucket.write('drafts/q3/upload.txt', b'from the Files app')
 
-    events = service.turn('read: /drafts/q3/upload.txt', files=_files())
+    events = service.turn(f'read: {serving._workspace()}/drafts/q3/upload.txt', files=_files())
 
     assert 'from the Files app' in _tool_output(events)
     assert not (files_bucket.root / '.trash').exists()
@@ -1812,32 +1855,32 @@ def test_a_file_put_in_files_reaches_the_agent(service: _Service, files_bucket: 
 
 
 def test_a_newer_file_in_files_replaces_the_workspaces_copy(service: _Service, files_bucket: Any) -> None:
-    service.turn('write: /plan.txt: old', files=_files())
+    service.turn(f'write: {serving._workspace()}/plan.txt: old', files=_files())
     files_bucket.write('plan.txt', b'new')
 
-    events = service.turn('read: /plan.txt', files=_files())
+    events = service.turn(f'read: {serving._workspace()}/plan.txt', files=_files())
 
     assert 'new' in _tool_output(events)
 
 
 def test_an_edit_within_the_second_of_the_last_sync_reaches_files(service: _Service, files_bucket: Any) -> None:
-    service.turn('write: /plan.txt: old', files=_files())
+    service.turn(f'write: {serving._workspace()}/plan.txt: old', files=_files())
     plan = files_bucket.root / 'plan.txt'
     synced = plan.stat().st_mtime
     plan.write_text('edited at once')
     # The agent's edit lands within the second Files stamped on the last sync.
     os.utime(plan, (synced + 0.5, synced + 0.5))
 
-    service.turn('ls: /', files=_files())
+    service.turn(f'ls: {serving._workspace()}', files=_files())
 
     assert files_bucket.read('plan.txt') == b'edited at once'
 
 
 def test_a_file_deleted_in_files_leaves_the_workspace_and_stays_deleted(service: _Service, files_bucket: Any) -> None:
-    service.turn('write: /report.csv: date,close', files=_files())
+    service.turn(f'write: {serving._workspace()}/report.csv: date,close', files=_files())
     (files_bucket.root / 'report.csv').unlink()
 
-    events = service.turn('ls: /', files=_files())
+    events = service.turn(f'ls: {serving._workspace()}', files=_files())
 
     assert events[-1]['type'] == 'RUN_FINISHED'
     assert '/report.csv' not in _tool_output(events)
@@ -1846,12 +1889,12 @@ def test_a_file_deleted_in_files_leaves_the_workspace_and_stays_deleted(service:
 
 
 def test_a_file_deleted_in_files_then_uploaded_again_reaches_the_workspace(service: _Service, files_bucket: Any) -> None:
-    service.turn('write: /report.csv: date,close', files=_files())
+    service.turn(f'write: {serving._workspace()}/report.csv: date,close', files=_files())
     (files_bucket.root / 'report.csv').unlink()
     files_bucket.write('report.csv', b'date,close,volume')
 
-    events = service.turn('read: /report.csv', files=_files())
-    service.turn('ls: /', files=_files())
+    events = service.turn(f'read: {serving._workspace()}/report.csv', files=_files())
+    service.turn(f'ls: {serving._workspace()}', files=_files())
 
     assert 'date,close,volume' in _tool_output(events)
     assert (files_bucket.root / 'report.csv').read_text() == 'date,close,volume'
@@ -1859,10 +1902,10 @@ def test_a_file_deleted_in_files_then_uploaded_again_reaches_the_workspace(servi
 
 
 def test_a_file_renamed_in_files_reaches_the_workspace_under_its_new_name_only(service: _Service, files_bucket: Any) -> None:
-    service.turn('write: /drafts/dummy (1).pdf: quarterly', files=_files())
+    service.turn(f'write: {serving._workspace()}/drafts/dummy (1).pdf: quarterly', files=_files())
     (files_bucket.root / 'drafts/dummy (1).pdf').rename(files_bucket.root / 'drafts/q3.pdf')
 
-    events = service.turn('ls: /drafts', files=_files())
+    events = service.turn(f'ls: {serving._workspace()}/drafts', files=_files())
 
     assert '/drafts/q3.pdf' in _tool_output(events)
     assert 'dummy (1).pdf' not in _tool_output(events)
@@ -1878,7 +1921,7 @@ def test_a_turn_without_files_uses_local_workspace_only(service: _Service, monke
         raise AssertionError('Unbound Turn mounted Files')
 
     monkeypatch.setattr(FilesMount, 'pull', forbidden)
-    service.turn('write: /report.csv: date,close')
+    service.turn(f'write: {serving._workspace()}/report.csv: date,close')
     assert (service.home / 'report.csv').read_text() == 'date,close'
 
 
@@ -1887,12 +1930,10 @@ def test_the_agent_is_told_its_files_are_the_workspace_root(service: _Service, f
     service.turn('hello', files=_files())
     service.turn('hello', thread='no-files')
 
-    files_line = (
-        "The user's Files are your working directory (`/` to your file tools); hidden files and anything under "
-        "`/tmp`, `/botcube-harness-deepagents`, `/skills` aren't saved."
-    )
-    assert files_line in service.recorder.prompts[0]
-    assert files_line not in service.recorder.prompts[1]
+    root = files_bucket.root
+    assert f"Files are at `{root}`" in service.recorder.prompts[0]
+    assert f"`{root / 'tmp'}`" in service.recorder.prompts[0]
+    assert '<files>' not in service.recorder.prompts[1]
 
 
 def test_the_environment_section_names_only_pinned_libraries_and_smoked_commands() -> None:
@@ -2081,12 +2122,12 @@ def test_a_workspace_tool_whose_files_cannot_sync_fails_loudly(service: _Service
         raise FilesMountError('EFS unavailable')
     monkeypatch.setattr(FilesMount, 'pull', unavailable)
 
-    events = service.turn('ls: /', files=_files())
+    events = service.turn(f'ls: {serving._workspace()}', files=_files())
 
     assert events[-1]['type'] == 'RUN_ERROR'
     assert 'EFS unavailable' in events[-1]['message']
     assert 'RUN_FINISHED' not in [event['type'] for event in events]
-    assert service.recorder.heard == [['ls: /']]
+    assert service.recorder.heard == [[f'ls: {serving._workspace()}']]
 
 
 # -- Conversation state ----------------------------------------------------------
@@ -3308,8 +3349,8 @@ def test_upgraded_graph_classifies_ordinary_provider_failure(
 
 
 def test_upgraded_write_file_replaces_existing_content(service: _Service) -> None:
-    service.turn('write: /plan.txt: first draft')
-    events = service.turn('write: /plan.txt: revised draft')
+    service.turn(f'write: {serving._workspace()}/plan.txt: first draft')
+    events = service.turn(f'write: {serving._workspace()}/plan.txt: revised draft')
 
     assert (service.prepared[0] / 'plan.txt').read_text() == 'revised draft'
     assert events[-1]['type'] == 'RUN_FINISHED'
@@ -3712,7 +3753,7 @@ def test_unreachable_efs_finishes_plain_answers_and_bounds_file_tool_errors(
         plain = service.turn('hello', files=files)
         assert plain[-1]['type'] == 'RUN_FINISHED'
         assert _said(plain) == 'Echo: hello'
-        failed = service.turn('ls: /', files=files)
+        failed = service.turn(f'ls: {serving._workspace()}', files=files)
         assert failed[-1]['type'] == 'RUN_ERROR'
         assert failed[-1]['code'] == 'FILES_MOUNT'
         assert 'deadline' in failed[-1]['message']
