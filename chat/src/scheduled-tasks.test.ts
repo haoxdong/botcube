@@ -770,15 +770,14 @@ describe('DELETE /scheduled-tasks/:id', () => {
     }
   });
 
-  it('reports an absent schedule to account deletion and permits the next retry', async () => {
+  it('finishes account deletion on the first attempt when the recorded schedule is absent', async () => {
     const account = owner();
     const task = await confirm(account);
     const client = new SchedulerClient(motoAws());
     await client.send(new DeleteScheduleCommand({ Name: task.id, GroupName: scheduler.runs.group }));
 
-    await expect(stack.history.delete(account)).rejects.toMatchObject({ status: 404, detail: 'Scheduled task schedule not found' });
-    expect(await listed(account)).toEqual([]);
     await stack.history.delete(account);
+    expect(await listed(account)).toEqual([]);
   });
 
   it('deletes the task and its schedule', async () => {
@@ -1485,7 +1484,6 @@ describe('ScheduledTasks', () => {
         expect((failure as AggregateError).errors[1]).toBe(storageOutage);
         expect(await tasks.list(account)).toEqual([pending]);
       }
-      if (metadataFails) await expect(history.delete(account)).rejects.toMatchObject({ status: 404, detail: 'Scheduled task schedule not found', cause: { name: 'ResourceNotFoundException' } });
       await history.delete(account);
       expect(await tasks.list(account)).toEqual([]);
       expect(await view.schedule(id)).toBeNull();
@@ -1948,9 +1946,8 @@ describe('ScheduledTasks', () => {
     expect((failure as AggregateError).errors[0]).toMatchObject({ name: 'ResourceNotFoundException' });
     expect((failure as AggregateError).errors[1]).toBe(outage);
     expect(await tasks.get(account, task.id)).toEqual(task);
-    await expect(tasks.deleteAll(account)).rejects.toMatchObject({ status: 404 });
-    expect(await tasks.list(account)).toEqual([]);
     await tasks.deleteAll(account);
+    expect(await tasks.list(account)).toEqual([]);
   });
 
   it.each([

@@ -109,12 +109,16 @@ class RetirementSchedulerFailure extends Error {
   }
 }
 
+class AbsentScheduleRetired extends HttpError {
+  constructor(cause: ResourceNotFoundException) {
+    super(404, 'Scheduled task schedule not found');
+    this.cause = cause;
+  }
+}
+
 function retirementFailure(item: TaskItem, error: unknown): unknown {
-  if (!(error instanceof ResourceNotFoundException)) return error;
-  if (item.schedule_group !== undefined && item.pending_creation !== false) return error;
-  const failure = item.schedule_group === undefined
-    ? new HttpError(503, 'Scheduled task schedule group is unknown')
-    : new HttpError(404, 'Scheduled task schedule not found');
+  if (!(error instanceof ResourceNotFoundException) || item.schedule_group !== undefined) return error;
+  const failure = new HttpError(503, 'Scheduled task schedule group is unknown');
   failure.cause = error;
   return failure;
 }
@@ -661,8 +665,12 @@ export class ScheduledTasks {
   /** Account deletion: every task goes, schedule first. */
   async deleteAll(owner: string): Promise<void> {
     for (const { id } of await this.list(owner)) {
-      // eslint-disable-next-line no-await-in-loop -- one task at a time: a retried deletion removes what is left
-      await this.delete(owner, id);
+      try {
+        // eslint-disable-next-line no-await-in-loop -- one task at a time: a retried deletion removes what is left
+        await this.delete(owner, id);
+      } catch (error) {
+        if (!(error instanceof AbsentScheduleRetired)) throw error;
+      }
     }
   }
 
@@ -779,8 +787,7 @@ export class ScheduledTasks {
       } catch (repairFailure) {
         throw new AggregateError([error, repairFailure], 'Schedule absence and task metadata cleanup failed');
       }
-      // Repair retains the observed SDK failure; the next deletion retry sees the erased task.
-      throw clientToken === undefined ? error : new RetirementSchedulerFailure(error, false);
+      throw clientToken === undefined ? error : new RetirementSchedulerFailure(new AbsentScheduleRetired(error), false);
     }
     return this.remove(owner, id, proposalId);
   }

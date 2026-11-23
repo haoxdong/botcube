@@ -7,6 +7,7 @@ import { ConditionalCheckFailedException, TransactionConflictException, DynamoDB
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, DeleteCommand, TransactWriteCommand, UpdateCommand, type QueryCommandInput } from '@aws-sdk/lib-dynamodb';
 export class AccountStoreError extends Error {}
 export class ScheduledBrowserAdmissionError extends AccountStoreError {}
+export class BrowserSessionDeniedError extends AccountStoreError {}
 export interface AgentComputerRecord { profileId: string | null; }
 export interface RunningAgentComputer {
   accountId: string;
@@ -241,7 +242,6 @@ export class AccountResources {
     ),
   ) {}
 
-  /** Send a DynamoDB command; a failure is an AccountStoreError naming the DynamoDB operation. */
   async call<T>(operation: string, command: { input: object }): Promise<T> {
     try {
       return (await this.documents.send(command as never)) as T;
@@ -279,7 +279,7 @@ export class AccountResources {
 
   async assertBrowserAllowed(accountId: string, threadId: string): Promise<void> {
     const session = await this.get(`SESSIONS#${accountId}`, `SESSION#${threadId}`);
-    if (session?.browser_limit === 0) throw new AccountStoreError('Browser sessions are denied for this Session');
+    if (session?.browser_limit === 0) throw new BrowserSessionDeniedError('Browser sessions are denied for this Session');
   }
 
   async scheduledBrowserAdmission(accountId: string, threadId: string): Promise<{ holder: string } | null> {

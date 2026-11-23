@@ -1,7 +1,7 @@
 import type { AgentComputerBrowser, AgentComputerRecords, AgentComputerState, AwakeComputer, BrowserControl } from './agent-computer-types.js';
 export type { AgentComputerBrowser, AgentComputerRecords, AgentComputerState } from './agent-computer-types.js';
 import { startAgentComputer } from './agent-computer-start.js';
-import { ScheduledBrowserAdmissionError } from './account-resources.js';
+import { BrowserSessionDeniedError, ScheduledBrowserAdmissionError } from './account-resources.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { agentCoreEndpointFromEnv } from './upstream.js';
 import { awsFetch } from './aws.js';
@@ -517,7 +517,13 @@ export function agentComputers({ browser, records, started, files, idleSeconds, 
       warmups.set(key, done);
       done.then(() => {
         if (warmups.get(key) === done) warmups.delete(key);
-      }, (error: unknown) => console.error("Agent Computer warm-up failed; the Session's next wake raises it", error));
+      }, (error: unknown) => {
+        if (error instanceof BrowserSessionDeniedError) {
+          console.info('Agent Computer warm-up skipped because Session browser access is disabled');
+        } else {
+          console.error("Agent Computer warm-up failed; the Session's next wake raises it", error);
+        }
+      });
     },
     state,
     sleepAll(): TaskStopSleep {

@@ -1,3 +1,4 @@
+import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { createHash } from 'node:crypto';
 import { HttpError } from 'botcube-chat';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -113,6 +114,36 @@ describe('an Agent Computer', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it('skips denied browser warm-up and still rejects explicit wake', async () => {
+    const { computer, store, log } = computers();
+    await store.call('PutItem', new PutCommand({ TableName: 'chat', Item: { pk: `SESSIONS#${ACCOUNT}`, sk: 'SESSION#restricted', browser_limit: 0 } }));
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    computer.warm(ACCOUNT, 'restricted');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(errors).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith('Agent Computer warm-up skipped because Session browser access is disabled');
+    expect(await computer.state(ACCOUNT, 'restricted')).toEqual({ state: 'asleep', screenshot: null });
+    await expect(computer.wake(ACCOUNT, 'restricted')).rejects.toThrow('Browser sessions are denied');
+    expect(log).toEqual([]);
+  });
+
+  it('reports an unexpected warm-up failure to the next explicit wake', async () => {
+    const { computer, failing } = computers();
+    failing.add('start');
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    computer.warm(ACCOUNT, 'chat-1');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(errors).toHaveBeenCalledWith("Agent Computer warm-up failed; the Session's next wake raises it", new Error('start failed'));
+    failing.delete('start');
+    await expect(computer.wake(ACCOUNT, 'chat-1')).rejects.toThrow('start failed');
+    await expect(computer.wake(ACCOUNT, 'chat-1')).resolves.toMatchObject({ state: 'awake' });
   });
 
   it('keeps the same browser accessible after Chat replacement', async () => {
