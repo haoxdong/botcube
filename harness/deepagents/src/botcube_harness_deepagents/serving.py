@@ -960,7 +960,7 @@ class _SessionTurns:
                     readiness.prefetch()
                     with prompt_cache_turn(context.session_id), collecting_turn_feeds() as feeds:
                         publish = partial(turn.publish, put=put, files=readiness, feeds=feeds)
-                        turn.work = asyncio.create_task(_turn_events(agent, input_data, reply.watching(publish)))
+                        turn.work = reply.create_task(_turn_events(agent, input_data, reply.watching(publish)))
                     limited = await wait_for_turn(turn.work, deadline, finished=lambda: turn.finished)
                     try:
                         await _settle_turn_writes(saver, turn.work)

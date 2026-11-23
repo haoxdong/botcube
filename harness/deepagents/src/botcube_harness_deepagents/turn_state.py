@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
@@ -29,7 +30,6 @@ from langchain.agents.middleware.types import (
 )
 from langchain_core.messages import (
     AIMessage,
-    BaseMessage,
     HumanMessage,
     RemoveMessage,
     ToolCall,
@@ -50,6 +50,9 @@ log = logging.getLogger(__name__)
 
 class CheckpointWriteError(RuntimeError):
     code = 'CHECKPOINT_WRITE_FAILED'
+
+
+_active_reply: ContextVar[_OpenReply | None] = ContextVar('_active_reply', default=None)
 
 
 async def _turn_events(
@@ -118,30 +121,29 @@ class _Turn:
 
 
 class _OpenReply:
-    """The text the run's model call is streaming: Stop cancels the call before LangGraph records it.
-
-    The text ends before the call does when the model goes on to a tool call, so
-    only the tool's result, which follows the recorded call, closes the reply.
-    """
-
     def __init__(self) -> None:
         self.clock: message_times.ClockFrame | None = None
         self.timing_id: str | None = None
         self.started = False
         self.open_text = False
         self.message_id = ''
+        self.model_message_id: str | None = None
         self.text = ''
         self.started_at = self.ended_at = 0
         self.open_thoughts: set[str] = set()
-        self.thoughts: dict[str, dict[str, dict[str, Any]]] = {}
+        self.thoughts: dict[str, dict[str, Any] | None] = {}
         # The tool calls started and not yet answered: the ones Stop cuts while they run.
         self.open_calls: set[str] = set()
+
+    def create_task(self, events: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
+        context = copy_context()
+        context.run(_active_reply.set, self)
+        return asyncio.create_task(events, context=context)
 
     def watching(self, put: Callable[[Any], None]) -> Callable[[Any], None]:
         def watched(event: Any) -> None:
             self._watch_clock(event)
-            if not self._watch_thought(event):
-                return
+            self._watch_thought(event)
             if event.type == EventType.RUN_STARTED:
                 self.started = True
             if event.type == EventType.TEXT_MESSAGE_START:
@@ -163,23 +165,22 @@ class _OpenReply:
 
         return watched
 
-    def _watch_thought(self, event: Any) -> bool:
-        if event.type not in {EventType.REASONING_MESSAGE_START, EventType.REASONING_MESSAGE_CONTENT, EventType.REASONING_MESSAGE_END}:
-            return True
-        message_id = event.message_id
-        lane = message_id.rsplit('-reasoning-', 1)[0]
+    def register_thought(self, message_id: str) -> None:
+        self.thoughts[message_id] = None
+
+    def _watch_thought(self, event: Any) -> None:
         if event.type == EventType.REASONING_MESSAGE_START:
+            message_id = event.message_id
             self.open_thoughts.add(message_id)
-            at = message_times.now()
-            self.thoughts.setdefault(lane, {})[message_id] = {'id': message_id, 'started_at': at, 'ended_at': at, 'text': ''}
-        elif (thought := self.thoughts.get(lane, {}).get(message_id)) is None:
-            return False
-        elif event.type == EventType.REASONING_MESSAGE_CONTENT:
+            if message_id in self.thoughts:
+                at = message_times.now()
+                self.thoughts[message_id] = {'id': message_id, 'started_at': at, 'ended_at': at, 'text': ''}
+        elif event.type == EventType.REASONING_MESSAGE_END:
+            self.open_thoughts.discard(event.message_id)
+            if (thought := self.thoughts.get(event.message_id)) is not None:
+                thought['ended_at'] = message_times.now()
+        elif event.type == EventType.REASONING_MESSAGE_CONTENT and (thought := self.thoughts.get(event.message_id)) is not None:
             thought['text'] += event.delta
-        else:
-            self.open_thoughts.discard(message_id)
-            thought['ended_at'] = message_times.now()
-        return True
 
     def _watch_clock(self, event: Any) -> None:
         if event.type == EventType.STATE_DELTA:
@@ -236,17 +237,14 @@ class _OpenReply:
         put(RunFinishedEvent(thread_id=input_data.thread_id, run_id=input_data.run_id))
 
     async def keep(self, agent: LangGraphAgent, session: tuple[str | None, str | None]) -> None:
-        """Record the text the user already read as the agent's answer, under its streamed ID."""
-        if not self.text and not self.thoughts:
-            return
-        config = _session_config(session)
-        recorded = (await agent.graph.aget_state(config)).values['messages']
-        if self.message_id and any(message.id == self.message_id for message in recorded):
-            return
-        thoughts = self._unrecorded_thoughts(getattr(agent, 'root_model_lane', None), recorded)
+        thoughts = [thought for thought in self.thoughts.values() if thought is not None]
         if not self.text and not thoughts:
             return
         self.message_id = self.message_id or f"{thoughts[0]['id']}-reply"
+        config = _session_config(session)
+        recorded = (await agent.graph.aget_state(config)).values['messages']
+        if any(message.id and message.id in (self.message_id, self.model_message_id) for message in recorded):
+            return
         blocks: list[ContentBlock] = [{'type': 'reasoning', 'reasoning': thought['text']} for thought in thoughts]
         if self.text:
             blocks.append({'type': 'text', 'text': self.text})
@@ -254,17 +252,6 @@ class _OpenReply:
         started = self.started_at if self.text else thoughts[0]['started_at']
         ended = self.ended_at if self.text else thoughts[-1]['ended_at']
         await agent.graph.aupdate_state(config, {'messages': [message_times.cut(reply, started, ended, thoughts, timing_id=self.timing_id)]}, as_node='model')
-
-    def _unrecorded_thoughts(self, lane: str | None, recorded: list[BaseMessage]) -> list[dict[str, Any]]:
-        thoughts = self.thoughts.get(lane, {}) if lane is not None else {}
-        if not thoughts:
-            return []
-        saved = {
-            thought.get('id')
-            for message in recorded
-            for thought in message.response_metadata.get(MESSAGE_TIMES, {}).get('reasoning', [])
-        }
-        return list(thoughts.values()) if saved.isdisjoint(thoughts) else []
 
     async def keep_clock(self, agent: LangGraphAgent, session: tuple[str | None, str | None], put: Callable[[Any], None]) -> None:
         if self.clock is None:

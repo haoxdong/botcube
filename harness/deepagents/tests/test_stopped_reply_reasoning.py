@@ -37,13 +37,14 @@ def test_a_reply_stopped_after_its_thought_replays_with_that_thought(monkeypatch
     monkeypatch.setattr(message_times, 'now', lambda: next(clock))
     reply = _OpenReply()
     watched = reply.watching(lambda _event: None)
+    reply.register_thought('root-reasoning-0')
     watched(ReasoningMessageStartEvent(message_id='root-reasoning-0', role='reasoning'))
     watched(ReasoningMessageEndEvent(message_id='root-reasoning-0'))
     watched(TextMessageStartEvent(message_id='answer-1', role='assistant'))
     watched(TextMessageContentEvent(message_id='answer-1', delta='Prime numbers have'))
     graph = _Graph()
 
-    asyncio.run(reply.keep(cast(Any, SimpleNamespace(graph=graph, root_model_lane='root')), ('user-1', 'thread-1')))
+    asyncio.run(reply.keep(cast(Any, SimpleNamespace(graph=graph)), ('user-1', 'thread-1')))
 
     replayed = conversation(graph.recorded)
     assert [(message['role'], message['id']) for message in replayed] == [('reasoning', 'root-reasoning-0'), ('assistant', 'answer-1')]
@@ -58,14 +59,17 @@ def test_a_reasoning_only_stop_keeps_the_thought_without_inventing_answer_text(m
     monkeypatch.setattr(message_times, 'now', lambda: next(clock))
     reply = _OpenReply()
     watched = reply.watching(lambda _event: None)
+    reply.register_thought('root-reasoning-0')
     watched(ReasoningMessageStartEvent(message_id='root-reasoning-0', role='reasoning'))
     watched(ReasoningMessageContentEvent(message_id='root-reasoning-0', delta='Compare the bond durations'))
     watched(ReasoningMessageEndEvent(message_id='root-reasoning-0'))
+    reply.register_thought('root-reasoning-1')
     graph = _Graph()
-    asyncio.run(reply.keep(cast(Any, SimpleNamespace(graph=graph, root_model_lane='root')), ('user-1', 'thread-1')))
+    asyncio.run(reply.keep(cast(Any, SimpleNamespace(graph=graph)), ('user-1', 'thread-1')))
     replayed = conversation(graph.recorded)
-    assert replayed[0]['role'] == 'reasoning'
-    assert replayed[0]['id'] == 'root-reasoning-0'
-    assert replayed[0]['content'] == 'Compare the bond durations'
-    assert replayed[0]['metadata'] == {'started_at': 1000, 'ended_at': 1800}
-    assert replayed[-1]['content'] == ''
+    thought, answer = replayed
+    assert (thought['role'], thought['id'], thought['content']) == (
+        'reasoning', 'root-reasoning-0', 'Compare the bond durations',
+    )
+    assert thought['metadata'] == {'started_at': 1000, 'ended_at': 1800}
+    assert answer['content'] == ''

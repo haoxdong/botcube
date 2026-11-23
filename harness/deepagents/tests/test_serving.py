@@ -1270,6 +1270,7 @@ class _ParallelReasoningModel(_RecordedBedrockModel):
         prompt = next(message.text for message in reversed(messages) if isinstance(message, HumanMessage))
         if isinstance(messages[-1], ToolMessage):
             if prompt == 'Delegate to both lanes.' and self.hold_final:
+                yield self.thought('Root conclusion.')
                 yield _text('Both lanes returned.')
                 await asyncio.Future()
             else:
@@ -1284,6 +1285,7 @@ class _ParallelReasoningModel(_RecordedBedrockModel):
             yield self.thought('Fast thought.')
             yield _call('ls', {'path': '/'}, 3)
         else:
+            yield self.thought('Delegate the work.')
             yield ChatGenerationChunk(message=AIMessageChunk(content='', tool_call_chunks=[
                 tool_call_chunk(name='task', args=json.dumps({'description': lane, 'subagent_type': 'general-purpose'}),
                                 id=f'task-{index}', index=index)
@@ -1340,8 +1342,11 @@ def test_parallel_subagent_reasoning_survives_a_tool_result(
 ) -> None:
     events = _parallel_reasoning_run(service, monkeypatch, stopped=False)
     assert events[-1]['type'] == 'RUN_FINISHED', events[-1]
-    before, fast, after = [event for event in events if event['type'] == 'REASONING_MESSAGE_CONTENT']
-    assert [before['delta'], fast['delta'], after['delta']] == ['Slow before. ', 'Fast thought.', 'Slow after.']
+    root, before, fast, unknown, after = [event for event in events if event['type'] == 'REASONING_MESSAGE_CONTENT']
+    assert [event['delta'] for event in (root, before, fast, unknown, after)] == [
+        'Delegate the work.', 'Slow before. ', 'Fast thought.', 'Orphan delta.', 'Slow after.',
+    ]
+    assert unknown['messageId'] == 'unknown-reasoning-0'
     assert before['messageId'] == after['messageId'] != fast['messageId']
     assert any(event['type'] == 'TOOL_CALL_RESULT' for event in events[events.index(fast):events.index(after)])
 
@@ -1352,7 +1357,7 @@ def test_stopping_the_parent_reply_keeps_subagent_reasoning_out_of_its_replay(
     events = _parallel_reasoning_run(service, monkeypatch, stopped=True)
     assert events[-1]['code'] == 'TURN_STOPPED', events[-1]
     replay = asyncio.run(session_api.get_session('user-1', 'thread-1'))
-    assert not [message for message in replay if message['role'] == 'reasoning']
+    assert [message['content'] for message in replay if message['role'] == 'reasoning'] == ['Delegate the work.', 'Root conclusion.']
     assert replay[-1]['content'] == 'Both lanes returned.'
 
 
