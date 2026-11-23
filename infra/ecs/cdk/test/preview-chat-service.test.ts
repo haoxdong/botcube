@@ -6,7 +6,7 @@ import { App, CfnParameter, Fn } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import type { ITable } from 'aws-cdk-lib/aws-dynamodb';
 import { ContainerImage } from 'aws-cdk-lib/aws-ecs';
-import { repositoryRoot, caPath, originProviderPath } from './origin-fixture';
+import { repositoryRoot, caCertificate, originProviderPath } from './origin-fixture';
 import { ChatStorageStack } from '../lib/chat-storage-stack.js';
 import { PreviewChatService, type PreviewChatServiceProps } from '../lib/preview-chat-service.js';
 import { PreviewOriginStack } from '../lib/preview-origin-stack.js';
@@ -21,7 +21,7 @@ function synth(runtimeArn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:ru
     env, hostname: 'preview.example.com', production: { hostname: 'api.example.com' }, repositoryRoot, originProviderPath,
     vpcId: 'vpc-fixture12345678', publicSubnets: [{ id: 'subnet-fixture11111111', availabilityZone: 'us-east-1a' }, { id: 'subnet-fixture22222222', availabilityZone: 'us-east-1b' }],
     cloudflareCidrs: ['173.245.48.0/20'], clientVersion: 'version', tokenSecretName: '/test/token', clientSecretName: '/test/client',
-    caPath, corsOrigins: [], parkedDnsTarget: 'parked.invalid', wakeUrl: 'https://wake.example.com/',
+    caCertificate, corsOrigins: [], parkedDnsTarget: 'parked.invalid', wakeUrl: 'https://wake.example.com/',
   });
   new PreviewChatService(origin, 'ChatService', {
     vpcId: 'vpc-fixture12345678', privateSubnets: subnets,

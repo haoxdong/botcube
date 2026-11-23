@@ -34,7 +34,7 @@ export const containerUri = z
   .string()
   .regex(ECR_IMAGE, ecrMessage)
   .describe(
-    "As CloudFormation Runtime ContainerConfiguration.ContainerUri: the Bot Image the Runtime runs, built FROM the Harness image and pinned by digest in production. Absent, BotCube builds the Harness and the bot's staged image with CodeBuild.",
+    "As CloudFormation Runtime ContainerConfiguration.ContainerUri: the Bot Image the Runtime runs, built FROM the Harness image and pinned by digest in production. Required when deploying an AgentCore Runtime; build and publish the Bot Image before synthesis.",
   );
 
 /** An OCI image reference, as ECS ContainerDefinition.Image takes it: a registry host, a repository, and a tag or a digest. */

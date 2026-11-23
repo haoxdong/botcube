@@ -42,7 +42,7 @@ def parked() -> dict[str, Any]:
 
 def parked_response() -> dict[str, object]:
     return {'status': 503, 'body': {'status': 'parked'},
-            'allowOrigin': 'http://localhost:3001', 'allowCredentials': 'true'}
+            'allowOrigin': 'https://chat.example.invalid', 'allowCredentials': 'true'}
 
 
 def live() -> dict[str, Any]:
@@ -60,7 +60,7 @@ def live() -> dict[str, Any]:
         'healthCheckDisabled': False,
         'alarmActions': dict.fromkeys(('bot-cube-api-health', 'bot-cube-preview-task-deficit', *ALB_ALARMS), True),
         'egressIp': '192.0.2.1',
-        'responses': {host: {'status': 200, 'body': {'status': 'ok'}, 'allowOrigin': 'http://localhost:3001', 'allowCredentials': 'true'}
+        'responses': {host: {'status': 200, 'body': {'status': 'ok'}, 'allowOrigin': 'https://chat.example.invalid', 'allowCredentials': 'true'}
                       for host in ('api.example.com', 'api-next.example.com')},
     }
 
@@ -206,7 +206,7 @@ class LiveVerificationTests(unittest.TestCase):
                                      ['credential-service tasks are not healthy: none'])
                     ecs.describe_tasks.assert_not_called()
     @staticmethod
-    def edge_response(status: int, body: bytes, origin: str | None = 'http://localhost:3001', credentials: str | None = 'true') -> MagicMock:
+    def edge_response(status: int, body: bytes, origin: str | None = 'https://chat.example.invalid', credentials: str | None = 'true') -> MagicMock:
         response = MagicMock()
         response.__enter__.return_value = response
         response.status = status
@@ -215,11 +215,11 @@ class LiveVerificationTests(unittest.TestCase):
         return response
 
     def test_failed_edge_responses_cannot_verify_live(self):
-        cases = ((500, b'{"detail":"unavailable"}', 'http://localhost:3001', 'true'),
-                 (522, b'error code: 522', 'http://localhost:3001', 'true'),
-                 (200, b'{"status":"unavailable"}', 'http://localhost:3001', 'true'),
+        cases = ((500, b'{"detail":"unavailable"}', 'https://chat.example.invalid', 'true'),
+                 (522, b'error code: 522', 'https://chat.example.invalid', 'true'),
+                 (200, b'{"status":"unavailable"}', 'https://chat.example.invalid', 'true'),
                  (200, b'{"status":"ok"}', None, 'true'),
-                 (200, b'{"status":"ok"}', 'http://localhost:3001', None))
+                 (200, b'{"status":"ok"}', 'https://chat.example.invalid', None))
         for status, body, origin, credentials in cases:
             with self.subTest(status=status, body=body, origin=origin, credentials=credentials):
                 response = self.edge_response(status, body, origin, credentials)

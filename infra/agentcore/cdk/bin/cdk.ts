@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { addAgentCoreStacks } from '../lib/agentcore-app';
 import { loadDeployConfig } from '../lib/deploy-config';
-import { checkoutRoot, stageAgentCoreDockerPrerequisites, toolStagingHook } from '../lib/predeploy-assets';
 import { readCdkContext } from '../lib/cdk-context';
 import { App } from 'aws-cdk-lib';
 import { execFileSync } from 'child_process';
@@ -19,17 +18,10 @@ async function main() {
   });
   const config = await loadDeployConfig(process.env.BOTCUBE_DEPLOY_ROOT, process.cwd());
 
-  const repositoryRoot = checkoutRoot(config.deployRoot);
-  const commit = checkoutCommit(repositoryRoot);
-  if (config.runtimeImage === undefined) {
-    stageAgentCoreDockerPrerequisites(
-      config.spec,
-      config.deployRoot,
-      undefined,
-      repositoryRoot,
-      toolStagingHook(config.deployRoot)
-    );
-  }
+  const repositoryRoot = execFileSync('git', ['-C', config.deployRoot, 'rev-parse', '--show-toplevel'], {
+    encoding: 'utf8',
+  }).trim();
+  const commit = app.node.tryGetContext('deploymentCommit') ?? checkoutCommit(repositoryRoot);
 
   addAgentCoreStacks(app, config, commit);
   app.synth();

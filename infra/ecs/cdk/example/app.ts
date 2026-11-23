@@ -20,7 +20,6 @@ import { defineProduction, type ProductionOptions } from '../lib/production.js';
 import { grantLambdasInline } from '../lib/lambda-inline-grants.js';
 import { placeLambdasInNetwork } from '../lib/existing-network.js';
 
-/** The deploy directory the examples' images and staging hook are in: the public example's. */
 const EXAMPLE_DEPLOY_ROOT = path.resolve(__dirname, '../../../../examples/public/deploy');
 export const EXAMPLES_ROOT = path.resolve(__dirname, '../../../../examples');
 export const IMAGE_EXAMPLES_ROOT = '/opt/chat-service/examples';
@@ -41,9 +40,8 @@ const CREDENTIAL_IMAGE: ExampleImage = {
   name: 'Credential Service', dockerfile: path.resolve(__dirname, '../../../../credential-service/Dockerfile'),
   sources: '${BOTCUBE_ROOT}/examples/', root: CREDENTIAL_IMAGE_EXAMPLES_ROOT,
 };
-/** The Runtime image, whose COPYs public/deploy/stage-tools.sh writes into the Harness build context's .tool-dist/Dockerfile. */
 const RUNTIME_IMAGE: ExampleImage = {
-  name: 'Runtime', dockerfile: path.resolve(EXAMPLE_DEPLOY_ROOT, 'stage-tools.sh'), sources: '.tool-dist/examples/', root: CREDENTIAL_IMAGE_EXAMPLES_ROOT,
+  name: 'Runtime', dockerfile: path.resolve(__dirname, '../../../../examples/bot/Dockerfile'), sources: 'examples/', root: CREDENTIAL_IMAGE_EXAMPLES_ROOT,
 };
 
 interface ExampleOptions {

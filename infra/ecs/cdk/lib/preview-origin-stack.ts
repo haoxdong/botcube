@@ -11,7 +11,6 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
-import * as assets from 'aws-cdk-lib/aws-s3-assets';
 import * as secrets from 'aws-cdk-lib/aws-secretsmanager';
 import * as custom from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
@@ -54,7 +53,7 @@ export interface PreviewOriginProps extends StackProps {
   turnIdentityKeysVersion?: string;
   tokenSecretName: string;
   clientSecretName: string;
-  caPath: string;
+  caCertificate: { bucket: string; key: string; versionId?: string };
   /** The bot's origin-provider Lambda source directory. */
   originProviderPath: string;
   originOwnership?: string;
@@ -109,8 +108,12 @@ export class PreviewOriginStack extends Stack {
       removalPolicy: RemovalPolicy.RETAIN,
       lifecycleRules: [{ expiration: Duration.days(props.connectionLogExpirationDays ?? 30) }],
     }) as s3.IBucket;
-    const ca = new assets.Asset(this, 'OriginPullCa', { path: path.join(props.repositoryRoot, props.caPath) });
-    const trustStore = new elb.TrustStore(this, 'OriginTrust', { bucket: ca.bucket, key: ca.s3ObjectKey, ...optionalPhysicalName('trustStoreName', props.trustStoreName) });
+    const ca = props.caCertificate;
+    const trustStore = new elb.TrustStore(this, 'OriginTrust', {
+      bucket: s3.Bucket.fromBucketName(this, 'OriginPullCa', ca.bucket), key: ca.key,
+      ...(ca.versionId ? { version: ca.versionId } : {}),
+      ...optionalPhysicalName('trustStoreName', props.trustStoreName),
+    });
     const token = secrets.Secret.fromSecretNameV2(this, 'CloudflareToken', props.tokenSecretName);
     const client = secrets.Secret.fromSecretNameV2(this, 'OriginClient', props.clientSecretName);
     const providerCode = lambda.Code.fromAsset(props.originProviderPath, {

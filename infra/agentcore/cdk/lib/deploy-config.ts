@@ -125,6 +125,8 @@ export function readDeployIdentity(deployRoot: string, config = readDeployment(d
       agentCore: {
         runtime: names.runtimeAgentRuntimeName,
         platformVersion: config.agentCore?.runtime?.platformVersion ?? 'V2',
+        maxLifetime: config.agentCore?.runtime?.maxLifetime,
+        idleRuntimeSessionTimeout: config.agentCore?.runtime?.idleRuntimeSessionTimeout,
         runtimeNetworkParameter: config.existing.browsers?.link
           ? `/${config.name}/agentcore/security-group-id`
           : undefined,
@@ -185,7 +187,7 @@ export function readProjectSpec(
     ...PROJECT_DEFAULTS,
     name: config.name.replaceAll('-', ''),
     tags: { ...PROJECT_DEFAULTS.tags, 'agentcore:project-name': config.name, ...config.tags },
-    runtimes: [{ ...RUNTIME_DEFAULTS, name, dockerfile: '.tool-dist/Dockerfile' }],
+    runtimes: [{ ...RUNTIME_DEFAULTS, name, dockerfile: 'Dockerfile' }],
     memories: [{ ...MEMORY_DEFAULTS, name }],
   });
   if (!parsed.success)
@@ -220,6 +222,7 @@ export async function loadDeployConfig(configuredRoot: string | undefined, cwd: 
     { name: deploymentNames(config).agentCoreTargetName, ...config.env },
   ]);
   const runtimeImage = config.agentCore?.runtime?.containerUri;
+  if (!runtimeImage) throw new Error('BotCube Config agentCore.runtime.containerUri must name the published Bot Image');
   const { tags } = config;
-  return { deployRoot, identity, spec, targets, ...(runtimeImage ? { runtimeImage } : {}), ...(tags ? { tags } : {}) };
+  return { deployRoot, identity, spec, targets, runtimeImage, ...(tags ? { tags } : {}) };
 }

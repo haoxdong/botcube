@@ -5,7 +5,7 @@ import { IMAGES } from '../../../../config/footprint-images.js';
 import { defineExample } from '../example/app.js';
 import type { DeployIdentity } from '../lib/production-identity.js';
 import { registryCredentialImage } from './credential-image.js';
-import { caPath, repositoryRoot } from './origin-fixture.js';
+import { caCertificate, repositoryRoot } from './origin-fixture.js';
 
 export const botcubeConfigPath = (example: string) => path.resolve(__dirname, `../../../../examples/${example}/botcube.yaml`);
 
@@ -22,7 +22,7 @@ export async function synthesizeExampleAt(configPath: string, adjust: (identity:
   const app = new App({ context });
   await defineExample(app, configPath, {
     repositoryRoot, commit: 'example', webLatency: { readerSubject: EXAMPLE_METRICS_READER_SUBJECT },
-    identity: identity => adjust({ ...identity, aws: { ...identity.aws, ecs: { ...identity.aws.ecs, originPullCaCertificate: caPath } } }),
+    identity: identity => adjust({ ...identity, aws: { ...identity.aws, ecs: { ...identity.aws.ecs, originPullCaCertificate: caCertificate } } }),
     origin: identity => ({
       input: { cloudflareCidrs: ['173.245.48.0/20'], clientVersion: 'version', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/example` },
       images: { chat: ContainerImage.fromRegistry(IMAGES.chatService), credential: registryCredentialImage(IMAGES.credentialService) },

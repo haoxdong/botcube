@@ -58,14 +58,9 @@ test('gives agentcore-cdk the project it finds on disk', async () => {
   expect(JSON.parse(fs.readFileSync(path.join(configRoot, 'agentcore.json'), 'utf8'))).toEqual(config.spec);
 });
 
-test('runs the Bot Image the BotCube Config names, and builds one without it', async () => {
-  const image = `123456789012.dkr.ecr.us-east-1.amazonaws.com/bot-cube/bot@sha256:${'b'.repeat(64)}`;
-  const named = publicExample(text =>
-    text.replace('runtime: { platformVersion: V2 }', `runtime: { platformVersion: V2, containerUri: "${image}" }`)
-  );
-
-  expect((await loadDeployConfig(named, '/')).runtimeImage).toBe(image);
-  expect((await loadDeployConfig(PUBLIC_EXAMPLE, '/')).runtimeImage).toBeUndefined();
+test('requires the Bot Image in botcube.yaml instead of building staged sources', async () => {
+  const root = publicExample(text => text.replace(/\s+containerUri: \S+/, ''));
+  await expect(loadDeployConfig(root, '/')).rejects.toThrow('agentCore.runtime.containerUri');
 });
 
 test.each(['identity.json', 'agentcore/agentcore.json', 'agentcore/aws-targets.json'])(

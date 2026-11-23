@@ -332,7 +332,7 @@ function createServingOrigin(app: App, options: ProductionOptions, input: Origin
     parkedWorkerName: identity.aws.ecs.parkedWorkerName,
     originZone: identity.aws.ecs.originZone,
     clientSecretName: identity.aws.ecs.originPullClientSecretName,
-    caPath: identity.aws.ecs.originPullCaCertificate,
+    caCertificate: identity.aws.ecs.originPullCaCertificate,
     corsOrigins: options.corsOrigins,
     parkedDnsTarget: identity.aws.ecs.parkedDnsTarget, wakeUrl,
     ...options.originConfig,

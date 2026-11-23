@@ -36,7 +36,7 @@ export function productionApp({ images: dockerfiles = {}, ...product }: ProductO
   const app = new App();
   const repositoryRoot = path.resolve(projectDir(__dirname), process.env.BOTCUBE_REPOSITORY_ROOT ?? '../../../..');
   const deployRoot = activeDeployRoot();
-  const identity = deployIdentity(deployRoot, repositoryRoot);
+  const identity = deployIdentity(deployRoot);
   const config = deployRootConfig(deployRoot);
   const botcubeConfig = readConfig(config.path);
   const { services, tags } = botcubeConfig;
@@ -53,7 +53,7 @@ export function productionApp({ images: dockerfiles = {}, ...product }: ProductO
       images: serviceImages(repositoryRoot, services, {
         chat: chatImage.file, credential: productionCredentialImage(repositoryRoot, dockerfiles.credential),
       }),
-      commit: checkoutCommit(repositoryRoot),
+      commit: app.node.tryGetContext('deploymentCommit') ?? checkoutCommit(repositoryRoot),
     };
   }
   const momentsContext = app.node.tryGetContext('webLatencyMoments');

@@ -11,18 +11,27 @@ names:
   agentComputerBrowserRoleName: bot-cube-agent-computer-browser
 domains:
   web: https://chat.example.invalid
-  webAliases: [https://www.chat.example.invalid]
+  webAliases: [ https://www.chat.example.invalid ]
   chatService: https://api.example.invalid
   chatServicePreview: https://api-preview.example.invalid
 agentCore:
-  runtime: { platformVersion: V2 }
+  runtime:
+    {
+      platformVersion: V2,
+      containerUri: 123456789012.dkr.ecr.us-east-1.amazonaws.com/bot-cube/runtime:release
+    }
   browsers:
     link:
-      extension: { bucket: example-browser-assets, key: bot-cube/browser-extensions/provider-user-agent/v2.zip, versionId: placeholder }
+      extension:
+        {
+          bucket: example-browser-assets,
+          key: bot-cube/browser-extensions/provider-user-agent/v2.zip,
+          versionId: placeholder
+        }
 network: { natGateways: 1, publicIp: 192.0.2.1 }
 cloudflare:
   zone: example.invalid
-  originPull: { caCertificate: deploy/ecs/origin-pull-ca.crt }
+  originPull: { caCertificate: { bucket: example-origin-trust, key: origin-pull-ca.pem } }
 existing:
   vpc:
     vpcId: vpc-placeholder
@@ -30,11 +39,26 @@ existing:
       - { subnetId: subnet-placeholdera, availabilityZone: us-east-1a }
       - { subnetId: subnet-placeholderb, availabilityZone: us-east-1c }
     privateSubnets:
-      - { subnetId: subnet-placeholdera, availabilityZone: us-east-1a, ipv4CidrBlock: 192.0.2.0/24, routeTableId: rtb-placeholder }
-      - { subnetId: subnet-placeholderb, availabilityZone: us-east-1c, ipv4CidrBlock: 198.51.100.0/24, routeTableId: rtb-placeholder }
+      - {
+          subnetId: subnet-placeholdera,
+          availabilityZone: us-east-1a,
+          ipv4CidrBlock: 192.0.2.0/24,
+          routeTableId: rtb-placeholder
+        }
+      - {
+          subnetId: subnet-placeholderb,
+          availabilityZone: us-east-1c,
+          ipv4CidrBlock: 198.51.100.0/24,
+          routeTableId: rtb-placeholder
+        }
   browsers:
     link: { browserId: browser-placeholder, securityGroupId: sg-placeholder }
   buckets:
     slots: { bucketName: bot-cube-sessions }
 parking:
-  automationUserAgents: [collective-automation]
+  automationUserAgents: [ collective-automation ]
+services:
+  chatService:
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/bot-cube/chat:release
+  credentialService:
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/bot-cube/credential:release

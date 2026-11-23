@@ -9,7 +9,7 @@ import { ChatStorageStack } from '../lib/chat-storage-stack.js';
 import { addFilesLinks } from '../lib/files-links.js';
 import { PreviewChatService } from '../lib/preview-chat-service.js';
 import { PreviewOriginStack } from '../lib/preview-origin-stack.js';
-import { repositoryRoot, caPath } from './origin-fixture.js';
+import { repositoryRoot, caCertificate } from './origin-fixture.js';
 
 function synth(parked: boolean, context: Record<string, unknown> = {}) {
   const app = new App({ context });
@@ -20,7 +20,7 @@ function synth(parked: boolean, context: Record<string, unknown> = {}) {
     env, hostname: 'preview.example.com', production: { hostname: 'api.example.com' }, repositoryRoot, originProviderPath: path.resolve(__dirname, '../../origin-provider'),
     vpcId: 'vpc-fixture12345678', publicSubnets: [{ id: 'subnet-fixture11111111', availabilityZone: 'us-east-1a' }, { id: 'subnet-fixture22222222', availabilityZone: 'us-east-1b' }],
     cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', tokenSecretName: '/test/token', clientSecretName: '/test/client',
-    caPath, corsOrigins: [], parkedDnsTarget: 'parked.invalid', wakeUrl: 'https://wake.example.com/',
+    caCertificate, corsOrigins: [], parkedDnsTarget: 'parked.invalid', wakeUrl: 'https://wake.example.com/',
   });
   const chat = new PreviewChatService(origin, 'ChatService', {
     vpcId: 'vpc-fixture12345678', privateSubnets: subnets,

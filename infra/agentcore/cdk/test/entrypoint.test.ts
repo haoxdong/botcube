@@ -23,7 +23,6 @@ jest.mock('../lib/cdk-context', () => {
   };
 });
 
-// The Runtime builds from BotCube's own Harness; a test repository's stands in for it, so its staging hook writes there.
 const mockHarness: { codeLocation?: string } = {};
 jest.mock('../lib/deploy-config', () => {
   const actual = jest.requireActual('../lib/deploy-config');
@@ -63,7 +62,6 @@ function tempDir(): string {
   return dir;
 }
 
-/** A repository whose bot is the public example's BotCube Config at bot/, with its deploy root bot/deploy staging tools. */
 function repository(): string {
   const repo = tempDir();
   const deployRoot = path.join(repo, 'bot/deploy');
@@ -71,12 +69,6 @@ function repository(): string {
   fs.mkdirSync(path.join(repo, 'harness'));
   mockHarness.codeLocation = path.join(repo, 'harness');
   fs.copyFileSync(path.join(PUBLIC_EXAMPLE, 'botcube.yaml'), path.join(repo, 'bot/botcube.yaml'));
-  fs.writeFileSync(
-    path.join(deployRoot, 'stage-tools.sh'),
-    '#!/bin/sh\npwd > staged-from\nmkdir -p harness/.tool-dist && echo "FROM scratch" > harness/.tool-dist/Dockerfile\n',
-    { mode: 0o755 }
-  );
-  fs.writeFileSync(path.join(repo, 'harness/Dockerfile'), 'FROM scratch\nCOPY .tool-dist/ ./\n');
   fs.writeFileSync(path.join(repo, 'harness/session-api.Dockerfile'), 'FROM scratch\n');
   git(repo, 'init', '--quiet');
   git(repo, 'add', '.');
@@ -116,7 +108,7 @@ async function runEntrypoint(): Promise<{ app?: App; exitCode?: number; errors: 
   return result;
 }
 
-test('stages tools from the repository root, then synthesizes the stacks with the package cdk.json context', async () => {
+test('deploys the named image and synthesizes the stacks with the package cdk.json context', async () => {
   const repo = repository();
   setDeployRoot(path.join(repo, 'bot/deploy'));
   process.env.CDK_OUTDIR = tempDir();
@@ -124,7 +116,6 @@ test('stages tools from the repository root, then synthesizes the stacks with th
   const { app, exitCode, errors } = await runEntrypoint();
 
   expect({ exitCode, errors }).toEqual({ exitCode: undefined, errors: [] });
-  expect(fs.readFileSync(path.join(repo, 'staged-from'), 'utf8').trim()).toBe(repo);
   const packageContext = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'cdk.json'), 'utf8')).context;
   expect(mockContextPaths).toHaveLength(1);
   assert(app, 'the entrypoint synthesized its app');
@@ -134,7 +125,7 @@ test('stages tools from the repository root, then synthesizes the stacks with th
   expect(deployedCommit(process.env.CDK_OUTDIR)).toBe(git(repo, 'rev-parse', 'HEAD'));
 });
 
-test('stages a nested deploy root from the checkout that holds it', async () => {
+test('loads a nested deploy root from the checkout that holds it', async () => {
   const repo = repository();
   const deployRoot = path.join(repo, 'examples/public/deploy');
   fs.mkdirSync(path.join(repo, 'examples'));
@@ -146,7 +137,6 @@ test('stages a nested deploy root from the checkout that holds it', async () => 
 
   expect({ errors, exitCode }).toEqual({ errors: [], exitCode: undefined });
   assert(app, 'the nested entrypoint synthesized its app');
-  expect(fs.readFileSync(path.join(repo, 'staged-from'), 'utf8').trim()).toBe(repo);
 });
 
 test('marks the deployed commit dirty when tracked files differ from it', async () => {

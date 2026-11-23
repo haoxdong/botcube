@@ -56,7 +56,7 @@ export interface DeployIdentity {
         /** With `publicHostname`: the partition-key prefixes of the Chat table rows the product's service reads and writes. */
         chatTableKeyPrefixes?: string[];
       };
-      originPullCaCertificate: string;
+      originPullCaCertificate: { bucket: string; key: string; versionId?: string };
       originPullClientSecretName: string;
       originTokenSecretName: string;
       parkedDnsTarget: string;

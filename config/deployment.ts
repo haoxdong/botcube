@@ -93,7 +93,8 @@ export const cloudflare = z
   .strictObject({
     zone: z.string().min(1).describe('BotCube-owned: the Cloudflare zone the origins are records in.'),
     originPull: z.strictObject({
-      caCertificate: z.string().min(1).describe('BotCube-owned: the authenticated origin pull CA, a PEM file relative to this file.'),
+      caCertificate: z.strictObject({ bucket: z.string().min(1), key: z.string().min(1), versionId: z.string().min(1).optional() })
+        .describe('The authenticated origin-pull CA bundle, as ElasticLoadBalancingV2 TrustStore S3 bucket, key and optional object version.'),
       organization: z.string().min(1).optional().describe("BotCube-owned: the Organization (O) of the origin pull client certificate's subject; absent, name."),
     }),
   })
@@ -208,7 +209,7 @@ export const RETIRED_FILES: Readonly<Record<string, Readonly<Record<string, Sour
     'aws.ecs.chatService.turnIdentityKeysSecretName': { derived: '/{name}/chat-service/turn-identity-keys' },
     'aws.ecs.cluster': named('clusterName'),
     'aws.ecs.deployRoleName': named('deployRoleName'),
-    'aws.ecs.originPullCaCertificate': { file: 'cloudflare.originPull.caCertificate' },
+    'aws.ecs.originPullCaCertificate': at('cloudflare.originPull.caCertificate'),
     'aws.ecs.originPullClientSecretName': { derived: '/{name}/cloudflare/origin-pull-client' },
     'aws.ecs.originTokenSecretName': { derived: '/{name}/cloudflare/origin-api-token' },
     'aws.ecs.previewOriginStackName': named('previewOriginStackName'),
@@ -262,7 +263,7 @@ export const RETIRED_FILES: Readonly<Record<string, Readonly<Record<string, Sour
     'tags.agentcore:project-name': at('name'),
     tags: { path: 'tags', spread: true },
     'runtimes.0.name': { derived: '{snake}' },
-    'runtimes.0.dockerfile': { value: '.tool-dist/Dockerfile' },
+    'runtimes.0.dockerfile': { value: 'Dockerfile' },
     'memories.0.name': { derived: '{snake}' },
   },
   'agentcore/aws-targets.json': {

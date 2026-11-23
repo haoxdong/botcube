@@ -2041,7 +2041,7 @@
             "containerUri": {
               "type": "string",
               "pattern": "^\\d{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com(\\.cn)?\\/[a-z0-9._/-]+(@sha256:[0-9a-f]{64}|:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}(@sha256:[0-9a-f]{64})?)$",
-              "description": "As CloudFormation Runtime ContainerConfiguration.ContainerUri: the Bot Image the Runtime runs, built FROM the Harness image and pinned by digest in production. Absent, BotCube builds the Harness and the bot's staged image with CodeBuild."
+              "description": "As CloudFormation Runtime ContainerConfiguration.ContainerUri: the Bot Image the Runtime runs, built FROM the Harness image and pinned by digest in production. Required when deploying an AgentCore Runtime; build and publish the Bot Image before synthesis."
             },
             "maxLifetime": {
               "description": "As LifecycleConfiguration.maxLifetime, in seconds; absent, 3600. Capped by ADR 0029.",
@@ -2131,9 +2131,15 @@
           "type": "object",
           "properties": {
             "caCertificate": {
-              "type": "string",
-              "minLength": 1,
-              "description": "BotCube-owned: the authenticated origin pull CA, a PEM file relative to this file."
+              "type": "object",
+              "properties": {
+                "bucket": { "type": "string", "minLength": 1 },
+                "key": { "type": "string", "minLength": 1 },
+                "versionId": { "type": "string", "minLength": 1 }
+              },
+              "required": ["bucket", "key"],
+              "additionalProperties": false,
+              "description": "The authenticated origin-pull CA bundle, as ElasticLoadBalancingV2 TrustStore S3 bucket, key and optional object version."
             },
             "organization": {
               "description": "BotCube-owned: the Organization (O) of the origin pull client certificate's subject; absent, name.",
@@ -2665,7 +2671,7 @@
         "default": "{name}-ecs-github-deploy"
       },
       "aws.ecs.originPullCaCertificate": {
-        "file": "cloudflare.originPull.caCertificate"
+        "path": "cloudflare.originPull.caCertificate"
       },
       "aws.ecs.originPullClientSecretName": {
         "derived": "/{name}/cloudflare/origin-pull-client"
@@ -2822,7 +2828,7 @@
       "tags.agentcore:project-name": { "path": "name" },
       "tags": { "path": "tags", "spread": true },
       "runtimes.0.name": { "derived": "{snake}" },
-      "runtimes.0.dockerfile": { "value": ".tool-dist/Dockerfile" },
+      "runtimes.0.dockerfile": { "value": "Dockerfile" },
       "memories.0.name": { "derived": "{snake}" }
     },
     "agentcore/aws-targets.json": {

@@ -111,7 +111,7 @@ describe('the enterprise example', () => {
   it('pulls every image, and builds every image FROM, its mirror registry', () => {
     const printed = printedFor('enterprise');
     // Its traces go straight to its own collector, so it pulls no collector sidecar.
-    expect(section(printed, 'Images')).toEqual(['  bot (FROM the BotCube Harness image)', '  botcube-chat-service', '  botcube-credential-service']);
+    expect(section(printed, 'Images')).toEqual(['  123456789012.dkr.ecr.us-east-1.amazonaws.com/bot-cube/chat:release', '  123456789012.dkr.ecr.us-east-1.amazonaws.com/bot-cube/credential:release', '  123456789012.dkr.ecr.us-east-1.amazonaws.com/bot-cube/runtime:release']);
     expect(section(printed, 'Build images')).toEqual([
       '  mirror.example.com/ecr-public/docker/library/nginx:stable-alpine',
       '  mirror.example.com/ecr-public/docker/library/node:24-bookworm-slim',

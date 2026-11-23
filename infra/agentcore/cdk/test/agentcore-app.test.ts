@@ -1,18 +1,8 @@
+import { readConfig } from 'botcube-config/read';
 import { App } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
-import { Asset } from 'aws-cdk-lib/aws-s3-assets';
-import { AgentEnvSpecSchema, setSessionProjectRoot } from '@aws/agentcore-cdk';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  readlinkSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'fs';
+import { setSessionProjectRoot } from '@aws/agentcore-cdk';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { resolve } from 'path';
 import { addAgentCoreStacks } from '../lib/agentcore-app';
@@ -348,61 +338,6 @@ test('stages the session API source without the Sandbox tools virtualenv', () =>
   }
 });
 
-test('uploads the locked bot dependencies and their portable links to CodeBuild', () => {
-  const fixture = mkdtempSync(resolve(tmpdir(), 'bot-context-'));
-  const source = resolve(fixture, 'source');
-  const packagePath = '.tool-dist/node_modules/.pnpm/locked-tool@1.2.3/node_modules/locked-tool/package.json';
-  // A bot's own image stages its CLI below .tool-dist/ too.
-  const botPackagePath = '.tool-dist/bot/cli/node_modules/bot-tool/package.json';
-  const files = {
-    [botPackagePath]: '{"name":"bot-tool"}',
-    Dockerfile: 'FROM scratch\nCOPY .tool-dist/ /opt/tools/\n',
-    'session-api.Dockerfile': 'FROM scratch\n',
-    '.tool-dist/pnpm-lock.yaml': 'lockfileVersion: "9.0"\npackages:\n  locked-tool@1.2.3: {}\n',
-    [packagePath]: '{"name":"locked-tool","version":"1.2.3"}',
-    'node_modules/unrelated/package.json': '{}',
-    '.env': 'fixture-secret',
-  };
-  try {
-    for (const [file, content] of Object.entries(files)) {
-      mkdirSync(resolve(source, file, '..'), { recursive: true });
-      writeFileSync(resolve(source, file), content);
-    }
-    writeFileSync(
-      resolve(source, '.dockerignore'),
-      readFileSync(resolve(__dirname, '../../../../harness/deepagents/.dockerignore'))
-    );
-    symlinkSync(
-      '.pnpm/locked-tool@1.2.3/node_modules/locked-tool',
-      resolve(source, '.tool-dist/node_modules/locked-tool')
-    );
-    const app = new App({ outdir: resolve(fixture, 'out') });
-    const config = deployConfig();
-    const [runtime] = config.spec.runtimes;
-    if (!runtime) throw new Error('Fixture runtime missing');
-    runtime.build = 'Container';
-    runtime.codeLocation = AgentEnvSpecSchema.shape.codeLocation.parse(source);
-    runtime.dockerfile = 'Dockerfile';
-    addAgentCoreStacks(app, config, COMMIT, { harnessCodeLocation: source });
-    const asset = app.node
-      .findAll()
-      .filter((construct): construct is Asset => construct instanceof Asset)
-      .find(candidate => existsSync(resolve(app.outdir, candidate.assetPath, '.tool-dist/pnpm-lock.yaml')));
-    if (!asset) throw new Error('CodeBuild source asset missing');
-    expect(readFileSync(resolve(app.outdir, asset.assetPath, packagePath), 'utf8')).toBe(
-      '{"name":"locked-tool","version":"1.2.3"}'
-    );
-    expect(readFileSync(resolve(app.outdir, asset.assetPath, botPackagePath), 'utf8')).toBe('{"name":"bot-tool"}');
-    expect(readlinkSync(resolve(app.outdir, asset.assetPath, '.tool-dist/node_modules/locked-tool'))).toBe(
-      '.pnpm/locked-tool@1.2.3/node_modules/locked-tool'
-    );
-    expect(existsSync(resolve(app.outdir, asset.assetPath, 'node_modules/unrelated/package.json'))).toBe(false);
-    expect(existsSync(resolve(app.outdir, asset.assetPath, '.env'))).toBe(false);
-  } finally {
-    rmSync(fixture, { recursive: true, force: true });
-  }
-});
-
 const BOT_IMAGE = `123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/bot@sha256:${'a'.repeat(64)}`;
 
 function synthesized(config: DeployConfig): Template {
@@ -528,13 +463,16 @@ test.each([
   const root = mkdtempSync(resolve(tmpdir(), 'runtime-lifecycle-'));
   try {
     mkdirSync(resolve(root, 'deploy'));
-    const yaml = readFileSync(resolve(DEPLOY_ROOT, '../botcube.yaml'), 'utf8');
+    const base = readConfig(resolve(DEPLOY_ROOT, '../botcube.yaml'));
     writeFileSync(
       resolve(root, 'botcube.yaml'),
-      yaml.replace(
-        'runtime: { platformVersion: V2 }',
-        `runtime: { platformVersion: V2, maxLifetime: ${maxLifetime}, idleRuntimeSessionTimeout: ${idleRuntimeSessionTimeout} }`
-      )
+      JSON.stringify({
+        ...base,
+        agentCore: {
+          ...base.agentCore,
+          runtime: { ...base.agentCore?.runtime, maxLifetime, idleRuntimeSessionTimeout },
+        },
+      })
     );
     const config = await loadDeployConfig(resolve(root, 'deploy'), '/');
     const app = new App();

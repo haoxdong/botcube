@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Issues the Authenticated Origin Pulls material: a private CA the ALB trusts
-# (committed, public) and a Cloudflare client certificate signed by it (kept in
-# Secrets Manager for upload to Cloudflare). The CA key is discarded: --rotate
-# reissues both and appends the new CA to the bundle, so the ALB trusts old and
-# new client certificates until Cloudflare switches; then drop the old CA.
-
 DEPLOY_ROOT="${BOTCUBE_DEPLOY_ROOT:?BOTCUBE_DEPLOY_ROOT must point to the active deploy directory}"
 CONFIG_ROOT="$DEPLOY_ROOT/.."
 
@@ -29,14 +23,14 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
-read -r AWS_REGION CA_PATH SECRET_NAME PREVIEW_URL ORGANIZATION < <(node -e '
+read -r AWS_REGION CA_BUCKET CA_KEY CA_VERSION SECRET_NAME PREVIEW_URL ORGANIZATION < <(node -e '
   const config = require(require("node:path").resolve(process.argv[1])).readDeployment(process.argv[2]);
   const names = require(require("node:path").resolve(process.argv[1])).deploymentNames(config);
-  const path = require("node:path");
-  const root = path.resolve(process.argv[2], "..");
   process.stdout.write([
     config.env.region,
-    path.relative(root, path.resolve(root, config.cloudflare.originPull.caCertificate)),
+    config.cloudflare.originPull.caCertificate.bucket,
+    config.cloudflare.originPull.caCertificate.key,
+    config.cloudflare.originPull.caCertificate.versionId ?? "-",
     names.originPullClientSecretName,
     config.domains.chatServicePreview,
     config.cloudflare.originPull.organization ?? config.name,
@@ -92,11 +86,25 @@ else
     --secret-string "file://$WORK/secret.json" \
     >/dev/null
 fi
-if [[ "$ROTATE" == true && -f "$CONFIG_ROOT/$CA_PATH" ]]; then
-  cat "$WORK/ca.crt" >> "$CONFIG_ROOT/$CA_PATH"
+if [[ "$ROTATE" == true ]]; then
+  version=()
+  if [[ "$CA_VERSION" != - ]]; then version+=(--version-id "$CA_VERSION"); fi
+  aws s3api get-object --bucket "$CA_BUCKET" --key "$CA_KEY" "${version[@]}" "$WORK/bundle.pem" >/dev/null
+  cat "$WORK/ca.crt" >> "$WORK/bundle.pem"
 else
-  cp "$WORK/ca.crt" "$CONFIG_ROOT/$CA_PATH"
+  cp "$WORK/ca.crt" "$WORK/bundle.pem"
 fi
+new_version=$(aws s3api put-object --bucket "$CA_BUCKET" --key "$CA_KEY" --body "$WORK/bundle.pem" --query VersionId --output text)
+node -e '
+  const fs = require("node:fs");
+  const reader = require(require("node:path").resolve(process.argv[1]));
+  const file = process.argv[2];
+  const config = reader.readConfig(file);
+  const ca = config.cloudflare.originPull.caCertificate;
+  if (process.argv[3] === "None") delete ca.versionId;
+  else ca.versionId = process.argv[3];
+  fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n");
+' "$(dirname "${BASH_SOURCE[0]}")/../../config/read.cjs" "$CONFIG_ROOT/botcube.yaml" "$new_version"
 
 printf 'Stored the Cloudflare client certificate in %s\n' "$SECRET_NAME"
-printf 'Wrote the ALB trust-store CA to %s; commit it.\n' "$CONFIG_ROOT/$CA_PATH"
+printf 'Uploaded the CA bundle to s3://%s/%s and updated botcube.yaml; deploy its trust store before switching the client.\n' "$CA_BUCKET" "$CA_KEY"

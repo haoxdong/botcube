@@ -24,7 +24,8 @@
   },
   "agentCore": {
     "runtime": {
-      "platformVersion": "V2"
+      "platformVersion": "V2",
+      "containerUri": "123456789012.dkr.ecr.us-east-1.amazonaws.com/bot-cube/runtime:release"
     },
     "browsers": {
       "link": {
@@ -39,7 +40,10 @@
   "cloudflare": {
     "zone": "example.invalid",
     "originPull": {
-      "caCertificate": "../public/deploy/ecs/origin-pull-ca.crt"
+      "caCertificate": {
+        "bucket": "example-origin-trust",
+        "key": "origin-pull-ca.pem"
+      }
     }
   },
   "schedules": {
@@ -94,7 +98,9 @@
         "x-tenant": "botcube-example"
       }
     },
-    "imageRegistry": { "url": "https://mirror.example.com/ecr-public" },
+    "imageRegistry": {
+      "url": "https://mirror.example.com/ecr-public"
+    },
     "proxy": {
       "kind": "forward",
       "url": "http://proxy.example.com:3128",
@@ -189,5 +195,13 @@
     "automationUserAgents": [
       "collective-automation"
     ]
+  },
+  "services": {
+    "chatService": {
+      "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/bot-cube/chat:release"
+    },
+    "credentialService": {
+      "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/bot-cube/credential:release"
+    }
   }
 }

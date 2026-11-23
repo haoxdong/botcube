@@ -20,7 +20,7 @@ export function deployRootConfig(deployRoot: string): SynthesizedConfig {
   return { path: path.join(deployRoot, '../botcube.yaml') };
 }
 
-export function deployIdentity(deployRoot: string, repositoryRoot = path.resolve(projectDir(__dirname), '../../..')): DeployIdentity {
+export function deployIdentity(deployRoot: string): DeployIdentity {
   const config = readDeployment(deployRoot);
   const names = deploymentNames(config);
   const { services } = config;
@@ -79,7 +79,7 @@ export function deployIdentity(deployRoot: string, repositoryRoot = path.resolve
         },
         cluster: names.clusterName,
         deployRoleName: names.deployRoleName,
-        originPullCaCertificate: config.cloudflare ? path.relative(repositoryRoot, path.resolve(deployRoot, '..', config.cloudflare.originPull.caCertificate)) : undefined,
+        originPullCaCertificate: config.cloudflare?.originPull.caCertificate,
         originPullClientSecretName: names.originPullClientSecretName,
         originTokenSecretName: names.originTokenSecretName,
         previewOriginStackName: names.previewOriginStackName,

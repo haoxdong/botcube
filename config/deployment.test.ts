@@ -26,7 +26,7 @@ const DEPLOYMENT = {
   name: 'acme-bot',
   env: { account: '123456789012', region: 'eu-west-1' },
   domains: { web: 'https://acme.example.com', chatService: 'https://api.acme.example.com', chatServicePreview: 'https://api-next.acme.example.com' },
-  cloudflare: { zone: 'acme.example.com', originPull: { caCertificate: 'deploy/origin-pull-ca.crt' } },
+  cloudflare: { zone: 'acme.example.com', originPull: { caCertificate: { bucket: 'acme-trust', key: 'origin-pull.pem' } } },
   existing: { vpc: VPC },
 };
 
@@ -101,6 +101,13 @@ describe("a deploy root's native BotCube Config", () => {
     expect(loadConfig(file({ ...DEPLOYMENT, existing: { vpc: { ...VPC, privateSubnets } } })).existing.vpc.privateSubnets).toEqual(privateSubnets);
     expect(() => loadConfig(file({ ...DEPLOYMENT, network: { natGateways: 1 }, existing: { vpc: { ...VPC, privateSubnets } } })))
       .toThrow('existing.vpc.privateSubnets.0.routeTableId: With network.natGateways 1, BotCube routes each private subnet to the NAT: give its route table');
+  });
+
+  it('reads the origin-pull CA as an S3 reference without a deploy-tree file', () => {
+    const ca = { bucket: 'acme-trust', key: 'origin-pull.pem', versionId: 'v3' };
+    const config = { ...DEPLOYMENT, cloudflare: { zone: 'acme.example.com', originPull: { caCertificate: ca } } };
+    expect(loadConfig(file(config)).cloudflare?.originPull.caCertificate).toEqual(ca);
+    expect(readDeployment(deployRoot(config)).cloudflare?.originPull.caCertificate).toEqual(ca);
   });
 
   it('keeps existing network and browser keys in their native shape', () => {

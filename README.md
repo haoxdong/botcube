@@ -105,8 +105,8 @@ A bot's CLIs install in its image (`examples/bot/Dockerfile`). A deployment's
 names, domains and provider values live in its one `botcube.yaml`
 (`examples/public/botcube.yaml`) and are injected into BotCube; no product
 default is allowed in the cube. The deploy directory beside it
-(`examples/public/deploy/`) holds code only, such as the `stage-tools.sh` hook
-that stages the bot's image for AgentCore.
+(`examples/public/deploy/`) holds code only, such as its acceptance hook.
+Build and publish the Bot Image before synthesis.
 
 ## Run the example
 

@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { App, FileSystem } from 'aws-cdk-lib';
 import { Match } from 'aws-cdk-lib/assertions';
-import { repositoryRoot, caPath, originProviderPath } from './origin-fixture';
+import { repositoryRoot, caCertificate, originProviderPath } from './origin-fixture';
 import { PreviewOriginStack, type PreviewOriginProps } from '../lib/preview-origin-stack.js';
 
 const props: PreviewOriginProps = {
@@ -16,7 +16,7 @@ const props: PreviewOriginProps = {
   vpcId: 'vpc-fixture12345678', publicSubnets: [{ id: 'subnet-fixture12345678', availabilityZone: 'us-east-1a' }, { id: 'subnet-fixture23456789', availabilityZone: 'us-east-1b' }],
   cloudflareCidrs: ['173.245.48.0/20'], clientVersion: 'version',
   tokenSecretName: '/test/token', clientSecretName: '/test/client',
-  caPath, corsOrigins: ['https://web.example.com'],
+  caCertificate, corsOrigins: ['https://web.example.com'],
   parkedDnsTarget: 'parked.invalid', wakeUrl: 'https://wake.example.com/',
 };
 test('preview requires Cloudflare HTTPS and private mTLS with no HTTP listener', () => {
@@ -155,8 +155,7 @@ test('the HTTPS listener serves both hostnames certificates under the TLS 1.3 po
 
 test('the trust store holds the Cloudflare origin-pull CA', () => {
   const template = parkingTemplate(new PreviewOriginStack(new App(), 'TestOrigin', props));
-  const ca = FileSystem.fingerprint(path.join(props.repositoryRoot, props.caPath));
-  template.hasResourceProperties('AWS::ElasticLoadBalancingV2::TrustStore', { CaCertificatesBundleS3Key: `${ca}.crt` });
+  template.hasResourceProperties('AWS::ElasticLoadBalancingV2::TrustStore', { CaCertificatesBundleS3Bucket: 'origin-trust', CaCertificatesBundleS3Key: 'origin-pull.pem', CaCertificatesBundleS3ObjectVersion: 'version-3' });
 });
 
 test('the provider creates each certificate, AOP and DNS record through one handler', () => {
@@ -218,8 +217,6 @@ test('the provider bundle ships the handler and parked Worker without tests or b
   };
   write(path.join(root, 'origin-provider'), [...bundled, 'test_handler.py', 'test_parked_worker.py', 'parked-worker.test.ts', '__pycache__/handler.pyc']);
   write(path.join(root, 'expected'), bundled);
-  fs.mkdirSync(path.dirname(path.join(root, props.caPath)), { recursive: true });
-  fs.copyFileSync(path.join(props.repositoryRoot, props.caPath), path.join(root, props.caPath));
   const template = parkingTemplate(new PreviewOriginStack(new App(), 'TestOrigin', { ...props, repositoryRoot: root, originProviderPath: path.join(root, 'origin-provider') }));
   const keys = Object.values(template.findResources('AWS::Lambda::Function')).map(resource => resource.Properties)
     .filter(fn => fn.Handler.startsWith('handler.')).map(fn => fn.Code.S3Key);

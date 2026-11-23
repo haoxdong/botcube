@@ -28,9 +28,6 @@ function fixture() {
   for (const name of ['chrome-policy.json', 'chrome-managed-policy.json']) {
     fs.writeFileSync(path.join(deployRoot, 'agent-computer', name), '{}');
   }
-  const caPath = path.join(root, identity.aws.ecs.originPullCaCertificate);
-  fs.mkdirSync(path.dirname(caPath), { recursive: true });
-  fs.writeFileSync(caPath, 'local synthesis fixture');
   const app = new App();
   return { root, deployRoot, app };
 }

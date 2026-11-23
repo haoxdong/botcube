@@ -42,7 +42,7 @@ From the public repository root, build BotCube's Harness image, your bot's image
 
 ```bash
 docker build -f harness/deepagents/Dockerfile --target harness -t botcube-harness harness/deepagents
-docker build --build-context harness=docker-image://botcube-harness -t bot examples/bot
+docker build --build-context harness=docker-image://botcube-harness -f examples/bot/Dockerfile -t bot .
 docker build -f harness/deepagents/session-api.Dockerfile -t session-api harness/deepagents
 docker build -f chat/Dockerfile --build-arg BOTCUBE_ROOT=. -t chat .
 docker build -f credential-service/Dockerfile --build-arg BOTCUBE_ROOT=. -t credential .
@@ -84,7 +84,7 @@ The sandbox uses local plain HTTP. Memory IDs and runtime ARNs may be supported 
 - **Bot settings and skills.** Copy [`examples/bot/`](examples/bot/). [`bot.yaml`](examples/bot/bot.yaml) follows [the bot settings schema](config/bot.schema.json): agent identity, account key, models, skills, Memory, and Agent Computer. Each skill is a directory holding a `SKILL.md`.
 - **Bot image.** The bot's [`Dockerfile`](examples/bot/Dockerfile) builds `FROM harness`, and copies the settings to `/bot/bot.yaml` and the skills beside them. Install your bot's CLIs there, on the `PATH`. The bot runs no code in BotCube's processes.
 - **BotCube Config.** Copy [`examples/public/botcube.yaml`](examples/public/botcube.yaml), a complete deployment: its name, account and region, domains, the AgentCore and network resources BotCube creates, and the existing VPC, link browser and slot bucket it uses. [The Configuration section](#configuration) describes each key; [`examples/enterprise/botcube.yaml`](examples/enterprise/botcube.yaml) replaces every integration default.
-- **Deploy directory.** Copy [`examples/public/deploy/`](examples/public/deploy/). It holds code, not configuration: the tool-staging hook [`stage-tools.sh`](examples/public/deploy/stage-tools.sh) and the acceptance hook [`ecs/acceptance.py`](examples/public/deploy/ecs/acceptance.py). Until `agentCore.runtime.containerUri` names a built Bot Image, AgentCore's CodeBuild builds it, and CodeBuild has no named build contexts, so the hook writes one Dockerfile, the Harness's then the bot's, to `harness/deepagents/.tool-dist/` ([`infra/agentcore/cdk/bin/cdk.ts`](infra/agentcore/cdk/bin/cdk.ts)); point it at your bot.
+- **Deploy directory.** Copy [`examples/public/deploy/`](examples/public/deploy/) for its acceptance hook [`ecs/acceptance.py`](examples/public/deploy/ecs/acceptance.py). Build images from their own Dockerfiles before synthesis.
 - **Services.** The [stock Chat Service](chat/src/stock.ts) and stock Credential Service need no code. The stock Chat Service's `openai-compatible` `models` take `wire`: `chat-completions` (default), or `responses` for a Responses-only gateway; Turn summaries and the Harness use it, and `botcube footprint` prints it. A bot may build its own Credential Service, for a site provider, or its own Chat Service, each from its own directory: its ECS app names their Dockerfiles (`images`), which the ECS app builds instead. `services.chatService.image` and `services.credentialService.image` name a built image to run in place of either build, pinned by digest in production. [The local stand-ins](infra/local/stand-ins/) show a fake site provider.
 - **UI.** [The default UI plugin](ui/web/src/plugin/default.tsx) supplies neutral copy, auth, and theme through the [typed UI contract](ui/web/src/plugin/types.ts). Bind your own plugin package with `BOTCUBE_UI_PACKAGE` at build time.
 
@@ -106,7 +106,7 @@ corepack pnpm --dir infra/agentcore/cdk build
 corepack pnpm --dir infra/agentcore/cdk cdk synth
 ```
 
-The example uses the placeholder account `000000000000`. Set your account in `env.account` before deployment. Unless `agentCore.runtime.containerUri` names a Bot Image, synthesis runs the deploy directory's tool-staging hook and may build Docker assets. It does not deploy resources.
+The example uses the placeholder account `000000000000`. Set your account in `env.account` and publish the images named by `agentCore.runtime.containerUri` and `services` before deployment. Publish your Bot Image and name it in `agentCore.runtime.containerUri` before synthesis. Synthesis does not deploy resources.
 
 [`infra/ecs/cdk/example/app.ts`](infra/ecs/cdk/example/app.ts) defines both CDK apps from a BotCube Config with `defineExample`. The Chat Service image ships that config and `/bot/bot.yaml`. Copy them in `chat/Dockerfile`.
 
@@ -162,13 +162,13 @@ main().catch((error) => {
 });
 ```
 
-Replace the placeholder IDs and ARNs with your resources. Run your deploy directory's tool-staging hook before synthesizing a custom app, unless `agentCore.runtime.containerUri` names your Bot Image. The imported execution role needs AgentCore trust and runtime infrastructure permissions, with no AgentCore Memory or cross-account data grants (ADR 0067). Its policies remain caller-owned; BotCube does not rewrite imported role policies. Supply security groups through `securityGroups` when your network policy requires them. The AgentCore memory key must permit the memory service, the session API role and the user Memory role; the Harness runtime reaches Memory only with each Turn's tagged credentials for that role (ADR 0067 §8). The subnet routes must reach the services the runtime uses, including STS.
+Replace the placeholder IDs and ARNs with your resources. Name your published Bot Image in `agentCore.runtime.containerUri` before synthesis. The imported execution role needs AgentCore trust and runtime infrastructure permissions, with no AgentCore Memory or cross-account data grants (ADR 0067). Its policies remain caller-owned; BotCube does not rewrite imported role policies. Supply security groups through `securityGroups` when your network policy requires them. The AgentCore memory key must permit the memory service, the session API role and the user Memory role; the Harness runtime reaches Memory only with each Turn's tagged credentials for that role (ADR 0067 §8). The subnet routes must reach the services the runtime uses, including STS.
 
 Operators configure a deployment through one `botcube.yaml`, using the [public and enterprise examples](examples/) as shape references. Set existing resources under `existing`, service settings under `services`, and deployment settings under `agentCore`, `alarms`, `cloudflare`, and `network`. The standard deploy entry reads these settings and composes the CDK stacks. The custom CDK composition above is for lower-level construct users.
 
 `PreviewChatService` and `PrivateCredentialService` take an `environment` map, and production composition forwards `chat.environment` and `credentials.environment`. Its names must be among the [four uses](#environment-variables); bot settings belong in the Bot Image and deployment settings in the BotCube Config. Framework-owned values, including serving ports and regions, take precedence over caller entries. The Chat image installs Chromium, which the local Agent Computer runs with no configuration.
 
-For the generic ECS CDK entry point, set `BOTCUBE_REPOSITORY_ROOT` to the absolute checkout root when running from a standalone BotCube mirror. This controls the image build context and the root that file paths from `botcube.yaml`, such as `cloudflare.originPull.caCertificate`, resolve against. If unset, it retains the current monorepo root; relative values resolve from `infra/ecs/cdk`.
+For the generic ECS CDK entry point, set `BOTCUBE_REPOSITORY_ROOT` to the absolute checkout root when running from a standalone BotCube mirror. This controls the image build context. `cloudflare.originPull.caCertificate` names an S3 bundle by `bucket`, `key`, and optional `versionId`. If unset, it retains the current monorepo root; relative values resolve from `infra/ecs/cdk`.
 
 ## Use an existing load balancer and listener
 
@@ -252,12 +252,12 @@ The Bot Image carries the bot's own settings at `/bot/bot.yaml`, against [`bot.s
 
 `botcube.yaml` names each image a deployment runs. A pinned image is a tag or a digest; pin by digest in production.
 
-- **Bot Image.** `agentCore.runtime.containerUri` is an Amazon ECR image URI, built `FROM` the Harness image. Without it, synthesis runs the deploy directory's `stage-tools.sh` and CodeBuild builds the Bot Image ([`infra/agentcore/cdk/bin/cdk.ts`](infra/agentcore/cdk/bin/cdk.ts)).
+- **Bot Image.** `agentCore.runtime.containerUri` is an Amazon ECR image URI, built `FROM` the Harness image. Before migrating an existing CodeBuild deployment, run `python3 infra/agentcore/retain-images.py <stack>` to preserve its image repository and encryption key. Synthesis requires the image and deploys it without CodeBuild ([`infra/agentcore/cdk/bin/cdk.ts`](infra/agentcore/cdk/bin/cdk.ts)).
 - **Chat Service.** `services.chatService.image` is an OCI image reference. Without it, BotCube builds the bot's own Chat Service Dockerfile, which its ECS app names in `productionApp({ images })`, or else the stock Chat Service ([`infra/ecs/cdk/lib/service-images.ts`](infra/ecs/cdk/lib/service-images.ts)).
 - **Credential Service.** `services.credentialService.image` is an Amazon ECR image URI, because its audit-copy Lambda runs the same image. Without it, BotCube builds the bot's own Credential Service Dockerfile, or else the stock one.
 - **Image registry.** `integrations.imageRegistry.url` is the one registry BotCube pulls from: the services' sidecars and every image it builds `FROM`. It defaults to `https://public.ecr.aws`, and a mirror keeps ECR Public's paths.
 
-The link browser's extension is not an image. `agentCore.browsers.link.extension` names it as an S3 object: `bucket`, `key` and `versionId`.
+A bot's Bot Image ships its browser extension under `/bot/browser-extension/`. The remote link browser needs a published zip of that extension. `agentCore.browsers.link.extension` names it as an S3 object: `bucket`, `key` and `versionId`.
 
 ### Environment variables
 
@@ -304,7 +304,7 @@ Bot directory <bot directory>: release.json: a configuration file; a deployment 
 
 These files may stay: `botcube.yaml`, `bot.yaml` and `latency-budgets.json` in the bot directory; build manifests (`package.json`, lockfiles, `pnpm-workspace.yaml`, `tsconfig*.json`, `pyproject.toml`, `uv.lock`, `cdk.json`, `cdk.context.json`); and anything in a directory that holds a `Dockerfile` or a browser extension's `manifest.json`, which is an image's build context. Dot-directories, `node_modules`, `cdk.out`, `dist` and `__pycache__` are not checked.
 
-- A `release.json` held release settings, which are not BotCube Config. The NAT's Elastic IP is `network.publicIp`. The web latency reader's OIDC subject is `ProductionOptions.webLatency.readerSubject`, which your ECS app passes. The deploy role's OIDC subject is `GITHUB_OIDC_SUBJECT`, read by [`bootstrap-deploy-role.sh`](infra/ecs/bootstrap-deploy-role.sh). The verification user agents are `VERIFICATION_USER_AGENT` and `ORIGIN_VERIFICATION_USER_AGENT`, read by [`deploy_check.py`](infra/ecs/deploy_check.py). The tool-staging hook is `stage-tools.sh` in the deploy directory, when it exists.
+- A `release.json` held release settings, which are not BotCube Config. The NAT's Elastic IP is `network.publicIp`. The web latency reader's OIDC subject is `ProductionOptions.webLatency.readerSubject`, which your ECS app passes. The deploy role's OIDC subject is `GITHUB_OIDC_SUBJECT`, read by [`bootstrap-deploy-role.sh`](infra/ecs/bootstrap-deploy-role.sh). The verification user agents are `VERIFICATION_USER_AGENT` and `ORIGIN_VERIFICATION_USER_AGENT`, read by [`deploy_check.py`](infra/ecs/deploy_check.py).
 - A file holding one fixed value, such as an `api-rate-limit.json` rule body, becomes a constant beside the code that reads it.
 
 **A missing name or Region.**

@@ -93,6 +93,12 @@ cat > "$ROLE_POLICY" <<EOF
     "bedrock-agentcore:ListAgentRuntimes",
     "bedrock-agentcore:ListAgentRuntimeEndpoints",
     "bedrock-agentcore:GetAgentRuntime",
+    "ecr:CreateRepository",
+    "ecr:GetAuthorizationToken",
+    "ecr:BatchCheckLayerAvailability",
+    "ecr:InitiateLayerUpload",
+    "ecr:UploadLayerPart",
+    "ecr:CompleteLayerUpload",
     "ecr:DescribeRepositories",
     "ecr:DescribeImages",
     "ecr:BatchGetImage",
@@ -160,6 +166,8 @@ cat > "$ROLE_POLICY" <<EOF
     {
       "Effect": "Allow",
       "Action": [
+        "cloudformation:GetTemplate",
+        "cloudformation:CreateChangeSet",
         "cloudformation:DescribeChangeSet",
         "cloudformation:DescribeStackEvents",
         "cloudformation:DescribeStackResource",
