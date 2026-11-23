@@ -80,22 +80,29 @@ describe('Turn credential prefix boundaries', () => {
 
   it('clears obsolete tool buffers when a snapshot replaces their messages', () => {
     const guard = turnCredentialGuard(['private-token']);
-    expect(guard.leaks('', [snapshot([{ id: 'answer', role: 'assistant', content: '', toolCalls: [{ id: 'tool', type: 'function', function: { name: 'execute', arguments: 'private-' } }] }])])).toBe(false);
-    expect(guard.hasPendingPrefix()).toBe(true);
+    const prefixed = snapshot([{ id: 'answer', role: 'assistant', content: '', toolCalls: [{ id: 'tool', type: 'function', function: { name: 'execute', arguments: 'private-' } }] }]);
+    const restarted = [{ type: 'TOOL_CALL_START', toolCallId: 'tool', toolCallName: 'execute', parentMessageId: 'answer' }, { type: 'TOOL_CALL_ARGS', toolCallId: 'tool', delta: 'token' }];
+    // Unreplaced, the snapshot's prefix is a candidate that a restarted call completes.
+    const unreplaced = turnCredentialGuard(['private-token']);
+    expect(unreplaced.leaks('', [prefixed])).toBe(false);
+    expect(unreplaced.leaks('', restarted)).toBe(true);
+    expect(guard.leaks('', [prefixed])).toBe(false);
+    // A finished call holds nothing; only a still-streaming message can.
+    expect(guard.hasPendingPrefix()).toBe(false);
     expect(guard.leaks('', [snapshot([{ id: 'answer', role: 'assistant', content: '', toolCalls: [{ id: 'tool', type: 'function', function: { name: 'execute', arguments: 'safe-' } }] }])])).toBe(false);
     expect(guard.hasPendingPrefix()).toBe(false);
-    expect(guard.leaks('', [{ type: 'TOOL_CALL_START', toolCallId: 'tool', toolCallName: 'execute', parentMessageId: 'answer' }, { type: 'TOOL_CALL_ARGS', toolCallId: 'tool', delta: 'token' }])).toBe(false);
+    expect(guard.leaks('', restarted)).toBe(false);
   });
 
   // turn-stream.test.ts already records the first matching tool buffer across
-  // same-tool-ID messages; this also checks that its prefix remains pending.
+  // same-tool-ID messages; this also checks that its prefix remains a candidate, though a finished call holds nothing.
   it('takes the first tool argument buffer across same-tool-ID snapshot messages', () => {
     const guard = turnCredentialGuard(['private-token']);
     expect(guard.leaks('', [snapshot([
       { id: 'first', role: 'assistant', content: '', toolCalls: [{ id: 'tool', type: 'function', function: { name: 'execute', arguments: 'private-' } }] },
       { id: 'second', role: 'assistant', content: '', toolCalls: [{ id: 'tool', type: 'function', function: { name: 'execute', arguments: 'safe-' } }] },
     ])])).toBe(false);
-    expect(guard.hasPendingPrefix()).toBe(true);
+    expect(guard.hasPendingPrefix()).toBe(false);
     expect(guard.leaks('', [{ type: 'TOOL_CALL_ARGS', toolCallId: 'tool', delta: 'token' }])).toBe(true);
   });
 });

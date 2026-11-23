@@ -314,7 +314,8 @@ describe('the credential guard follows client message buffers', () => {
     // The installed client appends TOOL_CALL_ARGS to the first matching tool.
     const safe = turnCredentialGuard(['private-token']);
     expect(safe.leaks('', [structuredClone(event)])).toBe(false);
-    expect(safe.hasPendingPrefix()).toBe(true);
+    // Seeded arguments are complete: the prefix stays a candidate but holds nothing.
+    expect(safe.hasPendingPrefix()).toBe(false);
     expect(safe.leaks('', [ToolCallArgsEventSchema.parse({ type: 'TOOL_CALL_ARGS', toolCallId: 'shared', delta: 'ordinary' })])).toBe(false);
     expect(safe.hasPendingPrefix()).toBe(false);
 
@@ -1502,5 +1503,126 @@ describe('an explicit Stop', () => {
     const { upstream } = fakeUpstream(() => new Response('busy', { status: 409 }));
 
     await expect(stopTurn(upstream, '{}', 'session-1')).rejects.toThrow('Test upstream refused to stop the Turn: HTTP 409');
+  });
+});
+
+describe('a credential prefix holds the relay only while its message streams', () => {
+  const credentials = ['private-token'];
+  const data = (event: object) => `data: ${JSON.stringify(event)}\n\n`;
+  const heartbeat = { type: 'STATE_DELTA', delta: [{ op: 'add', path: '/worklog_clock', value: { version: 1 } }] };
+  const finishedSnapshot = { type: 'MESSAGES_SNAPSHOT', messages: [
+    { id: 'u', role: 'user', content: 'question' },
+    { id: 'a', role: 'assistant', content: 'Wrote the file to /tmp/p' },
+  ] };
+
+  it('holds nothing after a snapshot whose finished message ends in a prefix', async () => {
+    const guard = turnCredentialGuard(credentials);
+    expect(guard.leaks('', [finishedSnapshot])).toBe(false);
+    expect(guard.hasPendingPrefix()).toBe(false);
+    expect(guard.leaks('', [heartbeat])).toBe(false);
+    expect(guard.hasPendingPrefix()).toBe(false);
+    expect(guard.leaks('', [
+      { type: 'TEXT_MESSAGE_START', messageId: 'b', role: 'assistant' },
+      { type: 'TEXT_MESSAGE_CONTENT', messageId: 'b', delta: 'next answer' },
+      { type: 'TEXT_MESSAGE_END', messageId: 'b' },
+    ])).toBe(false);
+    expect(guard.hasPendingPrefix()).toBe(false);
+
+    // The relay sends the clock heartbeat while the upstream is still open, not after the end of the Turn.
+    let upstream!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({ start(controller) { upstream = controller; } });
+    const response = await relayTurn(fakeUpstream(() => sse(body)).upstream, { ...turn, credentials });
+    upstream.enqueue(encoder.encode(data(finishedSnapshot) + data(heartbeat)));
+    const reader = defined(response.body, 'the relayed stream').getReader();
+    let relayed = '';
+    // eslint-disable-next-line no-await-in-loop -- reads the relayed body in order until the heartbeat arrives
+    while (!relayed.includes('worklog_clock')) relayed += new TextDecoder().decode((await reader.read()).value);
+    expect(relayed).toBe(data(finishedSnapshot) + data(heartbeat));
+    upstream.close();
+    await reader.cancel();
+  });
+
+  it('holds an open message across a snapshot until the delta that completes the credential, and catches it', () => {
+    const guard = turnCredentialGuard(credentials);
+    expect(guard.leaks('', [
+      { type: 'TEXT_MESSAGE_START', messageId: 'a', role: 'assistant' },
+      { type: 'TEXT_MESSAGE_CONTENT', messageId: 'a', delta: 'see private-' },
+    ])).toBe(false);
+    expect(guard.hasPendingPrefix()).toBe(true);
+    expect(guard.leaks('', [{ type: 'MESSAGES_SNAPSHOT', messages: [{ id: 'a', role: 'assistant', content: 'see private-' }] }])).toBe(false);
+    expect(guard.hasPendingPrefix()).toBe(true);
+    expect(guard.pendingKinds()).toEqual(['message']);
+    expect(guard.leaks('', [heartbeat])).toBe(false);
+    expect(guard.hasPendingPrefix()).toBe(true);
+    expect(guard.leaks('', [{ type: 'TEXT_MESSAGE_CONTENT', messageId: 'a', delta: 'token' }])).toBe(true);
+  });
+
+  it.each([
+    ['a RUN_STARTED seed', { type: 'RUN_STARTED', threadId: 't', runId: 'r', input: { messages: [{ id: 'a', role: 'assistant', content: 'Wrote the file to /tmp/p' }] } }],
+    ['a tool result', { type: 'TOOL_CALL_RESULT', messageId: 'a', toolCallId: 'call', content: 'Wrote the file to /tmp/p' }],
+  ])('holds nothing after %s whose content ends in a prefix', (_source, complete) => {
+    const guard = turnCredentialGuard(credentials);
+    for (const events of [[complete], [heartbeat], [
+      { type: 'TEXT_MESSAGE_START', messageId: 'b', role: 'assistant' },
+      { type: 'TEXT_MESSAGE_CONTENT', messageId: 'b', delta: 'next answer' },
+      { type: 'TEXT_MESSAGE_END', messageId: 'b' },
+    ]]) {
+      expect(guard.leaks('', events)).toBe(false);
+      expect(guard.hasPendingPrefix()).toBe(false);
+    }
+  });
+
+  it('ends the Turn normally when a finished message ending in a prefix is never continued', async () => {
+    const frames = [
+      data({ type: 'RUN_STARTED', threadId: 't', runId: 'r' }),
+      data({ type: 'TEXT_MESSAGE_START', messageId: 'a', role: 'assistant' }),
+      data({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'a', delta: 'Wrote the file to /tmp/p' }),
+      data({ type: 'TEXT_MESSAGE_END', messageId: 'a' }),
+      data(finishedSnapshot),
+      data(heartbeat),
+      data({ type: 'RUN_FINISHED', threadId: 't', runId: 'r' }),
+    ];
+    const guard = turnCredentialGuard(credentials);
+    expect(guard.leaks('', [
+      { type: 'TEXT_MESSAGE_START', messageId: 'a', role: 'assistant' },
+      { type: 'TEXT_MESSAGE_CONTENT', messageId: 'a', delta: 'Wrote the file to /tmp/p' },
+      { type: 'TEXT_MESSAGE_END', messageId: 'a' },
+      finishedSnapshot,
+    ])).toBe(false);
+    expect(guard.hasPendingPrefix()).toBe(false);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    expect(await (await relayTurn(fakeUpstream(() => sse(streamOf(frames))).upstream, { ...turn, credentials })).text()).toBe(frames.join(''));
+    expect(info.mock.calls.flat().join('\n')).not.toContain('held the stream');
+  });
+
+  it('logs a hold over a second with its length and kind, never its content', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const start = Date.UTC(2026, 10, 23, 9, 37, 7);
+      const queue: [number, string][] = [
+        [start, data({ type: 'TEXT_MESSAGE_START', messageId: 'a', role: 'assistant' })],
+        [start, data({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'a', delta: 'see private-' })],
+        [start + 1_500, data({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'a', delta: 'ly kept' })],
+        [start + 1_500, data({ type: 'TEXT_MESSAGE_END', messageId: 'a' })],
+      ];
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const step = queue.shift();
+          if (step === undefined) {
+            controller.close();
+            return;
+          }
+          vi.setSystemTime(step[0]);
+          controller.enqueue(encoder.encode(step[1]));
+        },
+      }, { highWaterMark: 0 });
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      await (await relayTurn(fakeUpstream(() => sse(body)).upstream, { ...turn, credentials })).text();
+      const logged = info.mock.calls.flat().join('\n');
+      expect(logged).toContain('Test upstream held the stream on a possible credential prefix session_id=session-1 held_ms=1500 kinds=message');
+      expect(logged).not.toContain('private');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

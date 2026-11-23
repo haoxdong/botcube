@@ -40,7 +40,8 @@ describe('Turn credential guard follows the client buffers', () => {
       { id: 'message', role: 'assistant', content: 'private-' },
       { id: 'new', role: 'assistant', content: 'private-' },
     ])])).toBe(false);
-    expect(guard.hasPendingPrefix()).toBe(true);
+    // Seeded history is complete: its prefix stays a candidate but holds nothing.
+    expect(guard.hasPendingPrefix()).toBe(false);
     expect(guard.leaks('', [start(), text('token')])).toBe(false);
     expect(guard.leaks('', [text('token', 'new')])).toBe(true);
   });
@@ -274,6 +275,7 @@ it('preserves reasoning chunk history after reasoning ends and an empty snapshot
   expect(guard.leaks('', [{ type: 'REASONING_MESSAGE_CHUNK', messageId: 'reasoning', delta: 'private-' }])).toBe(false);
   expect(guard.leaks('', [{ type: 'REASONING_END', messageId: 'reasoning' }])).toBe(false);
   expect(guard.leaks('', [{ type: 'MESSAGES_SNAPSHOT', messages: [] }])).toBe(false);
-  expect(guard.hasPendingPrefix()).toBe(true);
+  // Ended reasoning holds nothing, but its prefix stays a candidate for a later chunk.
+  expect(guard.hasPendingPrefix()).toBe(false);
   expect(guard.leaks('', [{ type: 'REASONING_MESSAGE_CHUNK', messageId: 'reasoning', delta: 'token' }])).toBe(true);
 });

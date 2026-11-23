@@ -187,6 +187,8 @@ interface MessageBuffer {
 interface PrefixState {
   candidates: Map<string, string>;
   pending: Set<string>;
+  /** Messages and tool calls started and not yet ended; only these can hold the relay. A snapshot keeps them. */
+  open: Set<string>;
   roles: Map<string, string>;
   activities: Map<string, unknown>;
   tools: Set<string>;
@@ -226,7 +228,7 @@ function restoreSnapshotTools(entry: MessageBuffer, state: PrefixState) {
     const json = entry.toolJSON?.get(id);
     if (json !== undefined) state.toolJSON.set(`tool:${id}`, json);
     retainPrefix(`tool:${id}`, prefix, state);
-    if (json !== undefined && json.escape !== '') state.pending.add(`tool:${id}`);
+    if (json !== undefined && json.escape !== '' && state.open.has(`tool:${id}`)) state.pending.add(`tool:${id}`);
   }
 }
 
@@ -257,10 +259,11 @@ function replaceSnapshot(messages: unknown, state: PrefixState, credentials: rea
   }
 }
 
+/** Keeps a snapshot's trailing prefix as a candidate for later deltas; it holds the relay only while its message is open. */
 function retainPrefix(id: string, prefix: string, state: PrefixState) {
   if (prefix === '') return;
   state.candidates.set(id, prefix);
-  state.pending.add(id);
+  if (state.open.has(id)) state.pending.add(id);
 }
 
 function rememberMessageRole(event: Record<string, unknown>, roles: Map<string, string>) {
@@ -317,9 +320,15 @@ function seedMessages(messages: unknown, state: PrefixState, credentials: readon
     });
     for (const event of deltas) {
       if (deltaPrefixLeaks(event, state, credentials)) return true;
+      holdOnlyOpen(deltaIdentity(event), state);
     }
   }
   return false;
+}
+
+/** Content that arrived whole (seeded history, a tool result) keeps its prefix as a candidate but holds the relay only while its id is open. */
+function holdOnlyOpen(id: string, state: PrefixState) {
+  if (!state.open.has(id)) state.pending.delete(id);
 }
 
 function resultLeaks(event: Record<string, unknown>, state: PrefixState, credentials: readonly string[]) {
@@ -336,7 +345,9 @@ function resultLeaks(event: Record<string, unknown>, state: PrefixState, credent
   state.roles.set(id, role);
   state.activities.delete(id);
   state.candidates.delete(`message:${id}`);
-  return deltaPrefixLeaks({ type: EventType.TEXT_MESSAGE_CONTENT, messageId: id, delta: event.content }, state, credentials);
+  if (deltaPrefixLeaks({ type: EventType.TEXT_MESSAGE_CONTENT, messageId: id, delta: event.content }, state, credentials)) return true;
+  holdOnlyOpen(`message:${id}`, state);
+  return false;
 }
 
 function replaceActivityBuffer(id: string, content: unknown, state: PrefixState, credentials: readonly string[]) {
@@ -449,8 +460,14 @@ function deltaLeaks(events: Record<string, unknown>[], state: PrefixState, crede
     const { type } = event;
     if (seededEventLeaks(event, state, credentials)) return true;
     const id = deltaIdentity(event);
-    if (ends.includes(type)) state.pending.delete(id);
-    if (starts.includes(type)) startPrefix(event, state);
+    if (ends.includes(type)) {
+      state.pending.delete(id);
+      state.open.delete(id);
+    }
+    if (starts.includes(type)) {
+      state.open.add(id);
+      startPrefix(event, state);
+    }
     if (contents.includes(type) && deltaPrefixLeaks(event, state, credentials)) return true;
     if (contents.includes(type)) updateMessageBuffer(event, state);
 
@@ -487,10 +504,12 @@ export interface HeldIds {
 export function turnCredentialGuard(credentials: readonly string[], initialMessages?: unknown, held?: HeldIds): {
   leaks: (text: string, events: Record<string, unknown>[]) => boolean;
   hasPendingPrefix: () => boolean;
+  /** The kinds (message or tool) of the ids holding the relay, for logging; never their content. */
+  pendingKinds: () => string[];
   /** The stream wrote to history the guard never saw. */
   wroteHeld: () => boolean;
 } {
-  const prefixes: PrefixState = { candidates: new Map(), pending: new Set(), roles: new Map(), activities: new Map(), tools: new Set(), order: [], toolJSON: new Map() };
+  const prefixes: PrefixState = { candidates: new Map(), pending: new Set(), open: new Set(), roles: new Map(), activities: new Map(), tools: new Set(), order: [], toolJSON: new Map() };
   replaceSnapshot(initialMessages, prefixes, credentials);
   prefixes.pending.clear();
   const heldIds = new Set([...(held?.messageIds ?? []).map((id) => `message:${id}`), ...(held?.toolCallIds ?? []).map((id) => `tool:${id}`)]);
@@ -505,6 +524,7 @@ export function turnCredentialGuard(credentials: readonly string[], initialMessa
       return wroteHeld;
     },
     hasPendingPrefix: () => prefixes.pending.size !== 0,
+    pendingKinds: () => [...new Set([...prefixes.pending].map((id) => id.slice(0, id.indexOf(':'))))],
     wroteHeld: () => wroteHeld,
   };
 }
@@ -661,6 +681,12 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
   let frame: string[] = [];
   const guard = turnCredentialGuard(credentials, turn.initialMessages, turn.held);
   const withheld: Frame[] = [];
+  let hold: { since: number; kinds: string[] } | undefined;
+  const release = (at: number) => {
+    // A hold over a second freezes the Worklog's clocks; log its length and kinds, never its content.
+    if (hold !== undefined && at - hold.since > 1000) console.info(`${upstream.label} held the stream on a possible credential prefix session_id=${sessionId} held_ms=${at - hold.since} kinds=${hold.kinds.join(',')}`);
+    hold = undefined;
+  };
   let terminal = false;
   let startFailure: { error: unknown } | undefined;
   let endTiming: { readAt: number; summarized: Promise<{ summaryMs: number; summaryFailed: boolean }>; endedMs?: number } | undefined;
@@ -805,9 +831,15 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
         return failure(message, 'AGENTCORE_UPSTREAM_STREAM_ERROR').then((frame) => ({ ...frame, failed: true }));
       }
       withheld.push(next);
-      if (!guard.hasPendingPrefix()) ready.push(...withheld.splice(0));
+      if (!guard.hasPendingPrefix()) {
+        release(next.readAt);
+        ready.push(...withheld.splice(0));
+      } else hold ??= { since: next.readAt, kinds: guard.pendingKinds() };
     }
-    if (done && !credentialLeak) ready.push(...withheld.splice(0));
+    if (done && !credentialLeak) {
+      release(Date.now());
+      ready.push(...withheld.splice(0));
+    }
     const prior = await saveFrames(ready);
     if (prior.failed || !credentialLeak) return prior;
     if (guard.wroteHeld()) {
