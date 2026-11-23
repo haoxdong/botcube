@@ -15,19 +15,13 @@ import { partsOf, PROPOSAL, type Part, type TurnMessage } from "./turn-parts";
 import { AnswerCards, AnswerTurn, type Published } from "./artifact-published";
 import { CLOCKS_KEPT, spanOf, startOf, useTurnClock, useWorklogClock } from "./worklog-clock";
 import { seconds, stepOf, timelineOf, totalOf } from "./worklog-timeline";
+import { idlePreload } from "./preload";
 
 // A step's sheet loads after first load (web-cold-open-check.mjs), once the page is idle, so a tap need not wait
 // for it and the Worklog's opening does not stall on it.
 const loadStepSheet = () => import("./step-sheet");
 const StepSheet = lazy(() => loadStepSheet().then(({ StepSheet }) => ({ default: StepSheet })));
-let stepSheetScheduled = false;
-function preloadStepSheet(): void {
-  if (stepSheetScheduled) return;
-  stepSheetScheduled = true;
-  const load = () => void loadStepSheet();
-  if (typeof requestIdleCallback === "function") requestIdleCallback(load, { timeout: 2000 });
-  else setTimeout(load, 1000);
-}
+const preloadStepSheet = idlePreload(loadStepSheet);
 
 
 export const TurnStart = createContext<string | undefined>(undefined);

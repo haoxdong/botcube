@@ -6,6 +6,8 @@ import { useEffect, useState, type RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "./avatar";
 import { Presence, presenceMotion } from "./collapse";
+import { BOT_SETTINGS } from "../bot-settings";
+import { preloadComputerView } from "../computer/agent-computer-view";
 
 // A state hold, not motion: a waiting message carried into the next Turn starts it a task after the last one ends, so
 // "is working" holds across the gap instead of blinking (steering.stories.tsx, chat-steering-carried-working).
@@ -45,6 +47,9 @@ export function ChatHeader({ opener, working, ready, chatId, open, picture, emoj
   emoji: string | undefined;
   name: string;
 }) {
+  useEffect(() => {
+    if (ready && BOT_SETTINGS.agentComputer.enabled) preloadComputerView();
+  }, [ready]);
   return (
     <header className="chat-header">
       <Button ref={opener} variant="ghost" className="chat-header-agent" data-working={working || undefined} disabled={!ready || chatId === null} onClick={open} aria-label="Agent profile" title="Agent profile">
