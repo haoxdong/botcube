@@ -36,6 +36,32 @@ it('answers the next Turn while the previous Runtime writer remains registered',
   } finally { await stack.stop(); }
 });
 
+it.each(['Turn', 'delete'] as const)('accepts a %s after an abandoned scheduled-post lease expires', async (operation) => {
+  const stack = await startInProcess();
+  const client = new AbortController();
+  const waiting = vi.spyOn(console, 'warn').mockImplementation(() => client.abort());
+  try {
+    await previousWriter(stack, 'session-post');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 3 * 3_600_000);
+    if (operation === 'Turn') {
+      const response = await nextTurn(stack, 'writer-busy', client.signal);
+      expect(response.status, await response.clone().text()).toBe(200);
+      expect(await response.text()).toContain('RUN_FINISHED');
+    } else {
+      const response = await stack.app.request('/threads/writer-busy', { method: 'DELETE' });
+      expect(response.status).toBe(204);
+      await expect.poll(() => stack.sessionApi.events()).toContainEqual({
+        operation: 'purge', userId: filed('acct_account-1'), sessionId: 'writer-busy',
+      });
+    }
+  } finally {
+    vi.useRealTimers();
+    waiting.mockRestore();
+    await stack.stop();
+  }
+});
+
 it('waits for the exclusive writer, answers the second Turn and reopens without a saved failure', async () => {
   const stack = await startInProcess();
   const { waiting, logged } = observeWait();

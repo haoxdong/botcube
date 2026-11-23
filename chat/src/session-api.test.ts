@@ -80,6 +80,15 @@ describe('local mode', () => {
     ]);
   });
 
+  it('keeps a post off the wire when its lease cannot cover an invocation', async () => {
+    fake = await new FakeSessionApi().listen();
+    const invoke = sessionApi({ localUrl: fake.url });
+    await expect(invoke({
+      operation: 'post', sessionId: 'session-1', userId: 'filed-account-1', content: 'Brief', messageId: 'post-1',
+    }, undefined, Date.now() + 60_000)).rejects.toThrow('Scheduled post lease expires before Session API can finish');
+    expect(fake.events()).toEqual([]);
+  });
+
   it("answers 404 with the session API's error", async () => {
     fake = await new FakeSessionApi().listen();
     fake.reply('session-1', 404, { error: 'Session not found' });

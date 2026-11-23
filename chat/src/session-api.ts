@@ -39,6 +39,8 @@ export type SessionApiConfig =
   | { localUrl: string }
   | null;
 
+export class SessionPostNotWrittenError extends HttpError {}
+
 export class SessionNotFoundError extends HttpError {
   constructor(detail: string) { super(404, detail); }
 }
@@ -48,7 +50,7 @@ export class SessionNotFoundError extends HttpError {
  * failed. Not a 502: Cloudflare, in front of the Chat Service, replaces an origin's 502 and 504 with
  * its own error page, which has no CORS headers, so the browser would see only "Failed to fetch".
  */
-export type SessionApi = (event: SessionApiEvent, timeoutSeconds?: number) => Promise<Record<string, unknown>>;
+export type SessionApi = (event: SessionApiEvent, timeoutSeconds?: number, postLeaseExpiresAt?: number) => Promise<Record<string, unknown>>;
 
 /**
  * Session API calls one Chat Service process runs at once, queueing the rest. It matches the most
@@ -60,6 +62,7 @@ export type SessionApi = (event: SessionApiEvent, timeoutSeconds?: number) => Pr
  * spill over to one cold on-demand environment (2 of 298 calls on Dev).
  */
 const SESSION_API_CALLS_AT_ONCE = 5;
+const LAMBDA_MAX_INVOCATION_MS = 900_000;
 
 /**
  * The session API's connections, with no headers or body timeout: a call's own timeout is its only deadline.
@@ -75,24 +78,30 @@ function sessionApiDispatcher(): Dispatcher {
 export function sessionApi(config: SessionApiConfig): SessionApi {
   const limit = pLimit(SESSION_API_CALLS_AT_ONCE);
   const dispatcher = sessionApiDispatcher();
-  return (event, timeoutSeconds = 60) =>
+  return (event, timeoutSeconds = 60, postLeaseExpiresAt) =>
     limit(async () => {
       if (config === null) throw new HttpError(503, 'The session API is not configured');
+      if (postLeaseExpiresAt !== undefined && Date.now() + timeoutSeconds * 1000 + LAMBDA_MAX_INVOCATION_MS >= postLeaseExpiresAt) {
+        throw new SessionPostNotWrittenError(503, 'Scheduled post lease expires before Session API can finish');
+      }
       const { status, body } =
         'functionArn' in config
           ? await invokeFunction(config, event, timeoutSeconds, dispatcher)
           : await invokeLocal(config.localUrl, event, timeoutSeconds, dispatcher);
+      const timedOut = status === 504 && (body as { code?: unknown } | null)?.code === 'SESSION_READ_TIMEOUT';
+      const refused = event.operation === 'post' && status >= 400 && status < 600 && !timedOut;
+      const ResponseError = refused ? SessionPostNotWrittenError : HttpError;
       if (status === 404) {
         const { error, code } = body as { error: unknown; code?: unknown };
-        throw code === 'SESSION_NOT_FOUND' ? new SessionNotFoundError(String(error)) : new HttpError(404, String(error));
+        throw code === 'SESSION_NOT_FOUND' && !refused ? new SessionNotFoundError(String(error)) : new ResponseError(404, String(error));
       }
       // A Session in the legacy checkpoint format, which the session API reads no further (ADR 0067).
       if (status === 410) {
         const { error, code } = body as { error: unknown; code: unknown };
-        throw new HttpError(410, String(error), String(code));
+        throw new ResponseError(410, String(error), String(code));
       }
       if (status !== 200) {
-        throw Object.assign(new HttpError(503, `Session API returned HTTP ${status}`), { cause: body });
+        throw Object.assign(new ResponseError(503, `Session API returned HTTP ${status}`), { cause: body });
       }
       if (event.operation === 'get' &&
           (typeof body !== 'object' || body === null || !('messages' in body) || !Array.isArray(body.messages))) {

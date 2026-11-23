@@ -21,6 +21,42 @@ import { eventually } from '../test/eventually.js';
 import { filed } from '../test/stock-bot.js';
 
 describe('a scheduled run', () => {
+  it.each([
+    { status: 503, code: 'POST_REFUSED', nextTurn: 200 },
+    { status: 504, code: 'SESSION_READ_TIMEOUT', nextTurn: 409 },
+  ])('answers the next Main Chat Turn with $nextTurn after Session API returns $code', async ({ status, code, nextTurn }) => {
+    const isolated = await startInProcess({ scheduled: true });
+    const failed = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const client = new AbortController();
+    const waiting = vi.spyOn(console, 'warn').mockImplementation(() => client.abort());
+    try {
+      const { id: main } = (await (await isolated.app.request('/main-chat')).json()) as { id: string };
+      isolated.sessionApi.reply(main, status, { error: code, code }, 'post');
+      isolated.agentcore.scriptPrompt('Brief me', stream(...text('brief', 'Scheduled result.')));
+      const scheduled = await isolated.app.request('/scheduled-tasks', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Morning brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', proposalId: 'refused-post' }),
+      });
+      const { id } = (await scheduled.json()) as { id: string };
+      await defined(isolated.scheduler, 'the isolated schedule').fire(id);
+      await eventually(() => expect(failed).toHaveBeenCalledWith('Scheduled run failed', expect.objectContaining({
+        message: `Session API returned HTTP ${status}`,
+      })));
+      const response = await isolated.app.request('/', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal: client.signal,
+        body: JSON.stringify({ threadId: main, runId: 'after-refusal', state: {}, tools: [], context: [], forwardedProps: {},
+          messages: [{ id: 'question', role: 'user', content: 'Next question' }] }),
+      });
+      const body = await response.text();
+      expect(response.status, body).toBe(nextTurn);
+      expect(body).toContain(nextTurn === 200 ? 'RUN_FINISHED' : 'SESSION_BUSY');
+    } finally {
+      failed.mockRestore();
+      waiting.mockRestore();
+      await isolated.stop();
+    }
+  });
+
   it('forwards the task timezone to its scheduled Turn', async () => {
     const account = owner();
     const main = await mainChat(account);

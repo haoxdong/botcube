@@ -168,14 +168,13 @@ it('releases an external registration only when its caller proves Lambda was nev
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
     const post = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main', undefined, undefined, 'session-post');
-    const abort = defined(post.abortUnsubmitted, 'unsubmitted post cancellation');
-    await Promise.all([abort(), abort()]);
+    await Promise.all([post('not-written'), post('not-written')]);
     const writer = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main');
     expect(writer.session).toMatchObject({ filing_user_id: 'original', session_id: 'main' });
     await writer();
     const completed = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main', undefined, undefined, 'session-post');
     await defined(completed.markSucceeded, 'post completed')('session-post');
-    await expect(defined(completed.abortUnsubmitted, 'cannot abort completed post')()).rejects.toThrow('completion is unproved');
+    await expect(completed('not-written')).rejects.toThrow('completion is unproved');
     await completed();
   } finally { await stack.stop(); }
 });

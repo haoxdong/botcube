@@ -160,7 +160,7 @@ async function settleRejectedWriters(complete: RegisteredSessionDispatch, sessio
   if (rejected.length === 0 || recovery === undefined) return;
   try { await recovery.settle(session, rejected); }
   catch (error) {
-    try { await complete.abortUnsubmitted?.(); }
+    try { await complete('not-written'); }
     catch (releaseError) { throw new AggregateError([error, releaseError], 'Rejected writer recovery and post fence release failed'); }
     throw new SessionWriterRecoveryError('Rejected Runtime writer recovery failed', { cause: error });
   }
@@ -590,6 +590,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     const epoch = kind === 'session-post' ? randomUUID() : identity.snapshotEpoch ?? randomUUID();
     const issueEpoch = kind === 'runtime';
     const rejected = kind === 'session-post' && recovery !== undefined ? await this.rejectedDispatches(session, recovery.runtimeTarget) : [];
+    const leaseExpiresAt = Date.now() + REGISTRATION_EXPIRY_MS;
     const transaction = this.dispatchTransaction(owner, identity, token, epoch, kind, acceptedTurn, expectedSession, rejected, recovery);
     try {
       await this.documents.send(new TransactWriteCommand(transaction));
@@ -600,17 +601,25 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     }
     const complete = this.writers.acknowledgement(session, token, false, false, undefined, kind, issueEpoch ? epoch : undefined);
     await settleRejectedWriters(complete, session, rejected, recovery);
-    return complete;
+    return kind === 'session-post' ? Object.assign(complete, { postLeaseExpiresAt: leaseExpiresAt }) : complete;
   }
 
   private async writerAdmissionChanged(error: unknown, identity: DispatchIdentity, transaction: TransactWriteCommandInput): Promise<boolean> {
     const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
     const writes = transaction.TransactItems ?? [];
     const controlIndex = writes.findIndex((item) => item.Update?.Key?.pk === writerControlKey(identity.session).pk);
-    if (reasons?.[controlIndex]?.Code === 'ConditionalCheckFailed') throw new SessionBusyError('Session persistence writer is still active', await this.writers.holder(identity.session, reasons[controlIndex].Item?.external_token?.S));
+    if (reasons?.[controlIndex]?.Code === 'ConditionalCheckFailed') {
+      await this.settleWriterConflict(identity.session, reasons[controlIndex].Item?.external_token?.S);
+      return true;
+    }
     if (reasons?.[2]?.Code !== 'ConditionalCheckFailed') return false;
     const current = await this.getSessionItem(identity.dispatchOwner, identity.session.session_id);
     return current !== null && current.snapshot_epoch !== identity.snapshotEpoch;
+  }
+
+  private async settleWriterConflict(session: SessionPurge, token?: string): Promise<void> {
+    const holder = await this.writers.holder(session, token);
+    if (!await this.writers.settleExpiredPost(session, holder)) throw new SessionBusyError('Session persistence writer is still active', holder);
   }
 
   rejectedDispatches(session: SessionPurge, runtimeTarget?: string): Promise<RegisteredDispatch[]> {
@@ -758,7 +767,10 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
     const failed = (index: number) => reasons?.[index]?.Code === 'ConditionalCheckFailed';
     if (failed(0)) throw new SessionDeletedError(session.session_id);
-    if (failed(4)) throw new SessionBusyError('Session persistence writer is still active', await this.writers.holder(session, reasons?.[4]?.Item?.external_token?.S));
+    if (failed(4)) {
+      await this.settleWriterConflict(session, reasons?.[4]?.Item?.external_token?.S);
+      return fallback();
+    }
     if (failed(1)) {
       if (accepted) return fallback();
       throw new SessionClaimError(owner);

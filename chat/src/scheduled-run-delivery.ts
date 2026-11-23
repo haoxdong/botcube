@@ -2,7 +2,7 @@ import { HttpError } from './http-error.js';
 import { SessionBusyError, SessionDeletedError, type SessionMetadata } from './session-metadata.js';
 import { SessionWriterRecoveryError } from './session-writers.js';
 import type { ScheduledDelivery, ScheduledRunStore } from './scheduled-run-store.js';
-import type { ScheduledRunCard, SessionApi } from './session-api.js';
+import { SessionPostNotWrittenError, type ScheduledRunCard, type SessionApi } from './session-api.js';
 import type { sessionLifecycle } from './session-lifecycle.js';
 
 export interface ScheduledDeliveryDeps {
@@ -19,17 +19,19 @@ export async function postScheduledResult(deps: ScheduledDeliveryDeps, store: Sc
   const complete = await beginScheduledPost(deps, store, delivery, messageId, options.waitForWriters !== false);
   if (complete.session === undefined) throw new HttpError(503, 'Scheduled post filing identity is unavailable');
   const userId = complete.session.filing_user_id;
-  if (complete.markSucceeded === undefined) throw new HttpError(503, 'Scheduled post success registration is unavailable');
+  if (complete.markSucceeded === undefined || complete.postLeaseExpiresAt === undefined) throw new HttpError(503, 'Scheduled post registration is unavailable');
   let posting: ScheduledDelivery;
+  let submitted = false;
   try {
     posting = await store.posting(delivery, complete, options.failed === true, scheduledRun.status === 'skipped' ? undefined : scheduledRun.status);
+    submitted = true;
+    await invokeSessionApi({ operation: 'post', sessionId: mainChat, userId, content: runSummary(scheduledRun), messageId, scheduledRun }, undefined, complete.postLeaseExpiresAt);
   } catch (error) {
-    if (complete.abortUnsubmitted === undefined) throw error;
-    try { await complete.abortUnsubmitted(); }
-    catch (abortError) { throw new AggregateError([error, abortError], 'Scheduled post preparation failed and its fence release failed', { cause: abortError }); }
+    if (submitted && !(error instanceof SessionPostNotWrittenError)) throw error;
+    try { await complete('not-written'); }
+    catch (settlementError) { throw new AggregateError([error, settlementError], 'Scheduled post failed and its writer did not settle'); }
     throw error;
   }
-  await invokeSessionApi({ operation: 'post', sessionId: mainChat, userId, content: runSummary(scheduledRun), messageId, scheduledRun });
   await complete.markSucceeded('session-post', store.postedTransaction(posting));
   await sessionMetadata.markPosted(owner, mainChat, posting.postMessageId);
   await complete();

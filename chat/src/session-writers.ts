@@ -8,11 +8,11 @@ import type { SessionPurge } from './session-identity.js';
 export class SessionDispatchPendingError extends Error {}
 export class SessionWriterRecoveryError extends Error {}
 
-export type RegisteredDispatch = (() => Promise<void>) & {
+export type RegisteredDispatch = ((outcome?: 'not-written') => Promise<void>) & {
   readonly session?: SessionPurge;
   readonly token?: string;
   readonly snapshotEpoch?: string;
-  abortUnsubmitted?: () => Promise<void>;
+  readonly postLeaseExpiresAt?: number;
   markRejected?: (runtimeTarget: string) => Promise<void>;
   markSucceeded?: (kind: 'session-post', completion?: NonNullable<TransactWriteCommandInput['TransactItems']>[number]) => Promise<void>;
   confirmStopped?: () => Promise<void>;
@@ -33,6 +33,7 @@ const dispatcherId = `${hostname()}:${process.pid}:${randomUUID()}`;
  * (the maintainer's decision, 2026-11-04). A younger registration still needs its exact stop.
  */
 export const REGISTRATION_EXPIRY_MS = 3 * 3_600_000;
+const registrationExpired = (created: string, now: number) => now - Date.parse(created) >= REGISTRATION_EXPIRY_MS;
 const dispatchKey = ({ session_id, filing_user_id }: SessionPurge, token: string) => ({ pk: `DISPATCH#${JSON.stringify([filing_user_id, session_id])}`, sk: token });
 
 export const writerControlKey = ({ session_id, filing_user_id }: SessionPurge) => ({ pk: `WRITERS#${JSON.stringify([filing_user_id, session_id])}`, sk: 'CONTROL' });
@@ -78,15 +79,16 @@ export class SessionWriters {
     const Key = dispatchKey(session, token);
     // A rejected admission is recorded against the Sandbox it may have started, which is the Session ID.
     const binding = { ':binding': session.session_id };
-    const complete: RegisteredSessionDispatch = Object.assign(async () => {
+    const complete: RegisteredSessionDispatch = Object.assign(async (outcome?: 'not-written') => {
+      if (writerKind === 'session-post' && outcome === 'not-written') {
+        return this.settleRegistration(session, token, 'dispatcher = :dispatcher AND attribute_not_exists(writer_succeeded)', { ':dispatcher': dispatcherId }, writerKind, true);
+      }
       const condition = recovered
         ? 'rejected_runtime_binding = :binding AND rejected_runtime_target = :target AND runtime_stop_confirmed = :binding'
         : 'attribute_exists(pk)' + (writerKind === 'session-post' ? ' AND writer_succeeded = :kind' : '');
       const values = recovered ? { ...binding, ':target': runtimeTarget } : writerKind === 'session-post' ? { ':kind': 'session-post' } : writerKind === 'runtime' ? binding : undefined;
       await this.settleRegistration(session, token, condition + (!recovered && writerKind === 'runtime' ? ' AND (attribute_not_exists(rejected_runtime_binding) OR runtime_stop_confirmed = :binding)' : ''), values, writerKind, false, recovered);
     }, { session, token, stopConfirmed: stopped, ...(snapshotEpoch === undefined ? {} : { snapshotEpoch }) });
-    if (writerKind === 'session-post') complete.abortUnsubmitted = () => this.settleRegistration(session, token,
-      'dispatcher = :dispatcher AND attribute_not_exists(writer_succeeded)', { ':dispatcher': dispatcherId }, writerKind, true);
     complete.markSucceeded = async (kind, completion) => {
       const completionProof = createHash('sha256').update(JSON.stringify(completion ?? null)).digest('hex');
       const Update = { TableName: this.tableName, Key,
@@ -129,7 +131,7 @@ export class SessionWriters {
     return complete;
   }
 
-  private async settleRegistration(session: SessionPurge, token: string, condition: string, values: Record<string, unknown> | undefined, kind?: 'runtime' | 'session-post', abortUnsubmitted = false, archive = false): Promise<void> {
+  private async settleRegistration(session: SessionPurge, token: string, condition: string, values: Record<string, unknown> | undefined, kind?: 'runtime' | 'session-post', releasePost = false, archive = false): Promise<void> {
     const Key = dispatchKey(session, token);
     const backup = archive ? await this.registrationBackup(Key) : [];
     try {
@@ -140,7 +142,7 @@ export class SessionWriters {
           TableName: this.tableName, Key: writerControlKey(session), UpdateExpression: 'ADD runtime_writers :minus_one',
           ConditionExpression: 'runtime_writers > :zero', ExpressionAttributeValues: { ':minus_one': -1, ':zero': 0 },
         } }] : []),
-        ...(abortUnsubmitted ? [{ Update: {
+        ...(releasePost ? [{ Update: {
           TableName: this.tableName, Key: writerControlKey(session), UpdateExpression: 'REMOVE external_token',
           ConditionExpression: 'external_token = :token', ExpressionAttributeValues: { ':token': token },
         } }] : []),
@@ -148,7 +150,9 @@ export class SessionWriters {
     } catch (error) {
       if (!(error as Partial<TransactionCanceledException>).CancellationReasons?.some((reason) => reason.Code === 'ConditionalCheckFailed')) throw error;
       const { Item } = await this.documents.send(new GetCommand({ TableName: this.tableName, Key, ConsistentRead: true }));
-      if (Item !== undefined) throw new SessionDispatchPendingError('Writer completion is unproved', { cause: error });
+      if (Item !== undefined && !(archive && releasePost && Item.writer_succeeded === 'session-post')) {
+        throw new SessionDispatchPendingError('Writer completion is unproved', { cause: error });
+      }
     }
   }
 
@@ -210,17 +214,25 @@ export class SessionWriters {
     ).map((row) => this.acknowledgeSuccessfulDispatch(session, row.sk, 'session-post')));
   }
 
-  /** Archive and release every registration of `session` older than REGISTRATION_EXPIRY_MS. */
+  async settleExpiredPost(session: SessionPurge, holder: SessionWriterHolder | undefined): Promise<boolean> {
+    if (holder?.scheduled !== true || !registrationExpired(holder.createdAt, Date.now())) return false;
+    await this.archiveExpired(session, holder.token, holder.createdAt, 'session-post');
+    return true;
+  }
+
   async settleExpired(session: SessionPurge, now = Date.now()): Promise<void> {
     for (const item of await this.queryPartition(dispatchKey(session, '').pk)) {
       const created = String(item.created_at);
-      // A registration whose age is unreadable never expires.
-      if (!(now - Date.parse(created) >= REGISTRATION_EXPIRY_MS)) continue;
+      if (!registrationExpired(created, now) || item.writer_succeeded === 'session-post') continue;
       const kind = item.writer_control === 'runtime' || item.writer_control === 'session-post' ? item.writer_control : undefined;
-      console.info(`Dispatch registration is older than MaxLifetime + 2 h, so it counts as settled. session_id=${session.session_id} registration=${item.sk} dispatcher=${String(item.dispatcher)} created_at=${created}`);
       // eslint-disable-next-line no-await-in-loop -- each expired registration is archived before the purge rechecks the rest
-      await this.settleRegistration(session, item.sk, 'created_at = :created', { ':created': created }, kind, kind === 'session-post', true);
+      await this.archiveExpired(session, item.sk, created, kind);
     }
+  }
+
+  private async archiveExpired(session: SessionPurge, token: string, created: string, kind?: 'runtime' | 'session-post'): Promise<void> {
+    console.info(`Dispatch registration expired. session_id=${session.session_id} registration=${token} created_at=${created}`);
+    await this.settleRegistration(session, token, 'created_at = :created', { ':created': created }, kind, kind === 'session-post', true);
   }
 
   async assertNoDispatch(session: SessionPurge, failedAdmissionTokens: readonly string[] = []): Promise<void> {
