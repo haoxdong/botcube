@@ -54,6 +54,7 @@ class SessionAgent(LangGraphAgent):
     _interrupted: bool = False
     _graph_stream: Any = None
     _asked: int | None = None
+    root_model_lane: str | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         # The graph's raw events carry the Session's history, which no client reads; skip
@@ -184,8 +185,8 @@ class SessionAgent(LangGraphAgent):
         lane = event['run_id']
         self._model_lane = lane
         try:
-            if kind == 'on_chat_model_start' and metadata.get('botcube_thinking'):
-                self._thinking[lane] = _Thinking()
+            if kind == 'on_chat_model_start':
+                self._start_model_lane(lane, metadata)
             thought = self._thinking.get(lane)
             chunk = event.get('data', {}).get('chunk')
             handled = self._thought_chunk(event, lane, thought, chunk)
@@ -198,6 +199,12 @@ class SessionAgent(LangGraphAgent):
                     yield emitted
         finally:
             self._model_lane = None
+
+    def _start_model_lane(self, lane: str, metadata: dict[str, Any]) -> None:
+        if not metadata.get('lc_agent_name'):
+            self.root_model_lane = lane
+        if metadata.get('botcube_thinking'):
+            self._thinking[lane] = _Thinking()
 
     def _model_completion_error(self, event: Any) -> RunErrorEvent | None:
         output = event.get('data', {}).get('output')
@@ -245,6 +252,7 @@ class SessionAgent(LangGraphAgent):
 
     async def prepare_stream(self, input: RunAgentInput, agent_state: Any, config: RunnableConfig) -> Any:
         self._graph_ended_at = None
+        self.root_model_lane = None
         self._interrupted = False
         self._thinking.clear()
         self._model_lane = None

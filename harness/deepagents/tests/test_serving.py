@@ -16,7 +16,14 @@ import re
 import threading
 import time
 import tomllib
-from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -1215,6 +1222,107 @@ class _RecordedBedrockModel(_ScriptedModel):
         self.answered += 1
         for chunk in recorded:
             yield ChatGenerationChunk(message=AIMessageChunk(**chunk))
+
+
+class _ParallelReasoningModel(_RecordedBedrockModel):
+    waiting: asyncio.Event
+    tool_returned: asyncio.Event
+    hold_final: bool
+
+    @staticmethod
+    def thought(text: str) -> ChatGenerationChunk:
+        return ChatGenerationChunk(message=AIMessageChunk(
+            content=[{'type': 'reasoning', 'index': 0, 'reasoning': text}],
+        ))
+
+    async def _astream(self, messages: list[BaseMessage], *_args: Any, **_kwargs: Any) -> AsyncIterator[ChatGenerationChunk]:
+        prompt = next(message.text for message in reversed(messages) if isinstance(message, HumanMessage))
+        if isinstance(messages[-1], ToolMessage):
+            if prompt == 'Delegate to both lanes.' and self.hold_final:
+                yield _text('Both lanes returned.')
+                await asyncio.Future()
+            else:
+                yield _text('Done.')
+        elif prompt == 'slow lane':
+            yield self.thought('Slow before. ')
+            await asyncio.wait_for(self.tool_returned.wait(), timeout=5)
+            yield self.thought('Slow after.')
+            yield _text('Slow done.')
+        elif prompt == 'fast lane':
+            await asyncio.wait_for(self.waiting.wait(), timeout=5)
+            yield self.thought('Fast thought.')
+            yield _call('ls', {'path': '/'}, 3)
+        else:
+            yield ChatGenerationChunk(message=AIMessageChunk(content='', tool_call_chunks=[
+                tool_call_chunk(name='task', args=json.dumps({'description': lane, 'subagent_type': 'general-purpose'}),
+                                id=f'task-{index}', index=index)
+                for index, lane in enumerate(('slow lane', 'fast lane'))
+            ]))
+
+
+def _stop_parallel_turn(service: _Service, final_text: threading.Event) -> list[dict[str, Any]]:
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        running = pool.submit(service.turn, 'Delegate to both lanes.')
+        assert final_text.wait(5), 'The parent never began its final reply'
+        response = service.client.post('/invocations', json={
+            'threadId': 'thread-1', 'runId': 'run-0', 'messages': [], 'tools': [], 'context': [], 'state': {},
+            'forwardedProps': {'stop': True, 'sessionUserId': 'user-1'},
+        })
+        assert response.status_code == 200
+        return running.result(timeout=10)
+
+
+def _parallel_reasoning_run(
+    service: _Service, monkeypatch: pytest.MonkeyPatch, *, stopped: bool,
+) -> list[dict[str, Any]]:
+    from ag_ui.core import ReasoningMessageContentEvent
+
+    waiting = asyncio.Event()
+    tool_returned = asyncio.Event()
+    final_text = threading.Event()
+    turn_events = serving._turn_events
+
+    async def observe_tool_result(agent: Any, run: Any, publish: Any) -> None:
+        def observed(event: Any) -> None:
+            publish(event)
+            if event.type == 'REASONING_MESSAGE_CONTENT' and event.delta == 'Slow before. ':
+                waiting.set()
+            if event.type == 'TOOL_CALL_RESULT' and event.tool_call_id == 'call-3':
+                publish(ReasoningMessageContentEvent(message_id='unknown-reasoning-0', delta='Orphan delta.'))
+                tool_returned.set()
+            if event.type == 'TEXT_MESSAGE_CONTENT' and event.delta == 'Both lanes returned.':
+                final_text.set()
+
+        await turn_events(agent, run, observed)
+
+    monkeypatch.setattr(serving, '_bot', replace(serving._require_bot(), system_prompt='Bot instructions.'))
+    monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: _ParallelReasoningModel(
+        recorder=service.recorder, waiting=waiting, tool_returned=tool_returned, hold_final=stopped,
+    ))
+    monkeypatch.setattr(serving, '_turn_events', observe_tool_result)
+
+    return _stop_parallel_turn(service, final_text) if stopped else service.turn('Delegate to both lanes.')
+
+
+def test_parallel_subagent_reasoning_survives_a_tool_result(
+    service: _Service, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _parallel_reasoning_run(service, monkeypatch, stopped=False)
+    assert events[-1]['type'] == 'RUN_FINISHED', events[-1]
+    before, fast, after = [event for event in events if event['type'] == 'REASONING_MESSAGE_CONTENT']
+    assert [before['delta'], fast['delta'], after['delta']] == ['Slow before. ', 'Fast thought.', 'Slow after.']
+    assert before['messageId'] == after['messageId'] != fast['messageId']
+    assert any(event['type'] == 'TOOL_CALL_RESULT' for event in events[events.index(fast):events.index(after)])
+
+
+def test_stopping_the_parent_reply_keeps_subagent_reasoning_out_of_its_replay(
+    service: _Service, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _parallel_reasoning_run(service, monkeypatch, stopped=True)
+    assert events[-1]['code'] == 'TURN_STOPPED', events[-1]
+    replay = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    assert not [message for message in replay if message['role'] == 'reasoning']
+    assert replay[-1]['content'] == 'Both lanes returned.'
 
 
 def test_a_recorded_bedrock_thought_spans_its_first_words_to_public_output_and_a_wordless_call_has_none(

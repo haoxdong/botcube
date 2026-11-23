@@ -29,6 +29,7 @@ from langchain.agents.middleware.types import (
 )
 from langchain_core.messages import (
     AIMessage,
+    BaseMessage,
     HumanMessage,
     RemoveMessage,
     ToolCall,
@@ -131,15 +132,15 @@ class _OpenReply:
         self.text = ''
         self.started_at = self.ended_at = 0
         self.open_thoughts: set[str] = set()
-        # This model call's thoughts as they streamed, so a kept reply replays them as the user saw them.
-        self.thoughts: list[dict[str, Any]] = []
+        self.thoughts: dict[str, dict[str, dict[str, Any]]] = {}
         # The tool calls started and not yet answered: the ones Stop cuts while they run.
         self.open_calls: set[str] = set()
 
     def watching(self, put: Callable[[Any], None]) -> Callable[[Any], None]:
         def watched(event: Any) -> None:
             self._watch_clock(event)
-            self._watch_thought(event)
+            if not self._watch_thought(event):
+                return
             if event.type == EventType.RUN_STARTED:
                 self.started = True
             if event.type == EventType.TEXT_MESSAGE_START:
@@ -156,24 +157,28 @@ class _OpenReply:
                 self.open_calls.add(event.tool_call_id)
             elif event.type == EventType.TOOL_CALL_RESULT:
                 self.open_calls.discard(event.tool_call_id)
-                self.message_id, self.text = '', ''
-                self.thoughts = []
+                self.message_id, self.text, self.timing_id = '', '', None
             put(event)
 
         return watched
 
-    def _watch_thought(self, event: Any) -> None:
+    def _watch_thought(self, event: Any) -> bool:
+        if event.type not in {EventType.REASONING_MESSAGE_START, EventType.REASONING_MESSAGE_CONTENT, EventType.REASONING_MESSAGE_END}:
+            return True
+        message_id = event.message_id
+        lane = message_id.rsplit('-reasoning-', 1)[0]
         if event.type == EventType.REASONING_MESSAGE_START:
-            self.open_thoughts.add(event.message_id)
+            self.open_thoughts.add(message_id)
             at = message_times.now()
-            self.thoughts.append({'id': event.message_id, 'started_at': at, 'ended_at': at, 'text': ''})
-        elif event.type in {EventType.REASONING_MESSAGE_CONTENT, EventType.REASONING_MESSAGE_END}:
-            thought = next(thought for thought in self.thoughts if thought['id'] == event.message_id)
-            if event.type == EventType.REASONING_MESSAGE_CONTENT:
-                thought['text'] += event.delta
-            else:
-                self.open_thoughts.discard(event.message_id)
-                thought['ended_at'] = message_times.now()
+            self.thoughts.setdefault(lane, {})[message_id] = {'id': message_id, 'started_at': at, 'ended_at': at, 'text': ''}
+        elif (thought := self.thoughts.get(lane, {}).get(message_id)) is None:
+            return False
+        elif event.type == EventType.REASONING_MESSAGE_CONTENT:
+            thought['text'] += event.delta
+        else:
+            self.open_thoughts.discard(message_id)
+            thought['ended_at'] = message_times.now()
+        return True
 
     def _watch_clock(self, event: Any) -> None:
         if event.type == EventType.STATE_DELTA:
@@ -233,21 +238,32 @@ class _OpenReply:
         """Record the text the user already read as the agent's answer, under its streamed ID."""
         if not self.text and not self.thoughts:
             return
-        self.message_id = self.message_id or f"{self.thoughts[0]['id']}-reply"
         config = _session_config(session)
         recorded = (await agent.graph.aget_state(config)).values['messages']
-        # A model call that finished, as one whose tool Stop cut short, is already recorded;
-        # the saver follows its unanswered calls with placeholder results on load.
-        if any(message.id == self.message_id for message in recorded):
+        if self.message_id and any(message.id == self.message_id for message in recorded):
             return
-        blocks: list[ContentBlock] = [{'type': 'reasoning', 'reasoning': thought['text']} for thought in self.thoughts]
+        thoughts = self._unrecorded_thoughts(getattr(agent, 'root_model_lane', None), recorded)
+        if not self.text and not thoughts:
+            return
+        self.message_id = self.message_id or f"{thoughts[0]['id']}-reply"
+        blocks: list[ContentBlock] = [{'type': 'reasoning', 'reasoning': thought['text']} for thought in thoughts]
         if self.text:
             blocks.append({'type': 'text', 'text': self.text})
         reply = AIMessage(content_blocks=blocks, id=self.message_id)
-        started = self.started_at if self.text else self.thoughts[0]['started_at']
-        ended = self.ended_at if self.text else self.thoughts[-1]['ended_at']
-        await agent.graph.aupdate_state(config, {'messages': [message_times.cut(reply, started, ended, self.thoughts, timing_id=self.timing_id)]}, as_node='model')
+        started = self.started_at if self.text else thoughts[0]['started_at']
+        ended = self.ended_at if self.text else thoughts[-1]['ended_at']
+        await agent.graph.aupdate_state(config, {'messages': [message_times.cut(reply, started, ended, thoughts, timing_id=self.timing_id)]}, as_node='model')
 
+    def _unrecorded_thoughts(self, lane: str | None, recorded: list[BaseMessage]) -> list[dict[str, Any]]:
+        thoughts = self.thoughts.get(lane, {}) if lane is not None else {}
+        if not thoughts:
+            return []
+        saved = {
+            thought.get('id')
+            for message in recorded
+            for thought in message.response_metadata.get(MESSAGE_TIMES, {}).get('reasoning', [])
+        }
+        return list(thoughts.values()) if saved.isdisjoint(thoughts) else []
 
     async def keep_clock(self, agent: LangGraphAgent, session: tuple[str | None, str | None], put: Callable[[Any], None]) -> None:
         if self.clock is None:
