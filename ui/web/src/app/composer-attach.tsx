@@ -25,7 +25,7 @@ export function AddMenu({ picker }: { picker: RefObject<HTMLInputElement | null>
   };
   return (
     <Menu.Root>
-      <Menu.Trigger ref={trigger} render={<InputGroupButton size="icon-sm" />} data-testid="copilot-add-menu-button" className="composer-add" aria-label="Add photos & files">
+      <Menu.Trigger ref={trigger} render={<InputGroupButton size="icon-sm" />} data-testid="copilot-add-menu-button" className="composer-add rounded-full focus-visible:bg-muted focus-visible:text-foreground" aria-label="Add photos & files">
         <Plus aria-hidden />
       </Menu.Trigger>
       <Menu.Portal>

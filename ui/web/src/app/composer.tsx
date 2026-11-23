@@ -122,7 +122,7 @@ export function Composer({
             <InputGroupAddon align="inline-end" className="composer-end">
               {picker}
               <InputGroupButton
-                className="composer-send rounded-full"
+                className="composer-send rounded-full focus-visible:bg-primary/80"
                 size="icon-sm"
                 variant="default"
                 data-testid="copilot-send-button"

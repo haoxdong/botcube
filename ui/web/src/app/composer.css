@@ -24,8 +24,8 @@
   background-color: var(--color-white);
   /* Clear at rest. */
   --input: transparent;
-  /* No coloured ring on focus (version C): stock InputGroup's focus border and ring read `--ring`, clear
-     here; the box's + and Send keep the blue one below. Focus deepens the shadow instead. */
+  /* No coloured ring on focus: stock InputGroup's focus border and ring, and the + and Send's, read `--ring`,
+     clear here. Focus deepens the shadow instead, and a focused + or Send takes its stock hover colour (their focus-visible classes). */
   --ring: transparent;
   border-radius: var(--radius-pill);
   /* The resting shadow, under stock InputGroup's focus ring (Tailwind's ring variables). */
@@ -39,11 +39,6 @@
 .chat-composer > .composer-box:focus-within {
   /* stylelint-disable-next-line declaration-property-value-allowed-list -- as at rest, with the deeper floating shadow */
   box-shadow: var(--tw-ring-offset-shadow, 0 0), var(--tw-ring-shadow, 0 0), var(--shadow-float);
-}
-
-/* The + and Send keep stock's blue keyboard focus ring. */
-.chat-composer > .composer-box > * {
-  --ring: var(--color-blue);
 }
 
 .chat-composer[data-layout="expanded"] > .composer-box {

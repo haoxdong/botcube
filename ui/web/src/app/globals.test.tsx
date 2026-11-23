@@ -352,12 +352,15 @@ it("lifts the composer on a clear border in the resting shadow, with no coloured
   } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
   }
-  // Focus draws no coloured ring (version C): stock InputGroup's ring reads the clear `--ring`, and the one composer
-  // focus rule deepens the shadow to the floating one. The + and Send keep the blue ring.
+  // Focus draws no coloured ring, on the box or its + and Send: all read the clear `--ring`, and the one composer
+  // focus rule deepens the shadow to the floating one. A focused + or Send takes its stock hover colour, from its classes.
   expect(sheet.match(/\.(chat-composer|composer-[a-z]+)[^{,]*:focus(-within|-visible)?\b[^{]*\{[^}]*\}/g)).toEqual([
     expect.stringMatching(/^\.chat-composer > \.composer-box:focus-within \{[^}]*box-shadow: var\(--tw-ring-offset-shadow, 0 0\), var\(--tw-ring-shadow, 0 0\), var\(--shadow-float\);\s*\}$/),
   ]);
-  expect(sheet).toMatch(/\.chat-composer > \.composer-box > \* \{\s*--ring: var\(--color-blue\);\s*\}/);
+  const source = (file: string) => readFileSync(path.join(here, file), 'utf8');
+  expect(source('composer-attach.tsx')).toContain('className="composer-add rounded-full focus-visible:bg-muted focus-visible:text-foreground"');
+  expect(source('composer.tsx')).toContain('className="composer-send rounded-full focus-visible:bg-primary/80"');
+  expect(sheet).not.toMatch(/\.chat-composer > \.composer-box > \* \{/);
   expect(sheet).not.toMatch(/\.composer-box::(before|after)/);
 });
 
