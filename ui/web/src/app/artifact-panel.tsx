@@ -28,7 +28,7 @@ import { useArtifactRequest, type ArtifactRequest } from "./artifact-request";
 import { TYPES } from "./artifact-types";
 import type { ArtifactEdit, ViewerProps } from "./artifact-viewer";
 import { withStorage } from "./main-chat-copy";
-import { Layout } from "./collapse";
+import { Fade, Layout, Swap } from "./collapse";
 import { motionTokens } from "./motion-tokens";
 import type { AgentProfileData } from "./agent-profile";
 import { Avatar } from "./avatar";
@@ -293,26 +293,25 @@ function History({ shown }: { shown: Shown }) {
   const now = new Date();
   const newest = versions[0];
   const when = newest?.version === artifact.version ? ` ${agoOf(newest.at, now)}` : "";
+  const failure = history && "failure" in history ? history.failure : null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger render={<Button type="button" variant="secondary" size="xs" className="artifact-history self-center font-normal text-muted-foreground" />}>
         Edited by {artifact.author === "user" ? "you" : agent.name}{when}<ChevronDownIcon data-icon="inline-end" aria-hidden />
       </DropdownMenuTrigger>
       <DropdownMenuContent align={phone ? "start" : "center"} className="artifact-history-menu w-auto min-w-72">
-        {history && "failure" in history && <DropdownMenuLabel role="alert">{history.failure}</DropdownMenuLabel>}
+        <Fade open={failure !== null} className="artifact-history-failure"><DropdownMenuLabel role="alert">{failure}</DropdownMenuLabel></Fade>
         {byDay(versions, now).map(({ day, versions: inDay }) => (
           <DropdownMenuGroup key={day}>
             <DropdownMenuLabel>{day}</DropdownMenuLabel>
             {inDay.map(({ version, author, at }) => (
               <DropdownMenuItem key={version} className="gap-2.5">
-                {author === "user"
-                  ? <Avatar size={32} />
-                  : <Avatar size={32} agent picture={agent.picture} emoji={agent.avatar} />}
+                <Avatar size={32} agent={author !== "user"} picture={author === "user" ? undefined : agent.picture} emoji={author === "user" ? undefined : agent.avatar} />
                 <span className="flex flex-col">
                   <span>{author === "user" ? "You" : agent.name}</span>
                   <span className="text-xs text-muted-foreground">Version {version} · {timeOf(at)}</span>
                 </span>
-                {version === artifact.version && <Badge variant="outline" className="ml-auto">Current</Badge>}
+                <Swap state={version === artifact.version ? "current" : "earlier"} className="ml-auto flex">{version === artifact.version && <Badge variant="outline">Current</Badge>}</Swap>
               </DropdownMenuItem>
             ))}
           </DropdownMenuGroup>
