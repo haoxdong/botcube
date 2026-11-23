@@ -1,7 +1,7 @@
 import { closeSidebar, sidebarSettled } from '../../../../scripts/web-layout-sidebar.mjs';
 
 export const scrollHalfwayUp = () => {
-  let scroller = document.querySelector('.copilotKitMessage')?.parentElement ?? null;
+  let scroller = document.querySelector(':is(.copilotKitMessage, .chat-message)')?.parentElement ?? null;
   while (scroller && !(/auto|scroll/.test(getComputedStyle(scroller).overflowY) && scroller.scrollHeight > scroller.clientHeight)) scroller = scroller.parentElement;
   scroller ??= /** @type {HTMLElement | null} */ (document.scrollingElement);
   scroller?.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
@@ -11,7 +11,7 @@ export const scrollHalfwayUp = () => {
 const PAGE_HOLD = () => {
   let row = document.querySelector('[data-page-hold-row]');
   if (row === null) {
-    row = [...document.querySelectorAll('.copilotKitMessage')].find((message) => message.getBoundingClientRect().top > 200) ?? null;
+    row = [...document.querySelectorAll(':is(.copilotKitMessage, .chat-message)')].find((message) => message.getBoundingClientRect().top > 200) ?? null;
     row?.setAttribute('data-page-hold-row', '');
   }
   const chat = /** @type {Element} */ (document.querySelector('.app-chat'));

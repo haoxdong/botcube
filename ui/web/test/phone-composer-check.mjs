@@ -7,11 +7,11 @@ export async function checkPhoneComposer(page, screen = 'WebKit iPhone 15') {
   const iosRules = await page.evaluate(() => [...document.styleSheets].filter(sheet => !sheet.href || new URL(sheet.href).origin === location.origin).flatMap(sheet => [...sheet.cssRules]).flatMap(rule => rule instanceof CSSSupportsRule && rule.conditionText.includes('-webkit-touch-callout') ? [[...rule.cssRules].map(child => child.cssText).join('\n')] : []).join('\n'));
   const style = iosRules ? await page.addStyleTag({ content: iosRules }) : null;
   const textarea = page.locator('textarea:not([readonly])').first();
-  await page.locator('.app-chat:not(.app-chat-opening) .copilotKitMessage').last().waitFor();
+  await page.locator('.app-chat:not(.app-chat-opening) :is(.copilotKitMessage, .chat-message)').last().waitFor();
   const originalDraft = await textarea.inputValue();
   const safeTop = await page.evaluate(() => document.documentElement.style.getPropertyValue('--app-safe-top'));
   const safeArea = await page.evaluate(() => ({ value: document.documentElement.style.getPropertyValue('--app-safe-bottom'), priority: document.documentElement.style.getPropertyPriority('--app-safe-bottom') }));
-  const scrolling = await page.locator('.copilotKitMessage').last().evaluateHandle(row => {
+  const scrolling = await page.locator(':is(.copilotKitMessage, .chat-message)').last().evaluateHandle(row => {
     let element = row.parentElement;
     while (element && !(/auto|scroll/.test(getComputedStyle(element).overflowY) && element.scrollHeight > element.clientHeight)) element = element.parentElement;
     const scroller = element ?? document.scrollingElement;
@@ -56,7 +56,7 @@ export async function checkPhoneComposer(page, screen = 'WebKit iPhone 15') {
       typed: input.querySelector('textarea')?.getBoundingClientRect().toJSON(),
       header: document.querySelector('.chat-header')?.getBoundingClientRect().toJSON(),
       pillBackground: getComputedStyle(pill).backgroundColor,
-      jump: document.querySelector('[data-testid="copilot-scroll-to-bottom"]')?.getBoundingClientRect().toJSON(),
+      jump: document.querySelector('.chat-scroll-button')?.getBoundingClientRect().toJSON(),
     };
   });
   /** @param {Awaited<ReturnType<typeof read>>} state */
@@ -85,7 +85,7 @@ export async function checkPhoneComposer(page, screen = 'WebKit iPhone 15') {
     await page.getByRole('heading', { name: 'Apps', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Toggle sidebar', exact: true }).click();
     await page.getByRole('button', { name: 'Main Chat', exact: true }).click();
-    await page.locator('.app-chat:not(.app-chat-opening) .copilotKitMessage').last().waitFor();
+    await page.locator('.app-chat:not(.app-chat-opening) :is(.copilotKitMessage, .chat-message)').last().waitFor();
     await page.waitForTimeout(400);
     assert.equal(await scrolling.evaluate(element => element.scrollTop), readingTop, 'Apps must preserve the reading position');
     await textarea.fill('Keyboard visibility regression');
@@ -128,13 +128,13 @@ export async function checkPhoneComposer(page, screen = 'WebKit iPhone 15') {
         scroller.dispatchEvent(new WheelEvent('wheel', { deltaY: -20, bubbles: true }));
         const before = scroller.scrollTop;
         scroller.scrollBy(0, -20);
-        const anchor = [...document.querySelectorAll('.copilotKitMessage')].find(row => {
+        const anchor = [...document.querySelectorAll(':is(.copilotKitMessage, .chat-message)')].find(row => {
           const rect = row.getBoundingClientRect();
           return rect.top < viewport.offsetTop + viewport.height && rect.bottom > viewport.offsetTop;
         });
         const expectedTop = anchor?.getBoundingClientRect().top;
         requestAnimationFrame(() => setTimeout(() => {
-        const visibleRows = [...document.querySelectorAll('.copilotKitMessage')].filter(row => {
+        const visibleRows = [...document.querySelectorAll(':is(.copilotKitMessage, .chat-message)')].filter(row => {
           const rect = row.getBoundingClientRect();
           return rect.bottom > viewport.offsetTop && rect.top < viewport.offsetTop + viewport.height;
         });
@@ -152,7 +152,7 @@ export async function checkPhoneComposer(page, screen = 'WebKit iPhone 15') {
       return { start, end: scroller.scrollTop, frames };
     }, scrolling);
     if (scroll.frames.filter(frame => frame.travel !== 0).length < 15 || scroll.frames.some(frame => frame.blank || frame.shift === null || Math.abs(frame.shift) > 1)) failures.push('scrolling rebounds after paint');
-    await page.getByTestId('copilot-scroll-to-bottom').click();
+    await page.locator('.chat-scroll-button').click();
     await page.waitForFunction(element => element.scrollHeight - element.clientHeight - element.scrollTop <= 2, scrolling);
     await page.waitForTimeout(200);
     await page.evaluate(() => {
