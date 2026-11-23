@@ -31,7 +31,7 @@ def review_retention(changes: dict[str, Any]) -> None:
         if resource['Action'] != 'Modify' or resource.get('Replacement') == 'True':
             raise ValueError(f'Image retention would change a resource: {resource}')
         for detail in resource.get('Details', []):
-            if detail.get('Evaluation') == 'Dynamic' and detail.get('ChangeSource') == 'ResourceAttribute':
+            if detail.get('Evaluation') == 'Dynamic' and detail.get('ChangeSource') in {'ResourceAttribute', 'ResourceReference'}:
                 continue
             if detail['Target']['Attribute'] not in {'DeletionPolicy', 'UpdateReplacePolicy'}:
                 raise ValueError(f'Image retention would change resource properties: {detail}')
