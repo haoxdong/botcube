@@ -101,7 +101,7 @@ export default function App({
   const { accountId } = auth;
   useEffect(() => setScreen('chat'), [accountId]);
   const {
-    current: { id: activeId, accountId: activeAccountId, openAt, newChat, provider: activeProvider, readOnly, agent, selfManagedAgents, entrances, showWelcome, stopServerTurn, turnFailure, turnRunning, turnRunsOnServer, turnMayRun, runningSince },
+    current: { id: activeId, accountId: activeAccountId, openAt, newChat, provider: activeProvider, readOnly, agent, selfManagedAgents, entrances, showWelcome, stopServerTurn, turnFailure, replayLoaded, turnRunsOnServer, turnMayRun, runningSince },
     mainChatId,
     loadOlder,
     olderError,
@@ -185,7 +185,7 @@ export default function App({
     if (isPhone) swipe.close();
   };
 
-  const { error: warmupError, turnStarting: warmupTurnStarting, composing } = useAgentWarmup({ auth, ready, accountId, activeId, activeAccountId, mainChatId, newChat, models, offeredModel, effort, turnRunning, agent });
+  const { error: warmupError, turnStarting: resetWarmup, composing } = useAgentWarmup({ auth, ready, accountId, activeId, activeAccountId, mainChatId, newChat, models, offeredModel, effort, turnRunsOnServer, agent });
 
   useEffect(() => {
     const subscription = agent.subscribe({
@@ -330,7 +330,7 @@ export default function App({
                 agent={agent}
                 threadId={activeId}
                 accountId={accountId}
-                turnRunning={turnRunning}
+                replayLoaded={replayLoaded}
                 turnRunsOnServer={turnRunsOnServer}
                 turnMayRun={turnMayRun}
                 onOpened={() => { setKeptChatShown(false); setOpenedChat(activeId); }}
@@ -344,7 +344,7 @@ export default function App({
                 selectedModel={offeredModel}
                 isAccountCurrent={() => auth.isAccountCurrent?.(accountId) !== false}
                 onMessageSubmitted={messageSubmitted}
-                onTurnStarting={(provider) => { warmupTurnStarting(); turnStarting(provider); }}
+                onTurnStarting={(provider) => { resetWarmup(); turnStarting(provider); }}
                 onCompose={composing}
                 stopServerTurn={stopServerTurn}
                 savedFailure={turnFailure}

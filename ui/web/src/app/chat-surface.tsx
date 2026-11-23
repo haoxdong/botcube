@@ -419,7 +419,7 @@ function ChatThread({
   agent,
   threadId,
   accountId,
-  turnRunning,
+  replayLoaded,
   turnRunsOnServer,
   turnMayRun,
   onMessageSubmitted,
@@ -445,7 +445,7 @@ function ChatThread({
   agent: AbstractAgent;
   threadId: string;
     accountId: string | undefined;
-  turnRunning: boolean;
+  replayLoaded: boolean;
   turnRunsOnServer: boolean;
   turnMayRun: () => void;
   onMessageSubmitted: () => void;
@@ -510,7 +510,7 @@ function ChatThread({
   const [agentRunning] = useAgentRunning(agent);
   const runEnded = useRunEnded(agent);
   const [openingRunning, setOpeningRunning] = useState(false);
-  const running = turnRunning || agentRunning || openingRunning;
+  const running = turnRunsOnServer || agentRunning || openingRunning;
   const subscribeRun = useCallback((listener: () => void) => {
     const subscription = agent.subscribe({ onRunStartedEvent: listener, onRunFinalized: listener });
     return () => subscription.unsubscribe();
@@ -521,7 +521,7 @@ function ChatThread({
   runningRef.current = running;
   useEffect(() => {
     const selected = models.loaded ? models.models.find(({ key }) => key === selectedModel) : undefined;
-    if (!isMainChat || openingAttempted.current || !showWelcome || running || savedFailure !== null ||
+    if (!replayLoaded || !isMainChat || openingAttempted.current || !showWelcome || running || savedFailure !== null ||
         agent.messages.length !== 0 || !online || !isAccountCurrent() || !models.loaded ||
         models.accountId !== accountId || selected === undefined) return;
     openingAttempted.current = true;
@@ -538,7 +538,7 @@ function ChatThread({
         setOpeningRunning(false);
       }
     })();
-  }, [agent, accountId, isMainChat, showWelcome, running, savedFailure, online, models, selectedModel, userName, isAccountCurrent, copilotkit, onTurnStarting]);
+  }, [agent, accountId, replayLoaded, isMainChat, showWelcome, running, savedFailure, online, models, selectedModel, userName, isAccountCurrent, copilotkit, onTurnStarting]);
   const composerSubmit = useRef<Submit | null>(null);
   const refreshSideChatsOnce = () => {
     if (firedRef.current) return;
@@ -587,7 +587,7 @@ function ChatThread({
   };
   const steeringDrop = useContext(SteeringDrop);
   const { steer, drop: dropSteering, waiting, withdraw, sendNow } = useSteering({
-    agent, accountId, threadId, running, ready: online && modelsReady(), serviceUrl: CHAT_SERVICE_URL,
+    agent, accountId, threadId, running, ready: replayLoaded && online && modelsReady(), serviceUrl: CHAT_SERVICE_URL,
     submit: (text) => composerSubmit.current !== null && submitTurn(text, composerSubmit.current),
     failed: (message) => setRunError({ message }),
     heldElsewhere: turnMayRun,
@@ -616,7 +616,7 @@ function ChatThread({
   return (
     <div className="chat-wrapper" ref={wrapperRef} onKeyDown={stopOnEscapeNoMenuTook(composerStop)} {...fileDrop.handlers}>
       <FileDropOverlay open={fileDrop.over} />
-      <Presence>{showWelcome && !running && !openingAttempted.current && <motionElement.div {...presenceMotion} className="chat-welcome"><WelcomeScreen userName={userName} /></motionElement.div>}</Presence>
+      <Presence>{replayLoaded && showWelcome && !running && !openingAttempted.current && <motionElement.div {...presenceMotion} className="chat-welcome"><WelcomeScreen userName={userName} /></motionElement.div>}</Presence>
       <ToolCallRenderer agent={agent} />
       <SubmitTurn.Provider value={submitTurn}>
       <ComposerSubmit.Provider value={composerSubmit}>

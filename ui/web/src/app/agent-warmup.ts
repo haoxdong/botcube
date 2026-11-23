@@ -11,7 +11,7 @@ type Current = ReturnType<typeof useSessionNavigation>["current"];
  * ~3 s machine start hides behind composing. Later compose actions before the next send warm nothing, and opening,
  * focusing or clicking through a chat warms nothing: a user only browsing chats starts no Session.
  */
-export function useAgentWarmup({ auth, ready, accountId, activeId, activeAccountId, mainChatId, newChat, models, offeredModel, effort, turnRunning, agent }: {
+export function useAgentWarmup({ auth, ready, accountId, activeId, activeAccountId, mainChatId, newChat, models, offeredModel, effort, turnRunsOnServer, agent }: {
   auth: AuthUiState;
   ready: boolean;
   accountId: AuthUiState["accountId"];
@@ -22,7 +22,7 @@ export function useAgentWarmup({ auth, ready, accountId, activeId, activeAccount
   models: ModelList;
   offeredModel: string | undefined;
   effort: string;
-  turnRunning: boolean;
+  turnRunsOnServer: boolean;
   agent: Current["agent"];
 }) {
   const [warmupError, setWarmupError] = useState<{ accountId: typeof accountId; threadId: string; message: string } | null>(null);
@@ -60,7 +60,7 @@ export function useAgentWarmup({ auth, ready, accountId, activeId, activeAccount
   // The user put something into the open chat's composer. A running Turn already holds the Sandbox.
   const composing = () => {
     if (!ready || activeId === null || activeAccountId !== accountId || !models.loaded || models.accountId !== accountId) return;
-    if (turnRunning || agent.isRunning || document.visibilityState !== "visible") return;
+    if (turnRunsOnServer || agent.isRunning || document.visibilityState !== "visible") return;
     warmup({ threadId: activeId, ...(newChat && { newChat: true }) });
   };
 

@@ -1543,6 +1543,30 @@ describe('Main Chat kept in this browser', () => {
     expect(stopsSent()).toEqual([{ runId: 'background-run' }]);
   });
 
+  it('keeps saved steering queued until the Main Chat replay confirms whether its Turn is running', async () => {
+    window.history.replaceState(null, '', '?chat=side');
+    service.replies.set('side', earlier);
+    await renderPage(auth({ accountId: 'acct-first' }));
+    localStorage.setItem(KEY, JSON.stringify({ accountId: 'acct-first', id: 'main-1', messages: earlier }));
+    const queued = [{ id: 'follow-up', content: 'Keep this follow-up.' }];
+    const steeringKey = 'botcube.steering:acct-first:main-1';
+    localStorage.setItem(steeringKey, JSON.stringify(queued));
+    const held = holdMainChat();
+    fireEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    await settle();
+
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    expect(requestsTo('/threads/main-1/steer')).toEqual([]);
+    expect(localStorage.getItem(steeringKey)).toBe(JSON.stringify(queued));
+
+    await act(async () => {
+      present(held[0], 'the Main Chat load')(answer(200, { id: 'main-1', messages: earlier, running: true, runId: 'background-run' }));
+    });
+    await settle();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    expect(requestsTo('/threads/main-1/steer')).toEqual(['POST']);
+  });
+
   it('reloads an active server Turn after reconciling the Main Chat copy', async () => {
     vi.useFakeTimers();
     localStorage.setItem(KEY, JSON.stringify({ accountId: 'acct-first', id: 'main-1', messages: earlier }));
@@ -3142,6 +3166,36 @@ describe('warming a chat as the user composes', () => {
     expect(warmups()).toEqual([]);
   });
 
+  it('warms and starts a Turn from the saved Main Chat while a Side Chat runs', async () => {
+    service.sideChats = [sideChat('side-running', 'Running elsewhere')];
+    service.running.add('side-running');
+    service.runIds.set('side-running', 'run-a');
+    window.history.replaceState(null, '', '?chat=side-running');
+    await renderPage(auth({ accountId: 'acct-first' }));
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
+    service.mainChat.running = false;
+    localStorage.setItem(KEY, JSON.stringify({ accountId: 'acct-first', id: service.mainChat.id, messages: service.mainChat.messages }));
+    const replay = Promise.withResolvers<Response>();
+    fetchMock.mockImplementation((url, init) => new URL(url).pathname === '/main-chat' ? replay.promise : chatService(url, init));
+
+    fireEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    await settle();
+    await type('h');
+    await type('hello');
+    fireEvent.keyDown(composerBox(), { key: 'Enter' });
+    await settle();
+
+    expect({
+      warmups: warmupBodies(),
+      turns: copilot.runAgent.mock.calls.map(([{ agent }]) => agent?.threadId),
+      steers: requestsTo('/threads/main-1/steer'),
+    }).toEqual({
+      warmups: ['{"threadId":"main-1","model":"deep","effort":"medium"}'],
+      turns: ['main-1'],
+      steers: [],
+    });
+  });
+
   it("warms the open Main Chat on the first keystroke, for the requester's model and effort", async () => {
     await renderPage();
 
@@ -3618,6 +3672,25 @@ describe('a Turn that runs on the server after a reload', () => {
     service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
     await threeSecondsPass();
     expect(agent().messages).toEqual([question, reply]);
+  });
+
+  it('shows that an undelivered steer is waiting and keeps it for the next Turn', async () => {
+    vi.useFakeTimers();
+    service.mainChat = { id: 'main-1', messages: [question], running: true, runId: 'run-on' };
+    fetchMock.mockImplementation((url, init) => url.endsWith('/steer')
+      ? Promise.resolve(answer(200, { accepted: false }))
+      : chatService(url, init));
+    await renderPage(auth({ accountId: 'acct-first' }));
+
+    await sendMessage('Also add BETA.');
+    expect(requestsTo('/threads/main-1/steer')).toEqual(['POST']);
+    expect(screen.getByText('Waiting for the next Turn')).toBeVisible();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(copilot.runAgent).toHaveBeenCalledTimes(1);
+    expect(agent().messages.at(-1)).toMatchObject({ role: 'user', content: 'Also add BETA.' });
   });
 
   it.each(['Stop', 'Escape'])('drops a follow-up the Turn never took when %s ends it', async (how) => {

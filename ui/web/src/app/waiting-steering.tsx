@@ -84,7 +84,9 @@ function WaitingMessage({ message, shown, last, onClosed, open, onToggle, onSend
       <div className={`${USER_MESSAGE_CLASS} waiting-message-bubble`} onPointerEnter={(event: ReactPointerEvent<HTMLDivElement>) => setHovered(event.pointerType === "mouse")} onClick={sent ? undefined : () => { if (!matchMedia("(hover: hover)").matches) onToggle(); }}>{text}</div>
       <Collapse open={!sent} appear={false}>
         <div className="waiting-message-actions">
-          <Fade open={outcome === "failed"} className="waiting-message-note">Your message is still waiting.</Fade>
+          <Fade open={message.missed === true || outcome === "failed"} className="waiting-message-note" role="status">
+            {message.missed ? "Waiting for the next Turn" : "Your message is still waiting."}
+          </Fade>
           <span className="waiting-message-swap">
             <Button type="button" variant="ghost" size="sm" className="waiting-message-send-now" onClick={onSendNow}>Send now</Button>
             <span className="waiting-message-icons">

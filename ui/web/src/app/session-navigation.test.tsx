@@ -40,7 +40,7 @@ it.each([false, true])('keeps the running reply through cached Main Chat hand-ov
   await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
 
   expect(result.current.current.agent.messages).toEqual(recording.completed.messages);
-  expect(result.current.current.turnRunning).toBe(false);
+  expect(result.current.current.turnRunsOnServer).toBe(false);
 });
 
 it('retains loaded running history when the live chat suspends during reload', async () => {
@@ -76,5 +76,5 @@ it('retains loaded running history when the live chat suspends during reload', a
   history = { id: cached.id, ...recording.completed };
   await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
   expect(result.current.current.agent.messages).toEqual(recording.completed.messages);
-  expect(result.current.current.turnRunning).toBe(false);
+  expect(result.current.current.turnRunsOnServer).toBe(false);
 });
