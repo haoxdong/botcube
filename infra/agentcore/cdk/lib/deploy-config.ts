@@ -105,6 +105,8 @@ export interface DeployIdentity {
       sessionApiFunction: string;
       sessionApiAlias: string;
       platformVersion: RuntimePlatformVersion;
+      maxLifetime?: number;
+      idleRuntimeSessionTimeout?: number;
       rollbackVersion?: string;
     } &
       // The runtime network places the runtime in the private NAT browser's subnets.

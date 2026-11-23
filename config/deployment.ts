@@ -93,6 +93,10 @@ export const agentCore = z
     runtime: z.strictObject({
       platformVersion: z.enum(['V1', 'V2']).optional().describe("BotCube-owned: the Runtime's platform generation; absent, V2."),
       containerUri: containerUri.optional(),
+      maxLifetime: z.number().int().min(60).max(3600).optional()
+        .describe('As LifecycleConfiguration.maxLifetime, in seconds; absent, 3600. Capped by ADR 0029.'),
+      idleRuntimeSessionTimeout: z.number().int().min(60).max(900).optional()
+        .describe('As LifecycleConfiguration.idleRuntimeSessionTimeout, in seconds; absent, 300.'),
       rollbackEndpoint: z.strictObject({
         agentRuntimeVersion: z.string().regex(/^[1-9][0-9]*$/, 'Expected a Runtime version number').describe('As CloudFormation RuntimeEndpoint.AgentRuntimeVersion.'),
       }).optional().describe('BotCube-owned: a V1_ROLLBACK endpoint on an earlier Runtime version, to move back to; absent, none.'),
@@ -211,6 +215,8 @@ export const RETIRED_FILES: Readonly<Record<string, Readonly<Record<string, Sour
     'aws.agentCore.runtimeMonitoring.filterName': named('runtimeErrorsFilterName', 'alarms.runtime'),
     'aws.agentCore.runtimeMonitoring.metricNamespace': at('alarms.runtime.metricNamespace'),
     'aws.agentCore.platformVersion': at('agentCore.runtime.platformVersion'),
+    'aws.agentCore.maxLifetime': at('agentCore.runtime.maxLifetime'),
+    'aws.agentCore.idleRuntimeSessionTimeout': at('agentCore.runtime.idleRuntimeSessionTimeout'),
     'aws.agentCore.runtimeNetworkParameter': { derived: '/{name}/agentcore/security-group-id', when: LINK },
     'aws.agentCore.memory': named('memoryName'),
     'aws.agentCore.sessionApiFunction': named('sessionApiFunctionName'),

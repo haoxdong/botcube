@@ -68,6 +68,10 @@ export function addAgentCoreStacks(
         userMemoryRole,
         privateNatBrowser: agentCore.privateNatBrowser,
         platformVersion: agentCore.platformVersion,
+        ...(agentCore.maxLifetime !== undefined ? { runtimeMaxLifetimeSeconds: agentCore.maxLifetime } : {}),
+        ...(agentCore.idleRuntimeSessionTimeout !== undefined
+          ? { runtimeIdleTimeoutSeconds: agentCore.idleRuntimeSessionTimeout }
+          : {}),
         ...(agentCore.rollbackVersion !== undefined ? { rollbackVersion: agentCore.rollbackVersion } : {}),
         harnessCodeLocation: path.resolve(deployRoot, runtime.codeLocation),
         runtimeImage,

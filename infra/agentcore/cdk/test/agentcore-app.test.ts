@@ -17,7 +17,13 @@ import { tmpdir } from 'os';
 import { resolve } from 'path';
 import { addAgentCoreStacks } from '../lib/agentcore-app';
 import type { AgentCoreStack } from '../lib/cdk-stack';
-import { agentCoreProjectRoot, readDeployIdentity, readProjectSpec, type DeployConfig } from '../lib/deploy-config';
+import {
+  agentCoreProjectRoot,
+  loadDeployConfig,
+  readDeployIdentity,
+  readProjectSpec,
+  type DeployConfig,
+} from '../lib/deploy-config';
 
 const COMMIT = 'abc123';
 const DEPLOY_ROOT = resolve(__dirname, '../../../../examples/public/deploy');
@@ -500,4 +506,43 @@ test('the BotCube Config tags every resource whose tags agentcore-cdk does not c
   expect(gained.map(([, { Type }]) => Type).filter(type => composed.includes(type))).toEqual([]);
   const missed = Object.entries(tagged).filter(([, resource]) => tagsOf(resource).length > 0 && !hasTeam(resource));
   expect([...new Set(missed.map(([, { Type }]) => Type))].sort()).toEqual(composed.sort());
+});
+
+test.each([
+  [1800, 240],
+  [60, 60],
+  [3600, 900],
+])('synthesizes the deploy identity Runtime lifecycle (%s, %s)', (maxLifetime, idleRuntimeSessionTimeout) => {
+  const app = new App();
+  addAgentCoreStacks(app, deployConfig({ maxLifetime, idleRuntimeSessionTimeout }), COMMIT);
+  Template.fromStack(onlyStack(app)).hasResourceProperties('AWS::BedrockAgentCore::Runtime', {
+    LifecycleConfiguration: { MaxLifetime: maxLifetime, IdleRuntimeSessionTimeout: idleRuntimeSessionTimeout },
+  });
+});
+
+test.each([
+  [1800, 240],
+  [60, 60],
+  [3600, 900],
+])('synthesizes Runtime lifecycle from botcube.yaml (%s, %s)', async (maxLifetime, idleRuntimeSessionTimeout) => {
+  const root = mkdtempSync(resolve(tmpdir(), 'runtime-lifecycle-'));
+  try {
+    mkdirSync(resolve(root, 'deploy'));
+    const yaml = readFileSync(resolve(DEPLOY_ROOT, '../botcube.yaml'), 'utf8');
+    writeFileSync(
+      resolve(root, 'botcube.yaml'),
+      yaml.replace(
+        'runtime: { platformVersion: V2 }',
+        `runtime: { platformVersion: V2, maxLifetime: ${maxLifetime}, idleRuntimeSessionTimeout: ${idleRuntimeSessionTimeout} }`
+      )
+    );
+    const config = await loadDeployConfig(resolve(root, 'deploy'), '/');
+    const app = new App();
+    addAgentCoreStacks(app, config, COMMIT);
+    Template.fromStack(onlyStack(app)).hasResourceProperties('AWS::BedrockAgentCore::Runtime', {
+      LifecycleConfiguration: { MaxLifetime: maxLifetime, IdleRuntimeSessionTimeout: idleRuntimeSessionTimeout },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

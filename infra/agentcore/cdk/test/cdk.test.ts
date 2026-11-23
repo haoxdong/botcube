@@ -704,9 +704,9 @@ test("the Harness reads its Memory only as AGENTCORE_MEMORY_ID, without the L3's
 
 test.each([
   ['runtimeMaxLifetimeSeconds', 3601, 3600],
-  ['runtimeIdleTimeoutSeconds', 301, 300],
+  ['runtimeIdleTimeoutSeconds', 901, 900],
   ...['runtimeMaxLifetimeSeconds', 'runtimeIdleTimeoutSeconds'].flatMap(name =>
-    [0, -1, 59, 60.5, NaN, Infinity].map(value => [name, value, name === 'runtimeMaxLifetimeSeconds' ? 3600 : 300])
+    [0, -1, 59, 60.5, NaN, Infinity].map(value => [name, value, name === 'runtimeMaxLifetimeSeconds' ? 3600 : 900])
   ),
 ])('rejects runtime lifecycle %s=%s outside its API bounds and permanent cap', (name, value, cap) => {
   expect(
@@ -720,7 +720,7 @@ test.each([
 });
 
 test.each([
-  [3600, 300],
+  [3600, 900],
   [1800, 120],
   [60, 60],
 ])('accepts runtime lifecycle at the caps and below (%s, %s)', (maxLifetime, idleTimeout) => {

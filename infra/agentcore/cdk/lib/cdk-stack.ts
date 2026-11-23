@@ -21,14 +21,11 @@ import type { HarnessAuth, ModelsDeployment, RuntimeTelemetry } from '../../../.
 import { addUserMemoryRole, type UserMemoryRole } from './user-memory-role';
 import { runtimeApplication, type RuntimeEnvironment } from './bot-image-runtime';
 
-/**
- * Cap (seconds) on a runtime microVM's total lifetime — permanent
- * defense-in-depth per ADR 0029, so no idle-reaping regression can cause an
- * 8 h runaway again. ~1 h; the AgentCore API bound is 60..28800 s.
- */
+/** Permanent lifetime cap in seconds (ADR 0029), bounding runaway microVM billing. */
 export const RUNTIME_MAX_LIFETIME_SECONDS = 3600;
 /** Idle timeout (seconds) after which an idle runtime microVM is reaped. */
 export const RUNTIME_IDLE_TIMEOUT_SECONDS = 300;
+const RUNTIME_IDLE_TIMEOUT_CAP_SECONDS = 900;
 /**
  * The session API function's timeout (seconds), Lambda's maximum. A purge deletes
  * events at 5 a second (DeleteEvent's per-Session limit), so this bounds a purge
@@ -151,7 +148,7 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
 function validateRuntimeLifecycle(props: AgentCoreStackProps): void {
   for (const [name, value, cap] of [
     ['runtimeMaxLifetimeSeconds', props.runtimeMaxLifetimeSeconds, RUNTIME_MAX_LIFETIME_SECONDS],
-    ['runtimeIdleTimeoutSeconds', props.runtimeIdleTimeoutSeconds, RUNTIME_IDLE_TIMEOUT_SECONDS],
+    ['runtimeIdleTimeoutSeconds', props.runtimeIdleTimeoutSeconds, RUNTIME_IDLE_TIMEOUT_CAP_SECONDS],
   ] as const) {
     if (value !== undefined && (!Number.isInteger(value) || value < 60 || value > cap)) {
       throw new Error(`${name} must be an integer between 60 and ${cap} seconds (ADR 0029)`);

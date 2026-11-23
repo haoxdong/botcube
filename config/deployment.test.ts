@@ -181,3 +181,13 @@ describe('a deploy root still holding a retired file', () => {
     ]);
   });
 });
+
+ it.each([
+  ['maxLifetime', 59], ['maxLifetime', 3601], ['maxLifetime', 60.5],
+  ['idleRuntimeSessionTimeout', 59], ['idleRuntimeSessionTimeout', 901], ['idleRuntimeSessionTimeout', 60.5],
+  ['runtimeMaxLifetimeSeconds', 1800], ['runtimeIdleTimeoutSeconds', 240], ['unknown', 60],
+])('rejects agentCore.runtime.%s=%s at both config readers', (key, value) => {
+  const path = file({ ...DEPLOYMENT, agentCore: { runtime: { [key]: value } } });
+  expect(() => loadConfig(path)).toThrow(`agentCore.runtime.${key}`);
+  expect(() => readConfig(path)).toThrow(`agentCore.runtime.${key}`);
+});

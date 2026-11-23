@@ -2043,6 +2043,18 @@
               "pattern": "^\\d{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com(\\.cn)?\\/[a-z0-9._/-]+(@sha256:[0-9a-f]{64}|:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}(@sha256:[0-9a-f]{64})?)$",
               "description": "As CloudFormation Runtime ContainerConfiguration.ContainerUri: the Bot Image the Runtime runs, built FROM the Harness image and pinned by digest in production. Absent, BotCube builds the Harness and the bot's staged image with CodeBuild."
             },
+            "maxLifetime": {
+              "description": "As LifecycleConfiguration.maxLifetime, in seconds; absent, 3600. Capped by ADR 0029.",
+              "type": "integer",
+              "minimum": 60,
+              "maximum": 3600
+            },
+            "idleRuntimeSessionTimeout": {
+              "description": "As LifecycleConfiguration.idleRuntimeSessionTimeout, in seconds; absent, 300.",
+              "type": "integer",
+              "minimum": 60,
+              "maximum": 900
+            },
             "rollbackEndpoint": {
               "description": "BotCube-owned: a V1_ROLLBACK endpoint on an earlier Runtime version, to move back to; absent, none.",
               "type": "object",
@@ -2530,6 +2542,10 @@
       },
       "aws.agentCore.platformVersion": {
         "path": "agentCore.runtime.platformVersion"
+      },
+      "aws.agentCore.maxLifetime": { "path": "agentCore.runtime.maxLifetime" },
+      "aws.agentCore.idleRuntimeSessionTimeout": {
+        "path": "agentCore.runtime.idleRuntimeSessionTimeout"
       },
       "aws.agentCore.runtimeNetworkParameter": {
         "derived": "/{name}/agentcore/security-group-id",
