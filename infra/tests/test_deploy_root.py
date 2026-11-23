@@ -41,7 +41,7 @@ def environment(**names: str) -> dict[str, str]:
 def test_the_identity_loads_from_the_deploy_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv(OLD_NAME, raising=False)
     monkeypatch.setenv(NAME, str(deploy_root(tmp_path, NAME)))
-    assert deploy_identity.load_identity()['aws']['ecs']['cluster'] == f'{NAME.lower()}-cluster'
+    assert deploy_identity.load_deployment()['names']['clusterName'] == f'{NAME.lower()}-cluster'
 
 
 def test_a_deploy_root_still_holding_its_identity_json_fails_naming_each_fields_botcube_yaml_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -50,24 +50,22 @@ def test_a_deploy_root_still_holding_its_identity_json_fails_naming_each_fields_
     monkeypatch.setenv(NAME, str(root))
 
     with pytest.raises(RuntimeError, match=f'Deploy root {root}: identity.json: aws.ecs.cluster: botcube.yaml names.clusterName'):
-        deploy_identity.load_identity()
+        deploy_identity.load_deployment()
     (root / 'identity.json').unlink()
-    assert deploy_identity.load_identity()['aws']['ecs']['cluster'] == f'{NAME.lower()}-cluster'
+    assert deploy_identity.load_deployment()['names']['clusterName'] == f'{NAME.lower()}-cluster'
 
 
 def test_a_deployed_process_loads_the_identity_from_the_botcube_config_it_is_told_of(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv(NAME, str(PUBLIC_EXAMPLE))
-    held = deploy_identity.load_identity()
+    held = deploy_identity.load_deployment()
     config = tmp_path / 'botcube.yaml'
-    config.write_text(json.dumps(yaml_document((PUBLIC_EXAMPLE.parent / 'botcube.yaml').read_text())))
+    config.write_text(json.dumps(held))
     monkeypatch.delenv(NAME)
     monkeypatch.setenv('BOTCUBE_CONFIG', str(config))
 
-    loaded = deploy_identity.load_identity()
+    loaded = deploy_identity.load_deployment()
 
-    assert loaded['aws']['ecs'].pop('originPullCaCertificate') == 'deploy/ecs/origin-pull-ca.crt'
-    del held['aws']['ecs']['originPullCaCertificate']
-    assert json.dumps(loaded) == json.dumps(held)
+    assert loaded == held
 
 
 @pytest.mark.integration

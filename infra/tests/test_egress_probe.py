@@ -46,7 +46,7 @@ class Logs:
 def fixture():
     module = load_deploy_script('egress_probe', 'egress_probe.py')
     outputs = {
-        module.ECS['previewOriginStackName']: {
+        module.NAMES['previewOriginStackName']: {
             'ReaperTaskDefinitionArn': 'arn:aws:ecs:us-east-1:123456789012:task-definition/reaper:1',
             'ReaperSecurityGroupId': 'sg-fixture', 'ReaperLogGroupName': '/fixture/reaper',
         },
@@ -112,11 +112,11 @@ def test_drain_stops_only_owned_probes_and_waits_for_stopped():
         ecs.desired = 'STOPPED'
 
     ecs.stop_task = stop_task
-    assert probe.pending(outputs[module.ECS['previewOriginStackName']])
+    assert probe.pending(outputs[module.NAMES['previewOriginStackName']])
     assert stopped == [running['taskArn']]
-    assert probe.pending(outputs[module.ECS['previewOriginStackName']])
+    assert probe.pending(outputs[module.NAMES['previewOriginStackName']])
     ecs.stopped = True
-    assert not probe.pending(outputs[module.ECS['previewOriginStackName']])
+    assert not probe.pending(outputs[module.NAMES['previewOriginStackName']])
     assert stopped == [running['taskArn']]
 
 
@@ -131,8 +131,8 @@ def test_transition_proof_handoff_through_verify_park_main(tmp_path, monkeypatch
     module, probe, ecs, ec2, outputs = fixture()
     transition = load_deploy_script('parking_transition', 'parking_transition.py')
     verifier = load_deploy_script('verify_park_handoff', 'verify-park.py')
-    outputs[module.ECS['apiHealth']['stackName']] = {}
-    outputs[module.ECS['previewOriginStackName']]['ReaperRuleName'] = 'fixture-rule'
+    outputs[module.NAMES['apiHealthStackName']] = {}
+    outputs[module.NAMES['previewOriginStackName']]['ReaperRuleName'] = 'fixture-rule'
     running = probe.start('wake-fixture', outputs, 1794960000)
     ecs.stopped = True
     proof = probe.observe(running)
@@ -157,7 +157,7 @@ def test_transition_proof_handoff_through_verify_park_main(tmp_path, monkeypatch
     monkeypatch.setattr(boto3, 'client', lambda name: clients[name])
     monkeypatch.setenv('RUNNER_TEMP', str(tmp_path))
     monkeypatch.setattr(verifier, 'stack_facts', lambda _cfn, name: (
-        'UPDATE_COMPLETE', facts['servingResources'] if name == module.ECS['previewOriginStackName'] else facts['natResources']))
+        'UPDATE_COMPLETE', facts['servingResources'] if name == module.NAMES['previewOriginStackName'] else facts['natResources']))
     monkeypatch.setattr(verifier, 'monitoring_facts', lambda *_: (False, facts['alarmActions']))
     monkeypatch.setattr(verifier, 'service_facts', lambda *_: facts['services'])
     monkeypatch.setattr(verifier, 'response_facts', lambda *_: facts['responses'])

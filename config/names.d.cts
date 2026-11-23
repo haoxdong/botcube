@@ -1,1 +1,46 @@
 export function fillName(template: string, name: string): string;
+export const DERIVED_NAMES: {
+  readonly runtimeAgentRuntimeName: '{snake}_runtime';
+  readonly memoryName: '{snake}_memory';
+  readonly agentComputerBrowserName: '{snake}_agent_computer_managed';
+  readonly agentComputerBrowserProfileNamePrefix: '{snake}_';
+  readonly linkBrowserName: '{snake}_link';
+  readonly agentCoreTargetName: 'default';
+  readonly sessionApiFunctionName: '{name}-session-api';
+  readonly clusterName: '{name}';
+  readonly deployRoleName: '{name}-ecs-github-deploy';
+  readonly deployPolicyName: '{name}-ecs-deploy';
+  readonly previewOriginStackName: '{name}-preview-origin';
+  readonly privateEgressStackName: '{name}-private-egress';
+  readonly natGatewayName: '{name}-private-egress';
+  readonly apiHealthStackName: '{name}-api-health';
+  readonly apiHealthAlarmName: '{name}-api-health';
+  readonly webLatencyStackName: '{name}-web-latency';
+  readonly webAppMonitorName: '{name}-web';
+  readonly alertsTopicName: '{name}-alerts';
+  readonly parkingFunctionName: '{name}-production-parking';
+  readonly repositoryName: '{name}/runtime';
+  readonly buildProjectName: '{name}-container-builder';
+  readonly buildFunctionName: '{name}-container-build-handler';
+  readonly buildLogGroupName: '/aws/lambda/{name}-container-build-handler';
+  readonly deployUserName: '{name}-deploy';
+  readonly runtimeRoleName: '{name}-runtime';
+  readonly memoryRoleName: '{name}-memory';
+  readonly userMemoryRoleName: '{name}-user-memory';
+  readonly chatServiceTaskRoleName: null;
+  readonly filesMountRoleName: null;
+  readonly filesLinksRoleName: null;
+  readonly agentComputerBrowserRoleName: null;
+  readonly buildFunctionRoleName: '{name}-container-build-handler';
+  readonly buildRoleName: '{name}-container-build';
+  readonly sessionApiRoleName: '{name}-session-api';
+  readonly invokePolicyNamePrefix: '{name}-agentcore-invoke';
+  readonly runtimeAlarmNamePrefix: '{name}-runtime';
+  readonly runtimeErrorsFilterName: '{name}-runtime-error-lines';
+};
+type Name = keyof typeof DERIVED_NAMES;
+type OptionalName = { [Key in Name]: (typeof DERIVED_NAMES)[Key] extends null ? Key : never }[Name];
+type FixedName = 'parkStateParameterName' | 'originPullClientSecretName' | 'originTokenSecretName'
+  | 'turnIdentityKeysSecretName' | 'rollbackTaskFamilyPrefix' | 'rollbackPolicyName';
+export function deploymentNames(config: { name: string; names?: Record<string, string | undefined> | undefined }):
+  Record<Exclude<Name, OptionalName> | FixedName, string> & Partial<Record<OptionalName, string>>;

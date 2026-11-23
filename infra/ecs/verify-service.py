@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 import boto3
 from botocore.exceptions import ClientError
 from deploy_check import user_agent
-from deploy_identity import deploy_root, load_identity
+from deploy_identity import deploy_root, deployment_names, load_deployment
 from origin_smoke import OriginSmoke, cleanup_conversation
 from test_user import test_user
 
@@ -37,7 +37,8 @@ if TYPE_CHECKING:
     from types_boto3_lambda import LambdaClient
 
 DEPLOY_ROOT = deploy_root().resolve()
-IDENTITY = load_identity()
+IDENTITY = load_deployment()
+NAMES = deployment_names(IDENTITY)
 DOMAIN = 'chatServicePreview'
 
 
@@ -120,7 +121,7 @@ def verify_deployment(outputs: dict[str, str], ecs: ECSClient, elb: ElasticLoadB
     eni = ec2.describe_network_interfaces(NetworkInterfaceIds=[eni_id])['NetworkInterfaces'][0]
     require(not eni.get('Association', {}).get('PublicIp'), 'Preview task unexpectedly has a public IP')
     subnet, private_ip = required(eni.get('SubnetId'), 'network interface SubnetId'), required(eni.get('PrivateIpAddress'), 'network interface PrivateIpAddress')
-    require(subnet in {s['id'] for s in IDENTITY['aws']['agentCore']['privateNatBrowser']['subnets']}, 'Preview task is outside configured private subnets')
+    require(subnet in {s['subnetId'] for s in IDENTITY['existing']['vpc']['privateSubnets']}, 'Preview task is outside configured private subnets')
     targets = elb.describe_target_health(TargetGroupArn=outputs['TargetGroupArn'])['TargetHealthDescriptions']
     current = [target for target in targets if target_endpoint(target) == (private_ip, 8123)]
     # ALB can continue displaying an old target as draining after deregistration.
@@ -281,7 +282,7 @@ class SessionRecord:
     """The deployed AgentCore Memory holding each Session's events (ADR 0067)."""
 
     def __init__(self, control: BedrockAgentCoreControlClient, data: BedrockAgentCoreClient) -> None:
-        name = IDENTITY['aws']['agentCore']['memory']
+        name = NAMES['memoryName']
         memories: list[str] = []
         args: dict[str, Any] = {}
         while True:
@@ -324,8 +325,8 @@ class SessionRecord:
 
 def verify_session_api(record: SessionRecord, lambda_client: LambdaClient) -> dict[str, Any]:
     require(record.expiry_days() == 365, 'AgentCore Memory event expiry is not 365 days')
-    aws = IDENTITY['aws']
-    function_arn = f"arn:aws:lambda:{aws['region']}:{aws['account']}:function:{aws['agentCore']['sessionApiFunction']}"
+
+    function_arn = f"arn:aws:lambda:{IDENTITY['env']['region']}:{IDENTITY['env']['account']}:function:{NAMES['sessionApiFunctionName']}"
     probe = {'operation': 'get', 'sessionId': 'deploy-verification-' + uuid.uuid4().hex, 'userId': 'deploy-verification'}
     try:
         lambda_client.invoke(FunctionName=function_arn, Payload=json.dumps(probe).encode())
@@ -440,7 +441,7 @@ def main():
     parser.add_argument('--observation-seconds', type=int, choices=range(601), default=0, metavar='0..600')
     parser.add_argument('--progress-rounds', type=int, choices=range(2, 121), default=120, metavar='2..120')
     args = parser.parse_args()
-    outputs = json.loads(Path(args.outputs).read_text())[IDENTITY['aws']['ecs']['previewOriginStackName']]
+    outputs = json.loads(Path(args.outputs).read_text())[NAMES['previewOriginStackName']]
     deployment = verify_deployment(outputs, boto3.client('ecs'), boto3.client('elbv2'))
     if args.replacement_evidence:
         replacement = json.loads(args.replacement_evidence.read_text())
@@ -468,7 +469,7 @@ def main():
         print(json.dumps(evidence), flush=True)
 
 
-ACCEPTANCE = runpy.run_path(str(DEPLOY_ROOT / IDENTITY['verification']['acceptanceHook']), init_globals=globals())
+ACCEPTANCE = runpy.run_path(str(DEPLOY_ROOT / 'ecs/acceptance.py'), init_globals=globals())
 
 if __name__ == '__main__':
     main()

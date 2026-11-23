@@ -1,7 +1,7 @@
 const { existsSync, readdirSync, readFileSync } = require('node:fs');
-const { basename, dirname, join, relative, resolve } = require('node:path');
+const { basename, join, relative } = require('node:path');
 const { parseDocument } = require('yaml');
-const { fillName } = require('./names.cjs');
+const { deploymentNames, fillName } = require('./names.cjs');
 const Ajv2020 = require('ajv/dist/2020').default;
 const schema = require('./botcube.schema.json');
 const validate = new Ajv2020({ strict: false, validateFormats: false }).compile(schema);
@@ -64,51 +64,6 @@ function readConfig(path) {
 /** The origins CORS allows: domains.web and its aliases; without domains, undefined. */
 function webOrigins(config) {
   return config.domains ? [config.domains.web, ...(config.domains.webAliases ?? [])] : undefined;
-}
-
-const valueAt = (value, path) => path.split('.').reduce((node, key) => (node === undefined || node === null ? undefined : node[key]), value);
-
-function setAt(root, keys, value) {
-  const parent = keys.slice(0, -1).reduce((node, key, index) => {
-    node[key] ??= /^\d+$/.test(keys[index + 1]) ? [] : {};
-    return node[key];
-  }, root);
-  parent[keys.at(-1)] = value;
-}
-
-/**
- * The retired deploy-root `file` the BotCube Config at `configPath` stands for, built from the schema's x-retired-files
- * map, with a file path given relative to `repositoryRoot`.
- */
-function deploymentFile(config, file, { configPath, repositoryRoot = resolve(__dirname, '..') }) {
-  const fields = schema['x-retired-files'][file];
-  if (!fields) throw new Error(`${file}: not a retired deploy-root file`);
-  const { name } = config;
-  const filled = template => fillName(template, name);
-  const sourced = source => {
-    if (source.when && !valueAt(config, source.when)) return undefined;
-    if ('value' in source) return source.value;
-    if ('derived' in source) return filled(source.derived);
-    if ('file' in source) {
-      const given = valueAt(config, source.file);
-      return given === undefined ? undefined : relative(repositoryRoot, resolve(dirname(configPath), given));
-    }
-    const found = valueAt(config, source.path);
-    if (found !== undefined && source.each) return found.map(item => Object.fromEntries(Object.entries(source.each).map(([field, from]) => [field, item[from]])));
-    if (found !== undefined && source.as === 'hostname') return new URL(found).hostname;
-    if (found !== undefined && source.as === 'list') return [found];
-    if (found !== undefined) return found;
-    return typeof source.default === 'string' ? filled(source.default) : source.default;
-  };
-  const entries = Object.entries(fields);
-  const built = /^\d/.test(entries[0][0]) ? [] : {};
-  for (const [field, source] of entries) {
-    const value = sourced(source);
-    if (value === undefined) continue;
-    if (source.spread) setAt(built, field.split('.'), { ...valueAt(built, field), ...value });
-    else setAt(built, field.split('.'), value);
-  }
-  return built;
 }
 
 /** Where a retired file's field went: the botcube.yaml key its Source names, or why none does. */
@@ -196,25 +151,13 @@ function checkBotDirectory(botDirectory, deployRoot) {
   if (errors.length) throw new Error(errors.join('\n'));
 }
 
-/**
- * The BotCube Config beside a deploy root, read once, and each of the deploy root's files built from it (`file`). It
- * fails while the deploy root still holds a retired file, or its bot directory any other configuration file.
- */
-function deployRootFiles(deployRoot, { repositoryRoot } = {}) {
+function readDeployment(deployRoot) {
   const botDirectory = join(deployRoot, '..');
   checkBotDirectory(botDirectory, deployRoot);
   const configPath = join(botDirectory, 'botcube.yaml');
-  const config = existsSync(configPath) ? readConfig(configPath) : {};
-  const file = name => {
-    if (!config.name) throw new Error(`${join(deployRoot, name)}: BotCube Config ${configPath} names no deployment`);
-    return deploymentFile(config, name, { configPath, ...(repositoryRoot ? { repositoryRoot } : {}) });
-  };
-  return { config, file };
-}
-
-/** A deploy root's `file`, built from the BotCube Config beside it, as {@link deployRootFiles} builds it. */
-function deployRootFile(deployRoot, file, options) {
-  return deployRootFiles(deployRoot, options).file(file);
+  const config = readConfig(configPath);
+  if (!config.name) throw new Error(`BotCube Config ${configPath} names no deployment`);
+  return config;
 }
 
 /** The IAM resource a Credential Source's `secretId` grants: its ARN as given, or a name's every ARN in the reader's own account and region. */
@@ -222,11 +165,10 @@ function secretResource(secretId, { partition, region, account }) {
   return secretId.startsWith('arn:') ? secretId : `arn:${partition}:secretsmanager:${region}:${account}:secret:${secretId}-??????`;
 }
 
-module.exports = { secretResource, readConfigSource, readConfig, parseYaml, webOrigins, deploymentFile, deployRootFiles, deployRootFile, botDirectoryErrors, checkBotDirectory };
+module.exports = { secretResource, readConfigSource, readConfig, parseYaml, webOrigins, readDeployment, deploymentNames, fillName, botDirectoryErrors, checkBotDirectory };
 
-// `node read.cjs <deploy root> <file> [repository root]` prints the deploy root's file as JSON, for a shell or workflow step.
 if (require.main === module) {
-  const [deployRoot, file, repositoryRoot] = process.argv.slice(2);
-  if (!deployRoot || !file) throw new Error('usage: node read.cjs <deploy root> <file> [repository root]');
-  process.stdout.write(`${JSON.stringify(deployRootFile(deployRoot, file, repositoryRoot ? { repositoryRoot: resolve(repositoryRoot) } : {}))}\n`);
+  const [deployRoot] = process.argv.slice(2);
+  if (!deployRoot || process.argv.length !== 3) throw new Error('usage: node read.cjs <deploy root>');
+  process.stdout.write(`${JSON.stringify(readDeployment(deployRoot))}\n`);
 }

@@ -3,10 +3,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { deployRootFile } from '../../config/read.cjs';
+import { readDeployment, deploymentNames } from '../../config/read.cjs';
 
-const identity = deployRootFile(process.env.BOTCUBE_DEPLOY_ROOT, 'identity.json');
-const { account, region, ecs } = identity.aws;
+const config = readDeployment(process.env.BOTCUBE_DEPLOY_ROOT);
+const names = deploymentNames(config);
+const { account, region } = config.env;
 const [mode, source] = process.argv.slice(2);
 if (!['deploy', 'rollback'].includes(mode) || !source) throw new Error('Usage: managed-deploy-policies.mjs deploy|rollback POLICY_JSON');
 const directory = mkdtempSync(join(tmpdir(), 'deploy-managed-policies-'));
@@ -23,31 +24,31 @@ function aws(service, operation, ...args) {
 }
 
 function migrate(document) {
-  const inline = aws('iam', 'list-role-policies', '--role-name', ecs.deployRoleName).PolicyNames;
-  const attached = aws('iam', 'list-attached-role-policies', '--role-name', ecs.deployRoleName).AttachedPolicies;
+  const inline = aws('iam', 'list-role-policies', '--role-name', names.deployRoleName).PolicyNames;
+  const attached = aws('iam', 'list-attached-role-policies', '--role-name', names.deployRoleName).AttachedPolicies;
   const core = mode === 'deploy';
-  const plans = [{ name: core ? ecs.deployPolicyName : ecs.rollbackPolicyName,
+  const plans = [{ name: core ? names.deployPolicyName : names.rollbackPolicyName,
     documents: core ? deployGroups(document) : { Rollback: document } }];
-  if (core && (inline.includes(ecs.rollbackPolicyName) || attached.some(policy => policy.PolicyName === `${ecs.rollbackPolicyName}-rollback`))) {
+  if (core && (inline.includes(names.rollbackPolicyName) || attached.some(policy => policy.PolicyName === `${names.rollbackPolicyName}-rollback`))) {
     const rollback = join(directory, 'rollback.json');
     const result = spawnSync('bash', [join(dirname(fileURLToPath(import.meta.url)), 'bootstrap-rollback-role.sh'), '--policy-file', rollback], { encoding: 'utf8' });
     if (result.status !== 0) throw new Error(result.stderr || 'Rollback policy rendering failed');
-    plans.push({ name: ecs.rollbackPolicyName, documents: { Rollback: JSON.parse(readFileSync(rollback, 'utf8')) } });
+    plans.push({ name: names.rollbackPolicyName, documents: { Rollback: JSON.parse(readFileSync(rollback, 'utf8')) } });
   }
   for (const plan of plans) checkHeadroom(plan.documents);
   const statements = plans.flatMap(plan => Object.values(plan.documents).flatMap(policy => policy.Statement));
-  const legacy = core ? inline : inline.filter(name => name === ecs.rollbackPolicyName);
+  const legacy = core ? inline : inline.filter(name => name === names.rollbackPolicyName);
   checkLegacy(legacy, statements);
   const wanted = plans.flatMap(plan => Object.keys(plan.documents).map(group => policyArn(plan.name, group)));
   const quota = aws('iam', 'get-account-summary').SummaryMap.AttachedPoliciesPerRoleQuota;
   if (!Number.isInteger(quota) || new Set([...attached.map(policy => policy.PolicyArn), ...wanted]).size > quota) throw new Error('Managed policy attachment quota exceeded');
   for (const plan of plans) deploy(plan);
-  const actual = aws('iam', 'list-attached-role-policies', '--role-name', ecs.deployRoleName).AttachedPolicies.map(policy => policy.PolicyArn);
+  const actual = aws('iam', 'list-attached-role-policies', '--role-name', names.deployRoleName).AttachedPolicies.map(policy => policy.PolicyArn);
   for (const plan of plans) verify(plan, actual);
-  const current = aws('iam', 'list-role-policies', '--role-name', ecs.deployRoleName).PolicyNames;
-  const retire = core ? current : current.filter(name => name === ecs.rollbackPolicyName);
+  const current = aws('iam', 'list-role-policies', '--role-name', names.deployRoleName).PolicyNames;
+  const retire = core ? current : current.filter(name => name === names.rollbackPolicyName);
   checkLegacy(retire, statements);
-  for (const name of retire) aws('iam', 'delete-role-policy', '--role-name', ecs.deployRoleName, '--policy-name', name);
+  for (const name of retire) aws('iam', 'delete-role-policy', '--role-name', names.deployRoleName, '--policy-name', name);
 }
 
 function deployGroups(document) {
@@ -72,9 +73,9 @@ function checkHeadroom(documents) {
   }
 }
 
-function checkLegacy(names, statements) {
-  for (const name of names) {
-    const policy = aws('iam', 'get-role-policy', '--role-name', ecs.deployRoleName, '--policy-name', name).PolicyDocument;
+function checkLegacy(policyNames, statements) {
+  for (const name of policyNames) {
+    const policy = aws('iam', 'get-role-policy', '--role-name', names.deployRoleName, '--policy-name', name).PolicyDocument;
     if (!policy.Statement.every(statement => covered(statement, statements))) throw new Error(`Inline policy ${name} has grants not represented in code`);
   }
 }
@@ -99,7 +100,7 @@ function policyArn(name, group) {
 function deploy(plan) {
   const resources = Object.fromEntries(Object.entries(plan.documents).map(([group, policy]) => [group, {
     Type: 'AWS::IAM::ManagedPolicy', Properties: {
-      ManagedPolicyName: `${plan.name}-${group.toLowerCase()}`, Roles: [ecs.deployRoleName], PolicyDocument: policy,
+      ManagedPolicyName: `${plan.name}-${group.toLowerCase()}`, Roles: [names.deployRoleName], PolicyDocument: policy,
     },
   }]));
   const template = join(directory, `${plan.name}.json`);

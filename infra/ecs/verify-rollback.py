@@ -102,7 +102,7 @@ class Exercise:
         self.outputs, self.ecs, self.elb, self.report, self.path = outputs, ecs, elb, report, path
         self.ecr = ecr
         self.cluster, self.name = outputs['ClusterName'], outputs['ServiceName']
-        require(self.name == 'chat-service-preview' and self.cluster == normal['IDENTITY']['aws']['ecs']['cluster'],
+        require(self.name == 'chat-service-preview' and self.cluster == normal['IDENTITY'].get('names', {}).get('clusterName', normal['IDENTITY']['name']),
                 'Rollback is restricted to the configured preview service')
 
     def save(self):
@@ -142,7 +142,7 @@ class Exercise:
         owner = os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT']
         self.report.update(outputs=self.outputs, baseline=baseline,
                            baselineServiceRevision=revision_arn(matches[0]),
-                           family=normal['IDENTITY']['aws']['ecs']['rollbackTaskFamilyPrefix'] + owner, owner=owner,
+                           family=normal['NAMES']['rollbackTaskFamilyPrefix'] + owner, owner=owner,
                            preparedAt=utc(), sourceRevision=os.environ['GITHUB_SHA'],
                            completed=False, manualRestore=False)
         self.save()
@@ -326,7 +326,7 @@ def main():
     require(args.mode != 'exercise' or not path.exists(), 'Use recovery, never replay a mutation record')
     report = json.loads(path.read_text()) if args.mode == 'recover' else {}
     config = Config(connect_timeout=10, read_timeout=20, retries={'total_max_attempts': 1})
-    outputs = json.loads(Path(args.outputs).read_text())[normal['IDENTITY']['aws']['ecs']['previewOriginStackName']]
+    outputs = json.loads(Path(args.outputs).read_text())[normal['IDENTITY'].get('names', {}).get('previewOriginStackName', normal['IDENTITY']['name'] + '-preview-origin')]
     exercise = Exercise(outputs, boto3.client('ecs', config=config), boto3.client('elbv2', config=config), report, path,
                         ecr=boto3.client('ecr', config=config))
     try:

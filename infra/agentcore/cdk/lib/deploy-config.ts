@@ -1,4 +1,4 @@
-import { deployRootFiles, type DeployRootFiles } from 'botcube-config/read';
+import { readDeployment, deploymentNames, type DeploymentConfig } from 'botcube-config/read';
 import {
   AgentCoreProjectSpecSchema,
   AwsDeploymentTargetsSchema,
@@ -19,7 +19,6 @@ function projectDir(dir: string): string {
 }
 const INFRA = path.resolve(projectDir(__dirname), '../..');
 
-/** What every deploy root's agentcore.json holds unless it says otherwise. */
 const PROJECT_DEFAULTS = { version: 1, managedBy: 'CDK', tags: { 'agentcore:created-by': 'agentcore-cli' } };
 const RUNTIME_DEFAULTS = {
   build: 'Container',
@@ -54,36 +53,6 @@ const MEMORY_DEFAULTS = {
     },
   ],
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-/** `own` over `defaults`: objects merge key by key, and any other value the deploy root sets replaces the default. */
-function overDefaults(defaults: unknown, own: unknown): unknown {
-  if (own === undefined) return defaults;
-  if (!isRecord(defaults) || !isRecord(own)) return own;
-  const keys = new Set([...Object.keys(defaults), ...Object.keys(own)]);
-  return Object.fromEntries([...keys].map(key => [key, overDefaults(defaults[key], own[key])]));
-}
-
-function readJson(file: string): unknown {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch (error) {
-    throw new Error(`Cannot read ${file}: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-/** The deploy root's retired `file`, built from the BotCube Config beside it. */
-function readDeployRootFile(deployRoot: string, files: DeployRootFiles, file: string): unknown {
-  try {
-    return files.file(file);
-  } catch (error) {
-    throw new Error(
-      `Cannot read ${path.join(deployRoot, file)}: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-}
 
 export interface PrivateNatBrowserIdentity {
   name: string;
@@ -144,27 +113,85 @@ export interface DeployConfig {
   tags?: Readonly<Record<string, string>>;
 }
 
-/** The deploy root's identity over BotCube's identity-defaults.json, built from the BotCube Config beside it. */
-export function readDeployIdentity(deployRoot: string, files = deployRootFiles(deployRoot)): DeployIdentity {
-  return overDefaults(
-    readJson(path.join(INFRA, 'identity-defaults.json')),
-    readDeployRootFile(deployRoot, files, 'identity.json')
-  ) as DeployIdentity;
+export function readDeployIdentity(deployRoot: string, config = readDeployment(deployRoot)): DeployIdentity {
+  const names = deploymentNames(config);
+  return {
+    aws: {
+      account: config.env.account,
+      region: config.env.region,
+      cloudFormation: {
+        stackFamily: config.name,
+      },
+      agentCore: {
+        runtime: names.runtimeAgentRuntimeName,
+        platformVersion: config.agentCore?.runtime?.platformVersion ?? 'V2',
+        runtimeNetworkParameter: config.existing.browsers?.link
+          ? `/${config.name}/agentcore/security-group-id`
+          : undefined,
+        memory: names.memoryName,
+        sessionApiFunction: names.sessionApiFunctionName,
+        sessionApiAlias: 'live',
+        privateNatBrowser: config.existing.browsers?.link
+          ? {
+              name: names.linkBrowserName,
+              id: config.existing.browsers.link.browserId,
+              vpcId: config.existing.vpc.vpcId,
+              browserSecurityGroupId: config.existing.browsers.link.securityGroupId,
+              extension: {
+                bucket: config.agentCore?.browsers?.link?.extension.bucket,
+                prefix: config.agentCore?.browsers?.link?.extension.key,
+                versionId: config.agentCore?.browsers?.link?.extension.versionId,
+              },
+              subnets: config.existing.vpc.privateSubnets.map(item => ({
+                id: item.subnetId,
+                availabilityZone: item.availabilityZone,
+                cidrBlock: item.ipv4CidrBlock,
+              })),
+            }
+          : undefined,
+        rollbackVersion: config.agentCore?.runtime?.rollbackEndpoint?.agentRuntimeVersion,
+      },
+      ecr: {
+        repository: names.repositoryName,
+      },
+      codeBuild: {
+        project: names.buildProjectName,
+      },
+      lambda: {
+        family: names.buildFunctionName,
+      },
+      iam: {
+        runtimeRole: names.runtimeRoleName,
+        memoryRole: names.memoryRoleName,
+        userMemoryRole: names.userMemoryRoleName,
+        chatServiceTaskRole: config.names?.chatServiceTaskRoleName,
+        lambdaRole: names.buildFunctionRoleName,
+        codeBuildRole: names.buildRoleName,
+        sessionApiRole: names.sessionApiRoleName,
+      },
+    },
+    domains: {
+      chatService: config.domains.chatService,
+    },
+  } as DeployIdentity;
 }
 
-/** The AgentCore project its BotCube Config gives, over the project, runtime and memory defaults every deploy shares. */
-export function readProjectSpec(deployRoot: string, files = deployRootFiles(deployRoot)): AgentCoreProjectSpec {
-  const specPath = path.join(deployRoot, '..', 'botcube.yaml');
-  const own = readDeployRootFile(deployRoot, files, 'agentcore/agentcore.json');
-  if (!isRecord(own)) throw new Error(`Invalid AgentCore project from ${specPath}: not a JSON object`);
-  const each = (entries: unknown, defaults: object) =>
-    Array.isArray(entries) ? entries.map(entry => overDefaults(defaults, entry)) : entries;
+export function readProjectSpec(
+  deployRoot: string,
+  config: DeploymentConfig = readDeployment(deployRoot)
+): AgentCoreProjectSpec {
+  const name = config.name.replaceAll('-', '_');
   const parsed = AgentCoreProjectSpecSchema.safeParse({
-    ...(overDefaults(PROJECT_DEFAULTS, own) as object),
-    runtimes: each(own.runtimes, RUNTIME_DEFAULTS),
-    memories: each(own.memories, MEMORY_DEFAULTS),
+    ...PROJECT_DEFAULTS,
+    name: config.name.replaceAll('-', ''),
+    tags: { ...PROJECT_DEFAULTS.tags, 'agentcore:project-name': config.name, ...config.tags },
+    runtimes: [{ ...RUNTIME_DEFAULTS, name, dockerfile: '.tool-dist/Dockerfile' }],
+    memories: [{ ...MEMORY_DEFAULTS, name }],
   });
-  if (!parsed.success) throw new Error(`Invalid AgentCore project from ${specPath}: ${parsed.error.message}`);
+  if (!parsed.success)
+    throw new Error(
+      `Invalid AgentCore project from ${path.join(deployRoot, '..', 'botcube.yaml')}: ${parsed.error.message}`
+    );
   return parsed.data;
 }
 
@@ -185,12 +212,14 @@ export async function loadDeployConfig(configuredRoot: string | undefined, cwd: 
     throw new Error('BOTCUBE_DEPLOY_ROOT must point to the active deploy directory');
   }
   const deployRoot = path.resolve(cwd, configuredRoot);
-  const files = deployRootFiles(deployRoot);
-  const identity = readDeployIdentity(deployRoot, files);
-  const spec = readProjectSpec(deployRoot, files);
+  const config = readDeployment(deployRoot);
+  const identity = readDeployIdentity(deployRoot, config);
+  const spec = readProjectSpec(deployRoot, config);
   setSessionProjectRoot(agentCoreProjectRoot(spec));
-  const targets = AwsDeploymentTargetsSchema.parse(readDeployRootFile(deployRoot, files, 'agentcore/aws-targets.json'));
-  const runtimeImage = files.config.agentCore?.runtime?.containerUri;
-  const { tags } = files.config;
+  const targets = AwsDeploymentTargetsSchema.parse([
+    { name: deploymentNames(config).agentCoreTargetName, ...config.env },
+  ]);
+  const runtimeImage = config.agentCore?.runtime?.containerUri;
+  const { tags } = config;
   return { deployRoot, identity, spec, targets, ...(runtimeImage ? { runtimeImage } : {}), ...(tags ? { tags } : {}) };
 }

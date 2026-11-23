@@ -150,7 +150,7 @@ class RollbackTest(unittest.TestCase):
         ecs.describe_service_deployments.return_value = {'serviceDeployments': [deployment]}
         ecs.describe_service_revisions.return_value = {'serviceRevisions': [revision]}
         report = {'baselineServiceRevision': 'baseline-service-revision', 'diagnosticRevision': 'diagnostic:1'}
-        return r.Exercise({'ClusterName': r.normal['IDENTITY']['aws']['ecs']['cluster'], 'ServiceName': 'chat-service-preview'},
+        return r.Exercise({'ClusterName': r.normal['NAMES']['clusterName'], 'ServiceName': 'chat-service-preview'},
                           ecs, None, report, Path('unused.json'))
 
     def test_provider_history_missing_a_field_the_verdict_reads_fails_loud(self):
@@ -168,7 +168,7 @@ class RollbackTest(unittest.TestCase):
     def exercise(self, provider: Provider, directory: str):
         report: ReportFixture = {'baseline': deepcopy(BASELINE), 'baselineServiceRevision': 'baseline-service-revision',
                   'family': 'bot-cube-preview-rollback-test', 'owner': 'test', 'manualRestore': False}
-        exercise = r.Exercise({'ClusterName': r.normal['IDENTITY']['aws']['ecs']['cluster'],
+        exercise = r.Exercise({'ClusterName': r.normal['NAMES']['clusterName'],
                                'ServiceName': 'chat-service-preview'}, provider, None, report, Path(directory) / 'evidence.json')
         def healthy():
             report['recoveredTask'] = deepcopy(BASELINE)
@@ -264,7 +264,7 @@ class RollbackTest(unittest.TestCase):
                 'deploymentConfiguration': {'minimumHealthyPercent': 100, 'maximumPercent': 200,
                     'deploymentCircuitBreaker': {'enable': True, 'rollback': True}},
                 'deployments': [{'status': 'PRIMARY', 'rolloutState': 'COMPLETED', 'taskDefinition': 'baseline:1'}]}]}
-            exercise = r.Exercise({'ClusterName': r.normal['IDENTITY']['aws']['ecs']['cluster'],
+            exercise = r.Exercise({'ClusterName': r.normal['NAMES']['clusterName'],
                                    'ServiceName': 'chat-service-preview'}, ecs, None,
                                   {'baseline': BASELINE}, Path(directory) / 'evidence.json')
             with patch.dict(r.normal, {'verify_deployment': lambda *_args: {**BASELINE, 'imageDigest': 'sha256:wrong'}}), self.assertRaisesRegex(RuntimeError, 'Recovered image differs'):
@@ -294,10 +294,10 @@ class RollbackTest(unittest.TestCase):
 
     def test_failed_probe_artifact_retains_supported_conversation_cleanup(self):
         with tempfile.TemporaryDirectory() as directory:
-            outputs = {'ClusterName': r.normal['IDENTITY']['aws']['ecs']['cluster'],
+            outputs = {'ClusterName': r.normal['NAMES']['clusterName'],
                        'ServiceName': 'chat-service-preview', 'ChatTableName': 'chat'}
             output_path = Path(directory) / 'outputs.json'
-            output_path.write_text(json.dumps({r.normal['IDENTITY']['aws']['ecs']['previewOriginStackName']: outputs}))
+            output_path.write_text(json.dumps({r.normal['NAMES']['previewOriginStackName']: outputs}))
             report_path = Path(directory) / 'preview-rollback-evidence.json'
             exercise_type = r.Exercise
             def factory(*args: object, **kwargs: object):

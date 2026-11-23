@@ -1,9 +1,10 @@
+import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { botDirectoryErrors, deployRootFile, readConfig, webOrigins } from './read.cjs';
+import { botDirectoryErrors, readDeployment, deploymentNames, readConfig, webOrigins } from './read.cjs';
 import { loadConfig } from './load.js';
 
 function file(config: unknown): string {
@@ -68,33 +69,30 @@ function deployRoot(config: unknown, files: Record<string, unknown> = {}): strin
   return root;
 }
 
-describe("a migrated deploy root's files, from its BotCube Config", () => {
-  it('name every resource from name, unless names overrides it', () => {
-    const identity = deployRootFile(deployRoot({ ...DEPLOYMENT, names: { alertsTopicName: 'corp-alerts', linkBrowserName: 'acme_link' } }), 'identity.json');
-    expect(identity).toMatchObject({ aws: {
-      account: '123456789012', region: 'eu-west-1',
-      cloudFormation: { stackFamily: 'acme-bot' },
-      agentCore: { runtime: 'acme_bot_runtime', memory: 'acme_bot_memory', sessionApiFunction: 'acme-bot-session-api' },
-      ecs: { cluster: 'acme-bot', alertsTopicName: 'corp-alerts', chatService: { turnIdentityKeysSecretName: '/acme-bot/chat-service/turn-identity-keys' } },
-      iam: { runtimeRole: 'acme-bot-runtime' },
-    } });
-    expect(identity).toHaveProperty('ssm', { runtimeArn: '/acme-bot/agentcore/runtime-arn', parkState: '/acme-bot/production/park-state' });
+describe("a deploy root's native BotCube Config", () => {
+  it('loads native keys and derives only physical names', () => {
+    const config = readDeployment(deployRoot({ ...DEPLOYMENT, names: { alertsTopicName: 'corp-alerts', linkBrowserName: 'acme_link' } }));
+    expect(config).toEqual({ ...DEPLOYMENT, names: { alertsTopicName: 'corp-alerts', linkBrowserName: 'acme_link' } });
+    expect(deploymentNames(config)).toMatchObject({
+      runtimeAgentRuntimeName: 'acme_bot_runtime', memoryName: 'acme_bot_memory',
+      sessionApiFunctionName: 'acme-bot-session-api', clusterName: 'acme-bot',
+      alertsTopicName: 'corp-alerts', linkBrowserName: 'acme_link', runtimeRoleName: 'acme-bot-runtime',
+    });
   });
 
-  it('resolve the origin-pull CA beside the BotCube Config, from the repository root', () => {
-    const root = deployRoot(DEPLOYMENT);
-    expect(deployRootFile(root, 'identity.json', { repositoryRoot: join(root, '../..') })).toHaveProperty(
-      'aws.ecs.originPullCaCertificate', `${join(root, '..').split('/').at(-1)}/deploy/origin-pull-ca.crt`,
-    );
-  });
-
-  it('take the VPC, and create the NAT in it, leaving through its Elastic IP, only with natGateways 1', () => {
-    const own = deployRootFile(deployRoot({ ...DEPLOYMENT, network: { publicIp: '192.0.2.10' }, existing: { vpc: VPC } }), 'identity.json');
-    const nat = deployRootFile(deployRoot({ ...DEPLOYMENT, network: { natGateways: 1, publicIp: '192.0.2.10' }, existing: { vpc: VPC } }), 'identity.json');
-    expect(own).not.toHaveProperty('aws.ecs.privateEgress');
-    expect(own).toHaveProperty('aws.ecs.publicSubnets', [{ id: 'subnet-puba', availabilityZone: 'eu-west-1a' }, { id: 'subnet-pubb', availabilityZone: 'eu-west-1b' }]);
-    expect(nat).toHaveProperty('aws.ecs.privateEgress', {
-      stackName: 'acme-bot-private-egress', publicIp: '192.0.2.10', routeTableId: 'rtb-acme', natGateway: { name: 'acme-bot-private-egress', publicSubnetId: 'subnet-puba' },
+  it.each(['acme-bot', 'example', 'a-b-c'])('derives fixed names identically in Node and Python for %s', (name) => {
+    const config = { name, names: { clusterName: 'custom-cluster', chatServiceTaskRoleName: 'custom-role' } };
+    const reader = fileURLToPath(new URL('../credential-service/src/botcube_credential_service/botcube_config.py', import.meta.url));
+    const python = execFileSync('python3', ['-c',
+      'import json, runpy, sys; print(json.dumps(runpy.run_path(sys.argv[1])["deployment_names"](json.loads(sys.argv[2]))))',
+      reader, JSON.stringify(config)], { encoding: 'utf8' });
+    expect(deploymentNames(config)).toEqual(JSON.parse(python));
+    expect(deploymentNames(config)).toMatchObject({
+      parkStateParameterName: `/${name}/production/park-state`,
+      originPullClientSecretName: `/${name}/cloudflare/origin-pull-client`,
+      originTokenSecretName: `/${name}/cloudflare/origin-api-token`,
+      turnIdentityKeysSecretName: `/${name}/chat-service/turn-identity-keys`,
+      rollbackTaskFamilyPrefix: `${name}-preview-rollback-`, rollbackPolicyName: `${name}-preview-rollback`,
     });
   });
 
@@ -105,40 +103,27 @@ describe("a migrated deploy root's files, from its BotCube Config", () => {
       .toThrow('existing.vpc.privateSubnets.0.routeTableId: With network.natGateways 1, BotCube routes each private subnet to the NAT: give its route table');
   });
 
-  it('place the link browser in the private subnets', () => {
+  it('keeps existing network and browser keys in their native shape', () => {
     const config = { ...DEPLOYMENT, agentCore: { browsers: { link: { extension: { bucket: 'acme-assets', key: 'ext.zip', versionId: 'v1' } } } }, existing: { vpc: VPC, browsers: { link: { browserId: 'browser-acme', securityGroupId: 'sg-acme' } } } };
-    expect(deployRootFile(deployRoot(config), 'identity.json')).toHaveProperty('aws.agentCore.privateNatBrowser', {
-      name: 'acme_bot_link', id: 'browser-acme', vpcId: 'vpc-acme', browserSecurityGroupId: 'sg-acme',
-      extension: { bucket: 'acme-assets', prefix: 'ext.zip', versionId: 'v1' },
-      subnets: [{ id: 'subnet-priva', availabilityZone: 'eu-west-1a', cidrBlock: '192.0.2.0/24' }, { id: 'subnet-privb', availabilityZone: 'eu-west-1b', cidrBlock: '198.51.100.0/24' }],
-    });
+    expect(readDeployment(deployRoot(config))).toEqual(config);
   });
 
   it("hold none of this repository's release settings, and a release.json beside the BotCube Config fails", () => {
     const root = deployRoot(DEPLOYMENT);
-    const identity = deployRootFile(root, 'identity.json');
+    const identity = readDeployment(root);
     for (const field of ['github', 'verification', 'artifacts']) expect(identity).not.toHaveProperty(field);
     writeFileSync(join(root, '../release.json'), JSON.stringify({ github: { environment: 'production' } }));
-    expect(() => deployRootFile(root, 'identity.json')).toThrow('release.json: a configuration file');
-  });
-
-  it('give the AgentCore project and its one target', () => {
-    const root = deployRoot({ ...DEPLOYMENT, tags: { team: 'acme' } });
-    expect(deployRootFile(root, 'agentcore/agentcore.json')).toEqual({
-      name: 'acmebot', tags: { 'agentcore:project-name': 'acme-bot', team: 'acme' },
-      runtimes: [{ name: 'acme_bot', dockerfile: '.tool-dist/Dockerfile' }], memories: [{ name: 'acme_bot' }],
-    });
-    expect(deployRootFile(root, 'agentcore/aws-targets.json')).toEqual([{ name: 'default', account: '123456789012', region: 'eu-west-1' }]);
+    expect(() => readDeployment(root)).toThrow('release.json: a configuration file');
   });
 
   it('fail when there is no BotCube Config beside the deploy root', () => {
-    expect(() => deployRootFile(deployRoot(undefined), 'identity.json')).toThrow(/identity\.json: BotCube Config .*botcube\.yaml names no deployment/);
+    expect(() => readDeployment(deployRoot(undefined))).toThrow(/botcube\.yaml: no file/);
   });
 
   it.each(['name', 'env', 'domains', 'existing'])('fail on a BotCube Config without %s, naming it as the loaders do', (key) => {
     const { [key as keyof typeof DEPLOYMENT]: _left, ...config } = DEPLOYMENT;
     const root = deployRoot(config);
-    expect(() => deployRootFile(root, 'identity.json')).toThrow(`BotCube Config ${join(root, '../botcube.yaml')}: ${key}: '${key}' is a required property`);
+    expect(() => readDeployment(root)).toThrow(`BotCube Config ${join(root, '../botcube.yaml')}: ${key}: '${key}' is a required property`);
   });
 });
 
@@ -149,7 +134,7 @@ describe('a deploy root still holding a retired file', () => {
       ssm: { parkState: '/acme/park' },
       github: { environment: 'production' },
     } });
-    expect(() => deployRootFile(root, 'agentcore/aws-targets.json')).toThrow([
+    expect(() => readDeployment(root)).toThrow([
       `Deploy root ${root}: identity.json is retired: botcube.yaml beside the deploy root replaces it; move each field to its key there, then delete the file`,
       `Deploy root ${root}: identity.json: aws.account: botcube.yaml env.account`,
       `Deploy root ${root}: identity.json: aws.ecs.publicSubnets: botcube.yaml existing.vpc.publicSubnets`,
@@ -163,9 +148,9 @@ describe('a deploy root still holding a retired file', () => {
   it.each(['identity.json', 'agentcore/agentcore.json', 'agentcore/aws-targets.json'])('fails for the %s the public example held, and passes once it is gone', retired => {
     const root = deployRoot(DEPLOYMENT);
     copyFileSync(fileURLToPath(new URL(`../tests/fixtures/public-example-deploy-root/${retired}`, import.meta.url)), join(root, retired));
-    expect(() => deployRootFile(root, 'identity.json')).toThrow(`Deploy root ${root}: ${retired} is retired`);
+    expect(() => readDeployment(root)).toThrow(`Deploy root ${root}: ${retired} is retired`);
     rmSync(join(root, retired));
-    expect(deployRootFile(root, 'identity.json')).toHaveProperty('aws.account', '123456789012');
+    expect(readDeployment(root)).toHaveProperty('env.account', '123456789012');
   });
 
   it('names the AgentCore project fields of the public example', () => {

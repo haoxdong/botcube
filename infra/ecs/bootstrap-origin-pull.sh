@@ -30,15 +30,18 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 read -r AWS_REGION CA_PATH SECRET_NAME PREVIEW_URL ORGANIZATION < <(node -e '
-  const identity = require(require("node:path").resolve(process.argv[1])).deployRootFile(process.argv[2], "identity.json", { repositoryRoot: process.argv[3] });
+  const config = require(require("node:path").resolve(process.argv[1])).readDeployment(process.argv[2]);
+  const names = require(require("node:path").resolve(process.argv[1])).deploymentNames(config);
+  const path = require("node:path");
+  const root = path.resolve(process.argv[2], "..");
   process.stdout.write([
-    identity.aws.region,
-    identity.aws.ecs.originPullCaCertificate,
-    identity.aws.ecs.originPullClientSecretName,
-    identity.domains.chatServicePreview,
-    identity.aws.ecs.originPullOrganization,
+    config.env.region,
+    path.relative(root, path.resolve(root, config.cloudflare.originPull.caCertificate)),
+    names.originPullClientSecretName,
+    config.domains.chatServicePreview,
+    config.cloudflare.originPull.organization ?? config.name,
   ].join(" ") + "\n");
-' "$(dirname "${BASH_SOURCE[0]}")/../../config/read.cjs" "$DEPLOY_ROOT" "$CONFIG_ROOT")
+' "$(dirname "${BASH_SOURCE[0]}")/../../config/read.cjs" "$DEPLOY_ROOT")
 export AWS_REGION
 
 SECRET_EXISTS=false

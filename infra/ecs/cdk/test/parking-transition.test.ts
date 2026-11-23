@@ -1,3 +1,4 @@
+import { readConfig } from 'botcube-config/read';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -6,7 +7,6 @@ import { App, Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { deployIdentity } from '../lib/deploy-root.js';
 import { deployedStacks, parkingTransition } from '../lib/parking-transition.js';
-import type { DeployIdentity } from '../lib/production-identity.js';
 
 const identity = deployIdentity(path.resolve(__dirname, '../../../../examples/public/deploy'));
 
@@ -51,11 +51,9 @@ test('bundles the transition when cdk.out sits inside ecs/cdk, as in the deploy 
     expect([bundled('boto3/__init__.py'), bundled('bin')]).toEqual([true, false]);
     // The bundle alone, without the site packages the tests run on, gives the Lambda the identity synthesis used.
     const loaded = JSON.parse(execFileSync('python3', ['-I', '-S', '-c',
-      'import json, sys; sys.path[:0] = [sys.argv[1], sys.argv[1] + "/ecs"]; import deploy_identity; print(json.dumps(deploy_identity.load_identity()))', bundle],
-    { env: { PATH: process.env.PATH, BOTCUBE_CONFIG: path.join(bundle, 'botcube.yaml') }, encoding: 'utf8' })) as DeployIdentity;
-    const withoutCaPath = (value: DeployIdentity) => ({ ...value, aws: { ...value.aws, ecs: { ...value.aws.ecs, originPullCaCertificate: undefined } } });
-    expect(loaded.aws.ecs.originPullCaCertificate).toBe('deploy/ecs/origin-pull-ca.crt');
-    expect(withoutCaPath(loaded)).toEqual(withoutCaPath(identity));
+      'import json, sys; sys.path[:0] = [sys.argv[1], sys.argv[1] + "/ecs"]; import deploy_identity; print(json.dumps(deploy_identity.load_deployment()))', bundle],
+    { env: { PATH: process.env.PATH, BOTCUBE_CONFIG: path.join(bundle, 'botcube.yaml') }, encoding: 'utf8' }));
+    expect(loaded).toEqual(readConfig(CONFIG.path));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

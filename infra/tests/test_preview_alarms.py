@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
+from deploy_identity import deployment_names
 
 from deploy_script_support import load_deploy_script
 
@@ -103,7 +104,7 @@ def test_configuration_only_accepts_cold_telemetry_without_polling(monkeypatch, 
     monkeypatch.setattr(alarms.time, 'sleep', lambda _seconds: pytest.fail('configuration must not wait'))
     monkeypatch.setenv('RUNNER_TEMP', str(tmp_path))
     output = tmp_path / 'outputs.json'
-    output.write_text(json.dumps({alarms.load_identity()['aws']['ecs']['previewOriginStackName']: OUTPUTS}))
+    output.write_text(json.dumps({deployment_names(alarms.load_deployment())['previewOriginStackName']: OUTPUTS}))
     monkeypatch.setattr(sys, 'argv', ['verify-alarms', str(output), '--configuration-only'])
     alarms.main()
     client.get_metric_statistics.assert_not_called()
@@ -129,7 +130,7 @@ def test_monitoring_still_fails_at_the_existing_600_second_deadline(monkeypatch,
         now[0] += seconds
     monkeypatch.setattr(alarms.time, 'sleep', sleep)
     output = tmp_path / 'outputs.json'
-    output.write_text(json.dumps({alarms.load_identity()['aws']['ecs']['previewOriginStackName']: OUTPUTS}))
+    output.write_text(json.dumps({deployment_names(alarms.load_deployment())['previewOriginStackName']: OUTPUTS}))
     monkeypatch.setattr(sys, 'argv', ['verify-alarms', str(output)])
     with pytest.raises(RuntimeError, match='within ten minutes'):
         alarms.main()

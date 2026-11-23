@@ -13,8 +13,8 @@ from botcube_credential_service.botcube_config import (
     BotCubeConfigError,
     botcube_config_from_env,
     credential_service_http_path,
-    deploy_root_file,
     load_botcube_config,
+    read_deployment,
 )
 from botcube_credential_service.server import (
     CredentialServiceSettings,
@@ -267,7 +267,7 @@ def test_a_retired_file_fails_naming_each_fields_botcube_yaml_key_as_the_typescr
     }})
 
     with pytest.raises(BotCubeConfigError) as error:
-        deploy_root_file(root, 'agentcore/aws-targets.json', BOTCUBE)
+        read_deployment(root)
     assert str(error.value).split('\n') == [
         f'Deploy root {root}: identity.json is retired: botcube.yaml beside the deploy root replaces it; move each field to its key there, then delete the file',
         f'Deploy root {root}: identity.json: aws.account: botcube.yaml env.account',
@@ -285,9 +285,9 @@ def test_each_retired_file_the_public_example_held_fails_and_passes_once_gone(tm
     (root / retired).write_text((RETIRED / retired).read_text())
 
     with pytest.raises(BotCubeConfigError, match=f'Deploy root {root}: {retired} is retired'):
-        deploy_root_file(root, 'identity.json', BOTCUBE)
+        read_deployment(root)
     (root / retired).unlink()
-    assert deploy_root_file(root, 'identity.json', BOTCUBE)['aws']['account'] == '123456789012'
+    assert read_deployment(root)['env']['account'] == '123456789012'
 
 
 def test_the_public_examples_agentcore_project_fields_are_named_as_the_typescript_reader_names_them(tmp_path: Path) -> None:
@@ -340,3 +340,15 @@ def test_the_credential_service_http_path_is_the_files_or_none() -> None:
     assert credential_service_http_path({'services': {'credentialService': {'http': {'path': '/rpc'}}}}) == '/rpc'
     assert credential_service_http_path({'services': {'credentialService': {}}}) == ''
     assert credential_service_http_path({}) == ''
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize('name', ['acme-bot', 'example', 'a-b-c'])
+def test_physical_names_match_the_javascript_deployment_reader(name: str) -> None:
+    import subprocess
+
+    config = {**DEPLOYMENT, 'name': name, 'names': {'clusterName': 'corp-cluster', 'chatServiceTaskRoleName': 'corp-chat'}}
+    result = subprocess.run(['node', '-e',
+                             'const {deploymentNames} = require(process.argv[1]); console.log(JSON.stringify(deploymentNames(JSON.parse(process.argv[2]))))',
+                             str(BOTCUBE / 'config/read.cjs'), json.dumps(config)], check=True, text=True, capture_output=True)
+    assert botcube_config.deployment_names(config) == json.loads(result.stdout)

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import boto3
-from deploy_identity import load_identity, require, required
+from deploy_identity import load_deployment, require, required
 
 if TYPE_CHECKING:
     from types_boto3_cloudwatch import CloudWatchClient
@@ -107,7 +107,7 @@ def main():
     parser.add_argument('outputs')
     parser.add_argument('--configuration-only', action='store_true')
     args = parser.parse_args()
-    outputs = json.loads(Path(args.outputs).read_text())[load_identity()['aws']['ecs']['previewOriginStackName']]
+    outputs = json.loads(Path(args.outputs).read_text())[load_deployment().get('names', {}).get('previewOriginStackName', f"{load_deployment()['name']}-preview-origin")]
     cw, sns = boto3.client('cloudwatch'), boto3.client('sns')
     names = [f"{outputs['ClusterName']}-preview-{suffix}" for suffix in expected_alarms(outputs)]
     alarms = cw.describe_alarms(AlarmNames=names)['MetricAlarms']

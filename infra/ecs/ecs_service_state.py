@@ -5,14 +5,15 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from botocore.waiter import WaiterModel, create_waiter_with_client
-from deploy_identity import SERVICES, load_identity, required
+from deploy_identity import SERVICES, deployment_names, load_deployment, required
 
 if TYPE_CHECKING:
     from types_boto3_ecs import ECSClient
     from types_boto3_ecs.type_defs import DeploymentTypeDef
 
 
-ECS = load_identity()['aws']['ecs']
+IDENTITY = load_deployment()
+NAMES = deployment_names(IDENTITY)
 
 
 def service_facts(ecs: ECSClient, timeout: int = 300) -> dict[str, dict[str, object]]:
@@ -30,12 +31,12 @@ def service_facts(ecs: ECSClient, timeout: int = 300) -> dict[str, dict[str, obj
              f' && pendingCount == `0` && runningCount == desiredCount]) == `{len(SERVICES)}`', 'expected': True},
         ],
     }}})
-    create_waiter_with_client('CompletedRollout', model, ecs).wait(cluster=ECS['cluster'], services=list(SERVICES))
+    create_waiter_with_client('CompletedRollout', model, ecs).wait(cluster=NAMES['clusterName'], services=list(SERVICES))
     return read_service_facts(ecs)
 
 
 def read_service_facts(ecs: ECSClient) -> dict[str, dict[str, object]]:
-    response = ecs.describe_services(cluster=ECS['cluster'], services=list(SERVICES))
+    response = ecs.describe_services(cluster=NAMES['clusterName'], services=list(SERVICES))
     if response.get('failures') or len(response['services']) != len(SERVICES):
         raise RuntimeError('ECS service lookup failed')
     return {required(service.get('serviceName'), 'ECS service serviceName'): {

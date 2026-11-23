@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 import boto3
 from botocore.exceptions import ClientError
 from deploy_check import user_agent
-from deploy_identity import load_identity, required
+from deploy_identity import deployment_names, load_deployment, owned_egress, required
 from ecs_service_state import service_facts
 from egress_probe import EgressProbe, WakeEgressProof
 
@@ -36,23 +36,24 @@ if TYPE_CHECKING:
     from types_boto3_route53 import Route53Client
 
 
-IDENTITY = load_identity()
+IDENTITY = load_deployment()
+NAMES = deployment_names(IDENTITY)
 os.environ.update({
-    'ORIGIN_OWNERSHIP': IDENTITY['aws']['ecs']['originOwnership'],
-    'PARKED_WORKER_NAME': IDENTITY['aws']['ecs']['parkedWorkerName'],
+    'ORIGIN_OWNERSHIP': f"{IDENTITY['name']}:preview-origin",
+    'PARKED_WORKER_NAME': f"{IDENTITY['name']}-parked",
 })
 sys.path.insert(0, str(Path(__file__).parent / 'origin-provider'))
 handler = importlib.import_module('handler')
 OWNER, Cloudflare = handler.OWNER, handler.Cloudflare
-ECS = IDENTITY['aws']['ecs']
-EGRESS = ECS.get('privateEgress')
-API_HEALTH = ECS['apiHealth']
+
+EGRESS = owned_egress(IDENTITY)
+
 # Alarms that would breach at zero tasks. Parked silences the first two and has
 # no ALB, so the ALB alarms do not exist; Live has all of them on.
-SILENCED_ALARMS = (API_HEALTH['alarmName'], f"{ECS['cluster']}-preview-task-deficit")
-ALB_ALARMS = tuple(f"{ECS['cluster']}-preview-{suffix}" for suffix in ('alb-5xx', 'target-5xx', 'unhealthy-hosts'))
+SILENCED_ALARMS = (NAMES['apiHealthAlarmName'], f"{NAMES['clusterName']}-preview-task-deficit")
+ALB_ALARMS = tuple(f"{NAMES['clusterName']}-preview-{suffix}" for suffix in ('alb-5xx', 'target-5xx', 'unhealthy-hosts'))
 HOSTS = [IDENTITY['domains'][key].removeprefix('https://') for key in ('chatService', 'chatServicePreview')]
-PARKED_DNS_TARGET = ECS['parkedDnsTarget']
+PARKED_DNS_TARGET = 'parked.invalid'
 WEB = IDENTITY['domains']['web']
 # origin-provider/parked-worker.mjs, as the web UI reads it from its own origin.
 PARKED_RESPONSE = {'status': 503, 'body': {'status': 'parked'}, 'allowOrigin': WEB, 'allowCredentials': 'true'}
@@ -187,6 +188,7 @@ def stack_facts(cfn: CloudFormationClient, name: str):
 
 
 def address_facts(ec2: EC2Client):
+    assert EGRESS is not None
     try:
         addresses = ec2.describe_addresses(PublicIps=[EGRESS['publicIp']])['Addresses']
     except ClientError as error:
@@ -197,6 +199,7 @@ def address_facts(ec2: EC2Client):
 
 
 def network_facts(ec2: EC2Client) -> tuple[list[dict[str, str | None]], list[dict[str, object]]]:
+    assert EGRESS is not None
     table = ec2.describe_route_tables(RouteTableIds=[EGRESS['routeTableId']])['RouteTables'][0]
     routes = [{'NatGatewayId': route.get('NatGatewayId'), 'State': route.get('State')}
               for route in required(table.get('Routes'), 'egress route table Routes') if route.get('DestinationCidrBlock') == '0.0.0.0/0']
@@ -212,7 +215,7 @@ def network_facts(ec2: EC2Client) -> tuple[list[dict[str, str | None]], list[dic
 
 def dns_facts() -> dict[str, dict[str, object] | None]:
     cf = Cloudflare(os.environ['CLOUDFLARE_ORIGIN_API_TOKEN'])
-    zone = cf.zone(IDENTITY['aws']['ecs']['originZone'])
+    zone = cf.zone(IDENTITY['cloudflare']['zone'])
     facts: dict[str, dict[str, object] | None] = {}
     for host in HOSTS:
         records = cf.records(zone, host)
@@ -248,10 +251,10 @@ def response_facts(parked: bool) -> dict[str, dict[str, object]]:
 
 def health_facts(ecs: ECSClient, elb: ElasticLoadBalancingv2Client, outputs: Mapping[str, str]):
     chat = elb.describe_target_health(TargetGroupArn=outputs['TargetGroupArn'])['TargetHealthDescriptions']
-    arns = ecs.list_tasks(cluster=ECS['cluster'], serviceName='credential-service', desiredStatus='RUNNING')['taskArns']
+    arns = ecs.list_tasks(cluster=NAMES['clusterName'], serviceName='credential-service', desiredStatus='RUNNING')['taskArns']
     tasks = []
     if arns:
-        response = ecs.describe_tasks(cluster=ECS['cluster'], tasks=arns)
+        response = ecs.describe_tasks(cluster=NAMES['clusterName'], tasks=arns)
         if response.get('failures'):
             raise RuntimeError('Credential Service health task lookup failed')
         tasks = response['tasks']
@@ -263,7 +266,7 @@ def health_facts(ecs: ECSClient, elb: ElasticLoadBalancingv2Client, outputs: Map
 def egress_ip(ecs: ECSClient, logs: CloudWatchLogsClient, ec2: EC2Client, outputs: Mapping[str, Mapping[str, str]]):
     probe = EgressProbe(ecs=ecs, logs=logs, ec2=ec2)
     running = probe.start(uuid.uuid4().hex, outputs, time.time())
-    ecs.get_waiter('tasks_stopped').wait(cluster=ECS['cluster'], tasks=[running['taskArn']], WaiterConfig={'Delay': 6, 'MaxAttempts': 50})
+    ecs.get_waiter('tasks_stopped').wait(cluster=NAMES['clusterName'], tasks=[running['taskArn']], WaiterConfig={'Delay': 6, 'MaxAttempts': 50})
     for _ in range(10):
         result = probe.observe(running)
         if result is not None:
@@ -274,6 +277,7 @@ def egress_ip(ecs: ECSClient, logs: CloudWatchLogsClient, ec2: EC2Client, output
 
 def owned_egress_facts(facts: dict[str, Any], state: str, outputs: Mapping[str, Mapping[str, str]], cfn: CloudFormationClient,
                        ec2: EC2Client, ecs: ECSClient, logs: CloudWatchLogsClient, proof: WakeEgressProof | None = None) -> dict[str, str | None]:
+    assert EGRESS is not None
     egress = outputs[EGRESS['stackName']]
     facts['stacks']['egress'], egress_types = stack_facts(cfn, EGRESS['stackName'])
     facts['defaultRoutes'], facts['natGateways'] = network_facts(ec2)
@@ -295,11 +299,11 @@ def main(argv: list[str]):
         raise RuntimeError('Retained egress proof is only valid for Live verification')
     proof = json.loads(args.egress_proof.read_text()) if args.egress_proof else None
     outputs = json.loads(Path(args.outputs).read_text())
-    origin = outputs[ECS['previewOriginStackName']]
+    origin = outputs[NAMES['previewOriginStackName']]
     cfn, ec2, ecs, elb = boto3.client('cloudformation'), boto3.client('ec2'), boto3.client('ecs'), boto3.client('elbv2')
     events, logs, route53, cloudwatch = boto3.client('events'), boto3.client('logs'), boto3.client('route53'), boto3.client('cloudwatch')
-    origin_status, origin_types = stack_facts(cfn, ECS['previewOriginStackName'])
-    health_check_disabled, alarm_actions = monitoring_facts(route53, cloudwatch, outputs[API_HEALTH['stackName']])
+    origin_status, origin_types = stack_facts(cfn, NAMES['previewOriginStackName'])
+    health_check_disabled, alarm_actions = monitoring_facts(route53, cloudwatch, outputs[NAMES['apiHealthStackName']])
     facts = {
         'stacks': {'origin': origin_status},
         'servingResources': sorted(SERVING_TYPES & set(origin_types)),

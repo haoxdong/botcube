@@ -17,26 +17,27 @@ if [[ "$#" -ne 0 ]]; then
 fi
 
 read -r AWS_ACCOUNT_ID AWS_REGION STACK_FAMILY CLUSTER ROLE_NAME ORIGIN_PULL_SECRET ORIGIN_TOKEN_SECRET ALERTS_TOPIC MEMORY_NAME PARK_STATE POLICY_NAME PARKING_FUNCTION SESSION_API RUNTIME_ROLE EGRESS_STACK ORIGIN_STACK HEALTH_STACK TURN_IDENTITY_SECRET < <(node -e '
-  const identity = require(require("node:path").resolve(process.argv[1])).deployRootFile(process.argv[2], "identity.json");
+  const config = require(require("node:path").resolve(process.argv[1])).readDeployment(process.argv[2]);
+  const names = require(require("node:path").resolve(process.argv[1])).deploymentNames(config);
   process.stdout.write([
-    identity.aws.account,
-    identity.aws.region,
-    identity.aws.cloudFormation.stackFamily,
-    identity.aws.ecs.cluster,
-    identity.aws.ecs.deployRoleName,
-    identity.aws.ecs.originPullClientSecretName,
-    identity.aws.ecs.originTokenSecretName,
-    identity.aws.ecs.alertsTopicName,
-    identity.aws.agentCore.memory,
-    identity.ssm.parkState,
-    identity.aws.ecs.deployPolicyName,
-    identity.aws.ecs.parking.functionName,
-    identity.aws.agentCore.sessionApiFunction,
-    identity.aws.iam.runtimeRole,
-    identity.aws.ecs.privateEgress.stackName,
-    identity.aws.ecs.previewOriginStackName,
-    identity.aws.ecs.apiHealth.stackName,
-    identity.aws.ecs.chatService.turnIdentityKeysSecretName,
+    config.env.account,
+    config.env.region,
+    config.name,
+    names.clusterName,
+    names.deployRoleName,
+    names.originPullClientSecretName,
+    names.originTokenSecretName,
+    names.alertsTopicName,
+    names.memoryName,
+    names.parkStateParameterName,
+    names.deployPolicyName,
+    names.parkingFunctionName,
+    names.sessionApiFunctionName,
+    names.runtimeRoleName,
+    names.privateEgressStackName,
+    names.previewOriginStackName,
+    names.apiHealthStackName,
+    names.turnIdentityKeysSecretName,
   ].join(" ") + "\n");
 ' "$(dirname "${BASH_SOURCE[0]}")/../../config/read.cjs" "$DEPLOY_ROOT")
 

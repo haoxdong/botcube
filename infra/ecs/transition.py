@@ -5,10 +5,11 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
-from deploy_identity import load_identity, required
+from deploy_identity import deployment_names, load_deployment, required
 
-IDENTITY = load_identity()
-PARAMETER = IDENTITY['ssm']['parkState']
+IDENTITY = load_deployment()
+NAMES = deployment_names(IDENTITY)
+PARAMETER = NAMES['parkStateParameterName']
 MODES = ('parked', 'egress', 'credential', 'live')
 
 
@@ -38,8 +39,8 @@ def session_api_capacity(target: str, autoscaling: Any = None, functions: Any = 
     import boto3
     autoscaling = autoscaling or boto3.client('application-autoscaling')
     functions = functions or boto3.client('lambda')
-    agent = IDENTITY['aws']['agentCore']
-    function, alias = agent['sessionApiFunction'], agent['sessionApiAlias']
+
+    function, alias = NAMES['sessionApiFunctionName'], 'live'
     resource = f'function:{function}:{alias}'
     found = autoscaling.describe_scalable_targets(ServiceNamespace='lambda', ResourceIds=[resource], ScalableDimension=SESSION_API_CAPACITY)['ScalableTargets']
     if not found:
@@ -135,7 +136,7 @@ def refresh_runtime_spares(agentcore: Any = None, pause: Callable[[float], None]
     V2 restores from its existing snapshot and needs no new version on wake."""
     import boto3
     agentcore = agentcore or boto3.client('bedrock-agentcore-control')
-    name = IDENTITY['aws']['agentCore']['runtime']
+    name = NAMES['runtimeAgentRuntimeName']
     found = [runtime for page in agentcore.get_paginator('list_agent_runtimes').paginate() for runtime in page['agentRuntimes']
              if runtime['agentRuntimeName'] == name]
     if len(found) != 1:
@@ -214,7 +215,7 @@ def transition(mode: str):
     import boto3
     event = {'op': {'parked': 'park', 'live': 'unpark'}[mode]} if mode in ('parked', 'live') else {'op': 'mode', 'mode': mode}
     response = boto3.client('lambda').invoke(
-        FunctionName=IDENTITY['aws']['ecs']['parking']['functionName'],
+        FunctionName=NAMES['parkingFunctionName'],
         InvocationType='RequestResponse', Payload=json.dumps(event).encode())
     payload = response['Payload'].read().decode()
     if response.get('FunctionError'):

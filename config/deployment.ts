@@ -1,51 +1,13 @@
 import { z } from 'zod';
 import { containerUri, serviceImages } from 'botcube-config/images';
-import { fillName } from './names.cjs';
+import { fillName, DERIVED_NAMES } from './names.cjs';
 
 /**
  * Each physical name `names` may override, as `<role><CloudFormation name property>`, and what it is absent: derived
  * from `name`, where `{name}` is it, `{snake}` it with `_` for `-`, and `{compact}` it without `-`; or, for `null`,
  * none, so CloudFormation generates it.
  */
-export const DERIVED_NAMES = {
-  runtimeAgentRuntimeName: '{snake}_runtime',
-  memoryName: '{snake}_memory',
-  agentComputerBrowserName: '{snake}_agent_computer_managed',
-  agentComputerBrowserProfileNamePrefix: '{snake}_',
-  linkBrowserName: '{snake}_link',
-  agentCoreTargetName: 'default',
-  sessionApiFunctionName: '{name}-session-api',
-  clusterName: '{name}',
-  deployRoleName: '{name}-ecs-github-deploy',
-  deployPolicyName: '{name}-ecs-deploy',
-  previewOriginStackName: '{name}-preview-origin',
-  privateEgressStackName: '{name}-private-egress',
-  natGatewayName: '{name}-private-egress',
-  apiHealthStackName: '{name}-api-health',
-  apiHealthAlarmName: '{name}-api-health',
-  webLatencyStackName: '{name}-web-latency',
-  webAppMonitorName: '{name}-web',
-  alertsTopicName: '{name}-alerts',
-  parkingFunctionName: '{name}-production-parking',
-  repositoryName: '{name}/runtime',
-  buildProjectName: '{name}-container-builder',
-  buildFunctionName: '{name}-container-build-handler',
-  buildLogGroupName: '/aws/lambda/{name}-container-build-handler',
-  deployUserName: '{name}-deploy',
-  runtimeRoleName: '{name}-runtime',
-  memoryRoleName: '{name}-memory',
-  userMemoryRoleName: '{name}-user-memory',
-  chatServiceTaskRoleName: null,
-  filesMountRoleName: null,
-  filesLinksRoleName: null,
-  agentComputerBrowserRoleName: null,
-  buildFunctionRoleName: '{name}-container-build-handler',
-  buildRoleName: '{name}-container-build',
-  sessionApiRoleName: '{name}-session-api',
-  invokePolicyNamePrefix: '{name}-agentcore-invoke',
-  runtimeAlarmNamePrefix: '{name}-runtime',
-  runtimeErrorsFilterName: '{name}-runtime-error-lines',
-} as const;
+export { DERIVED_NAMES } from './names.cjs';
 
 const origin = z
   .url({ protocol: /^https?$/ })
@@ -199,12 +161,6 @@ const CREDENTIALS = 'services.credentialService';
 const LINK = 'existing.browsers.link';
 const NAT = 'network.natGateways';
 
-/**
- * Each field of the deploy root's retired files and its source, in the files' own order: the readers build the file a
- * migrated deploy root no longer holds from it. A path is the BotCube Config's; `when` names the key whose presence
- * the field needs; `as` gives a web origin as its hostname, or a value as a list of it (absent, the default); `file` is
- * a path relative to the BotCube Config, given relative to the repository root.
- */
 export const RETIRED_FILES: Readonly<Record<string, Readonly<Record<string, Source>>>> = {
   'identity.json': {
     'aws.account': at('env.account'),

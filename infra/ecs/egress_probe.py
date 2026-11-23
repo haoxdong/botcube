@@ -7,16 +7,17 @@ from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, TypedDict
 
 import boto3
-from deploy_identity import load_identity, required
+from deploy_identity import deployment_names, load_deployment, owned_egress, required
 
 if TYPE_CHECKING:
     from types_boto3_ec2 import EC2Client
     from types_boto3_ecs import ECSClient
     from types_boto3_logs import CloudWatchLogsClient
 
-IDENTITY = load_identity()
-ECS = IDENTITY['aws']['ecs']
-EGRESS = ECS.get('privateEgress')
+IDENTITY = load_deployment()
+NAMES = deployment_names(IDENTITY)
+
+EGRESS = owned_egress(IDENTITY)
 PREFIX = 'parking-egress-'
 
 
@@ -68,12 +69,12 @@ class EgressProbe:
 
     def start(self, attempt_id: str, outputs: Mapping[str, Mapping[str, str]], started_at: float) -> RunningProbe:
         nat_id, allocation = self.network(outputs)
-        origin = outputs[ECS['previewOriginStackName']]
+        origin = outputs[NAMES['previewOriginStackName']]
         response = self.ecs.run_task(
-            cluster=ECS['cluster'], launchType='FARGATE', taskDefinition=origin['ReaperTaskDefinitionArn'],
+            cluster=NAMES['clusterName'], launchType='FARGATE', taskDefinition=origin['ReaperTaskDefinitionArn'],
             clientToken=hashlib.sha256(attempt_id.encode()).hexdigest(), startedBy=owner(attempt_id),
             networkConfiguration={'awsvpcConfiguration': {
-                'subnets': [subnet['id'] for subnet in IDENTITY['aws']['agentCore']['privateNatBrowser']['subnets']],
+                'subnets': [subnet['subnetId'] for subnet in IDENTITY['existing']['vpc']['privateSubnets']],
                 'securityGroups': [origin['ReaperSecurityGroupId']], 'assignPublicIp': 'DISABLED'}},
             overrides={'containerOverrides': [{'name': 'reaper', 'command': [
                 'node', '--input-type=module', '-e',
@@ -91,7 +92,7 @@ class EgressProbe:
                 'allocationId': allocation, 'logGroup': origin['ReaperLogGroupName']}
 
     def observe(self, probe: RunningProbe) -> EgressProof | None:
-        response = self.ecs.describe_tasks(cluster=ECS['cluster'], tasks=[probe['taskArn']])
+        response = self.ecs.describe_tasks(cluster=NAMES['clusterName'], tasks=[probe['taskArn']])
         if response.get('failures') or len(response['tasks']) != 1:
             raise RuntimeError('Egress probe task lookup failed')
         task = response['tasks'][0]
@@ -117,7 +118,7 @@ class EgressProbe:
             raise RuntimeError('Egress proof belongs to another attempt')
         if EGRESS is None:
             raise RuntimeError('Egress proof requires an owned NAT')
-        expected, origin = outputs[EGRESS['stackName']], outputs[ECS['previewOriginStackName']]
+        expected, origin = outputs[EGRESS['stackName']], outputs[NAMES['previewOriginStackName']]
         if ((proof['natGatewayId'], proof['allocationId']) != (expected['PrivateNatGatewayId'], expected['PrivateNatAllocationId'])
                 or proof['taskDefinitionArn'] != origin['ReaperTaskDefinitionArn']):
             raise RuntimeError('Egress proof belongs to another network or task definition')
@@ -131,14 +132,14 @@ class EgressProbe:
         family = origin['ReaperTaskDefinitionArn'].rsplit('/', 1)[-1].rsplit(':', 1)[0]
         pending = False
         for status in ('RUNNING', 'STOPPED'):
-            for page in self.ecs.get_paginator('list_tasks').paginate(cluster=ECS['cluster'], family=family, desiredStatus=status):
+            for page in self.ecs.get_paginator('list_tasks').paginate(cluster=NAMES['clusterName'], family=family, desiredStatus=status):
                 pending = self.stop_owned(page['taskArns']) or pending
         return pending
 
     def stop_owned(self, arns: list[str]) -> bool:
         if not arns:
             return False
-        response = self.ecs.describe_tasks(cluster=ECS['cluster'], tasks=arns)
+        response = self.ecs.describe_tasks(cluster=NAMES['clusterName'], tasks=arns)
         if response.get('failures'):
             raise RuntimeError('Owned egress probe cleanup lookup failed')
         pending = False
@@ -146,6 +147,6 @@ class EgressProbe:
             if not task.get('startedBy', '').startswith(PREFIX) or task['lastStatus'] == 'STOPPED':
                 continue
             if task.get('desiredStatus') != 'STOPPED':
-                self.ecs.stop_task(cluster=ECS['cluster'], task=task['taskArn'], reason='Production parking drains owned egress probes')
+                self.ecs.stop_task(cluster=NAMES['clusterName'], task=task['taskArn'], reason='Production parking drains owned egress probes')
             pending = True
         return pending

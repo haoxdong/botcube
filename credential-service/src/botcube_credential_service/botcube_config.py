@@ -15,7 +15,6 @@ from copy import deepcopy
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
     from jsonschema import ValidationError
@@ -191,70 +190,6 @@ def _value_at(value: Any, path: str) -> Any:
     return value
 
 
-def _set_at(root: Any, keys: list[str], value: Any) -> None:
-    node = root
-    for index, key in enumerate(keys[:-1]):
-        child: Any = [] if keys[index + 1].isdigit() else {}
-        if isinstance(node, list):
-            if int(key) == len(node):
-                node.append(child)
-            node = node[int(key)]
-        else:
-            node = node.setdefault(key, child)
-    if isinstance(node, list):
-        node.append(value)
-    else:
-        node[keys[-1]] = value
-
-
-def deployment_file(config: Mapping[str, Any], file: str, config_path: Path, repository_root: Path) -> Any:
-    """The retired deploy-root file the BotCube Config at config_path stands for, from the schema's x-retired-files map, as botcube/config/read.cjs builds it."""
-    fields: dict[str, Any] = _SCHEMA['x-retired-files'][file]
-    name: str = config['name']
-    built: Any = [] if next(iter(fields))[0].isdigit() else {}
-    for field, source in fields.items():
-        value = _sourced(source, config, name, config_path, repository_root)
-        if value is None:
-            continue
-        if source.get('spread'):
-            value = {**(_value_at(built, field) or {}), **value}
-        _set_at(built, field.split('.'), value)
-    return built
-
-
-def _sourced(source: Mapping[str, Any], config: Mapping[str, Any], name: str, config_path: Path, repository_root: Path) -> Any:
-    """A retired file's field, from the BotCube Config key, derived name or BotCube's own value its Source names."""
-    if 'when' in source and not _value_at(config, source['when']):
-        return None
-    if 'value' in source:
-        return deepcopy(source['value'])
-    if 'derived' in source:
-        return _filled(source['derived'], name)
-    if 'file' in source:
-        given = _value_at(config, source['file'])
-        return None if given is None else os.path.relpath((config_path.parent / given).resolve(), repository_root.resolve())
-    found = _value_at(config, source['path'])
-    if found is None:
-        default = source.get('default')
-        return _filled(default, name) if isinstance(default, str) else default
-    return _shaped(found, source)
-
-
-def _filled(template: str, name: str) -> str:
-    return template.replace('{name}', name).replace('{snake}', name.replace('-', '_')).replace('{compact}', name.replace('-', ''))
-
-
-def _shaped(found: Any, source: Mapping[str, Any]) -> Any:
-    """A BotCube Config value in the shape its Source gives the retired field: each item's fields, a hostname or a list."""
-    if 'each' in source:
-        return [{field: item[origin] for field, origin in source['each'].items()} for item in found]
-    if source.get('as') == 'hostname':
-        return urlsplit(found).hostname
-    if source.get('as') == 'list':
-        return [found]
-    return found
-
-
 def _replacement(source: Mapping[str, Any] | None) -> str:
     """Where a retired file's field went: the botcube.yaml key its Source names, or why none does."""
     if source is None:
@@ -341,15 +276,73 @@ def bot_directory_errors(bot_directory: Path, deploy_root: Path | None = None) -
     )]
 
 
-def deploy_root_file(deploy_root: Path, file: str, repository_root: Path) -> Any:
-    """A deploy root's file, built from the BotCube Config beside it. It fails while the deploy root still holds a
-    retired file, or its bot directory any other configuration file."""
+def read_deployment(deploy_root: Path) -> dict[str, Any]:
+    """The validated BotCube Config beside a deploy root, after migration checks."""
     bot_directory = deploy_root.parent
     errors = bot_directory_errors(bot_directory, deploy_root)
     if errors:
         raise BotCubeConfigError('\n'.join(errors))
     config_path = bot_directory / 'botcube.yaml'
-    config = load_botcube_config(config_path) if config_path.exists() else {}
+    config = load_botcube_config(config_path)
     if 'name' not in config:
-        raise BotCubeConfigError(f'{deploy_root / file}: BotCube Config {config_path} names no deployment')
-    return deployment_file(config, file, config_path, repository_root)
+        raise BotCubeConfigError(f'BotCube Config {config_path} names no deployment')
+    return config
+
+
+_PHYSICAL_NAMES = {
+    'runtimeAgentRuntimeName': '{snake}_runtime',
+    'memoryName': '{snake}_memory',
+    'agentComputerBrowserName': '{snake}_agent_computer_managed',
+    'agentComputerBrowserProfileNamePrefix': '{snake}_',
+    'linkBrowserName': '{snake}_link',
+    'agentCoreTargetName': 'default',
+    'sessionApiFunctionName': '{name}-session-api',
+    'clusterName': '{name}',
+    'deployRoleName': '{name}-ecs-github-deploy',
+    'deployPolicyName': '{name}-ecs-deploy',
+    'previewOriginStackName': '{name}-preview-origin',
+    'privateEgressStackName': '{name}-private-egress',
+    'natGatewayName': '{name}-private-egress',
+    'apiHealthStackName': '{name}-api-health',
+    'apiHealthAlarmName': '{name}-api-health',
+    'webLatencyStackName': '{name}-web-latency',
+    'webAppMonitorName': '{name}-web',
+    'alertsTopicName': '{name}-alerts',
+    'parkingFunctionName': '{name}-production-parking',
+    'repositoryName': '{name}/runtime',
+    'buildProjectName': '{name}-container-builder',
+    'buildFunctionName': '{name}-container-build-handler',
+    'buildLogGroupName': '/aws/lambda/{name}-container-build-handler',
+    'deployUserName': '{name}-deploy',
+    'runtimeRoleName': '{name}-runtime',
+    'memoryRoleName': '{name}-memory',
+    'userMemoryRoleName': '{name}-user-memory',
+    'chatServiceTaskRoleName': None,
+    'filesMountRoleName': None,
+    'filesLinksRoleName': None,
+    'agentComputerBrowserRoleName': None,
+    'buildFunctionRoleName': '{name}-container-build-handler',
+    'buildRoleName': '{name}-container-build',
+    'sessionApiRoleName': '{name}-session-api',
+    'invokePolicyNamePrefix': '{name}-agentcore-invoke',
+    'runtimeAlarmNamePrefix': '{name}-runtime',
+    'runtimeErrorsFilterName': '{name}-runtime-error-lines',
+}
+
+
+_FIXED_NAMES = {
+    'parkStateParameterName': '/{name}/production/park-state',
+    'originPullClientSecretName': '/{name}/cloudflare/origin-pull-client',
+    'originTokenSecretName': '/{name}/cloudflare/origin-api-token',
+    'turnIdentityKeysSecretName': '/{name}/chat-service/turn-identity-keys',
+    'rollbackTaskFamilyPrefix': '{name}-preview-rollback-',
+    'rollbackPolicyName': '{name}-preview-rollback',
+}
+
+def deployment_names(config: Mapping[str, Any]) -> dict[str, str]:
+    """Physical resource names from name, with the deployment's explicit overrides."""
+    name = config['name']
+    defaults = {key: template.replace('{name}', name).replace('{snake}', name.replace('-', '_')).replace('{compact}', name.replace('-', ''))
+                for key, template in _PHYSICAL_NAMES.items() if template is not None}
+    return {**defaults, **config.get('names', {}),
+            **{key: template.replace('{name}', name) for key, template in _FIXED_NAMES.items()}}

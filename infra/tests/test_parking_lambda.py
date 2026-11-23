@@ -638,7 +638,7 @@ def load_without_owned_egress(monkeypatch, tmp_path):
     (tmp_path / 'botcube.yaml').write_text(public.read_text().replace('network: { natGateways: 1, publicIp: 192.0.2.1 }', 'network: { natGateways: 0 }'))
     (tmp_path / 'deploy').mkdir()
     monkeypatch.setenv('BOTCUBE_DEPLOY_ROOT', str(tmp_path / 'deploy'))
-    assert 'privateEgress' not in deploy_identity.load_identity()['aws']['ecs']
+    assert deploy_identity.owned_egress(deploy_identity.load_deployment()) is None
     return load()
 
 

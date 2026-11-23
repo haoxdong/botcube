@@ -12,7 +12,7 @@ from urllib.error import HTTPError
 
 from botocore.exceptions import ClientError
 from deploy_guard import SETTLED, require_no_deploy
-from deploy_identity import load_identity
+from deploy_identity import deployment_names, load_deployment, owned_egress
 from egress_probe import RunningProbe
 
 
@@ -38,11 +38,13 @@ class TransitionState(TypedDict, total=False):
     probe: RunningProbe
     monitoringExecutionArn: str
 
-IDENTITY = load_identity()
-OWNED_EGRESS = IDENTITY['aws']['ecs'].get('privateEgress')
+IDENTITY = load_deployment()
+NAMES = deployment_names(IDENTITY)
+PARK_STATE = NAMES['parkStateParameterName']
+OWNED_EGRESS = owned_egress(IDENTITY)
 STACKS = {**({'egress': OWNED_EGRESS['stackName']} if OWNED_EGRESS else {}),
-          'origin': IDENTITY['aws']['ecs']['previewOriginStackName'],
-          'health': IDENTITY['aws']['ecs']['apiHealth']['stackName']}
+          'origin': NAMES['previewOriginStackName'],
+          'health': NAMES['apiHealthStackName']}
 EFFECTIVE_MODES = {
     STACKS['health']: {'parked': 'parked', 'egress': 'parked', 'credential': 'parked', 'live': 'live'},
     **({STACKS['egress']: {'parked': 'parked', 'egress': 'egress', 'credential': 'egress', 'live': 'egress'}} if OWNED_EGRESS else {}),
@@ -86,7 +88,7 @@ def operate(event, context, *, cloudformation=None, ssm=None, verify=None, capac
     if event.get('op') == 'backstop':
         return backstop(event, ssm or boto3.client('ssm'), executions or boto3.client('stepfunctions'), cloudformation, leases or boto3.client('s3'))
     if event.get('op') == 'state':
-        stored = event.get('stored') or (ssm or boto3.client('ssm')).get_parameter(Name=IDENTITY['ssm']['parkState'])['Parameter']['Value']
+        stored = event.get('stored') or (ssm or boto3.client('ssm')).get_parameter(Name=PARK_STATE)['Parameter']['Value']
         return production_state(cloudformation, stored)
     action = event.get('mode') or {'park': 'parked', 'unpark': 'live'}.get(event.get('action'))
     if action not in STEPS or event.get('op') not in ('start', 'advance'):
@@ -240,18 +242,18 @@ def start(action, cloudformation, executions, ssm):
         raise RuntimeError('A production transition is already running')
     preflight(cloudformation, action)
     if action in ('live', 'parked'):
-        ssm.put_parameter(Name=IDENTITY['ssm']['parkState'] + '/backstop', Value='none', Type='String', Overwrite=True)
+        ssm.put_parameter(Name=PARK_STATE + '/backstop', Value='none', Type='String', Overwrite=True)
     result = executions.start_execution(stateMachineArn=arn, input=json.dumps({'mode': action, 'op': 'advance'}))
     if action in ('egress', 'credential'):
         lease = str(time.time_ns())
-        ssm.put_parameter(Name=IDENTITY['ssm']['parkState'] + '/backstop', Value=lease, Type='String', Overwrite=True)
+        ssm.put_parameter(Name=PARK_STATE + '/backstop', Value=lease, Type='String', Overwrite=True)
         executions.start_execution(stateMachineArn=os.environ['BACKSTOP_STATE_MACHINE'],
                                    input=json.dumps({'op': 'backstop', 'lease': lease}))
     return {'executionArn': result['executionArn']}
 
 
 def backstop(event, ssm, executions, cloudformation, leases):
-    lease = ssm.get_parameter(Name=IDENTITY['ssm']['parkState'] + '/backstop')['Parameter']['Value']
+    lease = ssm.get_parameter(Name=PARK_STATE + '/backstop')['Parameter']['Value']
     if lease != event['lease']:
         return {'expired': False}
     arn = os.environ['TRANSITION_STATE_MACHINE']
@@ -325,10 +327,10 @@ def perform(step, target, cloudformation, ssm, verify, capacity, refresh, spares
     import boto3
     if step == 'store':
         (ssm or boto3.client('ssm')).put_parameter(
-            Name=IDENTITY['ssm']['parkState'], Value=target, Type='String', Overwrite=True)
+            Name=PARK_STATE, Value=target, Type='String', Overwrite=True)
         if target in ('live', 'parked'):
             (ssm or boto3.client('ssm')).put_parameter(
-                Name=IDENTITY['ssm']['parkState'] + '/backstop', Value='none', Type='String', Overwrite=True)
+                Name=PARK_STATE + '/backstop', Value='none', Type='String', Overwrite=True)
     elif step in ('verify', 'origin-proof', 'alarm-configuration'):
         (verify or verify_production)(target, **({} if verify else {'cloudformation': cloudformation, 'step': step, 'state': state}))
     elif step == 'capacity':
@@ -355,7 +357,7 @@ def perform(step, target, cloudformation, ssm, verify, capacity, refresh, spares
 
 def verify_production(target, cloudformation, step, state: TransitionState):
     import boto3
-    secret = boto3.client('secretsmanager').get_secret_value(SecretId=IDENTITY['aws']['ecs']['originTokenSecretName'])
+    secret = boto3.client('secretsmanager').get_secret_value(SecretId=NAMES['originTokenSecretName'])
     os.environ['CLOUDFLARE_ORIGIN_API_TOKEN'] = secret['SecretString']
     outputs = stack_outputs(cloudformation)
     output_path = Path(os.environ['RUNNER_TEMP']) / 'parking-outputs.json'

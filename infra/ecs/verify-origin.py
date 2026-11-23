@@ -22,12 +22,13 @@ from typing import TYPE_CHECKING
 
 import boto3
 from deploy_check import user_agent
-from deploy_identity import load_identity
+from deploy_identity import deployment_names, load_deployment
 
-IDENTITY = load_identity()
+IDENTITY = load_deployment()
+NAMES = deployment_names(IDENTITY)
 os.environ.update({
-    'ORIGIN_OWNERSHIP': IDENTITY['aws']['ecs']['originOwnership'],
-    'PARKED_WORKER_NAME': IDENTITY['aws']['ecs']['parkedWorkerName'],
+    'ORIGIN_OWNERSHIP': f"{IDENTITY['name']}:preview-origin",
+    'PARKED_WORKER_NAME': f"{IDENTITY['name']}-parked",
 })
 sys.path.insert(0, str(Path(__file__).parent / 'origin-provider'))
 handler = importlib.import_module('handler')
@@ -232,8 +233,8 @@ def parse_args(argv: list[str]):
 if __name__ == '__main__':
     args = parse_args(sys.argv[1:])
     cf = Cloudflare(os.environ['CLOUDFLARE_ORIGIN_API_TOKEN'])
-    zone = cf.zone(IDENTITY['aws']['ecs']['originZone'])
-    outputs = json.loads(Path(args.outputs).read_text())[IDENTITY['aws']['ecs']['previewOriginStackName']]
+    zone = cf.zone(IDENTITY['cloudflare']['zone'])
+    outputs = json.loads(Path(args.outputs).read_text())[NAMES['previewOriginStackName']]
     if args.action == 'production':
         verify_production(cf, zone, outputs)
     else:

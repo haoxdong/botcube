@@ -150,7 +150,7 @@ class WithoutOwnedEgressVerificationTests(unittest.TestCase):
         (root / 'botcube.yaml').write_text(public.read_text().replace('network: { natGateways: 1, publicIp: 192.0.2.1 }', 'network: { natGateways: 0 }'))
         (root / 'deploy').mkdir()
         with patch.dict(os.environ, {'BOTCUBE_DEPLOY_ROOT': str(root / 'deploy')}):
-            assert 'privateEgress' not in deploy_identity.load_identity()['aws']['ecs']
+            assert deploy_identity.owned_egress(deploy_identity.load_deployment()) is None
             self.verifier = runpy.run_path(str(DEPLOY_ECS / 'verify-park.py'))
 
     @staticmethod
@@ -362,8 +362,8 @@ class SessionApiProduction:
     """Application Auto Scaling and Lambda as the session API alias sees them, in memory."""
 
     def __init__(self, provisioned: int | None = 2, minimum: int = 2, target: bool = True):
-        agent = transition['IDENTITY']['aws']['agentCore']
-        self.function, self.alias = agent['sessionApiFunction'], agent['sessionApiAlias']
+        names = transition['NAMES']
+        self.function, self.alias = names['sessionApiFunctionName'], 'live'
         self.provisioned, self.minimum, self.target = provisioned, minimum, target
         self.weighted_for = 0
         self.suspended: dict[str, bool] | None = None
@@ -488,7 +488,7 @@ class AgentCoreProduction:
     """The AgentCore control plane as the refresh sees it, in memory: one runtime whose update makes a new version."""
 
     def __init__(self, extra: dict[str, Any] | None = None, status: str = 'READY', fail: str | None = None):
-        self.name = transition['IDENTITY']['aws']['agentCore']['runtime']
+        self.name = transition['NAMES']['runtimeAgentRuntimeName']
         self.configuration: RuntimeConfigurationFixture = {
             'agentRuntimeArtifact': {'containerConfiguration': {'containerUri': 'example.dkr.ecr/runtime@sha256:1'}},
             'roleArn': 'arn:aws:iam::123456789012:role/runtime',

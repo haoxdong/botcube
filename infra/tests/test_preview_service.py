@@ -39,7 +39,7 @@ class ServiceVerificationTests(unittest.TestCase):
         ecs.list_tasks.return_value = {'taskArns': ['task']}
         task = {'taskDefinitionArn': 'expected:2', 'lastStatus': 'RUNNING', 'taskArn': 'task', 'containers': [{'name': 'chat-service', 'imageDigest': 'sha256:1234', 'image': 'image', 'networkInterfaces': [{}]}], 'attachments': [{'type': 'ElasticNetworkInterface', 'details': [{'name': 'networkInterfaceId', 'value': 'eni-task'}]}]}
         ecs.describe_tasks.return_value = {'tasks': [task]}
-        subnet = verifier['IDENTITY']['aws']['agentCore']['privateNatBrowser']['subnets'][0]['id']
+        subnet = verifier['IDENTITY']['existing']['vpc']['privateSubnets'][0]['subnetId']
         ec2.describe_network_interfaces.return_value = {'NetworkInterfaces': [{'SubnetId': subnet, 'PrivateIpAddress': '198.51.100.10'}]}
         current = {'Target': {'Id': '198.51.100.10', 'Port': 8123}, 'TargetHealth': {'State': 'healthy'}}
         old = {'Target': {'Id': '198.51.100.11', 'Port': 8123}, 'TargetHealth': {'State': 'draining'}}
@@ -185,7 +185,7 @@ class ConversationVerificationTests(unittest.TestCase):
 
     def test_session_record_is_the_deployed_memory_and_waits_for_the_purge(self):
         control, data = Mock(), Mock()
-        name = verifier['IDENTITY']['aws']['agentCore']['memory']
+        name = verifier['NAMES']['memoryName']
         control.list_memories.side_effect = [
             {'memories': [{'id': 'other_memory-1'}], 'nextToken': 'page-2'},
             {'memories': [{'id': name + '-AbC123'}]},
@@ -207,7 +207,7 @@ class ConversationVerificationTests(unittest.TestCase):
 
     def test_the_purge_waits_for_the_sessions_pending_writes_sessions(self):
         control, data = Mock(), Mock()
-        name = verifier['IDENTITY']['aws']['agentCore']['memory']
+        name = verifier['NAMES']['memoryName']
         control.list_memories.return_value = {'memories': [{'id': name + '-AbC123'}]}
         writes = 'lgw-' + hashlib.sha256(b'session-1').hexdigest()[:32] + '-0'
         data.list_sessions.side_effect = lambda **kwargs: (
@@ -238,9 +238,10 @@ class ConversationVerificationTests(unittest.TestCase):
         denied = Mock()
         denied.invoke.side_effect = ClientError({'Error': {'Code': 'AccessDeniedException', 'Message': 'no'}}, 'Invoke')
         self.assertEqual(verify(record, denied), {'eventExpiryDays': 365, 'foreignCallerRejected': True})
-        aws = verifier['IDENTITY']['aws']
+        config = verifier['IDENTITY']
+        names = verifier['NAMES']
         self.assertEqual(denied.invoke.call_args.kwargs['FunctionName'],
-                         f"arn:aws:lambda:{aws['region']}:{aws['account']}:function:{aws['agentCore']['sessionApiFunction']}")
+                         f"arn:aws:lambda:{config['env']['region']}:{config['env']['account']}:function:{names['sessionApiFunctionName']}")
         with self.assertRaisesRegex(RuntimeError, 'accepted a caller other than the Chat Service'):
             verify(record, Mock())
         missing = Mock()

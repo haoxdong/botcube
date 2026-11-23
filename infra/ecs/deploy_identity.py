@@ -1,23 +1,15 @@
-"""The active bot's deploy identity, built from its BotCube Config, over BotCube's `identity-defaults.json`."""
+"""Native deployment config and the NAT a parking operation owns."""
 
 import json
 import os
 from pathlib import Path
 from typing import Any, TypeVar
 
-from botcube_credential_service.botcube_config import deploy_root_file, deployment_file
+from botcube_credential_service.botcube_config import deployment_names, read_deployment
 
 SERVICES = ('chat-service-preview', 'credential-service')
 
 T = TypeVar('T')
-_DEFAULTS = Path(__file__).resolve().parents[1] / 'identity-defaults.json'
-
-
-def _over(defaults: Any, bot: Any) -> Any:
-    """`bot` over `defaults`: objects merge key by key; any other value the bot sets replaces the default."""
-    if not isinstance(defaults, dict) or not isinstance(bot, dict):
-        return bot
-    return {**defaults, **{key: _over(defaults.get(key), value) for key, value in bot.items()}}
 
 
 def deploy_root() -> Path:
@@ -28,18 +20,10 @@ def deploy_root() -> Path:
     return Path(root)
 
 
-def load_identity() -> dict[str, Any]:
-    """The identity over the defaults: from the BotCube Config `BOTCUBE_CONFIG` names, as a deployed process is told
-    of it, else from the deploy root's files."""
+def load_deployment() -> dict[str, Any]:
+    """The native deployment config, validated by synthesis for a deployed bundle."""
     config = os.environ.get('BOTCUBE_CONFIG')
-    identity = _bundled_identity(Path(config)) if config else deploy_root_file(deploy_root(), 'identity.json', _DEFAULTS.parents[1])
-    return _over(json.loads(_DEFAULTS.read_text()), identity)
-
-
-def _bundled_identity(config: Path) -> Any:
-    """The identity a deployed process's bundle gives: its BotCube Config as JSON, validated when it was synthesized.
-    The bundle holds no YAML or JSON Schema library, so this needs neither."""
-    return deployment_file(json.loads(config.read_text()), 'identity.json', config, config.parent)
+    return json.loads(Path(config).read_text()) if config else read_deployment(deploy_root())
 
 
 def require(condition: object, message: str) -> None:
@@ -52,3 +36,16 @@ def required(value: T | None, name: str) -> T:
     if value is None:
         raise RuntimeError(f'AWS response lacks {name}')
     return value
+
+
+def owned_egress(config: dict[str, Any]) -> dict[str, Any] | None:
+    """The NAT this deployment owns, absent when the existing VPC supplies egress."""
+    if not config.get('network', {}).get('natGateways'):
+        return None
+    names = deployment_names(config)
+    return {
+        'stackName': names['privateEgressStackName'],
+        'routeTableId': config['existing']['vpc']['privateSubnets'][0]['routeTableId'],
+        'publicIp': config['network'].get('publicIp'),
+        'natGateway': {'name': names['natGatewayName']},
+    }

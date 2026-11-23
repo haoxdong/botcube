@@ -7,10 +7,11 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-from deploy_identity import load_identity
+from deploy_identity import deployment_names, load_deployment, owned_egress
 
-identity = load_identity()
-origin = identity['aws']['ecs']
+identity = load_deployment()
+NAMES = deployment_names(identity)
+
 token = os.environ['CLOUDFLARE_ORIGIN_API_TOKEN']
 if not token:
     raise SystemExit('Cloudflare token is missing')
@@ -22,11 +23,11 @@ def aws(*args: str):
 with tempfile.NamedTemporaryFile(mode='w', prefix='origin-token-') as secret_file:
     secret_file.write(token)
     secret_file.flush()
-    result = subprocess.run(['aws', 'secretsmanager', 'describe-secret', '--secret-id', origin['originTokenSecretName']], capture_output=True, text=True)
+    result = subprocess.run(['aws', 'secretsmanager', 'describe-secret', '--secret-id', NAMES['originTokenSecretName']], capture_output=True, text=True)
     if result.returncode == 0:
-        aws('secretsmanager', 'put-secret-value', '--secret-id', origin['originTokenSecretName'], '--secret-string', 'file://' + secret_file.name)
+        aws('secretsmanager', 'put-secret-value', '--secret-id', NAMES['originTokenSecretName'], '--secret-string', 'file://' + secret_file.name)
     elif 'ResourceNotFoundException' in result.stderr:
-        aws('secretsmanager', 'create-secret', '--name', origin['originTokenSecretName'], '--secret-string', 'file://' + secret_file.name)
+        aws('secretsmanager', 'create-secret', '--name', NAMES['originTokenSecretName'], '--secret-string', 'file://' + secret_file.name)
     else:
         raise SystemExit('Cannot read origin token secret metadata: ' + result.stderr)
 with urllib.request.urlopen('https://api.cloudflare.com/client/v4/ips', timeout=30) as response:
@@ -36,15 +37,15 @@ if not ranges.get('success'):
 cidrs = ranges['result']['ipv4_cidrs']
 if not cidrs or any(ipaddress.ip_network(cidr).version != 4 for cidr in cidrs):
     raise SystemExit('Cloudflare IPv4 ranges missing or invalid')
-client = aws('secretsmanager', 'get-secret-value', '--secret-id', origin['originPullClientSecretName'])
-runtime_arn = aws('ssm', 'get-parameter', '--name', identity['ssm']['runtimeArn'])['Parameter']['Value']
+client = aws('secretsmanager', 'get-secret-value', '--secret-id', NAMES['originPullClientSecretName'])
+runtime_arn = aws('ssm', 'get-parameter', '--name', f"/{identity['name']}/agentcore/runtime-arn")['Parameter']['Value']
 # The API health check: the observability dashboard reads its ID, so it
 # is imported once (your infrastructure ownership procedure), never created.
-health = origin['apiHealth']
-owner = subprocess.run(['aws', 'cloudformation', 'describe-stack-resource', '--stack-name', health['stackName'],
+
+owner = subprocess.run(['aws', 'cloudformation', 'describe-stack-resource', '--stack-name', NAMES['apiHealthStackName'],
                         '--logical-resource-id', 'ApiHealthCheck', '--output', 'json'], capture_output=True, text=True)
 if owner.returncode != 0:
-    raise SystemExit(f"{health['stackName']} must own the API health check before deploy; "
+    raise SystemExit(f"{NAMES['apiHealthStackName']} must own the API health check before deploy; "
                      f"import it per your infrastructure ownership procedure. {owner.stderr.strip()}")
 
 
@@ -56,10 +57,10 @@ def owned_egress_network(egress):
     if owner.returncode != 0 or json.loads(owner.stdout)['StackResourceDetail']['PhysicalResourceId'] != egress['publicIp']:
         raise SystemExit(f"{egress['stackName']} must own Elastic IP {egress['publicIp']} before deploy; "
                          f"import it per your infrastructure ownership procedure. {owner.stderr.strip()}")
-    network = identity['aws']['agentCore']['privateNatBrowser']
+
     route_table = aws('ec2', 'describe-route-tables', '--route-table-ids', egress['routeTableId'])['RouteTables'][0]
     associated = {item.get('SubnetId') for item in route_table['Associations']}
-    if not {subnet['id'] for subnet in network['subnets']} <= associated:
+    if not {subnet['subnetId'] for subnet in identity['existing']['vpc']['privateSubnets']} <= associated:
         raise SystemExit('Preview private subnets are not associated with the expected route table')
     defaults = [route for route in route_table['Routes'] if route.get('DestinationCidrBlock') == '0.0.0.0/0']
     # Parked production has no default route; the unpark deploy recreates it.
@@ -68,17 +69,17 @@ def owned_egress_network(egress):
     nat_state = None
     if defaults:
         nat = aws('ec2', 'describe-nat-gateways', '--nat-gateway-ids', defaults[0]['NatGatewayId'])['NatGateways'][0]
-        if nat['State'] != 'available' or nat['VpcId'] != network['vpcId']:
+        if nat['State'] != 'available' or nat['VpcId'] != identity['existing']['vpc']['vpcId']:
             raise SystemExit('Preview NAT Gateway is not available in the configured VPC')
         nat_state = nat['State']
     return {'routeTableId': egress['routeTableId'], 'subnetIds': sorted(associated - {None}),
             'defaultRoute': defaults[0] if defaults else None, 'natGatewayState': nat_state}
 
 
-egress = identity['aws']['ecs'].get('privateEgress')
+egress = owned_egress(identity)
 owned_network = owned_egress_network(egress) if egress else None
 Path(os.environ['PREVIEW_ORIGIN_INPUT']).write_text(json.dumps({
-    'turnIdentityKeysVersion': next(version for version, stages in aws('secretsmanager', 'describe-secret', '--secret-id', origin['chatService']['turnIdentityKeysSecretName'])['VersionIdsToStages'].items() if 'AWSCURRENT' in stages),
+    'turnIdentityKeysVersion': next(version for version, stages in aws('secretsmanager', 'describe-secret', '--secret-id', NAMES['turnIdentityKeysSecretName'])['VersionIdsToStages'].items() if 'AWSCURRENT' in stages),
     'cloudflareCidrs': cidrs, 'clientVersion': client['VersionId'], 'runtimeArn': runtime_arn,
     **({'network': owned_network} if owned_network else {}),
 }))

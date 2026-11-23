@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError, ConnectionError, ReadTimeoutError
-from deploy_identity import load_identity, require, required
+from deploy_identity import load_deployment, require, required
 
 if TYPE_CHECKING:
     from types_boto3_ecs import ECSClient
@@ -366,7 +366,7 @@ def exercise(outputs: dict[str, str], ecs: ECSClient, elb: ElasticLoadBalancingv
 
 
 def main():
-    outputs = json.loads(Path(sys.argv[1]).read_text())[load_identity()['aws']['ecs']['previewOriginStackName']]
+    outputs = json.loads(Path(sys.argv[1]).read_text())[load_deployment().get('names', {}).get('previewOriginStackName', f"{load_deployment()['name']}-preview-origin")]
     report = {'sourceRevision': os.environ['GITHUB_SHA'], 'workflowRun': os.environ['GITHUB_RUN_ID'],
               'workflowAttempt': os.environ['GITHUB_RUN_ATTEMPT'], 'completed': False}
     path = Path(os.environ['RUNNER_TEMP']) / 'preview-replacement-evidence.json'

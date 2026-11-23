@@ -6,13 +6,14 @@ import re
 from datetime import UTC, datetime
 
 from botocore.exceptions import ClientError
-from deploy_identity import load_identity
+from deploy_identity import deployment_names, load_deployment
 
-IDENTITY = load_identity()
+IDENTITY = load_deployment()
+NAMES = deployment_names(IDENTITY)
 SETTLED = {'CREATE_COMPLETE', 'UPDATE_COMPLETE', 'UPDATE_ROLLBACK_COMPLETE', 'IMPORT_COMPLETE'}
 # What a production deploy changes: the harness, the origin and the web stacks.
-DEPLOYED_STACKS = (f"AgentCore-{IDENTITY['aws']['cloudFormation']['stackFamily']}-default",
-                   IDENTITY['aws']['ecs']['previewOriginStackName'], IDENTITY['aws']['ecs']['webLatency']['stackName'])
+DEPLOYED_STACKS = (f"AgentCore-{IDENTITY['name']}-default",
+                   NAMES['previewOriginStackName'], NAMES['webLatencyStackName'])
 DEPLOY_LEASES = 'deploy-leases/'
 LEASE_STALE_SECONDS = 7200
 
@@ -23,7 +24,7 @@ class DeployInFlight(RuntimeError):
 
 def require_no_deploy(cloudformation, leases, now, refusal: type[Exception] = DeployInFlight):
     """Refuse while a lease under 2 h old exists, or a deployed stack is not settled; a missing stack passes."""
-    bucket = IDENTITY['aws']['ecs']['parking']['slotBucket']
+    bucket = IDENTITY['existing']['buckets']['slots']['bucketName']
     for item in leases.list_objects_v2(Bucket=bucket, Prefix=DEPLOY_LEASES).get('Contents', []):
         holder = leases.get_object(Bucket=bucket, Key=item['Key'])['Body'].read().decode().strip()
         # An unreadable time counts as fresh: the COO reads the holder in the refusal and deletes the lease by hand.

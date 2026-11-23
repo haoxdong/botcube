@@ -78,7 +78,7 @@ class Continuity:
 
 
 def main():
-    outputs = json.loads(Path(sys.argv[1]).read_text())[service['IDENTITY']['aws']['ecs']['previewOriginStackName']]
+    outputs = json.loads(Path(sys.argv[1]).read_text())[service['IDENTITY'].get('names', {}).get('previewOriginStackName', service['IDENTITY']['name'] + '-preview-origin')]
     report = {'sourceRevision': os.environ['GITHUB_SHA'], 'workflowRun': os.environ['GITHUB_RUN_ID'],
               'workflowAttempt': os.environ['GITHUB_RUN_ATTEMPT'], 'completed': False}
     timing = {}
