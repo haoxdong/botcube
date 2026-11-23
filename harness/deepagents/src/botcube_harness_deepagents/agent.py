@@ -65,7 +65,7 @@ from .model_request import ModelRequestBounds, count_request_tokens
 DEFAULT_SYSTEM_PROMPT = ''
 
 # deepagents 0.7's stdlib SkillMetadata cannot generate JSON schema on Python 3.11.
-# Preserve its complete shape with https://errors.pydantic.dev/2.13/u/typed-dict-version.
+# Keep its shape (https://errors.pydantic.dev/2.13/u/typed-dict-version).
 class _SkillMetadata(TypedDict):
     path: str
     name: str
@@ -81,8 +81,8 @@ class PlainState(DeepAgentState):
     so no read walks ancestor checkpoints (ADR 0067 decision 9)."""
 
     messages: Annotated[list[AnyMessage], add_messages]  # type: ignore[assignment]
-    # The Session's Memory block (`session_memory.SessionMemoryMiddleware`). Every graph on the
-    # Session record carries it, so a session API post keeps it in the next checkpoint.
+    # The Session's Memory block (`session_memory.SessionMemoryMiddleware`): every graph on the
+    # Session carries it, so a session API post keeps it in the next checkpoint.
     session_memory: NotRequired[Annotated[str, PrivateStateAttr]]
     last_model_call_at: NotRequired[Annotated[float, PrivateStateAttr]]
     _pending_summary: NotRequired[Annotated[PendingSummary | None, PrivateStateAttr]]
@@ -206,13 +206,8 @@ class _SchemaSkillsMiddleware(SkillsMiddleware):
 
 
 class _UncheckpointedTasksMiddleware(AgentMiddleware):
-    """Runs `task` subagents without checkpoints.
-
-    A subagent inherits the Session's saver, which would file its checkpoints in an
-    AgentCore session of their own, outside the Session and its writes sessions: past
-    the Turn's Memory access and the purge. Nothing resumes a subagent part-way: the
-    Harness never interrupts a graph.
-    """
+    """Runs `task` subagents without checkpoints: the Session's saver would file them outside the
+    Session, past its Memory access and the purge. Nothing resumes a subagent part-way."""
 
     def wrap_tool_call(
         self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
@@ -458,11 +453,8 @@ def _reject_dropped_settings(model: Any, permissions: list[FilesystemPermission]
 
 
 def general_purpose_subagent(instructions: str, skills: Sequence[str]) -> dict[str, Any]:
-    """deepagents' general-purpose subagent, with the bot's instructions after its stock prompt.
-
-    Like Claude Code's subagents, which load CLAUDE.md but not its system prompt, it gets the bot's
-    instructions but not the Harness's voice: it reports to the main agent, not the user.
-    """
+    """deepagents' general-purpose subagent: the bot's instructions after its stock prompt, without
+    the Harness's voice, since it reports to the main agent, not the user."""
     assert 'system_prompt' in GENERAL_PURPOSE_SUBAGENT
     return {
         **GENERAL_PURPOSE_SUBAGENT,
