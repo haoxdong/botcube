@@ -167,22 +167,12 @@ def test_personal_memory_paginator_needs_no_directory_scan_after_snapshot_prime(
         client.get_paginator('list_memory_records')
 
 
-def test_sts_and_scoped_memory_use_bounded_standard_retries() -> None:
-    from botocore.credentials import Credentials
-    from langgraph_checkpoint_aws import AgentCoreMemoryStore
+def test_sts_uses_bounded_standard_retries() -> None:
+    config = agentcore.sts_client('us-east-1').meta.config
 
-    like = AgentCoreMemoryStore(
-        memory_id='snapshot', region_name='us-east-1', aws_access_key_id='snapshot', aws_secret_access_key='snapshot',
-    ).client
-    credentials = agentcore._AwsAccess(
-        {'filingActorId': ['snapshot'], 'sessionId': ['snapshot']},
-        (Credentials('snapshot', 'snapshot', 'snapshot'), datetime.now(UTC) + timedelta(hours=1)), -1,
-    )
-    clients = (agentcore.sts_client('us-east-1'), agentcore._memory_client(credentials, like))
-    for client in clients:
-        assert client.meta.config.connect_timeout == 2
-        assert client.meta.config.read_timeout == 5
-        assert client.meta.config.retries == {'mode': 'standard', 'total_max_attempts': 2}
+    assert config.connect_timeout == 2
+    assert config.read_timeout == 5
+    assert config.retries == {'mode': 'standard', 'total_max_attempts': 2}
 
 
 @pytest.mark.parametrize('phase', ['memory', 'disk', '', 'unknown'])

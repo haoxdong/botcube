@@ -1,21 +1,14 @@
-"""Purge a Session's events from AgentCore Memory.
+"""Purge a Session and its pending writes one event at a time.
 
-AgentCore has no delete-by-session call: a Session is purged one ``DeleteEvent``
-at a time. ``DeleteEvent`` allows 5 TPS per actor and Session and 20 TPS per
-account, so every delete in this process is paced to 5 TPS, within both.
-
-The checkpointer files each checkpoint's pending writes in its own AgentCore
-session, named from the Session ID and the checkpoint ID (ADR 0067 decision 9).
-A purge reads the Session's checkpoints, empties each one's writes session, and
-empties the Session last, so a retried purge still finds every writes session
-left. Only a Session whose snapshots no longer decode lists the actor's
-sessions by the writes prefix instead, so a damaged Session still purges. A
-session counts as purged when ``ListEvents`` returns none.
+AgentCore allows 5 DeleteEvent calls per actor and Session per second.
+Empty writes sessions before deleting checkpoints so a retry still finds
+their IDs (ADR 0067 decision 9). A damaged snapshot requires a prefix scan.
 """
 
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from threading import Lock
 from time import monotonic, sleep
 from typing import Any
@@ -89,12 +82,13 @@ def _purge(events: Any, actor_id: str, session_id: str) -> None:
             return
         for event in page:
             _pace()
-            events.client.delete_event(
-                memoryId=events.memory_id,
-                actorId=actor_id,
-                sessionId=session_id,
-                eventId=event['eventId'],
-            )
+            with suppress(events.client.exceptions.ResourceNotFoundException):
+                events.client.delete_event(
+                    memoryId=events.memory_id,
+                    actorId=actor_id,
+                    sessionId=session_id,
+                    eventId=event['eventId'],
+                )
         log.info('Session purge deleted %d events. session_id=%s', len(page), session_id)
 
 

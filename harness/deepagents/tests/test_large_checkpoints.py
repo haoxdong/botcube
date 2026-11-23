@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import boto3
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
@@ -33,6 +35,10 @@ def test_a_large_chat_survives_a_cold_resume_and_session_api_replay(
     saver.put(
         CONFIG, checkpoint, {'source': 'loop', 'step': 1, 'parents': {}}, {'messages': '1'},
     )
+    fragments = [event for event in memory.events[('user-1', 'session-1')]
+                 if event.get('metadata', {}).get('lc_kind', {}).get('stringValue') == 'blob_fragment']
+    assert len(fragments) > 1
+    assert max(len(json.dumps(event, default=str).encode()) for event in fragments) <= 1_000_000
     warm = saver.get_tuple(CONFIG)
     assert warm is not None and warm.checkpoint == checkpoint
     fresh_warm_sessions(monkeypatch)

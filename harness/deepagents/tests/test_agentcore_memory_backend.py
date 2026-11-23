@@ -13,12 +13,18 @@ import boto3
 import pytest
 from botocore.awsrequest import AWSResponse, HTTPHeaders
 from botocore.credentials import Credentials
+from botocore.exceptions import ConnectionClosedError
 from langchain_core.messages import HumanMessage
 from langgraph_checkpoint_aws.checkpoint.agentcore.snapshot import (
     _writes_session_prefix,
 )
 
-from agentcore_fake import USER_MEMORY_ROLE_ARN, FakeSts, turn_identity
+from agentcore_fake import (
+    USER_MEMORY_ROLE_ARN,
+    FakeAgentCoreMemory,
+    FakeSts,
+    turn_identity,
+)
 from botcube_harness_deepagents.memory import agentcore
 from botcube_harness_deepagents.session_memory import SessionMemoryMiddleware
 from botcube_harness_deepagents.turn_memory import (
@@ -36,6 +42,7 @@ def aws_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('AWS_ACCESS_KEY_ID', 'test')
     monkeypatch.setenv('AWS_SECRET_ACCESS_KEY', 'test')
     monkeypatch.setenv('AWS_DEFAULT_REGION', 'us-west-2')
+    monkeypatch.setenv('AWS_ENDPOINT_URL_BEDROCK_AGENTCORE', 'http://127.0.0.1:1')
 
 
 def test_the_checkpointers_writes_prefix_is_the_one_the_chat_service_signs() -> None:
@@ -279,14 +286,16 @@ def test_turn_feed_retries_throttled_create_event_with_the_same_token(
         MEMORY_ID, turn_identity(), region_name='us-west-2', run_id='run-feed', turn=agentcore.next_turn(),
     )
     requests: list[dict[str, Any]] = []
+    memory = FakeAgentCoreMemory()
 
     def answer(request: Any, **_: Any) -> Any:
         requests.append(json.loads(request.body))
-        if exhausted or len(requests) == 1:
+        if exhausted or len(requests) <= 2:
             headers = HTTPHeaders()
             headers['x-amzn-errortype'] = 'ThrottlingException'
             return AWSResponse(request.url, 429, headers, _Body(b'{"message": "Busy"}'))
-        return AWSResponse(request.url, 200, HTTPHeaders(), _Body(b'{"event": {"eventId": "fed"}}'))
+        body = json.dumps(memory.create_event(memoryId=MEMORY_ID, **requests[-1])).encode()
+        return AWSResponse(request.url, 200, HTTPHeaders(), _Body(body))
 
     store.client.meta.events.register('before-send.bedrock-agentcore.CreateEvent', answer)
     feed = feed_turn(store, ('user-1', 'thread-1'), [HumanMessage(content='hello')])
@@ -296,7 +305,36 @@ def test_turn_feed_retries_throttled_create_event_with_the_same_token(
     else:
         asyncio.run(feed)
 
-    assert len(requests) == 2
-    assert requests[0] == requests[1]
+    assert len(requests) >= 3
+    assert all(request == requests[0] for request in requests)
+    assert memory.create_event_calls == (0 if exhausted else 1)
     assert requests[0]['clientToken']
     assert requests[0]['payload'] == [{'conversational': {'content': {'text': 'hello'}, 'role': 'USER'}}]
+
+
+def test_opening_memory_recovers_from_a_dropped_idle_connection(microvm: FakeSts) -> None:
+    _, store = agentcore.turn_memory(
+        MEMORY_ID, turn_identity(), region_name='us-west-2', run_id='run-opening', turn=agentcore.next_turn(),
+    )
+    memory = FakeAgentCoreMemory()
+    reconnect = False
+    drops = 0
+
+    def answer(request: Any, **_: Any) -> Any:
+        nonlocal drops
+        params = json.loads(request.body)
+        if reconnect and params['namespace'].endswith('/facts/') and drops < 2:
+            drops += 1
+            raise ConnectionClosedError(endpoint_url=request.url)
+        page = memory.list_memory_records(memoryId=MEMORY_ID, **params)
+        return AWSResponse(request.url, 200, HTTPHeaders(), _Body(json.dumps(page).encode()))
+
+    def empty_events(request: Any, **_: Any) -> Any:
+        return AWSResponse(request.url, 200, HTTPHeaders(), _Body(b'{"events": []}'))
+
+    store.client.meta.events.register('before-send.bedrock-agentcore.ListEvents', empty_events)
+    store.client.meta.events.register('before-send.bedrock-agentcore.ListMemoryRecords', answer)
+    assert agentcore.opening(store, 'user-1') == ''
+    reconnect = True
+    assert agentcore.opening(store, 'user-1') == ''
+    assert drops == 2

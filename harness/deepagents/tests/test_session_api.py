@@ -7,8 +7,10 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Barrier, Lock
 from typing import Any
 
 import boto3
@@ -605,7 +607,7 @@ def memory(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> FakeAgentCore
     monkeypatch.setattr(
         boto3,
         'client',
-        lambda service, *, region_name: fake if (service, region_name) == ('bedrock-agentcore', 'eu-west-1') else None,
+        lambda service, *, region_name, **_: fake if (service, region_name) == ('bedrock-agentcore', 'eu-west-1') else None,
     )
     monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     return fake
@@ -864,3 +866,26 @@ def test_a_new_addition_can_restore_text_from_an_earlier_correction(
         'operation': 'memory-add', 'userId': 'user-1', 'text': 'Trades copper',
     }).json()['line']
     assert _memory(client) == (200, {'lines': [added, {'id': OWN_RECORD, 'text': 'Trades silver'}]})
+
+
+def test_concurrent_session_purges_both_succeed(
+    client: TestClient, memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory.seed('user-1', 'session-1')
+    delete = memory.delete_event
+    deleting = Barrier(2)
+    lock = Lock()
+
+    def delete_listed_event(**params: Any) -> dict[str, Any]:
+        deleting.wait(timeout=5)
+        with lock:
+            memory.get_event(**params)
+            return delete(**params)
+
+    monkeypatch.setattr(memory, 'delete_event', delete_listed_event)
+    event = {'operation': 'purge', 'sessionId': 'session-1', 'userId': 'user-1'}
+    with ThreadPoolExecutor(2) as workers:
+        replies = list(workers.map(lambda _: client.post('/invocations', json=event), range(2)))
+
+    assert [reply.status_code for reply in replies] == [200, 200]
+    assert not memory.events[('user-1', 'session-1')]
