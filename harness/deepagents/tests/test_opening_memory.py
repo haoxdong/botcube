@@ -476,3 +476,66 @@ def test_large_memory_opens_as_a_bounded_index_newest_first(memory: FakeAgentCor
         assert lines[0] == '- 00000149 ' + 'x' * 88 + '…'
         assert lines[-1] == '- 00000050 ' + 'x' * 88 + '…'
     assert closing == '(50 more preferences; 50 more facts; use memory list or retrieve)'
+
+
+def test_thirty_pending_saves_and_corrections_keep_the_whole_opening_bounded(memory: FakeAgentCoreMemory) -> None:
+    for index in range(30):
+        record = _fact(f'Old {index:02d} ' + 'x' * 493, created_at=NOW - timedelta(seconds=30 - index))
+        record['memoryRecordId'] = f'mem-{index:08d}' + 'a' * 28
+        memory.records.append(record)
+    for index in range(30):
+        _save(memory, 'pending-memory-20260702', f'Pending {index:02d} ' + 'p' * 489,
+              at=NOW - timedelta(seconds=30 - index))
+        memory_document.edit_memory_line(
+            cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
+            record_id=f'mem-{index:08d}' + 'a' * 28, text=f'New {index:02d} ' + 'y' * 493,
+        )
+
+    block = _open(memory)
+    assert len(block) < 20_000
+    facts, corrections = block.split('\n\nMemory page corrections (authoritative):\n')
+    lines = facts.splitlines()[1:]
+    assert len(lines) == 60
+    assert all(len(line) == 100 and line.endswith('…') for line in lines)
+    assert lines[0] == '- Pending 29 ' + 'p' * 86 + '…'
+    assert lines[29] == '- Pending 00 ' + 'p' * 86 + '…'
+    assert lines[30].startswith('- 00000029 New 29 ')
+    correction_lines = corrections.splitlines()[1:-1]
+    assert len(correction_lines) == 20
+    assert all(len(line) <= 232 for line in correction_lines)
+    rows = [json.loads(line) for line in correction_lines]
+    assert all(len(row['previousText']) == 100 and len(row['text']) == 100 for row in rows)
+    assert rows[0] == {'previousText': 'Old 29 ' + 'x' * 92 + '…', 'text': 'New 29 ' + 'y' * 92 + '…'}
+    assert rows[-1] == {'previousText': 'Old 10 ' + 'x' * 92 + '…', 'text': 'New 10 ' + 'y' * 92 + '…'}
+    assert corrections.splitlines()[-1] == '(10 more corrections on the Memory page)'
+
+
+def test_pending_saves_share_the_fact_cap_with_extracted_records(memory: FakeAgentCoreMemory) -> None:
+    for index in range(70):
+        _save(memory, 'pending-memory-20260702', f'Pending {index:02d} ' + 'p' * 489, at=NOW)
+    for index in range(40):
+        record = _fact(f'Fact {index:02d} ' + 'f' * 492)
+        record['memoryRecordId'] = f'mem-{index:08d}' + 'a' * 28
+        memory.records.append(record)
+    facts, closing = _open(memory).split('\n\n')
+    lines = facts.splitlines()[1:]
+    assert len(lines) == 100
+    assert all(len(line) == 100 for line in lines)
+    assert sum(line.startswith('- Pending ') for line in lines) == 70
+    assert lines[70].startswith('- 00000000 Fact 00 ')
+    assert lines[-1].startswith('- 00000029 Fact 29 ')
+    assert closing == '(10 more facts; use memory list or retrieve)'
+
+
+def test_repeated_corrections_keep_the_latest_replacement_without_duplicate_previous_text(memory: FakeAgentCoreMemory) -> None:
+    record = _fact('First value')
+    record['memoryRecordId'] = 'mem-12345678' + 'a' * 28
+    memory.records.append(record)
+    for text in ('Second value', 'First value', 'Final value'):
+        memory_document.edit_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
+                                         record_id=record['memoryRecordId'], text=text)
+    _, corrections = _open(memory).split('\n\nMemory page corrections (authoritative):\n')
+    assert [json.loads(line) for line in corrections.splitlines()[1:]] == [
+        {'previousText': 'First value', 'text': 'Final value'},
+        {'previousText': 'Second value', 'text': 'Final value'},
+    ]

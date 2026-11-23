@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from .actor_identity import actor_namespace
-from .memory_index import MemoryIndexEntry
+from .memory_index import MemoryIndexEntry, memory_preview
 from .memory_tools import extract_text, list_memory_record_summaries, record_namespace
 from .pending_memory import (
     PENDING_MEMORY_WINDOW,
@@ -82,18 +82,18 @@ def opening_memory(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: 
 
 
 def _corrections_context(journal: Sequence[Mapping[str, Any]], saves: Mapping[str, str | None]) -> str:
-    previous: dict[str, list[str]] = {}
-    for save in journal:
-        if 'previousText' in save:
-            texts = previous.setdefault(save['recordId'], [])
-            if save['previousText'] not in texts:
-                texts.append(save['previousText'])
+    previous: dict[tuple[str, str], str | None] = {}
+    for save in reversed(journal):
+        current = saves[save['recordId']]
+        if 'previousText' in save and save['previousText'] != current:
+            previous.setdefault((save['recordId'], save['previousText']), current)
     corrections = [
-        json.dumps({'previousText': text, 'text': saves[record_id]})
-        for record_id, texts in previous.items()
-        for text in texts
-        if text != saves[record_id]
+        json.dumps({'previousText': memory_preview(text), 'text': memory_preview(current) if current is not None else None},
+                   ensure_ascii=False)
+        for (_, text), current in list(previous.items())[:20]
     ]
+    if len(previous) > 20:
+        corrections.append(f'({len(previous) - 20} more corrections on the Memory page)')
     if not corrections:
         return ''
     return (

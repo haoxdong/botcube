@@ -2434,8 +2434,8 @@ def test_on_agentcore_a_memory_page_edit_reaches_the_next_session_and_leaves_the
         'These corrections override conflicting memories above, including paraphrases and parts of compound saves. '
         'Each previousText is superseded by text; null means forgotten and must not be used. '
         'Keep unrelated facts from those saves.\n'
-        '{"previousText": "Lives in Paris", "text": "Lives in London"}\n'
-        '{"previousText": "Trades copper futures", "text": null}'
+        '{"previousText": "Trades copper futures", "text": null}\n'
+        '{"previousText": "Lives in Paris", "text": "Lives in London"}'
     )
     assert _memory_operation('memory') == {
         'lines': [{'id': DARK_MODE, 'text': 'Prefers dark mode'}, {'id': PARIS, 'text': 'Lives in London'}]
@@ -2496,8 +2496,8 @@ def test_on_agentcore_a_memory_page_edit_reaches_a_new_session_while_agentcore_l
         'These corrections override conflicting memories above, including paraphrases and parts of compound saves. '
         'Each previousText is superseded by text; null means forgotten and must not be used. '
         'Keep unrelated facts from those saves.\n'
-        '{"previousText": "Lives in Paris", "text": "Lives in London"}\n'
-        '{"previousText": "Trades copper futures", "text": null}'
+        '{"previousText": "Trades copper futures", "text": null}\n'
+        '{"previousText": "Lives in Paris", "text": "Lives in London"}'
     )
 
 
