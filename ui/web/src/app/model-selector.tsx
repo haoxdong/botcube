@@ -11,19 +11,10 @@ import { Slider } from "../components/ui/slider";
 import { EFFORT_LEVELS, type ModelList } from "./model-selection";
 import { pickerModels } from "./picker-models";
 import { zoomOf } from "@/lib/utils";
+import { composerEdges } from "./composer-edges";
 
 const RESERVED_LABEL = "Loading models… Medium";
 const DEFAULT_EFFORT = "medium";
-
-// Stock PopoverContent places the card against its trigger. These offsets carry it out to the composer's top and right
-// edges, so the card sits fully above the composer, as the + menu does.
-function composerEdges(trigger: HTMLElement | null) {
-  const composer = trigger?.closest(".chat-composer");
-  if (!trigger || !composer) return { above: 0, right: 0 };
-  const t = trigger.getBoundingClientRect();
-  const c = composer.getBoundingClientRect();
-  return { above: t.top - c.top, right: c.right - t.right };
-}
 
 export function ModelSelector({ models, model, effort, loadingLabel, onModelChange, onEffortChange }: {
   models: ModelList;

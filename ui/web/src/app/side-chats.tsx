@@ -5,8 +5,6 @@ import { Swap, Presence, presenceMotion, Collapse } from "./collapse";
 import { m as motionElement } from "motion/react";
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { contextMenuKey } from "./context-menu-key";
-import { ContextMenu } from "@base-ui/react/context-menu";
-import { Menu } from "@base-ui/react/menu";
 import { ChevronDown, ChevronRight, Clock, Ellipsis, Pencil, Plus, Trash2 } from "lucide-react";
 import { isUnread, type ConversationEntry } from "./conversations";
 import { withStorage } from "./main-chat-copy";
@@ -15,6 +13,8 @@ import { UnreadDot } from "./unread-dot";
 import type { AuthUiState } from "../plugin/index.js";
 import type { useSessionNavigation } from "./session-navigation";
 import { Button } from "@/components/ui/button";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 const NATIVE_SIDE_CHAT_BODY = process.env.NEXT_PUBLIC_NATIVE_SIDE_CHAT_BODY === "1";
 const SideChatsBody = NATIVE_SIDE_CHAT_BODY ? "div" : motionElement.div;
@@ -145,36 +145,34 @@ export function SideChats({ accountId, activeId, pluginsOpen, visible, entries: 
   );
 }
 
+/** A side chat's actions, from a right-click or long press on its row (stock ContextMenu) or from its "…" (stock
+ * DropdownMenu): the same two items either way. */
 function SideChatRow({ title, className, children, rename, remove }: {
   title: string; className: string; children: ReactNode; rename: () => void; remove: () => void;
 }) {
-  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const restoreFocus = useRef(true);
+  const opened = (open: boolean) => { if (open) restoreFocus.current = true; };
+  const popup = { className: "side-chat-menu standard-popup", "aria-label": title, "aria-labelledby": "", finalFocus: () => restoreFocus.current };
+  const onRename = () => { restoreFocus.current = false; rename(); };
+  const onRemove = () => { restoreFocus.current = false; remove(); };
   return (
-    <ContextMenu.Root onOpenChange={(open, details) => {
-      if (!open) return;
-      restoreFocus.current = true;
-      const trigger = details.trigger;
-      setAnchor(trigger instanceof HTMLElement && trigger.classList.contains("sidebar-item-more") ? trigger : null);
-    }}>
-      <ContextMenu.Trigger className={className} onKeyDown={contextMenuKey}>
+    <ContextMenu onOpenChange={opened}>
+      <ContextMenuTrigger className={className} onKeyDown={contextMenuKey}>
         {children}
-        <Menu.Trigger className="sidebar-item-more" aria-label="Side chat actions" title="More">
-          <Ellipsis size={16} aria-hidden />
-        </Menu.Trigger>
-      </ContextMenu.Trigger>
-      <ContextMenu.Portal>
-        <ContextMenu.Positioner className="standard-popup-positioner" anchor={anchor ?? undefined} sideOffset={4}>
-          <ContextMenu.Popup className="side-chat-menu standard-popup" aria-label={title} aria-labelledby="" finalFocus={() => restoreFocus.current}>
-            <ContextMenu.Item className="user-menu-item" onClick={() => { restoreFocus.current = false; rename(); }}>
-              <Pencil size={16} aria-hidden />Rename
-            </ContextMenu.Item>
-            <ContextMenu.Item className="user-menu-item side-chat-menu-delete" onClick={() => { restoreFocus.current = false; remove(); }}>
-              <Trash2 size={16} aria-hidden />Delete
-            </ContextMenu.Item>
-          </ContextMenu.Popup>
-        </ContextMenu.Positioner>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
+        <DropdownMenu onOpenChange={opened}>
+          <DropdownMenuTrigger className="sidebar-item-more" aria-label="Side chat actions" title="More">
+            <Ellipsis size={16} aria-hidden />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent {...popup}>
+            <DropdownMenuItem onClick={onRename}><Pencil aria-hidden />Rename</DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" onClick={onRemove}><Trash2 aria-hidden />Delete</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </ContextMenuTrigger>
+      <ContextMenuContent {...popup}>
+        <ContextMenuItem onClick={onRename}><Pencil aria-hidden />Rename</ContextMenuItem>
+        <ContextMenuItem variant="destructive" onClick={onRemove}><Trash2 aria-hidden />Delete</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }

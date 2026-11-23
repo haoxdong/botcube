@@ -550,8 +550,13 @@
 
 
 
-.standard-popup-positioner,
-[data-side]:has(> .user-menu-dropdown) {
+/* Menus, the Delete question and the fullscreen diagram open over the phone drawer, the profile sheet and the chat's
+   menu button, as the account menu does. */
+[data-side]:has(> .user-menu-dropdown, > .add-menu, > .side-chat-menu, > [data-slot="context-menu-content"]),
+[data-slot="alert-dialog-overlay"],
+[data-slot="alert-dialog-content"],
+[data-slot="dialog-overlay"]:has(+ .diagram-fullscreen-popup),
+.diagram-fullscreen-popup {
   z-index: 300;
 }
 
@@ -572,6 +577,17 @@
 
 .standard-popup[data-starting-style],
 .standard-popup[data-ending-style] {
+  opacity: 0;
+}
+
+/* The stock overlays have no class prop; they fade with their dialog. */
+[data-slot="alert-dialog-overlay"],
+[data-slot="dialog-overlay"]:has(+ .diagram-fullscreen-popup) {
+  transition: opacity var(--motion-quick) var(--ease);
+}
+
+[data-slot="alert-dialog-overlay"]:is([data-starting-style], [data-ending-style]),
+[data-slot="dialog-overlay"]:has(+ .diagram-fullscreen-popup):is([data-starting-style], [data-ending-style]) {
   opacity: 0;
 }
 

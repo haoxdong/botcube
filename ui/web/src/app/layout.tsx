@@ -8,7 +8,6 @@ import "./motion.css";
 import "./step-sheet.css";
 import "../computer/styles.css";
 import "../computer/live-browser.css";
-import "../computer/files-menu.css";
 import localFont from "next/font/local";
 import { cn } from "@/lib/utils";
 import { webUiPlugin } from "@bot-ui";

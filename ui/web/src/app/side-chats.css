@@ -56,39 +56,6 @@
     transform var(--motion-move) var(--ease);
 }
 
-/* Above the phone drawer and its strip; as wide as the account menu */
-.side-chat-menu {
-  position: relative;
-  z-index: 300;
-  width: 260px;
-  padding: var(--space-4) 0;
-  background: var(--color-white);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-float);
-  transition: opacity var(--motion-quick) var(--ease);
-}
-
-.side-chat-menu[data-starting-style],
-.side-chat-menu[data-ending-style] {
-  opacity: 0;
-}
-
-/* A touch or pointer's open focuses the menu itself, which shows no ring; a key's lands on an item, which shows one. */
-.side-chat-menu:focus,
-.side-chat-menu .user-menu-item:focus:not(:focus-visible) {
-  outline: none;
-}
-
-.side-chat-menu .user-menu-item:focus-visible {
-  background: var(--color-fill);
-}
-
-.side-chat-menu .side-chat-menu-delete,
-.side-chat-menu .side-chat-menu-delete svg {
-  color: var(--color-red);
-}
-
 .sidebar-item-content {
   flex: 1;
   min-width: 0;

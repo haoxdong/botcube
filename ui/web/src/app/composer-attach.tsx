@@ -3,17 +3,18 @@
 import { carriesFiles } from "./keep-file-drops";
 
 import { useEffect, useRef, useState, type DragEvent, type RefObject } from "react";
-import { Menu } from "@base-ui/react/menu";
 import { FilePlusCorner, Paperclip, Plus } from "lucide-react";
 import { zoomOf } from "@/lib/utils";
 import { InputGroupButton } from "@/components/ui/input-group";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { composerEdges } from "./composer-edges";
 import type { ComposerFiles } from "./composer-files";
 import { Fade } from "./collapse";
 
 // The ways files reach the composer besides pasting into its text: its + menu, and dropping them on the chat.
 
 /**
- * The composer's + and its menu, as ChatGPT's: a white popover over the composer's left edge whose items open the file
+ * The composer's + and its stock menu, opening over the composer's left edge, whose items open the file
  * picker, Add photos for images and Add files for any file.
  */
 export function AddMenu({ picker }: { picker: RefObject<HTMLInputElement | null> }) {
@@ -24,25 +25,21 @@ export function AddMenu({ picker }: { picker: RefObject<HTMLInputElement | null>
     picker.current.click();
   };
   return (
-    <Menu.Root>
-      <Menu.Trigger ref={trigger} render={<InputGroupButton size="icon-sm" />} data-testid="copilot-add-menu-button" className="composer-add rounded-full focus-visible:bg-muted focus-visible:text-foreground" aria-label="Add photos & files">
+    <DropdownMenu>
+      <DropdownMenuTrigger ref={trigger} render={<InputGroupButton size="icon-sm" />} data-testid="copilot-add-menu-button" className="composer-add rounded-full focus-visible:bg-muted focus-visible:text-foreground" aria-label="Add photos & files">
         <Plus aria-hidden />
-      </Menu.Trigger>
-      <Menu.Portal>
-        <Menu.Positioner className="add-menu-positioner" anchor={() => trigger.current?.closest(".chat-composer") ?? null} side="top" align="start" sideOffset={() => 8 * zoomOf(trigger.current)}>
-          <Menu.Popup className="add-menu">
-            <Menu.Item className="add-menu-item" onClick={() => addFile("image/*")}>
-              <Paperclip size={20} aria-hidden />
-              Add photos
-            </Menu.Item>
-            <Menu.Item className="add-menu-item" onClick={() => addFile()}>
-              <FilePlusCorner size={20} aria-hidden />
-              Add files
-            </Menu.Item>
-          </Menu.Popup>
-        </Menu.Positioner>
-      </Menu.Portal>
-    </Menu.Root>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="add-menu standard-popup" side="top" sideOffset={() => composerEdges(trigger.current).above + 8 * zoomOf(trigger.current)} alignOffset={() => -composerEdges(trigger.current).left}>
+        <DropdownMenuItem onClick={() => addFile("image/*")}>
+          <Paperclip aria-hidden />
+          Add photos
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => addFile()}>
+          <FilePlusCorner aria-hidden />
+          Add files
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

@@ -7,7 +7,6 @@ import '../src/app/code-blocks.css';
 import '../src/app/motion.css';
 import '../src/app/step-sheet.css';
 import '../src/computer/styles.css';
-import '../src/computer/files-menu.css';
 import '../src/computer/live-browser.css';
 import './font.css';
 

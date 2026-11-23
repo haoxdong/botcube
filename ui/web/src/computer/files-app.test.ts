@@ -392,7 +392,7 @@ const names = (host: HTMLElement) => [...host.querySelectorAll('.agent-computer-
 // A button's name: an icon chip's label, else its text.
 const named = (button: HTMLButtonElement) => button.getAttribute('aria-label') ?? button.textContent;
 const click = async (host: HTMLElement, label: string) => {
-  const button = [...host.querySelectorAll('button'), ...document.querySelectorAll<HTMLButtonElement>('[role=menu] button')].find((candidate) => named(candidate) === label);
+  const button = [...host.querySelectorAll('button'), ...document.querySelectorAll<HTMLButtonElement>('[role=menu] button, [role=alertdialog] button')].find((candidate) => named(candidate) === label);
   if (button === undefined) throw new Error(`no ${label} button`);
   await act(async () => button.click());
 };
@@ -1017,7 +1017,7 @@ describe('FilesApp', () => {
     };
     const menu = (_host: HTMLElement) => document.querySelector('[role="menu"]');
     const items = (_host: HTMLElement) => [...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent);
-    const sheet = (host: HTMLElement) => host.querySelector('[role="alertdialog"]');
+    const sheet = (_host: HTMLElement) => document.querySelector('[role="alertdialog"]');
     const key = async (target: Element | null, init: KeyboardEventInit) => {
       if (!(target instanceof HTMLElement)) throw new Error('Keyboard target is missing');
       target.focus();

@@ -5,10 +5,8 @@ import { Collapse, Presence, presenceMotion } from "../app/collapse";
 import { m as motionElement } from "motion/react";
 
 import { ChevronLeft, ChevronRight, Clock, Folder } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type RefObject, type MouseEvent } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type ReactElement, type MouseEvent } from 'react';
 import { contextMenuKey } from "../app/context-menu-key";
-import { ContextMenu } from '@base-ui/react/context-menu';
-import { AlertDialog } from '@base-ui/react/alert-dialog';
 import { FileName } from './file-name';
 import { FileTypeIcon, isImageName } from '../components/file-type-icon';
 import { FilesChart, opensAsChart } from './files-chart';
@@ -17,6 +15,8 @@ import { deleteFile, fileDownloadUrl, listFiles, renameFile, type FileEntry } fr
 
 import { LoadingSkeleton } from 'botcube-ui-web/load-state';
 import { Button } from "@/components/ui/button";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Input } from "@/components/ui/input";
 
 const MotionClock = motionElement.create(Clock);
@@ -255,24 +255,27 @@ export function FilesWindow({
           </nav>
         </div>
   
-        <AlertDialog.Root open={deleting?.open === true} onOpenChange={(open) => { if (!open) closeSheet(); }} onOpenChangeComplete={(open) => { if (!open) setDeleting(null); }}>
-          <AlertDialog.Portal container={view.current}>
-            <AlertDialog.Popup className="agent-computer-files-sheet standard-popup" aria-label="Delete file" finalFocus={() => {
-              const target = deleteFocus.current;
-              if (target?.opener.isConnected) return target.opener;
-              return [...(view.current?.querySelectorAll<HTMLElement>(".agent-computer-file") ?? [])].find((row) => row.dataset.filePath === target?.path) ?? view.current;
-            }}>
-              <p>{`Delete “${deleting?.row.name}”? This can't be undone.`}</p>
-              <AlertDialog.Close render={<Button type="button" variant="outline" />}>Cancel</AlertDialog.Close>
-              <Button type="button" variant="destructive" onClick={() => {
+        <AlertDialog open={deleting?.open === true} onOpenChange={(open) => { if (!open) closeSheet(); }} onOpenChangeComplete={(open) => { if (!open) setDeleting(null); }}>
+          <AlertDialogContent size="sm" className="standard-popup" finalFocus={() => {
+            const target = deleteFocus.current;
+            if (target?.opener.isConnected) return target.opener;
+            return [...(view.current?.querySelectorAll<HTMLElement>(".agent-computer-file") ?? [])].find((row) => row.dataset.filePath === target?.path) ?? view.current;
+          }}>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete file</AlertDialogTitle>
+              <AlertDialogDescription>{`Delete “${deleting?.row.name}”? This can't be undone.`}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction variant="destructive" onClick={() => {
                 closeSheet();
                 if (deleting === null) return;
                 const { path } = deleting.row;
                 void Promise.resolve(onDelete(path)).catch(() => setRefocus(path));
-              }}>Delete</Button>
-            </AlertDialog.Popup>
-          </AlertDialog.Portal>
-        </AlertDialog.Root>
+              }}>Delete</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <Presence>{error && <motionElement.p {...presenceMotion} className="agent-computer-error" role="alert">{error}</motionElement.p>}</Presence>
         {brokenPictures.map((message, index) => <p key={index} className="agent-computer-error" role="alert">{message}</p>)}
         <Collapse open={files === null && error === null} appear={false}><LoadingSkeleton label="Files" /></Collapse>
@@ -282,7 +285,7 @@ export function FilesWindow({
         <FilesChart file={viewing} fileUrl={thumbnailUrl} onDownload={onDownload} onClose={() => setViewing(null)} />
         <Presence>{files !== null && viewing === null && (
           <motionElement.div {...presenceMotion} className="agent-computer-files-grid" role="listbox" aria-label={place === null ? 'Recents' : 'Folder contents'}>
-            {items.map((item) => <FileMenu key={item.path} container={view} row={item} actions={menuItems} onOpen={() => setSelected(item.path)}><Presence>{item.path === renaming?.path ? (
+            {items.map((item) => <FileMenu key={item.path} row={item} actions={menuItems} onOpen={() => setSelected(item.path)}><Presence>{item.path === renaming?.path ? (
               <motionElement.div {...presenceMotion} key={item.path} role="option" aria-selected={item.path === selected} className="agent-computer-file" data-file-path={item.path} data-kind={kindOf(item)}>
                 {icon(item)}
                 <Input
@@ -411,35 +414,30 @@ export function FilesApp({ chatServiceUrl, onLoad }: { chatServiceUrl: string; o
   );
 }
 
-function FileMenu({ row, actions, onOpen, children, container }: {
+function FileMenu({ row, actions, onOpen, children }: {
   row: FilesItem;
-  container: RefObject<HTMLElement | null>;
   actions: { label: string; act: (at: { row: FilesItem; opener: HTMLElement }) => void }[];
   onOpen: () => void;
   children: ReactElement;
 }) {
   const opener = useRef<HTMLDivElement>(null);
   const restoreFocus = useRef(true);
-  const firstItem = useRef<HTMLButtonElement>(null);
+  const firstItem = useRef<HTMLDivElement>(null);
   const keyboard = useRef(false);
-  const menuActions = useRef<ContextMenu.Root.Actions | null>(null);
+  const menuActions = useRef<NonNullable<ComponentProps<typeof ContextMenu>["actionsRef"]>["current"]>(null);
   if (row.folder) return children;
   return (
-    <ContextMenu.Root actionsRef={menuActions} onOpenChange={(open) => { if (open) { restoreFocus.current = true; onOpen(); } }}>
-      <ContextMenu.Trigger ref={opener} className="agent-computer-file-trigger" tabIndex={-1} onKeyDown={(event) => { keyboard.current = contextMenuKey(event); }}>{children}</ContextMenu.Trigger>
-      <ContextMenu.Portal>
-        <ContextMenu.Positioner className="standard-popup-positioner" collisionBoundary={container.current ?? undefined}>
-          <ContextMenu.Popup onKeyDown={(event) => { if (event.key === "Tab") menuActions.current?.close(); }} className="agent-computer-files-menu standard-popup" aria-label={row.name} onFocus={(event) => { if (keyboard.current && event.target === event.currentTarget) { keyboard.current = false; firstItem.current?.focus(); } }} finalFocus={() => restoreFocus.current ? opener.current?.querySelector("button, input") ?? opener.current : false}>
-            {actions.map(({ label, act }, index) => (
-              <ContextMenu.Item key={label} ref={index === 0 ? firstItem : undefined} nativeButton render={<button type="button" />} onClick={() => {
-                if (opener.current === null) throw new Error("The file menu has no opener");
-                restoreFocus.current = label === "Download";
-                act({ row, opener: opener.current.querySelector<HTMLElement>(".agent-computer-file") ?? opener.current });
-              }}>{label}</ContextMenu.Item>
-            ))}
-          </ContextMenu.Popup>
-        </ContextMenu.Positioner>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
+    <ContextMenu actionsRef={menuActions} onOpenChange={(open) => { if (open) { restoreFocus.current = true; onOpen(); } }}>
+      <ContextMenuTrigger ref={opener} className="agent-computer-file-trigger" tabIndex={-1} onKeyDown={(event) => { keyboard.current = contextMenuKey(event); }}>{children}</ContextMenuTrigger>
+      <ContextMenuContent className="standard-popup" onKeyDown={(event) => { if (event.key === "Tab") menuActions.current?.close(); }} aria-label={row.name} onFocus={(event) => { if (keyboard.current && event.target === event.currentTarget) { keyboard.current = false; firstItem.current?.focus(); } }} finalFocus={() => restoreFocus.current ? opener.current?.querySelector("button, input") ?? opener.current : false}>
+        {actions.map(({ label, act }, index) => (
+          <ContextMenuItem key={label} ref={index === 0 ? firstItem : undefined} nativeButton render={<button type="button" />} onClick={() => {
+            if (opener.current === null) throw new Error("The file menu has no opener");
+            restoreFocus.current = label === "Download";
+            act({ row, opener: opener.current.querySelector<HTMLElement>(".agent-computer-file") ?? opener.current });
+          }}>{label}</ContextMenuItem>
+        ))}
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }

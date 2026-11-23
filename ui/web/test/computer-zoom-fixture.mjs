@@ -128,7 +128,6 @@ export function BrowserLiveView({onConnectionEstablished,onDisconnect}){
       [
         'botcube/ui/web/src/app/globals.css',
         'botcube/ui/web/src/computer/styles.css',
-        'botcube/ui/web/src/computer/files-menu.css',
       ].map((file) => readFile(resolve(root, file), 'utf8'))
     )
   )

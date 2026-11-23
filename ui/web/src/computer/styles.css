@@ -440,25 +440,6 @@
   .agent-computer-files-sidebar button { height: 44px; }
 }
 
-/* The sheet that asks before a Delete: it drops from the toolbar, as a macOS sheet does. */
-/* The delete confirmation lies over the grid's top, under the 36px toolbar, so no file moves as it comes and goes. */
-.agent-computer-files-sheet {
-  position: absolute;
-  top: 36px;
-  left: 0;
-  right: 0;
-  z-index: 1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-8);
-  align-items: center;
-  justify-content: flex-end;
-  padding: var(--space-8);
-  border-bottom: 1px solid var(--color-line);
-  background: var(--color-white);
-  box-shadow: var(--shadow-float);
-}
-.agent-computer-files-sheet p { flex: 1 1 100%; margin: 0; overflow-wrap: anywhere; }
 
 /* Take-over by touch: shown on phones only; desktops use their own keyboard and mouse. */
 .agent-computer-touch { display: none; }
