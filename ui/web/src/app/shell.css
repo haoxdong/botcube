@@ -320,15 +320,13 @@
   justify-content: flex-start;
 }
 
-/* The header's agent on the stock ghost Button keeps its text, spacing, press and focus. */
+/* The header's agent on the stock ghost Button keeps its text and spacing. */
 .chat-header-agent[data-slot="button"] {
   gap: 0;
-  box-shadow: none;
   font-size: inherit;
   font-weight: inherit;
   line-height: inherit;
   white-space: normal;
-  translate: none;
 }
 
 .sidebar-nav-icon {

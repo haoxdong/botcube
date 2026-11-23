@@ -118,7 +118,4 @@
 
 .chat-header-name {
   transform-origin: 50% 0;
-  transition:
-    background var(--motion-quick) var(--ease),
-    box-shadow var(--motion-quick) var(--ease);
 }

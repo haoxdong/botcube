@@ -793,7 +793,7 @@ it('spaces a scheduled-task proposal in a message by its own gap, not prose para
   expect(styleOf(message, '.scheduled-proposal').gap).toBe('4px');
 });
 
-it("shows the agent's name in a capsule over the avatar's bottom edge, which sinks when pressed (Muse/dots north star Figs 1, 7 and 11)", () => {
+it("shows the agent's name in a capsule over the avatar's bottom edge (Muse/dots north star Figs 1, 7 and 11)", () => {
   const { container } = render(
     <header className="chat-header">
       <button className="chat-header-agent">
@@ -809,21 +809,13 @@ it("shows the agent's name in a capsule over the avatar's bottom edge, which sin
   expect(name.position).toBe('relative');
   expect(name.borderRadius).toBe('9999px');
   expect(name.backgroundColor).toBe('#fff');
-  expect(sheet).toMatch(/\.chat-header-agent:active:not\(:disabled\)\s*\{\s*transform: scale\(0\.95\);/);
-  expect(sheet).toMatch(/\.chat-header-agent:active:not\(:disabled\) \.chat-header-name \{\s*background: var\(--color-line\);/);
 });
 
-it("answers a mouse over the agent's capsule and rings it on keyboard focus", () => {
-  // happy-dom applies no :hover or :focus-visible, so these read the sheet. A mouse lifts the capsule; a phone, which
-  // has no hover, keeps the press. The keyboard's focus rings the capsule in blue.
-  expect(sheet).toMatch(
-    /@media \(hover: hover\) \{\s*\.chat-header-agent:hover:not\(:disabled\) \.chat-header-name \{\s*background: var\(--color-white\);\s*box-shadow: var\(--shadow-rest\);/,
-  );
-  // Forced colors drop box-shadows but paint a transparent outline, so keyboard focus stays visible there.
-  expect(sheet).toMatch(/\.chat-header-agent:focus-visible \{\s*outline: 2px solid transparent;\s*\}/);
-  expect(sheet).toMatch(
-    /\.chat-header-agent:focus-visible:not\(:disabled\) \.chat-header-name \{\s*box-shadow: 0 0 0 2px var\(--color-white\), 0 0 0 4px var\(--color-blue\);/,
-  );
+it("leaves the agent's hover, press and focus to the stock ghost Button", () => {
+  // Stock gives no hover here (the app's background: none), its 1px press and its ring round the whole button.
+  expect(sheet).not.toMatch(/\.chat-header-agent[^{,]*:(?:hover|active|focus-visible)/);
+  const agent = sheet.match(/\.chat-header-agent\[data-slot="button"\] \{[^}]*\}/g)?.join('\n') ?? '';
+  expect(agent).not.toMatch(/box-shadow|translate|border-radius|transform/);
 });
 
 it('lays inline steering out as a normal user message', () => {
@@ -849,32 +841,6 @@ it("fades the Agent Computer's dock apps in, leaving the next tap to the dock", 
 it('bobs Marq while the agent works', () => {
   // happy-dom runs no animations, so this reads the sheet.
   expect(sheet).toMatch(/\.chat-header-agent\[data-working\] \.avatar-agent svg \{\s*animation: chatHeaderBob var\(--motion-loop\) ease-in-out infinite;/);
-});
-
-it('keeps the avatar keyboard focus ring while the pointer is over it', () => {
-  // happy-dom does not track hover or focus-visible. Equivalent classes preserve selector specificity
-  // and exercise their combined cascade using the actual stylesheet, including the disabled control.
-  const states = document.createElement('style');
-  states.textContent = page.replace(/:hover\b/g, '.pointer-over').replace(/:focus-visible\b/g, '.keyboard-focused').replace(/\(hover: hover\)/g, 'all');
-  const button = document.createElement('button');
-  button.className = 'chat-header-agent pointer-over keyboard-focused';
-  button.innerHTML = '<span class="chat-header-name">Astra</span>';
-  document.head.append(states);
-  document.body.append(button);
-  try {
-    const focusRing = '0 0 0 2px #fff, 0 0 0 4px #0d74ce';
-    expect(styleOf(button, '.chat-header-name').boxShadow).toBe(focusRing);
-    button.classList.remove('pointer-over');
-    expect(styleOf(button, '.chat-header-name').boxShadow).toBe(focusRing);
-    button.classList.remove('keyboard-focused');
-    button.classList.add('pointer-over');
-    expect(styleOf(button, '.chat-header-name').boxShadow).toBe('0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.08)');
-    button.disabled = true;
-    expect(styleOf(button, '.chat-header-name').boxShadow || 'none').toBe('none');
-  } finally {
-    button.remove();
-    states.remove();
-  }
 });
 
 it("floats the agent's header over the chat, which scrolls beneath it without a backing band, and starts the first message below it (Muse/dots north star Figs 7 and 11)", () => {

@@ -1,21 +1,3 @@
-/* A mouse over it lifts the capsule; phones, which have no hover, keep the press. */
-@media (hover: hover) {
-  .chat-header-agent:hover:not(:disabled) .chat-header-name {
-    background: var(--color-white);
-    box-shadow: var(--shadow-rest);
-  }
-}
-
-/* The keyboard's focus rings the capsule in blue, in place of the browser's outline around the whole button. The
-   outline stays, transparent, for forced colors, which drop the ring's box-shadow and paint the outline instead. */
-.chat-header-agent:focus-visible {
-  outline: 2px solid transparent;
-}
-
-.chat-header-agent:focus-visible:not(:disabled) .chat-header-name {
-  box-shadow: 0 0 0 2px var(--color-white), 0 0 0 4px var(--color-blue);
-}
-
 /* The name in a frosted capsule over the avatar's bottom edge, as dots (Fig 7) and Muse (Fig 11) show it: a button, not a heading. */
 .chat-header-name {
   position: relative;
