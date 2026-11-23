@@ -8,7 +8,7 @@ import {
 } from '@aws-sdk/client-efs';
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
 import { AccountTree } from './account-tree.js';
-import { saveArtifact } from './artifact-save.js';
+import { restoreArtifact, saveArtifact } from './artifact-save.js';
 import { HttpError } from './http-error.js';
 import { answerFilesLink, missing, signFilesLink } from './files-link.js';
 import {
@@ -353,6 +353,10 @@ export function accountFilesEfs({
     async saveArtifact(userId, save) {
       await requireActive(userId);
       return saveArtifact(await directory(userId), save);
+    },
+    async restoreArtifact(userId, restore) {
+      await requireActive(userId);
+      return restoreArtifact(await directory(userId), restore);
     },
     async mountBinding(userId) {
       await requireActive(userId);

@@ -16,6 +16,12 @@ export const ArtifactSave = z.object({
 });
 export type ArtifactSave = z.infer<typeof ArtifactSave>;
 
+export const ArtifactRestore = ArtifactSave.pick({ id: true }).extend({
+  from: z.number().int().positive(),
+  version: z.number().int().positive(),
+});
+export type ArtifactRestore = z.infer<typeof ArtifactRestore>;
+
 /**
  * Each Artifact Type as a save stores it, in the layout the harness's `Artifact` tool keeps: a version is
  * `<n><suffix>` beside its `<n>.json` record, a folder when `suffix` is empty and one file otherwise. `saves` names the
@@ -57,23 +63,44 @@ export async function saveArtifact(directory: string, { id, version, files }: Ar
   const source = sourceOf(id);
   const tree = await AccountTree.at(directory);
   const versions = `artifacts/${source}.versions`;
-  const type = editedType(await versionsIn(tree, versions), id, version);
+  const type = newestType(await versionsIn(tree, versions), id, version, 'edit');
   const edit: Edit = { tree, id, source, versions, version, type, files, kept: [] };
   edit.kept = type.suffix === '' ? await tree.files(edited(edit)) : [];
   await refuseEdits(edit);
   await checkWhole(edit);
   const record = readRecord((await tree.read(`${versions}/${version}.json`)).toString('utf8'));
   await refuseChangedKept(edit);
-  const next = await storeNext(edit, record);
-  return {
-    id, type: type.name, title: record.title, description: record.description, version: next, author: 'user',
-    path: `/${versions}/${next}${type.suffix}`,
-  };
+  const { title, description, imports } = record;
+  const savedRecord = { title, description, ...(imports === undefined ? {} : { imports }) };
+  return storeNext(edit, { ...savedRecord, author: 'user' }, (building) => buildEdited(edit, building),
+    async (_, publish) => {
+      await Promise.all(edits.map(([name, text]) => tree.write(sourceFile(edit, name), text, 'replace')));
+      await publish();
+    });
 }
 
+export async function restoreArtifact(directory: string, { id, from, version }: ArtifactRestore): Promise<SavedArtifact> {
+  const source = sourceOf(id);
+  const tree = await AccountTree.at(directory);
+  const versions = `artifacts/${source}.versions`;
+  const stored = await versionsIn(tree, versions);
+  newestType(stored, id, version, 'restore');
+  const type = stored.get(from);
+  if (type === undefined) throw new HttpError(404, `No version ${from} of ${id} in Files`);
+
+  const record = readRecord((await tree.read(`${versions}/${from}.json`)).toString('utf8'));
+  return storeNext({ tree, id, versions, version, type }, { ...record, author: 'user', restoredFrom: from },
+    (building) => tree.copy(`${versions}/${from}${type.suffix}`, building, type.suffix === ''),
+    (building, publish) => replaceSource(tree, source, building, type.suffix === '', publish));
+}
+
+type NextVersion = {
+  tree: AccountTree; id: string; versions: string; version: number; type: SaveType;
+};
+
 /** A save in progress: the version it edits and the files it carries, by their path in the Source. */
-type Edit = {
-  tree: AccountTree; id: string; source: string; versions: string; version: number; type: SaveType;
+type Edit = NextVersion & {
+  source: string;
   files: Record<string, string>;
   /** A folder Source's files in the edited version; empty for a one-file Source. */
   kept: string[];
@@ -84,12 +111,13 @@ const edited = ({ versions, version, type }: Edit) => `${versions}/${version}${t
 const sourceFile = ({ source, type }: Edit, name: string) => type.suffix === '' ? `${source}/${name}` : source;
 
 /** The edited version's type, when it is the Artifact's newest. */
-function editedType(stored: Map<number, SaveType>, id: string, version: number): SaveType {
+function newestType(stored: Map<number, SaveType>, id: string, version: number, action: 'edit' | 'restore'): SaveType {
   if (stored.size === 0) throw new HttpError(404, `No Artifact ${id} in Files`);
   const latest = Math.max(...stored.keys());
   const type = stored.get(version);
   if (latest !== version || type === undefined) {
-    throw new HttpError(409, `Version ${latest} of ${id} is newer than the version ${version} you edited. Open the newest and edit again.`);
+    const observed = action === 'edit' ? 'edited' : 'saw';
+    throw new HttpError(409, `Version ${latest} of ${id} is newer than the version ${version} you ${observed}. Open the newest and ${action} again.`);
   }
   return type;
 }
@@ -139,31 +167,68 @@ function attachments(text: string): string[] {
   return (readDraft(text).attachments ?? []).map(({ file }, index) => `attachment ${index} is ${file}`);
 }
 
-async function storeNext(edit: Edit, { title, description, imports }: VersionRecord): Promise<number> {
-  const { tree, id, versions, version, type: { suffix }, files, kept } = edit;
-  const next = version + 1;
-  const claimed = `${versions}/${next}.json`;
-  const building = `${versions}/.saving-${randomUUID()}${suffix}`;
+async function buildEdited(edit: Edit, building: string): Promise<void> {
+  const { tree, type: { suffix }, files, kept } = edit;
+  if (suffix === '') {
+    await Promise.all(kept.map(async (name) => tree.write(`${building}/${name}`, files[name] ?? await tree.read(`${edited(edit)}/${name}`), 'new')));
+  } else {
+    await tree.write(building, Object.values(files)[0] ?? '', 'new');
+  }
+}
+
+async function replaceSource(tree: AccountTree, source: string, building: string, folder: boolean, publish: () => Promise<void>): Promise<() => Promise<void>> {
+  const replacement = `${building}.source`;
+  const previous = `${building}.previous`;
   try {
-    if (suffix === '') {
-      await Promise.all(kept.map(async (name) => tree.write(`${building}/${name}`, files[name] ?? await tree.read(`${edited(edit)}/${name}`), 'new')));
-    } else {
-      await tree.write(building, Object.values(files)[0] ?? '', 'new');
-    }
-    await tree.write(claimed, JSON.stringify({ author: 'user', title, description, imports }), 'new').catch((error: unknown) => {
-      throw errorCode(error) === 'EEXIST' ? new HttpError(409, `Version ${next} of ${id} was saved first. Open the newest and edit again.`) : error;
+    await tree.copy(building, replacement, folder);
+    await tree.folders(path.posix.dirname(source));
+    const hadSource = await tree.rename(source, previous).then(() => true, (error: unknown) => {
+      if (errorCode(error) === 'ENOENT') return false;
+      throw error;
     });
     try {
-      await Promise.all(Object.entries(files).map(([name, text]) => tree.write(sourceFile(edit, name), text, 'replace')));
-      await tree.rename(building, `${versions}/${next}${suffix}`);
+      await tree.rename(replacement, source);
+      try {
+        await publish();
+      } catch (error) {
+        await tree.remove(source);
+        throw error;
+      }
     } catch (error) {
-      await tree.remove(claimed);
+      if (hadSource) await tree.rename(previous, source);
       throw error;
     }
+  } catch (error) {
+    await tree.remove(replacement);
+    throw error;
+  }
+  return () => tree.remove(previous);
+}
+
+async function storeNext(
+  { tree, id, versions, version, type }: NextVersion,
+  record: VersionRecord & { author: 'user' },
+  build: (building: string) => Promise<void>,
+  publishWithSource: (building: string, publish: () => Promise<void>) => Promise<void | (() => Promise<void>)>,
+): Promise<SavedArtifact> {
+  const next = version + 1;
+  const claimed = `${versions}/${next}.json`;
+  const stored = `${versions}/${next}${type.suffix}`;
+  const building = `${versions}/.saving-${randomUUID()}${type.suffix}`;
+  try {
+    await build(building);
+    await tree.write(claimed, JSON.stringify(record), 'new').catch((error: unknown) => {
+      throw errorCode(error) === 'EEXIST' ? new HttpError(409, `Version ${next} of ${id} was saved first. Open the newest and edit again.`) : error;
+    });
+    const cleanup = await publishWithSource(building, () => tree.rename(building, stored)).catch(async (error: unknown) => {
+      await tree.remove(claimed);
+      throw error;
+    });
+    await cleanup?.();
   } finally {
     await tree.remove(building);
   }
-  return next;
+  return { id, type: type.name, title: record.title, description: record.description, version: next, author: record.author, path: `/${stored}` };
 }
 
 function sourceOf(id: string): string {

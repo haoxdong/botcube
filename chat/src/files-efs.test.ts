@@ -3,10 +3,14 @@ import { cp, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'n
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PutCommand } from '@aws-sdk/lib-dynamodb';
+import { Hono } from 'hono';
+import { readRecord } from 'botcube-artifact-check/record';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryDocuments } from '../test/memory-documents.js';
 import { AccountResources } from './account-resources.js';
 import { accountFilesEfs, type AccessPoints } from './files-efs.js';
+import { computerFilesRoutes } from './computer-files-routes.js';
+import { HttpError } from './http-error.js';
 import { signFilesLink } from './files-link.js';
 
 const ACCOUNT = 'acct_0123456789';
@@ -131,6 +135,91 @@ describe('EFS account Files', () => {
     await files.rename(ACCOUNT, 'a.txt', 'archive/a.txt');
     expect((await files.list(ACCOUNT)).map(({ name }) => name).sort()).toEqual(['archive/a.txt', 'b.txt']);
     await expect(files.rename(ACCOUNT, 'a.txt', 'c.txt')).rejects.toMatchObject({ status: 404 });
+  });
+
+  describe('POST /files/artifact-restore', () => {
+    const post = () => {
+      const { files } = setup();
+      const app = new Hono()
+        .onError((error) => new Response(error.message, { status: error instanceof HttpError ? error.status : 500 }))
+        .route('/', computerFilesRoutes({
+          requester: async () => ({ owner: ACCOUNT }),
+          history: { owns: async () => true },
+          computers: {
+            state: async () => { throw new Error('unused'); },
+            wake: async () => { throw new Error('unused'); },
+          },
+          files: () => files,
+        }));
+      return (id: string, from: number, version: number) => app.request('/files/artifact-restore', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, from, version }),
+      });
+    };
+    const read = (name: string) => readFile(path.join(root, HASH, name), 'utf8');
+
+    it.each([
+      ['page', '.html', '<h1>First</h1>', '<h1>Second</h1>', undefined],
+      ['doc', '.md', '# First', '# Second', undefined],
+      ['sheet', '.sheet.json', '{"edits":[{"kind":"importFile","asset":"old.csv"}]}', '{"edits":[]}', 'old.csv'],
+      ['email', '.email.json', '{"attachments":[{"file":"old.pdf"}]}', '{"attachments":[{"file":"new.pdf"}]}', 'old.pdf'],
+    ])('restores a whole %s and keeps the selected version metadata', async (type, suffix, first, second, kept) => {
+      const source = `reports/q3${suffix}`;
+      const versions = `artifacts/${source}.versions`;
+      const imports = kept === undefined ? undefined : [{ edit: 0, from: `/${kept}`, path: `/${versions}/kept/${kept}` }];
+      const record = { author: 'agent', title: 'First', description: 'Original', imports };
+      await Promise.all([
+        put(HASH, source, second),
+        put(HASH, `${versions}/1${suffix}`, first),
+        put(HASH, `${versions}/1.json`, JSON.stringify(record)),
+        put(HASH, `${versions}/2${suffix}`, second),
+        put(HASH, `${versions}/2.json`, JSON.stringify({ author: 'agent', title: 'Second', description: '' })),
+        ...(kept === undefined ? [] : [put(HASH, `${versions}/kept/${kept}`, 'kept bytes')]),
+      ]);
+      const restore = post();
+
+      const response = await restore(`/${source}`, 1, 2);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        id: `/${source}`, type, title: 'First', description: 'Original', version: 3, author: 'user', path: `/${versions}/3${suffix}`,
+      });
+      expect(await read(source)).toBe(first);
+      expect(await read(`${versions}/3${suffix}`)).toBe(first);
+      expect(readRecord(await read(`${versions}/3.json`))).toEqual({ ...record, author: 'user', restoredFrom: 1 });
+      if (kept !== undefined) expect(await read(`${versions}/kept/${kept}`)).toBe('kept bytes');
+      expect((await restore(`/${source}`, 2, 2)).status).toBe(409);
+      expect(await read(source)).toBe(first);
+      expect(await readdir(path.join(root, HASH, versions))).not.toContain('4.json');
+    });
+
+    it('replaces a Slides Source with the selected deck and loses an already claimed version', async () => {
+      const source = 'decks/q3';
+      const versions = `artifacts/${source}.versions`;
+      const record = '{"author":"agent","title":"Deck","description":""}';
+      await Promise.all([
+        put(HASH, `${versions}/1.json`, record),
+        put(HASH, `${versions}/1/project/deck.json`, '{"order":["cover"]}'),
+        put(HASH, `${versions}/1/project/slides/cover.html`, '<h1>Cover</h1>'),
+        put(HASH, `${versions}/2.json`, record),
+        put(HASH, `${versions}/2/project/slides/agenda.html`, '<h1>Agenda</h1>'),
+        put(HASH, `${versions}/3.json`, record),
+        put(HASH, `${source}/project/slides/agenda.html`, '<h1>Agenda</h1>'),
+      ]);
+      const restore = post();
+      expect((await restore(`/${source}`, 999, 2)).status).toBe(404);
+      expect((await restore(`/${source}`, 1, 2)).status).toBe(409);
+      expect(await read(`${versions}/3.json`)).toBe(record);
+      expect(await read(`${source}/project/slides/agenda.html`)).toBe('<h1>Agenda</h1>');
+      await rm(path.join(root, HASH, versions, '3.json'));
+
+      expect((await restore(`/${source}`, 1, 2)).status).toBe(200);
+      expect(await read(`${source}/project/deck.json`)).toBe('{"order":["cover"]}');
+      expect(await read(`${source}/project/slides/cover.html`)).toBe('<h1>Cover</h1>');
+      expect(await read(`${versions}/3/project/slides/cover.html`)).toBe('<h1>Cover</h1>');
+      expect(await readdir(path.join(root, HASH, source, 'project/slides'))).toEqual(['cover.html']);
+      expect(await readdir(path.join(root, HASH, versions, '3/project/slides'))).toEqual(['cover.html']);
+      expect((await readdir(path.join(root, HASH, versions))).sort()).toEqual(['1', '1.json', '2', '2.json', '3', '3.json']);
+    });
   });
 
   describe("a User's save of an Artifact", () => {

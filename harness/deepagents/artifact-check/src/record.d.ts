@@ -4,6 +4,6 @@
  */
 export type Imported = { edit: number; from: string; path: string };
 /** An Artifact Version's record, `<n>.json` beside it: who made it, its title and description, and the Files it keeps. */
-export type VersionRecord = { author: 'agent' | 'user'; title: string; description: string; imports?: Imported[] };
+export type VersionRecord = { author: 'agent' | 'user'; title: string; description: string; imports?: Imported[]; restoredFrom?: number };
 /** The record in `text`; throws naming what is wrong when it is not one. */
 export function readRecord(text: string): VersionRecord;

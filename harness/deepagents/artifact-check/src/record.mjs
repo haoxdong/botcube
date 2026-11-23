@@ -11,6 +11,7 @@ const VersionRecord = z.object({
   title: z.string(),
   description: z.string(),
   imports: z.array(Imported).optional(),
+  restoredFrom: z.number().int().positive().optional(),
 });
 
 /** The record in `text`; throws naming what is wrong when it is not one. */

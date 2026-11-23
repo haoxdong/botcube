@@ -41,6 +41,26 @@ export class AccountTree {
     return found.flat();
   }
 
+  async copy(from: string, to: string, folder: boolean): Promise<void> {
+    if (!folder) {
+      await this.write(to, await this.read(from), 'new');
+      return;
+    }
+
+    await this.refuseLink(from);
+    const source = await this.pin(from.split('/'), false);
+    try {
+      const entries = await readdir(`/proc/self/fd/${source.fd}`, { withFileTypes: true });
+      await this.folders(to);
+      const copied = await Promise.allSettled(entries.map((entry) =>
+        this.copy(`${from}/${entry.name}`, `${to}/${entry.name}`, entry.isDirectory())));
+      const failed = copied.find((entry) => entry.status === 'rejected');
+      if (failed !== undefined) throw failed.reason;
+    } finally {
+      await source.close();
+    }
+  }
+
   async read(name: string): Promise<Buffer> {
     const file = await this.open(name, constants.O_RDONLY);
     try {

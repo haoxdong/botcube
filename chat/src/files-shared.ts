@@ -1,6 +1,6 @@
 import type { FilesCleanupClaim } from './files-cleanup-worker.js';
 import { createHash } from 'node:crypto';
-import type { ArtifactSave, SavedArtifact } from './artifact-save.js';
+import type { ArtifactRestore, ArtifactSave, SavedArtifact } from './artifact-save.js';
 import { HttpError } from './http-error.js';
 import type { LinkRequest } from './files-link.js';
 
@@ -78,6 +78,7 @@ export interface AccountFiles {
   rename(accountId: string, from: string, to: string): Promise<void>;
   /** A User's save of an Artifact edited in place: its Source and its next Artifact Version, authored by the User. */
   saveArtifact(accountId: string, save: ArtifactSave): Promise<SavedArtifact>;
+  restoreArtifact(accountId: string, restore: ArtifactRestore): Promise<SavedArtifact>;
   mountBinding(accountId: string): Promise<FilesMountBinding>;
   /** Move every file into another account's Files for Account Claim, then retire the source access point. */
   transfer(sourceAccountId: string, destinationAccountId: string): Promise<void>;
