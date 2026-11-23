@@ -7980,7 +7980,7 @@ describe('model and effort picker', () => {
     expect(await modelOptions()).toEqual(['GPT Plan']);
   });
 
-  describe("once a Session has started, offers only its provider's models", () => {
+  describe("keeps the account catalog after a Session starts", () => {
     const names = modelOptions;
     beforeEach(() => {
       service.models = [
@@ -7998,39 +7998,25 @@ describe('model and effort picker', () => {
       expect(await names()).toEqual(['Deep', 'Fast', 'Plan']);
     });
 
-    it("never hands another provider's model to a replayed Session", async () => {
+    it('lets a replayed OpenAI Side Chat pick an Anthropic model', async () => {
       service.sideChats = [sideChat('on-plan', 'On the plan')];
       service.replies.set('on-plan', [{ id: 'm1', role: 'user', content: 'On the plan' }]);
       service.providers.set('on-plan', 'openai');
       await renderPage();
-      expect(pill()).toHaveAccessibleName('Model Deep, reasoning Medium');
-
       await userEvent.click(sidebar().getByText('On the plan'));
-      await settle();
-
-      const replays = copilot.kits.filter((entry) => entry.selfManagedAgents['research-agent']?.threadId === 'on-plan');
-      expect(replays.length).toBeGreaterThan(0);
-      for (const entry of replays) expect(entry.properties).toEqual({ model: 'plan', effort: 'medium', sandbox: true });
-    });
-
-    it("moving a replayed Session off another provider's model", async () => {
-      service.sideChats = [sideChat('on-plan', 'On the plan')];
-      service.replies.set('on-plan', [{ id: 'm1', role: 'user', content: 'On the plan' }]);
-      service.providers.set('on-plan', 'openai');
-      await renderPage();
-
-      await userEvent.click(sidebar().getByText('On the plan'));
-
-      expect(pill()).toHaveAccessibleName('Model Plan, reasoning Medium');
-      expect(kit().properties).toEqual({ model: 'plan', effort: 'medium', sandbox: true });
-      expect(await names()).toEqual(['Plan']);
+      expect(await names()).toEqual(['Deep', 'Fast', 'Plan']);
+      await chooseModel('Fast');
+      await userEvent.keyboard('{Escape}');
+      await sendMessage('Continue the chat');
+      expect(kit().properties.model).toBe('fast');
+      expect(copilot.runAgent).toHaveBeenCalledExactlyOnceWith({ agent: agent() });
     });
 
     it('for the replayed Main Chat', async () => {
       service.mainChat = { id: 'main-1', provider: 'openai', messages: [{ id: 'm1', role: 'user', content: 'Hi' }] };
       await renderPage();
 
-      expect(await names()).toEqual(['Plan']);
+      expect(await names()).toEqual(['Deep', 'Fast', 'Plan']);
     });
 
     it("from the first Turn's model once the user sends it", async () => {
@@ -8040,7 +8026,7 @@ describe('model and effort picker', () => {
 
       await sendMessage('Hello');
 
-      expect(await names()).toEqual(['Deep', 'Fast']);
+      expect(await names()).toEqual(['Deep', 'Fast', 'Plan']);
       expect(kit().properties).toEqual({ model: 'fast', effort: 'medium', sandbox: true });
     });
 
@@ -9260,12 +9246,12 @@ describe('an offline first Turn refused before dispatch', () => {
     expect(copilot.openingTurn).not.toHaveBeenCalled();
   });
 
-  it('locks the provider after an online first Turn', async () => {
+  it('keeps provider choices after an online first Turn', async () => {
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
     await renderPage();
     await sendMessage('Create one reminder');
     expect(copilot.runAgent).toHaveBeenCalledOnce();
-    expect(await modelNames()).toEqual(['Deep']);
+    expect(await modelNames()).toEqual(['Deep', 'Astra']);
     expect(welcome()).toBeNull();
   });
 
@@ -9291,10 +9277,10 @@ describe('an offline first Turn refused before dispatch', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(submittedProperties).toEqual([{ model: 'astra', effort: 'medium', sandbox: true }]);
     expect(copilot.runAgent).toHaveBeenCalledExactlyOnceWith({ agent: agent() });
-    expect(await modelNames()).toEqual(['Astra']);
+    expect(await modelNames()).toEqual(['Deep', 'Astra']);
   });
 
-  it('locks the provider only after the refused Turn succeeds on Retry', async () => {
+  it('keeps provider choices after the refused Turn succeeds on Retry', async () => {
     await renderPage();
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
     await sendMessage('Create one reminder');
@@ -9304,7 +9290,7 @@ describe('an offline first Turn refused before dispatch', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(copilot.runAgent).toHaveBeenCalledOnce();
     expect(agent().messages).toEqual([expect.objectContaining({ role: 'user', content: 'Create one reminder' })]);
-    expect(await modelNames()).toEqual(['Deep']);
+    expect(await modelNames()).toEqual(['Deep', 'Astra']);
     expect(screen.queryByRole('alert')).toBeNull();
     expect(welcome()).toBeNull();
   });
@@ -9781,28 +9767,20 @@ describe('opening admission navigation regressions', () => {
     expect(copilot.openingTurn).not.toHaveBeenCalled();
   });
 
-  it('retains the opening provider while a different provider is chosen before the first reply', async () => {
+  it('lets the next Turn use a different provider selected during the opening Turn', async () => {
     service.models.push({ key: 'astra', label: 'Astra', provider: 'openai' });
     let finishOpening: (() => void) | undefined;
     copilot.openingTurn.mockImplementation(() => new Promise<void>((resolve) => { finishOpening = resolve; }));
     await renderPage();
-    const otherProvider = within(await openModelList()).queryByRole('option', { name: 'Astra' });
-    if (otherProvider !== null) await userEvent.click(otherProvider);
-    expect(kit().properties.model).toBe('deep');
-    expect(within(await openModelList()).queryByRole('option', { name: 'Astra' })).toBeNull();
-    await userEvent.keyboard('{Escape}');
+    await chooseModel('Astra');
     await userEvent.keyboard('{Escape}');
     await act(async () => {
       agent().addMessage({ id: 'opening-reply', role: 'assistant', content: 'Hi Ada' });
       present(finishOpening, 'the opening Turn')();
     });
     await sendMessage('What do you remember?');
-    expect(kit().properties.model).toBe('deep');
+    expect(kit().properties.model).toBe('astra');
     expect(copilot.runAgent).toHaveBeenCalledExactlyOnceWith({ agent: agent() });
-    expect(pickerTrigger()).toHaveAccessibleName(/^Model Deep/);
-    const list = await openModelList();
-    expect(within(list).queryByRole('option', { name: 'Astra' })).toBeNull();
-    expect(within(list).getByRole('option', { name: 'Fast' })).toBeVisible();
   });
 });
 

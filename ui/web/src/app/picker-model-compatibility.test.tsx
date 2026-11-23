@@ -34,14 +34,14 @@ it("retains an older task's current value without offering hidden models for a n
   ]);
 });
 
-it("defaults new chats to the newest Sol while preserving a saved older choice", async () => {
+it("defaults to the first plan model and preserves a saved choice", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ models })));
-  const options = { ready: true, accountId: "account", activeProvider: undefined, showWelcome: true, chatServiceUrl: "http://chat.test" };
+  const options = { ready: true, accountId: "account", chatServiceUrl: "http://chat.test" };
   const fresh = renderHook(() => useModelSelection(options));
-  await waitFor(() => expect(fresh.result.current.properties.model).toBe("openai-plan:gpt-6.1-sol"));
+  await waitFor(() => expect(fresh.result.current.properties.model).toBe("openai-plan:gpt-6-luna"));
   fresh.unmount();
-  localStorage.setItem("botcube.picker-choice", JSON.stringify({ account: "account", model: "openai-plan:gpt-6-luna" }));
+  localStorage.setItem("botcube.picker-choice", JSON.stringify({ account: "account", model: "openai-plan:gpt-6.1-sol" }));
   const saved = renderHook(() => useModelSelection(options));
   await waitFor(() => expect(saved.result.current.catalog.loaded).toBe(true));
-  expect(saved.result.current.properties.model).toBe("openai-plan:gpt-6-luna");
+  expect(saved.result.current.properties.model).toBe("openai-plan:gpt-6.1-sol");
 });

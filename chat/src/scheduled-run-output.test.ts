@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { defined } from '../test/defined.js';
 import { startInProcess } from '../test/in-process.js';
 
-import { activity, mainChat, owner, posted, request, run, scheduler, sideChatOf, signInChecks, stack, stream, text, unavailableCatalogs } from '../test/scheduled-run-fixture.js';
+import { activity, mainChat, owner, posted, request, run, scheduler, sideChatOf, signInChecks, stack, stream, text, planCatalogs } from '../test/scheduled-run-fixture.js';
 import { filed } from '../test/stock-bot.js';
 
 describe('a scheduled run', () => {
@@ -170,8 +170,9 @@ describe('a scheduled run', () => {
     });
   });
 
-  it('runs on the proposing model confirmed at creation', async () => {
+  it('runs on the proposing model confirmed at creation while signed out of the plan', async () => {
     const account = owner();
+    planCatalogs.set(account, []);
     const main = await mainChat(account);
 
     await run(account, stream(...text('a1', 'Done.')), 'Morning brief', { model: 'thorough' });
@@ -184,14 +185,25 @@ describe('a scheduled run', () => {
     });
   });
 
-  it.each(['thorough', 'plan'])("runs on the model %s the task names without the account's plan catalog", async (model) => {
+  it('dispatches a task saved with a gateway model on the plan after sign-in', async () => {
     const account = owner();
     const main = await mainChat(account);
-    unavailableCatalogs.add(account);
+    planCatalogs.set(account, []);
+    const prompt = 'Brief from a task saved before plan sign-in';
+    const created = await request(account, '/scheduled-tasks', {
+      method: 'POST', body: { title: 'Morning brief', prompt, schedule: 'rate(1 day)', timezone: 'UTC', proposalId: prompt, model: 'thorough' },
+    });
+    expect(created.status).toBe(201);
+    const { id } = await created.json() as { id: string };
+    planCatalogs.set(account, [{ key: 'openai-plan:gpt-6-sol', label: 'GPT-6-Sol', provider: 'openai' }]);
+    stack.agentcore.scriptPrompt(prompt, stream(...text('a1', 'Done.')));
 
-    await run(account, stream(...text('a1', 'Done.')), 'Morning brief', { model });
+    await scheduler.fire(id);
 
     expect(await posted(main)).toEqual([{ content: 'Scheduled task "Morning brief": Done.', userId: filed(account) }]);
+    expect(stack.agentcore.invocationFor(defined(await sideChatOf(account, id), 'the run Side Chat')).payload.forwardedProps)
+      .toMatchObject({ model: 'openai-plan:gpt-6-sol' });
+    expect(stack.bedrock.summarizedTurns().map(({ request }) => request)).not.toContain(prompt);
   });
 
   it("keeps its Side Chat on the default model's provider, and the Main Chat on none until the user's Turn", async () => {

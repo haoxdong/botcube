@@ -96,7 +96,7 @@ describe('scheduled persistence dispatch admission', () => {
       const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: isolated.agentcore.url });
       const bot: ScheduledRunSource = {
         agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
-        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
+        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [],
         scheduledRequester: async (owner) => ({ owner }),
         filingUserId: (owner) => filed(owner), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
         credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
@@ -148,7 +148,7 @@ describe('scheduled persistence dispatch admission', () => {
       const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: isolated.agentcore.url });
       const bot: ScheduledRunSource = {
         agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
-        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
+        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [],
         scheduledRequester: async (owner) => ({ owner }),
         filingUserId: (owner) => filed(owner), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
         credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
@@ -185,7 +185,7 @@ describe('scheduled persistence dispatch admission', () => {
       const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: isolated.agentcore.url });
       const bot: ScheduledRunSource = {
         agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
-        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
+        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [],
         scheduledRequester: async (owner) => ({ owner }),
         filingUserId: (owner) => filed(owner), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
         credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
@@ -236,7 +236,7 @@ describe('scheduled persistence dispatch admission', () => {
     const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: claimed.agentcore.url });
     const bot: ScheduledRunSource = {
       agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
-      models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
+      models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [],
       scheduledRequester: async (account) => ({ owner: account }),
       filingUserId: (account) => filed(account), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
@@ -358,7 +358,7 @@ describe('scheduled persistence dispatch admission', () => {
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const bot: ScheduledRunSource = {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined,
+      accountModels: async () => [],
       scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
@@ -390,7 +390,7 @@ describe('scheduled persistence dispatch admission', () => {
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const bot: ScheduledRunSource = {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined,
+      accountModels: async () => [],
       scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
@@ -425,7 +425,7 @@ describe('scheduled persistence dispatch admission', () => {
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const bot: ScheduledRunSource = {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined,
+      accountModels: async () => [],
       scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
@@ -487,7 +487,7 @@ describe('scheduled persistence dispatch admission', () => {
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const bot: ScheduledRunSource = {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined,
+      accountModels: async () => [],
       scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null,
@@ -649,7 +649,7 @@ describe('scheduled persistence dispatch admission', () => {
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const bot: ScheduledRunSource = {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined,
+      accountModels: async () => [],
       scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null,
@@ -687,7 +687,7 @@ describe('scheduled persistence dispatch admission', () => {
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const bot: ScheduledRunSource = {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined,
+      accountModels: async () => [],
       scheduledRequester: async (value) => {
         await stack.sessionMetadata.fenceOwner(value);
         return { owner: value };
@@ -720,7 +720,7 @@ describe('scheduled persistence dispatch admission', () => {
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const bot: ScheduledRunSource = {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined,
+      accountModels: async () => [],
       scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null,

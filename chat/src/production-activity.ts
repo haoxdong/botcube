@@ -79,9 +79,9 @@ export class ProductionActivity {
       if (turn.running !== undefined && turn.postAcceptance !== true) this.turnStarted(`${owner}#${sessionId}`, turn.running.runId, turn.scheduledTaskId === undefined);
       return prepared;
     };
-    const turnEnded: SessionMetadata['turnEnded'] = async (owner, sessionId, running, failure) => {
+    const turnEnded: SessionMetadata['turnEnded'] = async (owner, sessionId, running, failure, provider) => {
       this.turnEnded(`${owner}#${sessionId}`, running.runId);
-      return metadata.turnEnded(owner, sessionId, running, failure);
+      return metadata.turnEnded(owner, sessionId, running, failure, provider);
     };
     const turnActive: NonNullable<SessionMetadata['turnActive']> = (owner, sessionId, running) => {
       this.turnActive(`${owner}#${sessionId}`, running.runId);

@@ -403,7 +403,6 @@ describe('a scheduled run', () => {
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const bot: ScheduledRunSource = {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [],
-      accountModel: async () => undefined,
       scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null,
@@ -439,7 +438,7 @@ describe('a scheduled run', () => {
     const released = new Promise<void>((resolve) => { release = resolve; });
     const bot: ScheduledRunSource = {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined,
+      accountModels: async () => [],
       scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null,
@@ -492,7 +491,7 @@ describe('a scheduled run', () => {
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const bot: ScheduledRunSource = {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined,
+      accountModels: async () => [],
       scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null,

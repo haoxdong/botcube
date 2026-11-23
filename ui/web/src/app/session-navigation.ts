@@ -618,7 +618,7 @@ export function useSessionNavigation({
     });
 
   return {
-    current: { id: activeId, accountId: activeChat?.accountId, openAt, newChat: newChatOwner !== null && newChatOwner.accountId === accountId, provider: activeProvider, readOnly: activeReadOnly, agent, selfManagedAgents, entrances, showWelcome, stopServerTurn, turnFailure, runningSince: serverTurn?.runningSince,
+    current: { id: activeId, accountId: activeChat?.accountId, openAt, newChat: newChatOwner !== null && newChatOwner.accountId === accountId, readOnly: activeReadOnly, agent, selfManagedAgents, entrances, showWelcome, stopServerTurn, turnFailure, runningSince: serverTurn?.runningSince,
       replayLoaded, turnRunsOnServer,
       // Another tab can know of a Turn this one does not: the open chat reloads until the server says none runs.
       turnMayRun: () => setServerTurn((turn) => turn ?? { runId: undefined }) },

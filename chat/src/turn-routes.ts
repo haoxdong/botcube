@@ -9,8 +9,8 @@ import { DEPLOY_CHECK_USER_AGENT } from './production-activity.js';
 import { requireCandidatePrompts } from './candidate-prompt.js';
 import type { Requester } from './requester.js';
 import { warmingSessions, warmupTiming } from './warming-sessions.js';
-import { accountDefaultModel, accountModelList, requireAllowedModel } from './models.js';
-import { SessionOpeningError, SessionProviderError, SessionUnissuedError, type SessionMetadata, type PreparedTurn, type TurnFailure, type TurnActivity, type SessionPurge } from './session-metadata.js';
+import { namedModel } from './models.js';
+import { SessionOpeningError, SessionUnissuedError, type SessionMetadata, type PreparedTurn, type TurnFailure, type TurnActivity, type SessionPurge } from './session-metadata.js';
 import { assertIdleContinuable } from './sessions.js';
 import { SessionReadOnlyError } from './session-identity.js';
 import { forwardSnapshotEpoch, type sessionLifecycle } from './session-lifecycle.js';
@@ -120,7 +120,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
       if (opening && input.messages.length !== 0) throw new HttpError(422, 'An opening Turn cannot contain messages');
       const initialMessages = structuredClone(input.messages);
       const held = takeHeldIds(input.forwardedProps ?? {});
-      const model = await requireAllowedModel(input, bot, requester);
+      const model = await namedModel(bot, requester, input.forwardedProps?.model);
       requireCandidatePrompts(input.forwardedProps, requester, bot);
       const traffic = trafficMarker(input.forwardedProps?.traffic, c.req.header('user-agent'));
       timing.model = model.key;
@@ -136,7 +136,6 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
         prepared = await sessionMetadata.prepareTurn(requester.owner, input.threadId, {
           filingUserId: bot.filingUserId(requester.owner),
           title: (validatedInput.messages.map(userText).find(Boolean) ?? 'Untitled conversation').slice(0, 200),
-          provider: model.provider,
           running,
           messageId: input.runId,
           opening,
@@ -147,12 +146,6 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
           if (result.status === 'rejected' && result.reason !== error) console.error('Concurrent Turn preparation failed', result.reason);
         });
         if (error instanceof SessionOpeningError) throw new HttpError(409, error.message);
-        if (error instanceof SessionProviderError) {
-          throw new HttpError(
-            409,
-            `Model ${JSON.stringify(model.key)} is from ${model.provider}; this Session runs on ${error.provider} models`,
-          );
-        }
         throw await accessError(error);
       }
       timing.mark('admitted');
@@ -199,7 +192,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
           finished: async (answer) => {
             if (request === undefined) return;
             try {
-              await recordTurnSummary(summarizeTurn, async (finished) => saveTurn(finished), input.threadId, { request: userText(request), answer });
+              await recordTurnSummary(summarizeTurn, async (finished) => saveTurn(finished), input.threadId, { request: userText(request), answer }, model.key);
             } catch (error) {
               const failure = { code: 'TURN_SUMMARY_FAILED', message: (error as Error).message };
               await sessionMetadata.turnSummaryFailed(requester.owner, input.threadId, running, failure).catch((recordError: unknown) => {
@@ -210,7 +203,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
           },
           failed: (message) => request === undefined ? undefined : saveTurn(turnActivity(userText(request), message)),
           ended: end,
-          started: () => sessionMetadata.turnStarted(requester.owner, input.threadId, running),
+          started: () => sessionMetadata.turnStarted(requester.owner, input.threadId, running, model.provider),
           client: c.req.raw.signal,
           active: () => sessionMetadata.turnActive?.(requester.owner, input.threadId, running),
         });
@@ -263,10 +256,9 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
 
   const namedWarmupProps = async (input: RunAgentInput, requester: Requester, requestedModel: unknown, effort: unknown) => {
     input.forwardedProps = {
-      model: requestedModel ?? accountDefaultModel(await accountModelList(bot, requester)).key,
       ...(typeof effort === 'string' && { effort }),
     };
-    const payload = await turnPayload(input, requester, await requireAllowedModel(input, bot, requester));
+    const payload = await turnPayload(input, requester, await namedModel(bot, requester, requestedModel ?? undefined));
     const recorded = await sessionMetadata.get(requester.owner, input.threadId);
     return { ...payload.forwardedProps, warmup: true, sessionUserId: recorded?.filing_user_id ?? bot.filingUserId(requester.owner) };
   };

@@ -206,7 +206,6 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
       },
       startupCredentials: identity?.credentials ?? [],
       accountModels: ({ owner }, options) => plan.accountModels(owner, options),
-      accountModel: ({ owner }, key) => plan.accountModel(owner, key),
       routes: new Hono()
         .route('/', config.liveView.kind === 'none' ? refusingLiveView() : new Hono())
         .route('/', computer.routes)

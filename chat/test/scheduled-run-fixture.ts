@@ -9,8 +9,8 @@ import { SchedulerView } from './fakes/scheduler.js';
 import { startInProcess, type InProcessStack } from './in-process.js';
 
 export const signInChecks: { owner: string; outputs: string[] }[] = [];
-/** Owners whose plan catalog cannot be fetched for their scheduled runs. */
-export const unavailableCatalogs = new Set<string>();
+const plan = { key: 'plan', label: 'Plan', provider: 'openai' };
+export const planCatalogs = new Map<string, readonly AgentModel[]>();
 export const turnSecrets = {
   files: { accessKeyId: 'scheduled-access-key', secretAccessKey: 'scheduled/secret+key', sessionToken: 'scheduled-session-token' },
   credentialServiceInvocationToken: 'scheduled-invocation-token',
@@ -21,15 +21,12 @@ export let scheduler: SchedulerView;
 beforeAll(async () => {
   stack = await startInProcess({
     scheduled: true,
-    overrides: {
+    overrides: (chat) => ({
+      models: [...chat.models, plan],
       credentialProps: ['credentialServiceInvocationToken', 'agentComputerCdpUrl'],
       // A scheduled run acts for its owner with no request: say so in the payload.
       scheduledRequester: async (owner) => ({ owner, scheduled: true }),
-      accountModels: async (requester) => {
-        if ('scheduled' in requester && unavailableCatalogs.has(requester.owner)) throw new Error('The plan catalog is unavailable');
-        return [{ key: 'plan', label: 'Plan', provider: 'openai' }];
-      },
-      accountModel: async (_requester, key) => (key === 'plan' ? { key: 'plan', label: 'Plan', provider: 'openai' } : undefined),
+      accountModels: async ({ owner }) => planCatalogs.get(owner) ?? [plan],
       invocationPayload: async (input, requester, model?: AgentModel) => ({
         ...input, forwardedProps: { ...input.forwardedProps, requester, approvedModel: model, ...turnSecrets },
       }),
@@ -37,7 +34,7 @@ beforeAll(async () => {
         signInChecks.push({ owner, outputs });
         return outputs.find((output) => output.includes('Sign in to continue')) ?? null;
       },
-    },
+    }),
   });
   scheduler = defined(stack.scheduler, 'the stack schedules tasks');
 });

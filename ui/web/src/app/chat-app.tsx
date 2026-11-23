@@ -101,7 +101,7 @@ export default function App({
   const { accountId } = auth;
   useEffect(() => setScreen('chat'), [accountId]);
   const {
-    current: { id: activeId, accountId: activeAccountId, openAt, newChat, provider: activeProvider, readOnly, agent, selfManagedAgents, entrances, showWelcome, stopServerTurn, turnFailure, replayLoaded, turnRunsOnServer, turnMayRun, runningSince },
+    current: { id: activeId, accountId: activeAccountId, openAt, newChat, readOnly, agent, selfManagedAgents, entrances, showWelcome, stopServerTurn, turnFailure, replayLoaded, turnRunsOnServer, turnMayRun, runningSince },
     mainChatId,
     loadOlder,
     olderError,
@@ -119,7 +119,7 @@ export default function App({
   } = useSessionNavigation({ ready, accountId, chatServiceUrl: CHAT_SERVICE_URL, agentId: AGENT_ID, opening, reading: !screenOpen && !(isPhone && (agentProfileOpen || sidebarExpanded)) });
   const surfaceKey = useChatSurfaceKey(accountId, activeId, artifactWorkspace);
   const { catalog: models, picker, properties, choiceError } = useModelSelection({
-    ready, accountId, activeProvider, showWelcome, chatServiceUrl: CHAT_SERVICE_URL,
+    ready, accountId, chatServiceUrl: CHAT_SERVICE_URL,
   });
   const { model: offeredModel, effort } = picker;
   useEffect(() => {

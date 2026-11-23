@@ -19,7 +19,7 @@ import { FakeBedrock, FakeSessionApi } from './fakes/fake-backends.js';
 import { RUNTIME_ARN, createChatTable } from './fakes/stack.js';
 import { motoAws, motoEndpoint } from './fakes/moto.js';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import type { StockOverrides } from '../src/stock.js';
+import type { StockOptions } from '../src/stock.js';
 import { TEST_ACCOUNT_KEY, TestAccounts, testBotCubeConfig } from './stock-bot.js';
 
 /** The account every request signs in as, unless the x-test-owner header names another. */
@@ -27,11 +27,12 @@ const OWNER = 'acct_account-1';
 
 export interface InProcessOptions {
   turnQuota?: TurnQuotaLimits;
+  env?: NodeJS.ProcessEnv;
   /** Another Chat Service instance uses this already-created table. */
   existingTable?: string;
   invokeSessionApi?: SessionApi;
   /** Hooks replaced on BotCube's own Chat, which serves the test bot's BotCube Config as production does. */
-  overrides?: StockOverrides;
+  overrides?: StockOptions['overrides'];
   /** Sections of the BotCube Config the Chat Service serves, such as its `domains`. */
   botcube?: Record<string, unknown>;
   /** Overrides of the Chat Service config, which points AgentCore and the session API at the fakes. */
@@ -50,6 +51,7 @@ export interface InProcessOptions {
 export interface InProcessStack {
   /** The Chat Service app: drive it with `app.request()`. */
   readonly app: Hono;
+  readonly accounts: TestAccounts;
   readonly agentcore: FakeAgentCore;
   readonly sessionApi: FakeSessionApi;
   /** The Bedrock Converse endpoint each finished Turn is summarized at. */
@@ -104,7 +106,7 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
   const accounts = new TestAccounts(table, DynamoDBDocumentClient.from(client));
   const { app: service, chat, history } = createChatService(
     {
-      env: { BOTCUBE_CONFIG: botcubeConfig, BOTCUBE_CHAT_TABLE: table },
+      env: { BOTCUBE_CONFIG: botcubeConfig, BOTCUBE_CHAT_TABLE: table, ...options.env },
       accountStore: accounts,
       // The Agent Computer is an External Service: these tests start no browser.
       agentComputer: (local) => ({ ...local, warmSession: async () => undefined, turnStarting: () => undefined }),
@@ -127,6 +129,7 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
   });
   return {
     app,
+    accounts,
     history,
     agentcore,
     sessionApi,

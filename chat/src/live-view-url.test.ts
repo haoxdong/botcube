@@ -12,7 +12,7 @@ const env = { BOTCUBE_CONFIG: testBotCubeConfig(), BOTCUBE_CHAT_TABLE: 'live-vie
 const overrides: StockOverrides = {
   agentDocuments: { agentIdentity: { name: 'Test Bot', character: '', vibe: '', avatar: '' }, soul: '' },
   models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
-  accountModels: async () => [], accountModel: async () => undefined,
+  accountModels: async () => [],
   routes: new Hono(),
   requester: async () => ({ owner: 'acct_owner' }),
   filingUserId: (owner) => owner,

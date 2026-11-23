@@ -8,9 +8,16 @@ from collections.abc import Iterator
 
 import openai
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 
 from botcube_harness_deepagents.llm import ModelRelay, PlanUsageError, build_model
+from prompt_cache_fake import DelegatingBedrockClient, fake_bedrock_model
 from relay_fake import (
     FakeRelay,
     RelayReply,
@@ -118,6 +125,53 @@ def test_plan_history_replays_tool_calls_results_and_images_as_responses_json(re
         'parameters': {'type': 'object', 'properties': {'symbol': {'type': 'string'}}, 'required': ['symbol']},
     }]
     assert 'extra_body' not in call['body']
+
+
+def test_provider_requests_replay_tool_history_across_plan_sign_in_and_sign_out(relay: FakeRelay) -> None:
+    bedrock = DelegatingBedrockClient()
+    tool = {'type': 'function', 'function': {
+        'name': 'lookup', 'description': 'Look up a symbol',
+        'parameters': {'type': 'object', 'properties': {'symbol': {'type': 'string'}}},
+    }}
+    anthropic = fake_bedrock_model(bedrock).bind_tools([tool])
+    plan = build_model(model='openai-plan:gpt-6-astra', relay=lambda: _relay(relay)).bind_tools([tool])
+    history: list[BaseMessage] = [HumanMessage('Look up copper.')]
+    anthropic.invoke(history)
+    history += [
+        AIMessage(
+            [{'type': 'reasoning_content', 'reasoning_content': {'type': 'text', 'text': 'Anthropic reasoning', 'signature': 'anthropic-signature'}}],
+            tool_calls=[{'id': 'tooluse_copper', 'name': 'lookup', 'args': {'symbol': 'HG'}}],
+            response_metadata={'model_provider': 'bedrock_converse', 'model_name': 'us.anthropic.claude-sonnet-4-6'},
+        ),
+        ToolMessage('Copper result', tool_call_id='tooluse_copper'),
+        AIMessage('Copper was found.'),
+        HumanMessage('Look up gold.'),
+    ]
+    asyncio.run(plan.ainvoke(history))
+    [plan_call] = relay.calls
+    plan_input = plan_call['body']['input']
+    assert {'type': 'function_call_output', 'output': 'Copper result', 'call_id': 'tooluse_copper'} in plan_input
+    assert 'Copper was found.' in json.dumps(plan_input)
+    assert 'anthropic-signature' not in json.dumps(plan_input)
+
+    history += [
+        AIMessage(
+            [{'type': 'reasoning', 'id': 'rs_gold', 'summary': [], 'encrypted_content': 'openai-encrypted'}],
+            tool_calls=[{'id': 'call_gold', 'name': 'lookup', 'args': {'symbol': 'GC'}}],
+            response_metadata={'model_provider': 'openai'},
+        ),
+        ToolMessage('Gold result', tool_call_id='call_gold'),
+        AIMessage('Gold was found.'),
+        HumanMessage('Compare the two metals.'),
+    ]
+    anthropic.invoke(history)
+    first, last = bedrock.requests
+    assert first['messages'] == [{'role': 'user', 'content': [{'text': 'Look up copper.'}]}]
+    replay = json.dumps(last['messages'])
+    assert 'Copper was found.' in replay and 'Gold was found.' in replay
+    assert 'tooluse_copper' in replay and 'call_gold' in replay
+    assert 'Copper result' in replay and 'Gold result' in replay
+    assert 'openai-encrypted' not in replay
 
 
 def test_every_step_of_a_session_asks_for_the_prompt_cache_under_the_sessions_key(relay: FakeRelay) -> None:

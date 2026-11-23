@@ -1,16 +1,13 @@
 import type { AccountStore } from './account-store.js';
-import type { AgentModel } from './models.js';
+import { isPlanModelKey, PLAN_MODEL_PREFIX, type AgentModel } from './models.js';
 import { HttpError } from './http-error.js';
 import { signCredentialServiceInvocation } from './credential-service-token.js';
 import { isRecord } from './payload.js';
 import { planUsageRoutes, type OperatorInvocation, type PlanUsageSink } from './plan-usage.js';
 
-const PLAN_MODEL_PREFIX = 'openai-plan:';
 // The Session a catalog fetch is signed for: it belongs to the plan, not to any one chat.
 const PLAN_CATALOG_SESSION = 'plan-catalog';
 const CREDENTIAL_SERVICE_TIMEOUT_MS = 30_000;
-
-export const isPlanModelKey = (key: string) => key.startsWith(PLAN_MODEL_PREFIX);
 
 export interface PlanModelsConfig {
   /** The Credential Service: its OpenAI provider vaults the owner's Sign-in and relays the plan's catalog. */
@@ -42,11 +39,12 @@ export function planModels(config: PlanModelsConfig) {
 
   async function catalog(refresh: boolean, accountId: string): Promise<AgentModel[]> {
     const plan = await planAccountOf(accountId);
-    if (provider === null || plan !== config.ownerAccountId) return [];
+    if (plan !== config.ownerAccountId) return [];
     const account = await config.store().loadAccount(plan);
     const identity = account?.openaiIdentity;
     if (identity === undefined) return [];
-    if (!refresh && account?.planModels !== undefined) return account.planModels;
+    if (provider === null) return unbound();
+    if (!refresh && account?.planModels?.length) return account.planModels;
     const models = await provider.catalog(config.invocationSecret, plan);
     if (await config.store().recordPlanModels(plan, identity, models) === null) {
       throw new HttpError(409, 'OpenAI Sign-in changed while fetching the plan catalog');
@@ -65,9 +63,6 @@ export function planModels(config: PlanModelsConfig) {
       accountNotFoundMessage: `${config.store().naming.product} account not found`,
     }),
     accountModels: (owner: string, { refresh = false } = {}) => catalog(refresh, owner),
-    async accountModel(owner: string, key: string) {
-      return isPlanModelKey(key) ? (await catalog(false, owner)).find((model) => model.key === key) : undefined;
-    },
     /** The account whose plan a Turn on `model` runs on; none for a model off the plan. */
     planAccountId: async (owner: string, model: AgentModel) => (isPlanModelKey(model.key) ? planAccountOf(owner) : undefined),
   };
@@ -125,7 +120,7 @@ function openaiProvider(url: string) {
 function listedModels(catalog: unknown): AgentModel[] {
   const models = record(catalog)?.models;
   if (!Array.isArray(models)) throw new HttpError(503, 'Credential Service plan catalog returned no models');
-  return models.flatMap((entry): AgentModel[] => {
+  const listed = models.flatMap((entry): AgentModel[] => {
     const model = record(entry);
     const slug = text(model?.slug);
     const label = text(model?.display_name);
@@ -136,6 +131,8 @@ function listedModels(catalog: unknown): AgentModel[] {
     const description = text(model.description);
     return [{ key: `${PLAN_MODEL_PREFIX}${slug}`, label, ...(description ? { description } : {}), provider: 'openai' }];
   });
+  if (listed.length === 0) throw new HttpError(503, 'Credential Service plan catalog returned no listed models');
+  return listed;
 }
 
 /** The message of the Credential Service's classified Plan Usage error, in OpenAI's error shape. */

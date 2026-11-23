@@ -8,7 +8,7 @@ import {
 import { DeleteCommand, DynamoDBDocumentClient, PutCommand, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../test/fakes/stack.js';
-import { DynamoDBSessionMetadata, SessionConcurrencyError, SessionDeletedError, SessionProviderError, SessionClaimError, SessionOpeningError } from './session-metadata.js';
+import { DynamoDBSessionMetadata, SessionConcurrencyError, SessionDeletedError, SessionClaimError, SessionOpeningError } from './session-metadata.js';
 import { SessionReadOnlyError } from './session-identity.js';
 import { purgeQueue } from './purges.js';
 import { RuntimeAdmissionUnprovedError, runtimeSessionId, sessionLifecycle } from './session-lifecycle.js';
@@ -233,17 +233,6 @@ describe('recordTurn', () => {
     expect(await metadata.list('account-1')).toMatchObject([expect.objectContaining({ provider: 'anthropic' })]);
   });
 
-  it('rejects another provider for a pre-existing provider-less Session without changing it', async () => {
-    await legacySession();
-    const before = await items();
-    await expect(metadata.recordTurn('account-1', 'legacy', { allocation: true, filingUserId: 'f', title: 't', provider: 'openai' }))
-      .rejects.toThrow(new SessionProviderError('anthropic'));
-    expect(await items()).toEqual(before);
-    await expect(metadata.recordTurn('account-1', 'legacy', { allocation: true, filingUserId: 'f', title: 't', provider: 'anthropic' }))
-      .resolves.toBe('filed-account-1');
-    expect(await metadata.get('account-1', 'legacy')).toEqual(expect.objectContaining({ provider: 'anthropic' }));
-  });
-
   it('does not expose the new unbound marker in Session summaries', async () => {
     await turn('account-1', 'session-1', T1);
     expect(await items()).toMatchObject([expect.objectContaining({ provider_pending: true })]);
@@ -264,23 +253,6 @@ describe('recordTurn', () => {
     await racing.recordTurn('account-1', 'legacy', { allocation: true, filingUserId: 'f', title: 't' });
     expect(transactions).toBe(2);
     expect((await items())[0]).not.toHaveProperty('provider_pending');
-    await expect(metadata.recordTurn('account-1', 'legacy', { allocation: true, filingUserId: 'f', title: 't', provider: 'openai' }))
-      .rejects.toThrow(new SessionProviderError('anthropic'));
-  });
-
-  it('refuses a competing explicit provider without a model-less retry', async () => {
-    let transactions = 0;
-    const racing = metadataWith(async (command) => {
-      if (command !== 'TransactWriteItemsCommand') return;
-      transactions += 1;
-      if (transactions > 1) throw new Error('Unexpected retry of an explicit provider binding');
-      await metadata.recordTurn('account-1', 'session-1', { allocation: true, filingUserId: 'first', title: 'first', provider: 'anthropic' });
-    });
-    await expect(racing.recordTurn('account-1', 'session-1', { allocation: true, filingUserId: 'second', title: 'second', provider: 'openai' }))
-      .rejects.toThrow(new SessionProviderError('anthropic'));
-    expect(transactions).toBe(1);
-    expect(await metadata.get('account-1', 'session-1'))
-      .toEqual(expect.objectContaining({ provider: 'anthropic', filing_user_id: 'first' }));
   });
 
   it('keeps a provider bound by the writer that creates a new Session first', async () => {
@@ -336,15 +308,11 @@ describe('recordTurn', () => {
     ]);
   });
 
-  it("records the first model Turn's provider and keeps it", async () => {
+  it("records the latest model Turn's provider", async () => {
     await turn('account-1', 'session-1', T1, 'hello');
     await metadata.recordTurn('account-1', 'session-1', { allocation: true, filingUserId: 'f', title: 't', provider: 'openai' });
-    await metadata.recordTurn('account-1', 'session-1', { allocation: true, filingUserId: 'f', title: 't', provider: 'openai' });
-
-    expect(await items()).toMatchObject([expect.objectContaining({ sk: 'SESSION#session-1', provider: 'openai' })]);
-    await expect(
-      metadata.recordTurn('account-1', 'session-1', { allocation: true, filingUserId: 'f', title: 't', provider: 'anthropic' }),
-    ).rejects.toThrow(new SessionProviderError('openai'));
+    await metadata.recordTurn('account-1', 'session-1', { allocation: true, filingUserId: 'f', title: 't', provider: 'anthropic' });
+    expect(await metadata.get('account-1', 'session-1')).toMatchObject({ provider: 'anthropic' });
   });
 
   it("refuses a Turn on a fenced Session as deleted, whatever the Turn's provider", async () => {
@@ -1733,7 +1701,7 @@ describe('Account Claim failure recovery', () => {
     await metadata.transferOwner('claim-source', 'claim-destination');
     await metadata.transferOwner('claim-source', 'claim-destination');
     expect(await metadata.recordTurn('claim-destination', 'a-bound', { allocation: true, filingUserId: 'replacement-filing', title: 'resumed', provider: 'openai' })).toBe('original-filing');
-    await expect(metadata.recordTurn('claim-destination', 'a-bound', { allocation: true, filingUserId: 'replacement-filing', title: 'wrong provider', provider: 'anthropic' })).rejects.toBeInstanceOf(SessionProviderError);
+    await expect(metadata.recordTurn('claim-destination', 'a-bound', { allocation: true, filingUserId: 'replacement-filing', title: 'switch provider', provider: 'anthropic' })).resolves.toBe('original-filing');
     expect(await metadata.recordTurn('claim-destination', 'b-unbound', { allocation: true, filingUserId: 'replacement-filing', title: 'first model', provider: 'openai' })).toBe('original-filing');
     expect(await metadata.get('claim-source', 'a-bound')).toBeNull();
     expect(await metadata.get('claim-source', 'b-unbound')).toBeNull();

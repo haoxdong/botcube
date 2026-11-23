@@ -41,7 +41,7 @@ export interface SessionSummary extends SessionIdentity {
   turn_completed_at?: string;
   created_at: string;
   updated_at: string;
-  /** The model provider of the Session's first Turn, which all its Turns run on; absent until a model Turn. */
+  /** The model provider of the latest Turn. */
   provider?: string;
   /** When the Session's latest relayed Turn started, until its relay ends. */
   turn_running_since?: string;
@@ -110,13 +110,6 @@ export interface StoredTurnSummary extends Partial<TurnSummary> {
   failed?: string;
 }
 
-/** The Turn's model is another provider's than the Session's first Turn's. */
-export class SessionProviderError extends Error {
-  constructor(readonly provider: string) {
-    super(`The Session runs on ${provider} models`);
-  }
-}
-
 /** The source account's history is being transferred by Account Claim. */
 export class SessionClaimError extends Error {}
 
@@ -139,12 +132,6 @@ function scheduledWrite(scheduledTaskId?: string, postAcceptance?: true): { set:
       : ' AND attribute_not_exists(turn_running_since)',
   };
 }
-
-function compatibleAdmission(error: unknown, provider: string | undefined): boolean {
-  const existing = (error as Partial<TransactionCanceledException>).CancellationReasons?.[1]?.Item?.provider?.S;
-  return provider === undefined || existing === undefined || existing === provider;
-}
-
 
 function mainPointer(owner: string, main: Record<string, unknown>, old?: Record<string, unknown>) {
   if (old === undefined) return { Item: { ...mainChatKey(owner), ...main }, ConditionExpression: 'attribute_not_exists(pk)' };
@@ -190,9 +177,8 @@ export interface SessionMetadata {
   /**
    * Create the Session's metadata on its first Turn and bump its last activity;
    * returns the user ID it is filed under. A Turn with a model `provider` records
-   * it on the Session unless one is recorded. Throws SessionDeletedError when the
-   * Session or its owner is deleted, SessionClaimError when its owner is transferring, and SessionProviderError when the Session
-   * runs on another provider. A running Turn records its startedAt and runId together, and a `messageId`
+   * it on the Session. Throws SessionDeletedError when the Session or its owner is deleted and
+   * SessionClaimError when its owner is transferring. A running Turn records its startedAt and runId together, and a `messageId`
    * becomes the Session's latest_message_id.
    */
   recordTurn(
@@ -201,7 +187,7 @@ export interface SessionMetadata {
     turn: TurnAdmission,
   ): Promise<string>;
   /** Clear this running Turn's mark, and record why it failed, unless another run replaced it. */
-  turnEnded(owner: string, sessionId: string, running: RunningTurn, failure: TurnFailure | undefined): Promise<void>;
+  turnEnded(owner: string, sessionId: string, running: RunningTurn, failure: TurnFailure | undefined, provider?: string): Promise<void>;
   /**
    * Record why this Turn's summary failed, which runs on after its stream closed, unless another run
    * started since; the thread's next read returns it.
@@ -210,7 +196,7 @@ export interface SessionMetadata {
   /** The Harness sent this running Turn something. Only the production activity observer implements it. */
   turnActive?(owner: string, sessionId: string, running: RunningTurn): void;
   /** The Harness emitted RUN_STARTED for this Turn; it can now be stopped by run ID. */
-  turnStarted(owner: string, sessionId: string, running: RunningTurn): Promise<void>;
+  turnStarted(owner: string, sessionId: string, running: RunningTurn, provider?: string): Promise<void>;
   /**
    * Save a finished Turn, replacing any earlier row of it, under the Session's filing
    * user, which Account Claim keeps. Throws SessionDeletedError when the Session is missing
@@ -291,19 +277,10 @@ function summaryWithLegacyProvider(item: SessionItem): SessionSummary {
   return provider_pending ? summary : { ...summary, provider: summary.provider ?? 'anthropic' };
 }
 
-function providerWrite(provider: string | undefined, newUnbound: boolean) {
-  if (provider === undefined) {
-    return newUnbound
-      ? { set: ', provider_pending = :pending', condition: ' AND attribute_not_exists(session_id)', values: { ':pending': true } }
-      : { set: '', condition: '', values: {} };
-  }
-  return {
-    set: ', provider = if_not_exists(provider, :provider)',
-    condition: provider === 'anthropic'
-      ? ' AND (attribute_not_exists(provider) OR provider = :provider)'
-      : ' AND (provider = :provider OR (attribute_not_exists(provider) AND (attribute_not_exists(session_id) OR provider_pending = :pending)))',
-    values: provider === 'anthropic' ? { ':provider': provider } : { ':provider': provider, ':pending': true },
-  };
+function providerWrite(provider: string | undefined, creating: boolean) {
+  if (provider !== undefined) return { set: ', provider = :provider', values: { ':provider': provider } };
+  if (creating) return { set: ', provider_pending = :pending', values: { ':pending': true } };
+  return { set: '', values: {} };
 }
 
 /** A relayed Turn: when it started, and its run ID, which a Stop names. */
@@ -660,8 +637,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
   }
 
   private turnTransaction(owner: string, sessionId: string, { filingUserId, title, provider, running, messageId, warmup, opening, postAcceptance, scheduledTaskId }: TurnAdmission, creating: boolean, admission?: { session: SessionPurge }): TransactWriteCommandInput {
-    const newUnbound = provider === undefined && creating;
-    const providerUpdate = providerWrite(provider, newUnbound);
+    const providerUpdate = providerWrite(provider, creating);
     const runningUpdate = runningWrite(running, postAcceptance);
     const scheduledUpdate = scheduledWrite(scheduledTaskId, postAcceptance);
     const runtime = turnIdentityWrite(creating, admission);
@@ -687,7 +663,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
                   scheduledUpdate.set +
                   runningUpdate.set +
                   providerUpdate.set + (postAcceptance ? '' : ' REMOVE turn_failure' + runningUpdate.remove + (provider === undefined ? '' : ', provider_pending')),
-                ConditionExpression: `attribute_not_exists(deleted_at) AND ${creating ? 'attribute_not_exists' : 'attribute_exists'}(session_id)${providerUpdate.condition}` +
+                ConditionExpression: `attribute_not_exists(deleted_at) AND ${creating ? 'attribute_not_exists' : 'attribute_exists'}(session_id)` +
                   scheduledUpdate.condition + runtime.condition + (warmup || postAcceptance ? '' : ' AND (attribute_not_exists(single_turn) OR (attribute_not_exists(title) AND attribute_not_exists(latest_message_id)))') + (opening ? " AND attribute_not_exists(title) AND attribute_not_exists(turn_latest_run_id) AND attribute_not_exists(latest_message_id) AND attribute_not_exists(turn_running_since)" : ""),
                 ExpressionAttributeValues: {
                   ':session_id': sessionId,
@@ -740,7 +716,8 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       filing_user_id: typeof identity?.filing_user_id === 'string' ? identity.filing_user_id : filingUserId,
     };
     if (identity === undefined) await this.assertIssued(owner, sessionId);
-    return { creating: existing === undefined, session: Object.freeze(session), snapshotEpoch: (existing as SessionItem | undefined)?.snapshot_epoch };
+    const item = existing as SessionItem | undefined;
+    return { creating: item === undefined, session: Object.freeze(session), snapshotEpoch: item?.snapshot_epoch };
   }
 
   private async dispatchTurn(owner: string, session: Readonly<SessionPurge>, snapshotEpoch: string | undefined, acceptedTurn?: AcceptedDispatch): Promise<RegisteredSessionDispatch> {
@@ -785,7 +762,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     try {
       await this.documents.send(new TransactWriteCommand(transaction));
     } catch (error) {
-      if (retryUnboundTurn(turnTransactionError(error), sessionId, creating && compatibleAdmission(error, turn.provider), turn.scheduledTaskId, turn.opening)) return this.prepareTurn(owner, sessionId, turn);
+      if (retrySessionCreation(turnTransactionError(error), sessionId, creating, turn.scheduledTaskId, turn.opening)) return this.prepareTurn(owner, sessionId, turn);
     }
     return { session, dispatch: () => this.dispatchTurn(owner, session, snapshotEpoch, turn.running ?? (turn.messageId === undefined ? undefined : { messageId: turn.messageId })) };
   }
@@ -797,7 +774,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     try {
       await this.documents.send(new TransactWriteCommand(this.turnTransaction(owner, sessionId, resolved, creating)));
     } catch (error) {
-      if (retryUnboundTurn(error, sessionId, creating && compatibleAdmission(error, admission.provider), admission.scheduledTaskId, admission.opening)) {
+      if (retrySessionCreation(error, sessionId, creating, admission.scheduledTaskId, admission.opening)) {
         return this.recordTurn(owner, sessionId, resolved);
       }
     }
@@ -808,18 +785,20 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     throw new Error('Session metadata missing after accepted Turn');
   }
 
-  async turnStarted(owner: string, sessionId: string, running: RunningTurn): Promise<void> {
-    await this.updateRunningMark(owner, sessionId, running, 'REMOVE turn_preparing');
+  async turnStarted(owner: string, sessionId: string, running: RunningTurn, provider?: string): Promise<void> {
+    await this.updateRunningMark(owner, sessionId, running,
+      provider === undefined ? 'REMOVE turn_preparing' : 'SET provider = :provider REMOVE turn_preparing, provider_pending',
+      provider === undefined ? {} : { ':provider': provider });
   }
 
-  async turnEnded(owner: string, sessionId: string, running: RunningTurn, failure: TurnFailure | undefined): Promise<void> {
+  async turnEnded(owner: string, sessionId: string, running: RunningTurn, failure: TurnFailure | undefined, provider?: string): Promise<void> {
     try {
       await this.updateRunningMark(
         owner,
         sessionId,
         running,
-        `SET turn_completed_at = :completed, turn_completed_run_id = :run_id${failure === undefined ? '' : ', turn_failure = :failure'} REMOVE turn_running_since, turn_run_id, turn_preparing`,
-        { ':completed': new Date().toISOString(), ...(failure === undefined ? {} : { ':failure': { ...failure, runId: running.runId } }) },
+        `SET turn_completed_at = :completed, turn_completed_run_id = :run_id${provider === undefined ? '' : ', provider = :provider'}${failure === undefined ? '' : ', turn_failure = :failure'} REMOVE turn_running_since, turn_run_id, turn_preparing${provider === undefined ? '' : ', provider_pending'}`,
+        { ...(provider === undefined ? {} : { ':provider': provider }), ':completed': new Date().toISOString(), ...(failure === undefined ? {} : { ':failure': { ...failure, runId: running.runId } }) },
       );
     } catch (error) {
       if (!(error instanceof ConditionalCheckFailedException)) throw error;
@@ -1241,20 +1220,18 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
   }
 }
 
-function retryUnboundTurn(error: unknown, sessionId: string, newUnbound: boolean, scheduledTaskId?: string, opening?: boolean): boolean {
+function retrySessionCreation(error: unknown, sessionId: string, creating: boolean, scheduledTaskId?: string, opening?: boolean): boolean {
   const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
   const [ownerFence, session, claimFence] = reasons ?? [];
   if (ownerFence?.Code === 'ConditionalCheckFailed' || (session?.Code === 'ConditionalCheckFailed' && session.Item?.deleted_at !== undefined)) throw new SessionDeletedError(sessionId);
   if (claimFence?.Code === 'ConditionalCheckFailed') throw new SessionClaimError(sessionId);
-  if (session?.Code === 'ConditionalCheckFailed') {
-    if (session.Item?.single_turn?.BOOL === true && (session.Item.title !== undefined || session.Item.latest_message_id !== undefined)) throw new SessionConcurrencyError('This Session permits one Turn');
-    if (opening && ['title', 'turn_latest_run_id', 'latest_message_id', 'turn_running_since'].some((field) => session.Item?.[field] !== undefined)) throw new SessionOpeningError();
-    if (session.Item?.turn_running_since !== undefined && (scheduledTaskId !== undefined || session.Item.scheduled_task_id !== undefined)) {
-      throw new SessionBusyError('The previous Turn is still going');
-    }
-    if (newUnbound) return true;
-    throw new SessionProviderError(session.Item?.provider?.S ?? 'anthropic');
+  if (session?.Code !== 'ConditionalCheckFailed') throw error;
+  if (session.Item?.single_turn?.BOOL === true && (session.Item.title !== undefined || session.Item.latest_message_id !== undefined)) throw new SessionConcurrencyError('This Session permits one Turn');
+  if (opening && ['title', 'turn_latest_run_id', 'latest_message_id', 'turn_running_since'].some((field) => session.Item?.[field] !== undefined)) throw new SessionOpeningError();
+  if (session.Item?.turn_running_since !== undefined && (scheduledTaskId !== undefined || session.Item.scheduled_task_id !== undefined)) {
+    throw new SessionBusyError('The previous Turn is still going');
   }
+  if (creating && session.Item?.session_id !== undefined) return true;
   throw error;
 }
 

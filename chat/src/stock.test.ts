@@ -100,7 +100,6 @@ describe('the stock Chat Service', () => {
 
     expect(service.models).toEqual([{ key: 'echo', label: 'Echo', provider: 'echo' }]);
     expect(await service.accountModels({ owner: 'owner' })).toEqual([]);
-    await expect(service.accountModel({ owner: 'owner' }, 'openai-plan:gpt-5.5')).resolves.toBeUndefined();
   });
 
   it("keeps signed in the sessions an earlier Chat minted under the bot's account key", async () => {
@@ -386,7 +385,6 @@ describe("the stock Chat Service's Plan Usage", () => {
     const { service } = await planUsage();
 
     expect(await service.accountModels({ owner: PLAN_OWNER }, { refresh: true })).toEqual([model]);
-    expect(await service.accountModel({ owner: PLAN_OWNER }, model.key)).toEqual(model);
     const payload = await service.invocationPayload(turn({ model: model.key }), { owner: PLAN_OWNER }, model);
     expect(claims(payload)).toMatchObject({ account_id: PLAN_OWNER, plan_account_id: PLAN_OWNER, model_id: 'gpt-5.6-sol' });
   });
@@ -401,7 +399,6 @@ describe("the stock Chat Service's Plan Usage", () => {
 
     expect(await service.accountModels({ owner: testUser }, { refresh: true })).toEqual([model]);
     expect(await service.accountModels({ owner: other }, { refresh: true })).toEqual([]);
-    expect(await service.accountModel({ owner: other }, model.key)).toBeUndefined();
     expect(credentialService.requests.slice(fetchedBefore).map((request) => request.headers['x-botcube-account-id'])).toEqual([PLAN_OWNER]);
     expect((await accountStore.loadAccount(testUser))?.openaiIdentity).toBeUndefined();
     expect(claims(await service.invocationPayload(turn({ model: model.key }), { owner: testUser }, model)))
@@ -494,7 +491,7 @@ describe("the stock Chat Service's Plan Usage", () => {
       expect(await models()).toEqual([{ key: 'echo', label: 'Echo', provider: 'echo' }]);
       const signedIn = await operator('POST', 'credential_capture');
       expect([signedIn.status, await signedIn.json()]).toEqual([200, { status: 'stored', subject: 'openai-http-owner' }]);
-      expect(await models()).toEqual([model, { key: 'echo', label: 'Echo', provider: 'echo' }]);
+      expect(await models()).toEqual([model]);
 
       const signedOut = await operator('DELETE', 'credential_revocation');
       expect([signedOut.status, await signedOut.json()]).toEqual([200, { status: 'removed' }]);

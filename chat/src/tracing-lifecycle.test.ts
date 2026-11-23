@@ -18,7 +18,7 @@ afterEach(() => {
 
 const overrides: StockOverrides = {
   agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
-  models: [{ key: 'test', label: 'Test', provider: 'test' }], accountModels: async () => [], accountModel: async () => undefined,
+  models: [{ key: 'test', label: 'Test', provider: 'test' }], accountModels: async () => [],
   routes: new Hono(), requester: async () => ({ owner: 'owner' }),
   filingUserId: (owner) => owner, scheduledRequester: async (owner) => ({ owner }),
   signInNeeded: async () => null, invocationPayload: async (input) => ({ ...input, forwardedProps: input.forwardedProps ?? {} }),

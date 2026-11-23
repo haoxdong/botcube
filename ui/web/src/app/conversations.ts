@@ -79,7 +79,7 @@ export interface AgentModel {
   key: string;
   label: string;
   description?: string;
-  /** A started Session takes only its first Turn's provider's models. */
+  /** The provider of the last Turn. */
   provider: string;
 }
 

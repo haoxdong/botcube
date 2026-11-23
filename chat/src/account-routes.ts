@@ -89,14 +89,7 @@ export function accountRoutes(
 
   app.get('/agent/models', async (c) => {
     const requester = await bot.requester(c);
-    try {
-      return c.json({ models: await accountModelList(bot, requester, { refresh: true }) });
-    } catch (error) {
-      if (error instanceof HttpError && (error.status === 502 || error.status === 503)) {
-        return c.json({ detail: error.detail, botModels: bot.models }, error.status);
-      }
-      throw error;
-    }
+    return c.json({ models: await accountModelList(bot, requester, { refresh: true }) });
   });
 
   app.get('/agent/identity', async (c) => c.json((await documentsOf((await bot.requester(c)).owner)).agentIdentity));
@@ -224,14 +217,7 @@ export function accountRoutes(
     const paused = isRecord(body) ? body.paused : undefined;
     if (paused !== undefined && typeof paused !== 'boolean') throw new HttpError(422, 'paused must be true or false');
     const model = isRecord(body) ? body.model : undefined;
-    if (model !== undefined) {
-      const selected = await namedModel(bot, requester, model);
-      const session = await sessionMetadata.get(owner, (await tasks().get(owner, c.req.param('id')))?.sideChatId ?? c.req.param('id'));
-      if (session?.provider !== undefined && session.provider !== selected.provider) {
-        throw new HttpError(422, `The scheduled task's Session runs on ${session.provider} models`);
-      }
-      changes.model = selected.key;
-    }
+    if (model !== undefined) changes.model = (await namedModel(bot, requester, model)).key;
     const updated = await tasks().update(owner, c.req.param('id'), paused === undefined ? changes : { ...changes, paused });
     if (updated === null) throw new HttpError(404, 'Scheduled task not found');
     return c.json(await taskView(owner, updated));

@@ -47,23 +47,19 @@ function offeredEffort(effort: string | undefined): string {
 }
 
 function modelInList(models: ModelList, selected: string | undefined): string | undefined {
-  return models.loaded && !models.models.some(({ key }) => key === selected)
-    ? pickerModels(models.models, webUiPlugin.config.pickerModelFamilies)[0]?.key
-    : selected;
+  if (!models.loaded || models.models.some(({ key }) => key === selected)) return selected;
+  const first = models.models[0]?.key;
+  return first?.startsWith("openai-plan:") ? first : pickerModels(models.models, webUiPlugin.config.pickerModelFamilies)[0]?.key;
 }
 
-/** The account's offered choice, including browser persistence and the Session's provider. */
+/** The account's offered choice, and its browser persistence. */
 export function useModelSelection({
   ready,
   accountId,
-  activeProvider,
-  showWelcome,
   chatServiceUrl,
 }: {
   ready: boolean;
   accountId: string | undefined;
-  activeProvider: string | undefined;
-  showWelcome: boolean;
   chatServiceUrl: string;
 }) {
   const [modelList, setModels] = useState<ModelList>({ loaded: false, error: null });
@@ -85,14 +81,12 @@ export function useModelSelection({
     }
   };
   const [effort, setEffort] = useState(() => offeredEffort(stored.effort));
-  // The new account renders before its models effect resets the previous account's loaded list.
   const models: ModelList = modelList.loaded && modelList.accountId !== accountId ? { loaded: false, error: null } : modelList;
   const modelsRequest = useRef(0);
   useEffect(
     () => {
       if (!ready) return;
       const request = ++modelsRequest.current;
-      // The previous account's models are not this one's.
       setModels({ loaded: false, error: null });
       fetchAgentModels({ chatServiceUrl }).then(
         (loaded) => {
@@ -112,17 +106,8 @@ export function useModelSelection({
     [ready, accountId],
   );
 
-  // A started Session takes only its provider's models: the recorded one, else its first Turn's.
-  const selectedProvider = models.loaded ? models.models.find(({ key }) => key === model)?.provider : undefined;
-  const sessionProvider = activeProvider ?? (showWelcome ? undefined : selectedProvider);
-  const offeredModels: ModelList =
-    !models.loaded || sessionProvider === undefined
-      ? models
-      : { ...models, models: models.models.filter(({ provider }) => provider === sessionProvider) };
-  // Use the provider's valid selection in this render, before the effect remembers it. Until the account's models load,
-  // offer the model picked here, so a chat's opening warmup prepares its Turn's model, not the Chat Service's default.
-  const offeredModel = modelInList(offeredModels, model ?? (models.loaded ? undefined : storedModel));
-  const offeredLabel = offeredModels.loaded ? offeredModels.models.find(({ key }) => key === offeredModel)?.label : undefined;
+  const offeredModel = modelInList(models, model ?? (models.loaded ? undefined : storedModel));
+  const offeredLabel = models.loaded ? models.models.find(({ key }) => key === offeredModel)?.label : undefined;
   useEffect(() => {
     if (offeredLabel === undefined || (shown.current?.account === accountId && shown.current?.label === offeredLabel)) return;
     shown.current = { account: accountId, label: offeredLabel };
@@ -139,7 +124,7 @@ export function useModelSelection({
   return {
     catalog: models,
     picker: {
-      models: offeredModels,
+      models,
       model: offeredModel,
       effort,
       loadingLabel: shownLabel,

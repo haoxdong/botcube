@@ -1,3 +1,4 @@
+import { isPlanModelKey } from './models.js';
 import { createHash } from 'node:crypto';
 import type { BotCubeConfig } from 'botcube-config';
 import type { ModelsWire } from 'botcube-config/blocks';
@@ -256,6 +257,7 @@ export async function recordTurnSummary(
   save: (finished: TurnActivity) => Promise<void>,
   sessionId: string,
   turn: FinishedTurn,
+  model = '',
 ): Promise<void> {
   const finished = turnActivity(turn.request);
   const saving = { sessionId };
@@ -269,11 +271,11 @@ export async function recordTurnSummary(
   };
   unsaved.add(saving);
   try {
-    const summary = await summarize(turn).catch(async (error: unknown) => {
+    const summary = isPlanModelKey(model) ? undefined : await summarize(turn).catch(async (error: unknown) => {
       await saveActivity({ ...finished, failed: firstLine(`The Turn summary could not be made: ${message(error)}`) });
       throw error;
     });
-    await saveActivity({ ...finished, summary });
+    await saveActivity(summary === undefined ? finished : { ...finished, summary });
   } catch (error) {
     console.error(`${TURN_SUMMARY_FAILED} session_id=${sessionId}`, error);
     throw new Error(`The Turn summary could not be saved: ${message(error)}`, { cause: error });

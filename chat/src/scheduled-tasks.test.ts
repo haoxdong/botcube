@@ -1070,7 +1070,7 @@ describe('ScheduledTasks', () => {
         overrides: {
           agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
           models: [{ key: 'test', label: 'Test', provider: 'test' }],
-          accountModels: async () => [], accountModel: async () => undefined,
+          accountModels: async () => [],
           routes: new Hono(),
           requester: async () => ({ owner: account }),
           filingUserId: (owner) => owner,

@@ -9,7 +9,7 @@ import type { AgentDocuments } from './agent-documents.js';
 import type { ParkHistory } from './park-history.js';
 import { botMemory, type TurnSource } from './turn-preparation.js';
 import { HttpError } from './http-error.js';
-import { accountDefaultModel, accountModelList, namedModel } from './models.js';
+import { namedModel } from './models.js';
 import { fired, type ScheduledRunMessage, type ScheduledTask, type ScheduledTaskRun, type ScheduledTasks } from './scheduled-tasks.js';
 import type { ScheduledRunCard } from './session-api.js';
 import { SessionBusyError, SessionDeletedError, type SessionMetadata } from './session-metadata.js';
@@ -197,11 +197,7 @@ async function runInSideChat(
   const stops = scheduledTeardown(deps, owner, sideChat);
   const messageId = delivery.inputMessageId;
   const requester = await bot.scheduledRequester(owner);
-  // The task's chosen model, else the account's default.
-  const model =
-    task.model === undefined
-      ? accountDefaultModel(await accountModelList(bot, requester))
-      : await namedModel(bot, requester, task.model);
+  const model = await namedModel(bot, requester, task.model);
   const input: RunAgentInput = {
     threadId: sideChat,
     runId: delivery.runId,
@@ -216,7 +212,6 @@ async function runInSideChat(
   const prepared = await allocateSideChat(sessionMetadata, owner, sideChat, { filingUserId, title: task.title, scheduledTaskId: task.id }).then(() => sessionMetadata.prepareTurn(owner, sideChat, {
     filingUserId,
     title: task.title,
-    provider: model.provider,
     messageId,
     running,
     scheduledTaskId: task.id,
@@ -231,6 +226,7 @@ async function runInSideChat(
   let execution: ScheduledExecution | undefined;
   let phase: 'preparing' | 'submitted' | 'received' = 'preparing';
   let failure: unknown;
+  let provider: string | undefined;
   try {
     execution = await deps.sessionMetadata.scheduledRuns?.execution(owner, sideChat);
     if (execution === undefined) throw new HttpError(503, 'Scheduled execution admission is unavailable');
@@ -264,6 +260,7 @@ async function runInSideChat(
       credentialValues(payload.forwardedProps, bot.credentialProps),
       initialMessages,
     );
+    provider = model.provider;
   } catch (error) {
     failure = error;
     throw error;
@@ -271,7 +268,7 @@ async function runInSideChat(
     try {
       await execution?.finish(stops, phase !== 'submitted', failure);
     } finally {
-      await sessionMetadata.turnEnded(owner, sideChat, running, undefined);
+      await sessionMetadata.turnEnded(owner, sideChat, running, undefined, provider);
     }
   }
   const signIn = await bot.signInNeeded?.(owner, [...output.toolResults, ...output.texts]) ?? null;
@@ -283,6 +280,7 @@ async function runInSideChat(
       (finished) => sessionMetadata.saveTurnSummary(owner, turn, finished),
       sideChat,
       { request: task.prompt, answer: answer ?? '' },
+      model.key,
     );
   } else {
     // The Activity lists a run that could not finish by its request, failed on a run error.

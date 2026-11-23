@@ -28,7 +28,7 @@ const CONFIG = testBotCubeConfig();
 const overrides: StockOverrides = {
   agentDocuments: { agentIdentity: { name: 'Test Bot', character: '', vibe: '', avatar: '' }, soul: '' },
   models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
-  accountModels: async () => [], accountModel: async () => undefined,
+  accountModels: async () => [],
   routes: new Hono(),
   requester: async () => ({ owner: 'account-1' }),
   filingUserId: (owner) => `filed-${owner}`,

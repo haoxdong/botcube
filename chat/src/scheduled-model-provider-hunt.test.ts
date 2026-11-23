@@ -1,26 +1,14 @@
 import { expect, it } from 'vitest';
 import { eventually } from '../test/eventually.js';
-import { mainChat, owner, posted, request, run, scheduler, stack, stream, text } from '../test/scheduled-run-fixture.js';
-
-it('does not accept a model change that makes future scheduled runs fail on the existing Side Chat provider', async () => {
-  const account = owner();
-  const main = await mainChat(account);
-  const { id } = await run(account, stream(...text('answer', 'Rates brief.')), 'Provider brief', { model: 'quick' });
-  expect((await completedPosts(main))[0]?.content).toBe('Scheduled task "Provider brief": Rates brief.');
-  const changed = await request(account, `/scheduled-tasks/${id}`, { method: 'PATCH', body: { model: 'plan' } });
-  expect(changed.status).toBe(422);
-  const listed = await (await request(account, '/scheduled-tasks')).json();
-  expect(listed.tasks.find((task: { id: string }) => task.id === id).model).toBe('quick');
-  await scheduler.fire(id);
-  expect(await completedPosts(main)).toHaveLength(2);
-  expect((await posted(main))[1]?.content).toBe('Scheduled task "Provider brief": Rates brief.');
-});
+import { mainChat, owner, planCatalogs, posted, request, scheduler, stack, stream, text } from '../test/scheduled-run-fixture.js';
 
 it.each([
   ['same provider after a run', true, 'thorough'],
+  ['another provider after a run', true, 'plan'],
   ['another provider before the first run', false, 'plan'],
 ] as const)('accepts a supported model edit for %s', async (_name, alreadyRan, model) => {
   const account = owner();
+  planCatalogs.set(account, []);
   const main = await mainChat(account);
   const prompt = `Supported provider edit ${account}`;
   let release!: () => void;

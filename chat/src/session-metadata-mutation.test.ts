@@ -56,11 +56,8 @@ describe('model-less Turns after a Session already exists', () => {
   });
 });
 
-describe('serialized provider-binding writes', () => {
-  it.each([
-    ['anthropic', false],
-    ['openai', true],
-  ] as const)('sends only the expression values used by a %s binding', async (provider, needsPending) => {
+describe('serialized provider writes', () => {
+  it.each(['anthropic', 'openai'])('sends only the expression values used to record %s', async (provider) => {
     const writes: { TransactItems: { Update?: { ExpressionAttributeValues: Record<string, unknown> } }[] }[] = [];
     client.middlewareStack.add(
       (next, context) => async (args) => {
@@ -79,8 +76,7 @@ describe('serialized provider-binding writes', () => {
     expect(writes).toHaveLength(1);
     const values = writes[0]?.TransactItems[1]?.Update?.ExpressionAttributeValues;
     expect(values).toHaveProperty(':provider', { S: provider });
-    if (needsPending) expect(values).toHaveProperty(':pending', { BOOL: true });
-    else expect(values).not.toHaveProperty(':pending');
+    expect(values).not.toHaveProperty(':pending');
     expect(await metadata.get('owner', 'conversation')).toEqual(expect.objectContaining({ provider }));
   });
 });
