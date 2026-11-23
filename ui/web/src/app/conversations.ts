@@ -2,7 +2,7 @@
 
 import { UNANSWERED_CALL } from "botcube-ui-web/interrupted-call";
 
-import { takeOpeningResponse } from "botcube-ui-web/opening-requests";
+import { REPLAY_HEADERS, takeOpeningResponse } from "botcube-ui-web/opening-requests";
 
 import { tap } from "rxjs";
 import { clockSubscriber, validateClockEvent } from "botcube-ui-web/worklog-clock";
@@ -94,6 +94,7 @@ export class ModelCatalogError extends Error {
 export interface ReplayedSession {
   provider?: string;
   messages: Message[];
+  nextBefore?: string;
   /** The Session's latest Turn still runs on the server, as after a reload mid-Turn. */
   running?: boolean;
   /** That running Turn's run ID, which its Stop names. */
@@ -180,7 +181,7 @@ export async function fetchMainChat({
   const opening = takeOpeningResponse(url);
   const answered = opening === null ? null : await opening;
   // A browser without an account cookie must first let /account/session create it.
-  const response = answered !== null && answered.status !== 401 ? answered : await request(fetchImpl, url, "open the Main Chat");
+  const response = answered !== null && answered.status !== 401 ? answered : await request(fetchImpl, url, "open the Main Chat", { headers: REPLAY_HEADERS });
   if (!response.ok) throw new ChatServiceError("open the Main Chat", response.status);
   return withRunningCallsUnanswered((await response.json()) as ReplayedSession & { id: string });
 }
@@ -197,14 +198,31 @@ function withRunningCallsUnanswered<T extends ReplayedSession>(read: T): T {
 export async function openConversation({
   id,
   chatServiceUrl,
+  before,
+  at,
   fetchImpl = fetch,
 }: {
   id: string;
   chatServiceUrl: string;
+  before?: string;
+  at?: string | null;
   fetchImpl?: typeof fetch;
 }): Promise<ReplayedSession> {
-  const response = await request(fetchImpl, `${chatServiceUrl}/threads/${id}`, "replay thread");
-  return withRunningCallsUnanswered((await response.json()) as ReplayedSession);
+  const url = `${chatServiceUrl}/threads/${encodeURIComponent(id)}`;
+  const page = async (cursor?: string) => {
+    const response = await request(fetchImpl, cursor === undefined ? url : `${url}?before=${encodeURIComponent(cursor)}`, "replay thread", { headers: REPLAY_HEADERS });
+    return await response.json() as ReplayedSession;
+  };
+  if (before !== undefined) return page(before);
+  const session = withRunningCallsUnanswered(await page());
+  while (at != null && session.nextBefore !== undefined && !session.messages.some(({ id }) => id === at)) {
+    // eslint-disable-next-line no-await-in-loop -- each page supplies the cursor for the next one
+    const earlier = await page(session.nextBefore);
+    session.messages = [...earlier.messages, ...session.messages];
+    if (earlier.nextBefore === undefined) delete session.nextBefore;
+    else session.nextBefore = earlier.nextBefore;
+  }
+  return session;
 }
 
 /** Ask the Chat Service to stop the Session's Turn `runId`; a Turn whose client went away runs on until then. */

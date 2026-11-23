@@ -17,18 +17,14 @@ const threadSummary = ({ session_id, title, created_at, updated_at, scheduled_ta
   ...(scheduled_task_id === undefined ? {} : { scheduled: true }),
 });
 
+type ReplayQuery = { before?: string; paged?: true };
+
 export const MAX_RUNNING_TURN_AGE_MS = 3_600_000;
 
 const runningTurn = ({ turn_running_since, turn_run_id, turn_preparing }: SessionSummary) =>
   turn_running_since !== undefined && Date.now() - Date.parse(turn_running_since) < MAX_RUNNING_TURN_AGE_MS
     ? { running: true, runningSince: turn_running_since, ...(turn_preparing === true ? {} : { runId: turn_run_id }) }
     : { running: false };
-
-const historyRead = (sessionId: string, metadata: SessionSummary) => ({
-  operation: 'get' as const,
-  sessionId,
-  userId: metadata.filing_user_id,
-});
 
 /**
  * The account's Sessions as the UI sees them: Metadata owns access and filing
@@ -48,13 +44,15 @@ export function sessionOperations(
       throw new HttpError(409, `The Main Chat cannot be ${action}`);
     }
   };
-  const replayState = async (owner: string, sessionId: string, metadata: SessionSummary) => {
+  const replayState = async (owner: string, sessionId: string, metadata: SessionSummary, query: ReplayQuery) => {
     let absence: SessionNotFoundError;
     try {
-      const { messages } = await invokeSessionApi(historyRead(sessionId, metadata));
-      return { messages, failure: metadata.turn_failure?.code === 'SESSION_OPENING_ALREADY_STARTED' ? undefined : metadata.turn_failure };
+      const { messages, nextBefore } = await invokeSessionApi({
+        operation: 'get', sessionId, userId: metadata.filing_user_id, ...query,
+      });
+      return { messages, nextBefore, failure: metadata.turn_failure?.code === 'SESSION_OPENING_ALREADY_STARTED' ? undefined : metadata.turn_failure };
     } catch (error) {
-      if (!(error instanceof SessionNotFoundError)) throw error;
+      if (query.before !== undefined || !(error instanceof SessionNotFoundError)) throw error;
       absence = error;
     }
     const running = runningTurn(metadata).running;
@@ -90,11 +88,11 @@ export function sessionOperations(
         ...(main?.turn_completed_at === undefined ? {} : { mainChat: threadSummary(main) }),
       };
     },
-    async mainChat(owner: string) {
+    async mainChat(owner: string, query: ReplayQuery = {}) {
       const id = await sessionMetadata.mainChat(owner, filingUserId(owner));
       const metadata = await sessionMetadata.get(owner, id);
       if (metadata === null || (metadata.title === undefined && metadata.turn_latest_run_id === undefined && metadata.latest_message_id === undefined)) return { id, messages: [], running: false };
-      const state = await replayState(owner, id, metadata);
+      const state = await replayState(owner, id, metadata, query);
       return { id, provider: metadata.provider, ...state, ...runningTurn(metadata) };
     },
     /** The finished Turns of the account's Sessions, from Session Metadata alone, newest first. */
@@ -116,10 +114,10 @@ export function sessionOperations(
         });
       return tasks.sort((a, b) => Date.parse(b.completedAt) - Date.parse(a.completedAt));
     },
-    async replay(owner: string, sessionId: string) {
+    async replay(owner: string, sessionId: string, query: ReplayQuery = {}) {
       const metadata = await sessionMetadata.get(owner, sessionId);
       if (metadata === null) throw new HttpError(404, 'Session not found');
-      const state = await replayState(owner, sessionId, metadata);
+      const state = await replayState(owner, sessionId, metadata, query);
       return { ...threadSummary(metadata), provider: metadata.provider, ...state, ...runningTurn(metadata), ...(oneIdSession(metadata) ? {} : { readOnly: true }) };
     },
     async renameSideChat(owner: string, sessionId: string, title: string) {

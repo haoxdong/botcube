@@ -2400,6 +2400,26 @@ describe('Main Chat', () => {
       vi.unstubAllGlobals();
     });
 
+    it('fetches older replay from the server only when the reader reaches the loaded history boundary', async () => {
+      service.mainChat = { id: 'main-1', messages: service.mainChat.messages.slice(-4) };
+      const olderUrl = 'http://chat.test/threads/main-1?before=0%3Am82';
+      fetchMock.mockImplementation(async (url, init) => {
+        if (url === olderUrl) return answer(200, { messages: [{ id: 'm82', role: 'user', content: 'Older question' }] });
+        if (url === 'http://chat.test/main-chat') return answer(200, { ...service.mainChat, nextBefore: '0:m82' });
+        return chatService(url, init);
+      });
+
+      await renderPage();
+      expect(rows()).toEqual(['m83', 'm84', 'm85', 'm86']);
+      expect(fetchMock.mock.calls.filter(([url]) => url === olderUrl)).toHaveLength(0);
+
+      await scrollToTop();
+      expect(fetchMock.mock.calls.filter(([url]) => url === olderUrl)).toHaveLength(1);
+      await scrollToTop();
+      expect(rows()).toEqual(['m82', 'm83', 'm84', 'm85', 'm86']);
+      expect(fetchMock.mock.calls.filter(([url]) => url === olderUrl)).toHaveLength(1);
+    });
+
     it('opens at its latest messages alone, and lays out earlier ones as the user scrolls up to them', async () => {
       await renderPage();
 

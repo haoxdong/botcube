@@ -103,6 +103,8 @@ export default function App({
   const {
     current: { id: activeId, accountId: activeAccountId, openAt, newChat, provider: activeProvider, readOnly, agent, selfManagedAgents, entrances, showWelcome, stopServerTurn, turnFailure, turnRunning, turnRunsOnServer, turnMayRun, runningSince },
     mainChatId,
+    loadOlder,
+    olderError,
     mainChatUnread,
     sideChats: { entries: sideChats, error: sideChatsError, listed: sideChatsListed },
     failures: { mainChat: mainChatError, linkedChat: linkedChatError, refresh: mainChatRefreshError, stop: stopError },
@@ -317,7 +319,7 @@ export default function App({
             properties={properties}
           >
             {(ChatThread) => <>
-            <ChatAlerts errors={activeId === null ? [] : [auth.error, mainChatRefreshError, stopError, choiceError, warmupError?.accountId === accountId ? warmupError?.message : null]} failure={activeId === null || mainChatError === null ? null : { error: mainChatError, retry: () => void openMainChat() }} />
+            <ChatAlerts errors={activeId === null ? [] : [auth.error, mainChatRefreshError, olderError, stopError, choiceError, warmupError?.accountId === accountId ? warmupError?.message : null]} failure={activeId === null || mainChatError === null ? null : { error: mainChatError, retry: () => void openMainChat() }} />
             <ChatColumn agent={agent} profile={agentProfile} accountId={accountId} header={headerInPane ? chatHeader : undefined} request={artifactRequest}>
             <Presence>{activeId === null ? noChat : (
             <motionElement.div {...presenceMotion} className={covered ? "app-chat app-chat-opening" : "app-chat"}>
@@ -347,6 +349,7 @@ export default function App({
                 stopServerTurn={stopServerTurn}
                 savedFailure={turnFailure}
                 openAt={openAt}
+                loadOlder={loadOlder}
                 onOpenRun={({ sideChat, title, messageId }) => void handleSelectConversation({ id: sideChat, title }, messageId)}
               >
                 <div className="chat-model-picker">

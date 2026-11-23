@@ -9,8 +9,8 @@ import { HttpError } from './http-error.js';
  * and reads and edits a user's Memory document, whose lines are AgentCore Memory records.
  */
 type SessionApiEvent =
-  /** Read history from the Session's latest checkpoint; the session API ignores `contains`. */
-  | { operation: 'get'; sessionId: string; userId: string }
+  /** Read a page of history from the Session's latest checkpoint. */
+  | { operation: 'get'; sessionId: string; userId: string; before?: string; paged?: true }
   | { operation: 'purge'; sessionId: string; userId: string }
   /** Add `content` to the Session as the agent's message, under `messageId`, with the run card a scheduled run shows as. */
   | { operation: 'post'; sessionId: string; userId: string; content: string; messageId: string; scheduledRun?: ScheduledRunCard }
@@ -88,27 +88,30 @@ export function sessionApi(config: SessionApiConfig): SessionApi {
         'functionArn' in config
           ? await invokeFunction(config, event, timeoutSeconds, dispatcher)
           : await invokeLocal(config.localUrl, event, timeoutSeconds, dispatcher);
-      const timedOut = status === 504 && (body as { code?: unknown } | null)?.code === 'SESSION_READ_TIMEOUT';
-      const refused = event.operation === 'post' && status >= 400 && status < 600 && !timedOut;
-      const ResponseError = refused ? SessionPostNotWrittenError : HttpError;
-      if (status === 404) {
-        const { error, code } = body as { error: unknown; code?: unknown };
-        throw code === 'SESSION_NOT_FOUND' && !refused ? new SessionNotFoundError(String(error)) : new ResponseError(404, String(error));
-      }
-      // A Session in the legacy checkpoint format, which the session API reads no further (ADR 0067).
-      if (status === 410) {
-        const { error, code } = body as { error: unknown; code: unknown };
-        throw new ResponseError(410, String(error), String(code));
-      }
-      if (status !== 200) {
-        throw Object.assign(new ResponseError(503, `Session API returned HTTP ${status}`), { cause: body });
-      }
-      if (event.operation === 'get' &&
-          (typeof body !== 'object' || body === null || !('messages' in body) || !Array.isArray(body.messages))) {
-        throw new HttpError(503, 'Session API returned an invalid replay result');
-      }
-      return body as Record<string, unknown>;
+      return sessionApiResult(event.operation, status, body);
     });
+}
+
+function sessionApiResult(operation: SessionApiEvent['operation'], status: number, body: unknown): Record<string, unknown> {
+  const timedOut = status === 504 && (body as { code?: unknown } | null)?.code === 'SESSION_READ_TIMEOUT';
+  const refused = operation === 'post' && status >= 400 && status < 600 && !timedOut;
+  const ResponseError = refused ? SessionPostNotWrittenError : HttpError;
+  if (status === 404) {
+    const { error, code } = body as { error: unknown; code?: unknown };
+    throw code === 'SESSION_NOT_FOUND' && !refused ? new SessionNotFoundError(String(error)) : new ResponseError(404, String(error));
+  }
+  if (status === 410 || (operation === 'get' && [400, 409].includes(status))) {
+    const { error, code } = body as { error: unknown; code: unknown };
+    throw new ResponseError(status, String(error), String(code));
+  }
+  if (status !== 200) {
+    throw Object.assign(new ResponseError(503, `Session API returned HTTP ${status}`), { cause: body });
+  }
+  if (operation === 'get' &&
+      (typeof body !== 'object' || body === null || !('messages' in body) || !Array.isArray(body.messages))) {
+    throw new HttpError(503, 'Session API returned an invalid replay result');
+  }
+  return body as Record<string, unknown>;
 }
 
 /** Invoke the deployed session API through Lambda Invoke, signed with SigV4. */

@@ -286,7 +286,7 @@ const messageList = (list: HTMLDivElement | null) => {
   return () => stop?.();
 };
 
-function MessageRows({ rows, messages }: { rows: ReactElement[]; messages: readonly { id: string }[] }) {
+function MessageRows({ rows, messages, loadOlder }: { rows: ReactElement[]; messages: readonly { id: string }[]; loadOlder: (() => Promise<void>) | undefined }) {
   const [firstKey, setFirstKey] = useState<Key | null>(null);
   const kept = firstKey === null ? -1 : rows.findIndex((row) => row.key === firstKey);
   const messageIds = new Set(messages.map(({ id }) => id));
@@ -295,19 +295,18 @@ function MessageRows({ rows, messages }: { rows: ReactElement[]; messages: reado
   const first = kept === -1 ? pageStart(rows, at === -1 ? rows.length : at + 1, messageIds) : kept;
   const firstRowKey = rows[first]?.key ?? null;
   if (kept === -1 && firstRowKey !== firstKey) setFirstKey(firstRowKey);
-
-  const rowsRef = useRef({ rows, messageIds });
-  rowsRef.current = { rows, messageIds };
+  const hasOlder = loadOlder !== undefined;
+  const rowsRef = useRef({ rows, messageIds, loadOlder });
+  rowsRef.current = { rows, messageIds, loadOlder };
   const earlier = useRef<HTMLDivElement>(null);
   const join = () => {
     const now = rowsRef.current;
-    setFirstKey(now.rows[pageStart(now.rows, first, now.messageIds)]?.key ?? null);
+    if (first > 0) setFirstKey(now.rows[pageStart(now.rows, first, now.messageIds)]?.key ?? null);
+    else void now.loadOlder?.();
   };
   useEffect(() => {
     const marker = earlier.current;
-    if (first === 0 || marker === null) return undefined;
-    // A callback can carry several of the marker's changes, oldest first: on a loaded phone one held its going out of
-    // view as a page joined and its coming back, and acting on the first left earlier history unloaded for good.
+    if ((first === 0 && !hasOlder) || marker === null) return undefined;
     const observer = new IntersectionObserver((entries) => {
       const entry = entries.at(-1);
       if (!entry?.isIntersecting || marker.closest("[inert], [hidden]") !== null) return;
@@ -324,15 +323,20 @@ function MessageRows({ rows, messages }: { rows: ReactElement[]; messages: reado
       observer.disconnect();
       uncovered.disconnect();
     };
-  }, [first]);
+  }, [first, hasOlder]);
 
   return (
     <>
-      {first > 0 && <div ref={earlier} data-chat-earlier aria-hidden />}
+      {(first > 0 || hasOlder) && <div ref={earlier} data-chat-earlier aria-hidden />}
+      <Presence>{first === 0 && loadOlder && (
+        <MotionButton {...presenceMotion} type="button" className="mx-auto block" onClick={() => void loadOlder()}>Load older messages</MotionButton>
+      )}</Presence>
       {rows.slice(first).map((row) => <MessageEntranceRow key={row.key} id={String(row.key)}>{row}</MessageEntranceRow>)}
     </>
   );
 }
+
+const LoadOlder = createContext<(() => Promise<void>) | undefined>(undefined);
 
 /** A children render prop disables CopilotKit virtualization, whose estimated row heights shift long chats on open. */
 function ChatMessages(props: CopilotChatMessageViewProps) {
@@ -349,6 +353,7 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
   const started = useContext(RunStarted);
   const { running: onServer } = useContext(ServerTurn);
   const ended = useContext(RunEnded);
+  const loadOlder = useContext(LoadOlder);
   return (
     <>
       <CopilotChatMessageView {...props} {...props.messages && { messages: props.messages.filter(shows) }} assistantMessage={ASSISTANT_MESSAGE_SLOT} userMessage={USER_MESSAGE} reasoningMessage={REASONING_MESSAGE}>
@@ -359,7 +364,7 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
           return (
             <div ref={attachList} data-copilotkit data-testid="copilot-message-list" className="copilotKitMessages cpk:flex cpk:flex-col">
               <ReplyTurnRunning.Provider value={isRunning}>
-                <MessageRows rows={worklogRows(messageElements, messages, isRunning || onServer, { started: isRunning ? started : onServer })} messages={messages} />
+                <MessageRows rows={worklogRows(messageElements, messages, isRunning || onServer, { started: isRunning ? started : onServer })} messages={messages} loadOlder={loadOlder} />
               </ReplyTurnRunning.Provider>
               {interruptElement}
               <Presence>{isRunning && last?.role !== "reasoning" && (last?.role ?? "user") === "user" && !started && <motionElement.div {...presenceMotion} className="chat-pending-cursor"><CopilotChatMessageView.Cursor /></motionElement.div>}</Presence>
@@ -433,6 +438,7 @@ function ChatThread({
   savedFailure,
   onOpened,
   openAt,
+  loadOlder,
   onOpenRun,
   children,
 }: {
@@ -459,6 +465,7 @@ function ChatThread({
   composerAccessory?: React.ReactNode;
     onOpened: () => void;
     openAt?: string | null;
+    loadOlder?: (() => Promise<void>) | undefined;
     onOpenRun?: (run: ReachedScheduledRun) => void;
   children?: React.ReactNode;
 }) {
@@ -623,6 +630,7 @@ function ChatThread({
       <AttachedFiles.Provider value={attachedFiles}>
       <OpenScheduledRun.Provider value={onOpenRun ?? null}>
       <OpensAt.Provider value={opensAt}>
+      <LoadOlder.Provider value={loadOlder}>
       <ReadOnlyChat.Provider value={startNewChat}>
         <RunError.Provider value={runError}>
         <RunStarted.Provider value={started}>
@@ -654,6 +662,7 @@ function ChatThread({
         </RunStarted.Provider>
         </RunError.Provider>
       </ReadOnlyChat.Provider>
+      </LoadOlder.Provider>
       </OpensAt.Provider>
       </OpenScheduledRun.Provider>
       </AttachedFiles.Provider>

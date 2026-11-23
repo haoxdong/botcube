@@ -7,11 +7,12 @@ Service container, invoked only by the Chat Service's role; locally
 Service's local mode.
 
 Operations:
-- ``{"operation": "get", "sessionId", "userId"}`` -> ``{"messages": [...]}``,
+- ``{"operation": "get", "sessionId", "userId", "paged"?, "before"?}`` -> ``{"messages": [...], "nextBefore"?}``,
   the Session's conversation in AG-UI message shape, read from its latest
   checkpoint through LangGraph's state API. Each agent, reasoning and tool
   message the Harness timed carries ``metadata`` ``{"started_at", "ended_at"}``,
-  in epoch milliseconds (message_times.py). A Session with no record is
+  in epoch milliseconds (message_times.py). Clients opt in with ``paged: true``
+  during independent deployments. A Session with no record is
   ``SESSION_NOT_FOUND`` (HTTP 404).
 - ``{"operation": "post", "sessionId", "userId", "content", "messageId"?, "scheduledRun"?}`` -> ``{}``,
   after adding ``content`` to the Session as the agent's message, under
@@ -48,7 +49,7 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver, CheckpointTuple
 
@@ -172,9 +173,7 @@ def _phase(phases: dict[str, float], name: str) -> Generator[None, None, None]:
         phases[name] = (perf_counter() - start) * 1000
 
 
-async def get_session(user_id: str, session_id: str, phases: dict[str, float] | None = None) -> list[dict[str, Any]]:
-    """The Session's conversation as its latest checkpoint holds it."""
-    phases = {} if phases is None else phases
+async def _session_messages(user_id: str, session_id: str, phases: dict[str, float]) -> list[BaseMessage]:
     with _phase(phases, 'graph'):
         graph = _graph()
         reader = graph.copy(update={'checkpointer': _SessionRead(graph, phases)})
@@ -187,8 +186,67 @@ async def get_session(user_id: str, session_id: str, phases: dict[str, float] | 
         phases['state'] -= phases.get('checkpoint', 0)
     if not messages:
         raise SessionNotFoundError(f'Session {session_id} has no record')
+    return messages
+
+
+async def get_session(user_id: str, session_id: str) -> list[dict[str, Any]]:
+    return conversation(await _session_messages(user_id, session_id, {}))
+
+
+REPLAY_PAGE_BYTES = 4_500_000
+REPLAY_PAGE_MESSAGES = 100
+INLINE_TOOL_BYTES = 64_000
+
+
+class StaleReplayCursor(SessionApiError):
+    status_code = 409
+    code = 'STALE_REPLAY_CURSOR'
+
+
+def _replay_message(message: dict[str, Any]) -> dict[str, Any]:
+    size = len(json.dumps(message, ensure_ascii=True))
+    if size <= (INLINE_TOOL_BYTES if message['role'] == 'tool' else REPLAY_PAGE_BYTES - 1024):
+        return message
+    return {
+        **{key: message[key] for key in ('id', 'role', 'toolCallId') if key in message},
+        'content': 'Large message content is stored in the Session record.',
+        'metadata': {'contentRef': message['id']},
+    }
+
+
+def _replay_position(messages: list[BaseMessage], before: str | None) -> tuple[int, int | None]:
+    if before is None:
+        return len(messages) - 1, None
+    part, _, message_id = before.partition(':')
+    index = next((i for i, message in enumerate(messages) if message.id == message_id), -1)
+    if not part.isascii() or not part.isdecimal() or len(part) > 9 or index < 0:
+        raise StaleReplayCursor('The replay changed. Reopen the chat to read its history.')
+    return index, int(part)
+
+
+def _replay_page(messages: list[BaseMessage], before: str | None) -> dict[str, Any]:
+    start, offset = _replay_position(messages, before)
+    page: list[dict[str, Any]] = []
+    size = 0
+    for index in range(start, -1, -1):
+        source = messages[index]
+        group = conversation([source])
+        end = len(group) if offset is None else min(offset + 1, len(group))
+        offset = None
+        for part in range(end - 1, -1, -1):
+            message = _replay_message(group[part])
+            message_size = len(json.dumps(message, ensure_ascii=True)) + 2
+            if size + message_size > REPLAY_PAGE_BYTES or len(page) >= REPLAY_PAGE_MESSAGES:
+                return {'messages': page[::-1], 'nextBefore': f'{part}:{source.id}'}
+            page.append(message)
+            size += message_size
+    return {'messages': page[::-1]}
+
+
+async def _read_replay(user_id: str, session_id: str, before: str | None, paged: bool, phases: dict[str, float]) -> dict[str, Any]:
+    messages = await _session_messages(user_id, session_id, phases)
     with _phase(phases, 'conversation'):
-        return conversation(messages)
+        return _replay_page(messages, before) if paged or before is not None else {'messages': conversation(messages)}
 
 
 class _SessionRead(BaseCheckpointSaver[str]):
@@ -290,15 +348,20 @@ async def handle(event: Mapping[str, Any]) -> dict[str, Any]:
         'errorCode': 'INTERNAL_ERROR',
         'phasesMs': phases,
     }
+    if isinstance(event.get('sessionId'), str):
+        record['sessionId'] = event['sessionId']
     try:
         result = await _handle(event, phases)
+        record['responseBytes'] = len(json.dumps(result, ensure_ascii=False, separators=(',', ':')).encode())
         record['statusCode'] = 200
         del record['errorCode']
         if operation == 'get':
             record['messageCount'] = len(result['messages'])
         return result
     except SessionApiError as exc:
-        record.update(statusCode=exc.status_code, errorCode=exc.code)
+        record.update(statusCode=exc.status_code, errorCode=exc.code, responseBytes=len(
+            json.dumps(_err(exc)['body'], ensure_ascii=False, separators=(',', ':')).encode()
+        ))
         raise
     finally:
         record['durationMs'] = (perf_counter() - start) * 1000
@@ -309,7 +372,8 @@ async def _handle(event: Mapping[str, Any], phases: dict[str, float]) -> dict[st
     operation = event.get('operation')
     if operation == 'get':
         user_id, session_id = _required(event, 'userId'), _required(event, 'sessionId')
-        return {'messages': await _read(session_id, get_session(user_id, session_id, phases))}
+        before = _optional(event, 'before')
+        return await _read(session_id, _read_replay(user_id, session_id, before, event.get('paged') is True, phases))
     if operation == 'post':
         user_id, session_id = _required(event, 'userId'), _required(event, 'sessionId')
         content, message_id = _required(event, 'content'), _optional(event, 'messageId')

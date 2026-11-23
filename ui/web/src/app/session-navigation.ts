@@ -132,6 +132,48 @@ export function useSessionNavigation({
   const shownRef = useRef({ agent, entrances });
   shownRef.current = { agent, entrances };
 
+  const [hasOlder, setHasOlder] = useState(false);
+  const [olderError, setOlderError] = useState<string | null>(null);
+  const replay = useRef<{ before: string | undefined; pending?: true; extended?: true }>({ before: undefined });
+  const resetReplay = (before: string | undefined) => {
+    replay.current = { before };
+    setHasOlder(before !== undefined);
+    setOlderError(null);
+  };
+
+  const showReplay = ({ messages, nextBefore }: ReplayedSession) => {
+    const { agent: shown, entrances: shownEntrances } = shownRef.current;
+    const first = messages[0];
+    const overlap = first === undefined ? -1 : shown.messages.findIndex(({ id }) => id === first.id);
+    const keepOlder = replay.current.extended && overlap >= 0;
+    const history = keepOlder ? [...shown.messages.slice(0, overlap), ...messages] : messages;
+    if (!keepOlder && (nextBefore !== replay.current.before || replay.current.extended)) resetReplay(nextBefore);
+    shownEntrances.history(messages);
+    if (JSON.stringify(history) !== JSON.stringify(shown.messages)) shown.setMessages(history);
+  };
+
+  const loadOlder = async () => {
+    const page = replay.current;
+    if (activeId === null || page.before === undefined || page.pending || agent.isRunning) return;
+    page.pending = true;
+    const changed = changes();
+    try {
+      const older = await openConversation({ id: activeId, chatServiceUrl, before: page.before });
+      if (page !== replay.current || shownRef.current.agent !== agent || changed()) return;
+      const visible = new Set(agent.messages.map(({ id }) => id));
+      entrances.history(older.messages);
+      agent.setMessages([...older.messages.filter(({ id }) => !visible.has(id)), ...agent.messages]);
+      page.before = older.nextBefore;
+      page.extended = true;
+      setHasOlder(page.before !== undefined);
+      setOlderError(null);
+    } catch (error) {
+      if (page === replay.current) setOlderError(`Older messages could not be loaded: ${(error as Error).message}`);
+    } finally {
+      delete page.pending;
+    }
+  };
+
   /** Run a Side Chat action, showing its failure in the sidebar until the next one succeeds. */
   const sideChatAction = async (failure: string, action: () => Promise<void>) => {
     try {
@@ -175,14 +217,13 @@ export function useSessionNavigation({
       if (completedAt === undefined || entry?.read_at === completedAt) return;
       pending = true;
       const showAndRead = async () => {
-        const { agent: shown, entrances: shownEntrances } = shownRef.current;
+        const { agent: shown } = shownRef.current;
         const before = shown.messages;
         const streaming = () => shown.isRunning;
         if (streaming()) return;
         const loaded = activeId === mainChatId ? await fetchMainChat({ chatServiceUrl }) : await openConversation({ id: activeId, chatServiceUrl });
         if (!isMounted() || document.visibilityState !== "visible" || streaming() || shown.messages !== before) return;
-        shownEntrances.history(loaded.messages);
-        if (JSON.stringify(loaded.messages) !== JSON.stringify(before)) shown.setMessages(loaded.messages);
+        showReplay(loaded);
         await markChatRead(chatServiceUrl, activeId, completedAt);
         if (!isMounted()) return;
         const read = (chat: ConversationEntry) => chat.id === activeId && chat.turn_completed_at === completedAt ? { ...chat, read_at: completedAt } : chat;
@@ -199,8 +240,10 @@ export function useSessionNavigation({
     return () => { mounted = false; document.removeEventListener("visibilitychange", acknowledge); };
   }, [ready, reading, activeId, mainChatId, mainChatEntry, sideChats, chatServiceUrl, accountId]);
 
-  const openChat = (id: string, { messages, provider, running, runId, runningSince, failure, readOnly }: ReplayedSession, loaded = true, at: string | null = null) => {
+  const openChat = (id: string, { messages, provider, running, runId, runningSince, failure, readOnly, nextBefore }: ReplayedSession, loaded = true, at: string | null = null) => {
     navigationDestination.current = id;
+    resetReplay(nextBefore);
+    if (at !== null) replay.current.extended = true;
     setActiveReadOnly(readOnly === true);
     setTurnKnown(loaded);
     setOpenAt(at);
@@ -232,17 +275,16 @@ export function useSessionNavigation({
   };
 
   const loadIntoCopy = (copy: MainChatCopy, session: ReplayedSession) => {
-    const { agent: shown, entrances: shownEntrances } = shownRef.current;
+    const { agent: shown } = shownRef.current;
     if (shown.threadId !== copy.id) {
       openChat(copy.id, session);
       return;
     }
-    const { messages, provider, running, runId, runningSince, failure } = session;
+    const { provider, running, runId, runningSince, failure } = session;
     setTurnKnown(true);
     const copied = JSON.stringify(copy.messages);
     if (!shown.isRunning && JSON.stringify(shown.messages) === copied) {
-      shownEntrances.history(messages);
-      if (JSON.stringify(messages) !== copied) shown.setMessages(messages);
+      showReplay(session);
       setServerTurn(running === true ? { runId, runningSince } : null);
       setTurnFailure(failure ?? null);
     }
@@ -252,6 +294,7 @@ export function useSessionNavigation({
   /** Takes the previous account's chat off screen. */
   const closeChat = () => {
     copiedAccount.current = undefined;
+    resetReplay(undefined);
     setActiveChat(null);
     setNewChatOwner(null);
     setActiveInitialMessages([]);
@@ -428,11 +471,9 @@ export function useSessionNavigation({
       const changed = changes();
       counted(refreshesOut, fetchMainChat({ chatServiceUrl })).then(
         (mainChat) => {
-          const { messages } = mainChat;
           if (!mounted || sequence !== refreshSequence || changed()) return;
           // A history with nothing new leaves the chat as it is, so a periodic refresh does not re-render it.
-          entrances.history(messages);
-          if (JSON.stringify(messages) !== JSON.stringify(agent.messages)) agent.setMessages(messages);
+          showReplay(mainChat);
           if (accountId !== undefined) withStorage(() => keepMainChatCopy(accountId, mainChat));
           setMainChatRefreshError(null);
         },
@@ -508,12 +549,10 @@ export function useSessionNavigation({
       const stale = () => !mounted || changed();
       const load = activeId === mainChatId ? fetchMainChat({ chatServiceUrl }) : openConversation({ id: activeId, chatServiceUrl });
       counted(reloadsOut, load).finally(next).then(
-        ({ messages, running, runId, runningSince, failure }) => {
+        (session) => {
           if (stale()) return;
-          if (!(running && messages.length < agent.messages.length)) {
-            entrances.history(messages);
-            if (JSON.stringify(messages) !== JSON.stringify(agent.messages)) agent.setMessages(messages);
-          }
+          const { messages, running, runId, runningSince, failure } = session;
+          if (!(running && !replay.current.extended && messages.length < agent.messages.length)) showReplay(session);
           setMainChatRefreshError(null);
           setServerTurn(running ? { runId, runningSince } : null);
           // Only the awaited run's failure: a send that never reached the Chat Service leaves an earlier one on record.
@@ -553,7 +592,7 @@ export function useSessionNavigation({
     const request = ++navigation.current;
     navigationDestination.current = conversation.id;
     try {
-      const session = await openConversation({ id: conversation.id, chatServiceUrl });
+      const session = await openConversation({ id: conversation.id, chatServiceUrl, at });
       if (request !== navigation.current) return;
       openChat(conversation.id, session, true, at);
       setSideChatsError(null);
@@ -587,6 +626,8 @@ export function useSessionNavigation({
       turnRunsOnServer,
       // Another tab can know of a Turn this one does not: the open chat reloads until the server says none runs.
       turnMayRun: () => setServerTurn((turn) => turn ?? { runId: undefined }) },
+    loadOlder: hasOlder ? loadOlder : undefined,
+    olderError,
     mainChatId,
     mainChatUnread: mainChatEntry !== undefined && isUnread(mainChatEntry),
     sideChats: { entries: sideChats, error: sideChatsError, listed: sideChatsListedFor !== null && sideChatsListedFor.accountId === accountId },

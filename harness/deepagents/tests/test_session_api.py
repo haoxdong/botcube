@@ -471,6 +471,25 @@ def test_the_function_entrypoint_serves_repeated_invocations(local_record: None)
     assert session_api.lambda_handler(event, None)['statusCode'] == 404
 
 
+def test_page_negotiation_preserves_history_for_clients_without_paging(local_record: None) -> None:
+    async def record_and_read() -> tuple[dict[str, Any], dict[str, Any]]:
+        config = {'configurable': {'thread_id': 'session-1', 'actor_id': 'user-1'}}
+        graph = session_api._graph()
+        await graph.aupdate_state(config, {'messages': []}, as_node='model')
+        await graph.aupdate_state(config, {'messages': [
+            HumanMessage(str(i), id=f'm{i}') for i in range(101)
+        ]}, as_node='model')
+        return await session_api.handle(GET), await session_api.handle({**GET, 'paged': True})
+
+    legacy, paged = asyncio.run(record_and_read())
+
+    assert list(legacy) == ['messages']
+    assert legacy['messages'][0]['id'] == 'm0'
+    assert len(legacy['messages']) == 101
+    assert paged['messages'] == legacy['messages'][1:]
+    assert paged['nextBefore']
+
+
 def test_session_api_timing_splits_history_reads_without_logging_content(
     local_record: None, caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -491,7 +510,8 @@ def test_session_api_timing_splits_history_reads_without_logging_content(
     assert all(duration >= 0 for duration in record['phasesMs'].values())
     assert 'private answer' not in caplog.text
     assert 'user-1' not in caplog.text
-    assert 'session-1' not in caplog.text
+    assert record['sessionId'] == 'session-1'
+    assert record['responseBytes'] == len(json.dumps(result['body'], separators=(',', ':')).encode())
 
 
 @pytest.mark.parametrize('unexpected', [False, True])

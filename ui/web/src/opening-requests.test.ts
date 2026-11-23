@@ -14,7 +14,7 @@ it('starts session and Main together before either response, and consumes each o
   startOpeningRequests('https://chat.test');
   expect(fetch.mock.calls.map(([url]) => url)).toEqual(['https://chat.test/account/session', 'https://chat.test/main-chat']);
   expect(fetch).toHaveBeenCalledWith('https://chat.test/account/session', { credentials: 'include', cache: 'no-store' });
-  expect(fetch).toHaveBeenCalledWith('https://chat.test/main-chat', { credentials: 'include', cache: 'no-store' });
+  expect(fetch).toHaveBeenCalledWith('https://chat.test/main-chat', { credentials: 'include', cache: 'no-store', headers: { accept: 'application/vnd.botcube.replay+json' } });
   const pending = takeOpeningResponse('https://chat.test/account/session');
   expect(takeOpeningResponse('https://chat.test/account/session')).toBeNull();
   finish(Response.json({ accountId: 'owner' }));
