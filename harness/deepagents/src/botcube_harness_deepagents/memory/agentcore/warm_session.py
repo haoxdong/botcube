@@ -194,9 +194,7 @@ class _WarmSnapshotClient(FragmentedSnapshotClient):
 
     def __init__(self, memory_id: str, serializer: EventSerializer, client: Any) -> None:
         # The Turn's client is already built with its credentials: no second boto3 client.
-        super().__init__(
-            memory_id, serializer, BedrockAgentCoreClientWithRetry(client),
-        )
+        super().__init__(memory_id, serializer, BedrockAgentCoreClientWithRetry(client, max_retries=0))
         self.kept: tuple[_Snapshot, int] | None = None
         self._stored_events: ContextVar[list[str] | None] = ContextVar('stored_snapshot_events', default=None)
 

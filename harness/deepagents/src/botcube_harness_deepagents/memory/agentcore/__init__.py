@@ -63,7 +63,7 @@ _LOADER = botocore.loaders.create_loader()
 _MEMORY_OPERATIONS = frozenset(botocore.session.get_session().get_service_model('bedrock-agentcore').operation_names)
 _TAGS_CLAIM = 'https://aws.amazon.com/tags'
 # Live, a Turn's opening Memory read, history read and turn feed overlapped 12 calls.
-_MEMORY_CONFIG = Config(retries={'mode': 'adaptive'}, tcp_keepalive=True, max_pool_connections=16)
+_MEMORY_CONFIG = Config(retries={'mode': 'adaptive'}, max_pool_connections=16)
 # A Turn exchanges its JWT again when the credentials held for its tags expire within this.
 _REUSE_MARGIN = timedelta(minutes=5)
 
@@ -100,7 +100,7 @@ def build_checkpointer(memory_id: str, *, region_name: str) -> AgentCoreMemorySa
     # A non-checkpoint head sends the stock saver to a filtered page of full historical snapshots.
     saver = AgentCoreMemorySaver(
         memory_id, checkpoint_format='snapshot', limit=None, max_results=4, region_name=region_name,
-        serde=CompressedReadingSerializer(), config=_MEMORY_CONFIG,
+        serde=CompressedReadingSerializer(), config=_MEMORY_CONFIG, max_retries=0,
     )
     saver.checkpoint_event_client = FragmentedSnapshotClient(
         memory_id, saver.serializer, saver.checkpoint_event_client.client,

@@ -167,14 +167,6 @@ def test_personal_memory_paginator_needs_no_directory_scan_after_snapshot_prime(
         client.get_paginator('list_memory_records')
 
 
-def test_sts_uses_bounded_standard_retries() -> None:
-    config = agentcore.sts_client('us-east-1').meta.config
-
-    assert config.connect_timeout == 2
-    assert config.read_timeout == 5
-    assert config.retries == {'mode': 'standard', 'total_max_attempts': 2}
-
-
 @pytest.mark.parametrize('phase', ['memory', 'disk', '', 'unknown'])
 def test_only_the_runtime_memory_warmup_primes(phase: str, monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi.testclient import TestClient

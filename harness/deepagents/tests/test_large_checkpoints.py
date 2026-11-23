@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
-
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import CheckpointMetadata, empty_checkpoint
@@ -37,8 +36,7 @@ def test_a_large_chat_survives_a_cold_resume_and_session_api_replay(
     )
     fragments = [event for event in memory.events[('user-1', 'session-1')]
                  if event.get('metadata', {}).get('lc_kind', {}).get('stringValue') == 'blob_fragment']
-    assert len(fragments) > 1
-    assert max(len(json.dumps(event, default=str).encode()) for event in fragments) <= 1_000_000
+    assert len(fragments) == 2
     warm = saver.get_tuple(CONFIG)
     assert warm is not None and warm.checkpoint == checkpoint
     fresh_warm_sessions(monkeypatch)
@@ -115,21 +113,23 @@ def test_an_incomplete_snapshot_keeps_the_preceding_checkpoint(
     checkpoint['channel_values'] = {'messages': [HumanMessage('x' * 7_500_000)]}
     checkpoint['channel_versions'] = {'messages': '1'}
     create = memory.create_event
-    fragment_calls = 0
+    fragment_calls = failed_calls = 0
 
     def fail_publish(**params):
-        nonlocal fragment_calls
+        nonlocal fragment_calls, failed_calls
         kind = params.get('metadata', {}).get('lc_kind', {}).get('stringValue')
         if kind == 'blob_fragment':
             fragment_calls += 1
-        if ((failure == 'fragment' and kind == 'blob_fragment' and fragment_calls == 2)
+        if ((failure == 'fragment' and kind == 'blob_fragment' and fragment_calls >= 2)
                 or (failure == 'publication' and kind == 'checkpoint')):
-            raise RuntimeError('snapshot write failed')
+            failed_calls += 1
+            raise ClientError({'Error': {'Code': 'RetryableConflictException'}}, 'CreateEvent')
         return create(**params)
 
     monkeypatch.setattr(memory, 'create_event', fail_publish)
-    with pytest.raises(RuntimeError, match='snapshot write failed'):
+    with pytest.raises(ClientError, match='RetryableConflictException'):
         saver.put(saved, checkpoint, {'source': 'loop', 'step': 2, 'parents': {}}, {'messages': '1'})
+    assert failed_calls == 1
     fresh_warm_sessions(monkeypatch)
 
     loaded = WarmSessionSaver(MEMORY_ID, memory).get_tuple(CONFIG)

@@ -22,7 +22,6 @@ from pydantic import BaseModel, Field
 
 _BLOB_BYTES = 90_000
 _FRAGMENT_BYTES = 64_000
-_FRAGMENT_REQUEST_BYTES = 1_000_000
 
 
 class _Reference(BaseModel):
@@ -83,9 +82,10 @@ class FragmentedSnapshotClient(AgentCoreSnapshotClient):
             for index in range(0, len(data), _FRAGMENT_BYTES)
         ]
         event_ids: list[str] = []
-        for payload in self._chunk_payload(fragments, 100, _FRAGMENT_REQUEST_BYTES):
+        for index in range(0, len(fragments), 100):
             response = self._create_snapshot_event(
-                payload, scope.session_id, scope.actor_id, scope.checkpoint, 'blob_fragment', offset_ms=1000,
+                fragments[index:index + 100], scope.session_id, scope.actor_id, scope.checkpoint,
+                'blob_fragment', offset_ms=1000,
             )
             event_ids.append(response['event']['eventId'])
         reference = _Reference(event_ids=event_ids, sha256=hashlib.sha256(data).hexdigest()).model_dump_json()
