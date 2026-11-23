@@ -27,7 +27,7 @@ const COMPOSED_TAG_TYPES = [
  */
 export function addAgentCoreStacks(
   app: App,
-  { deployRoot, identity, spec, targets, runtimeImage, tags = {} }: DeployConfig,
+  { deployRoot, identity, spec, targets, runtimeImage, existingMemoryKeyArn, tags = {} }: DeployConfig,
   commit: string,
   overrides: Omit<Partial<AgentCoreStackProps>, 'spec' | 'physicalIdentity' | 'env'> = {},
   awsAccess: 'web-identity' | 'assume-role' = 'web-identity'
@@ -56,6 +56,7 @@ export function addAgentCoreStacks(
   // The Chat Service serves OIDC discovery on the hostname its ALB answers, as BOTCUBE_PUBLIC_ORIGIN.
   const chatServiceIssuer = `https://${new URL(identity.domains.chatService).hostname}`;
   const userMemoryRole = memoryRoleFor(identity, awsAccess, chatServiceIssuer);
+  const memoryEncryption = existingMemoryKeyArn ? { existingMemoryKeyArn } : {};
   for (const target of targets) {
     const stack = new AgentCoreStack(
       app,
@@ -75,6 +76,7 @@ export function addAgentCoreStacks(
         ...(agentCore.rollbackVersion !== undefined ? { rollbackVersion: agentCore.rollbackVersion } : {}),
         harnessCodeLocation: path.resolve(deployRoot, runtime.codeLocation),
         runtimeImage,
+        ...memoryEncryption,
         runtimeNetwork: agentCore.runtimeNetworkParameter
           ? {
               securityGroupParameterName: agentCore.runtimeNetworkParameter,

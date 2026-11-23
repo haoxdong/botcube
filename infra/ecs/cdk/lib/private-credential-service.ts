@@ -82,7 +82,7 @@ export interface PrivateCredentialServiceProps {
    * A existing Credential Service Endpoint: callers get its URL, the tasks register into its target group and admit its
    * load balancer's security group, in place of the private DNS namespace and Cloud Map service, which are not created.
    */
-  existingEndpoint?: { url: string; targetGroupArn: string; securityGroupId: string };
+  existingEndpoint?: { url: string; targetGroupArn: string; securityGroup: ec2.ISecurityGroup };
   /** Whether the service's image mounts the Sign-in Sheet routes; only then is a sheet key created when none is existing. */
   sheetRoutes?: boolean;
   namespaceName: string;
@@ -209,8 +209,7 @@ export class PrivateCredentialService extends Construct {
     });
     service.node.addDependency(audit.subscription);
     if (endpoint) {
-      const balancer = ec2.SecurityGroup.fromSecurityGroupId(this, 'EndpointBalancer', endpoint.securityGroupId, { mutable: false });
-      network.connections.allowFrom(balancer, ec2.Port.tcp(props.port), "The existing Endpoint's load balancer");
+      network.connections.allowFrom(endpoint.securityGroup, ec2.Port.tcp(props.port), "The existing Endpoint's load balancer");
       service.attachToApplicationTargetGroup(elbv2.ApplicationTargetGroup.fromTargetGroupAttributes(this, 'EndpointTargets', { targetGroupArn: endpoint.targetGroupArn }));
     }
     this.url = endpoint?.url ?? `http://${props.dnsName ?? 'credentials'}.${props.namespaceName}:${props.port}${props.rpcPath}`;

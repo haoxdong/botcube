@@ -75,10 +75,10 @@ function dropManagedPolicy(role: iam.Role, name: string): boolean {
   const dropped = JSON.stringify(stack.resolve(iam.ManagedPolicy.fromAwsManagedPolicyName(name).managedPolicyArn));
   const held = cfn.managedPolicyArns;
   const others = (arns: readonly unknown[] = []) => arns.filter(arn => JSON.stringify(arn) !== dropped);
-  const resolved: unknown[] | undefined = stack.resolve(held);
-  if (!resolved?.some(arn => JSON.stringify(arn) === dropped)) return false;
+  const initial: unknown[] = stack.resolve(held) ?? [];
+  if (others(initial).length === initial.length) return false;
   cfn.managedPolicyArns = Token.asList(
-    Lazy.any({ produce: () => others(stack.resolve(held)) }, { omitEmptyArray: true })
+    Lazy.uncachedAny({ produce: context => others(context.resolve(held)) }, { omitEmptyArray: true })
   );
   return true;
 }

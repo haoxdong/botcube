@@ -6,7 +6,7 @@ import type { ChatHarnessAuth } from './harness-auth.js';
 const USER_MEMORY_ROLE_ARN = 'BOTCUBE_USER_MEMORY_ROLE_ARN';
 
 /** The `awsAccess` adapter: `assume-role` with the Memory role the deploy names. */
-export type AwsAccessAdapter = { kind: 'web-identity' } | { kind: 'assume-role'; roleArn: string };
+export type AwsAccessAdapter = { kind: 'web-identity' } | { kind: 'assume-role'; roleArn: string; memoryKeyArn?: string };
 
 export interface ConfigAdapters {
   harnessAuth: ChatHarnessAuth;
@@ -29,17 +29,17 @@ export function configAdapters(env: NodeJS.ProcessEnv): ConfigAdapters {
   const config = env.BOTCUBE_CONFIG ? loadConfig(env.BOTCUBE_CONFIG) : sectionDefaults();
   const { integrations: { harnessAuth, awsAccess, telemetry, modelGateway: models, proxy }, schedules, parking } = config;
   return {
-    harnessAuth, awsAccess: awsAccessAdapter(awsAccess.kind, env[USER_MEMORY_ROLE_ARN] || undefined), schedules, telemetry, proxy,
+    harnessAuth, awsAccess: awsAccessAdapter(awsAccess.kind, env[USER_MEMORY_ROLE_ARN] || undefined, config.existing?.kmsKeys?.memory), schedules, telemetry, proxy,
     corsOrigins: allowedOrigins(config), automationUserAgents: parking?.automationUserAgents ?? [], models,
   };
 }
 
-function awsAccessAdapter(kind: BotCubeConfig['integrations']['awsAccess']['kind'], roleArn: string | undefined): AwsAccessAdapter {
+function awsAccessAdapter(kind: BotCubeConfig['integrations']['awsAccess']['kind'], roleArn: string | undefined, memoryKeyArn?: string): AwsAccessAdapter {
   if (kind === 'web-identity') {
     if (roleArn !== undefined) throw new Error(`awsAccess: ${USER_MEMORY_ROLE_ARN} is set but awsAccess.kind is web-identity, which assumes no role`);
     return { kind };
   }
   if (roleArn === undefined) throw new Error(`awsAccess.kind: assume-role needs ${USER_MEMORY_ROLE_ARN}, the Memory role it assumes for each Turn`);
   if (!/^arn:aws[a-z-]*:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(roleArn)) throw new Error(`${USER_MEMORY_ROLE_ARN} must be an IAM role ARN`);
-  return { kind, roleArn };
+  return { kind, roleArn, ...(memoryKeyArn ? { memoryKeyArn } : {}) };
 }

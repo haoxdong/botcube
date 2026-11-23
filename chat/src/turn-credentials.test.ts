@@ -6,6 +6,7 @@ import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { assumeRoleAwsAccess, memorySessionPolicy, SESSION_POLICY_LIMIT } from './turn-credentials.js';
 import { filed } from '../test/stock-bot.js';
 
+const MEMORY_KEY_ARN = 'arn:aws:kms:us-east-1:123456789012:key/33333333-cccc-4ccc-8ccc-333333333333';
 const ROLE_ARN = 'arn:aws:iam::123456789012:role/bot-cube-user-memory';
 
 let stack: InProcessStack;
@@ -84,7 +85,7 @@ describe('the assume-role STS client', () => {
     vi.stubEnv('AWS_CONFIG_FILE', '/nonexistent/aws-config');
     const turn = { actorId: filed('a'), filingActorId: filed('a'), sessionId: randomUUID(), startedAt: new Date().toISOString() };
 
-    await expect(assumeRoleAwsAccess(ROLE_ARN).grant(turn)).rejects.toThrow('Region is missing');
+    await expect(assumeRoleAwsAccess({ roleArn: ROLE_ARN }).grant(turn)).rejects.toThrow('Region is missing');
   });
 });
 
@@ -108,11 +109,18 @@ describe('the Memory session policy', () => {
     });
   });
 
+  it('permits only the supplied Memory key in the Turn session', () => {
+    expect(JSON.parse(memorySessionPolicy(scope, MEMORY_KEY_ARN)).Statement).toContainEqual({
+      Effect: 'Allow', Resource: MEMORY_KEY_ARN,
+      Action: ['kms:Decrypt', 'kms:DescribeKey', 'kms:Encrypt', 'kms:GenerateDataKey*', 'kms:ReEncrypt*'],
+    });
+  });
+
   it('stays under the STS limit for the longest filing IDs and Session IDs a Turn can carry', () => {
     // A filing ID is at most 255 characters (filing-user-id.ts); an AgentCore Session ID at most 100.
     const longest = { actorId: 'a'.repeat(255), filingActorId: 'f'.repeat(255), sessionId: 's'.repeat(100), writesPrefix: scope.writesPrefix };
 
-    expect(memorySessionPolicy(longest).length).toBeLessThanOrEqual(SESSION_POLICY_LIMIT);
+    expect(memorySessionPolicy(longest, MEMORY_KEY_ARN).length).toBeLessThanOrEqual(SESSION_POLICY_LIMIT);
   });
 
   it('refuses a policy STS would refuse, naming its length', () => {

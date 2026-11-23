@@ -5,7 +5,7 @@ import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import type { Construct } from 'constructs';
 import { auditCopyImage, credentialServiceImage, type CredentialServiceImage } from './credential-audit-copy.js';
-import { projectDir } from './deploy-root.js';
+import { cdkPackageRoot } from './project-dir.js';
 import { repositoryImageProps } from './repository-image.js';
 
 /** The Dockerfiles of a bot's own services, relative to the repository root, which its own ECS app names; absent, BotCube's stock one. */
@@ -14,7 +14,7 @@ export interface BotServiceDockerfiles {
   readonly credential?: string;
 }
 
-const BOTCUBE = path.resolve(projectDir(__dirname), '../../..');
+const BOTCUBE = path.resolve(cdkPackageRoot, '../../..');
 
 /**
  * The preview origin's Chat Service Dockerfile and the BotCube Config it serves (`config`). A bot's own (`own`) builds on

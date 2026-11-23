@@ -54,6 +54,14 @@ describe("the Chat Service's adapters", () => {
     expect(configAdapters({ BOTCUBE_CONFIG: path, BOTCUBE_USER_MEMORY_ROLE_ARN: ROLE_ARN }).awsAccess).toEqual({ kind: 'assume-role', roleArn: ROLE_ARN });
   });
 
+  it('uses the configured Memory key to scope the assume-role session', () => {
+    const memoryKeyArn = 'arn:aws:kms:us-east-1:123456789012:key/33333333-cccc-4ccc-8ccc-333333333333';
+    const path = botcubeConfig({ integrations: { awsAccess: { kind: 'assume-role' } }, existing: { kmsKeys: { memory: memoryKeyArn } } });
+
+    expect(configAdapters({ BOTCUBE_CONFIG: path, BOTCUBE_USER_MEMORY_ROLE_ARN: ROLE_ARN }).awsAccess)
+      .toEqual({ kind: 'assume-role', roleArn: ROLE_ARN, memoryKeyArn });
+  });
+
   it.each([
     ['assume-role with no Memory role', { integrations: { awsAccess: { kind: 'assume-role' } } }, {}, 'awsAccess.kind: assume-role needs BOTCUBE_USER_MEMORY_ROLE_ARN'],
     ['assume-role with a role that is no IAM role ARN', { integrations: { awsAccess: { kind: 'assume-role' } } }, { BOTCUBE_USER_MEMORY_ROLE_ARN: 'bot-cube-user-memory' }, 'BOTCUBE_USER_MEMORY_ROLE_ARN must be an IAM role ARN'],

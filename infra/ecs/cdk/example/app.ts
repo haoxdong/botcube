@@ -83,13 +83,13 @@ export async function defineExample(app: App, configPath: string, options: Examp
       ...seams.chat, botcubeConfig, environment: commandOptIn, proxyEnvironment: environment, imageRegistry: registryHost(config.integrations.imageRegistry),
       telemetry: config.integrations.telemetry.kind === 'xray' ? { kind: 'xray' } : { kind: config.integrations.telemetry.kind, environment: telemetry.chatService, secretIds: telemetry.secretIds },
     },
+    ...(credentialService ? { existingCredentialEndpoint: credentialService } : {}),
     credentials: {
       environment: { ...environment, ...commandOptIn, BOTCUBE_CONFIG: credentialBotCubeConfig },
       ...(tables?.vault ? { existingVaultTableName: tables.vault.tableName } : {}),
       ...(kmsKeys?.vault ? { existingVaultKeyArn: kmsKeys.vault } : {}),
       ...(kmsKeys?.sheet ? { existingSheetKeyAlias: kmsKeys.sheet } : {}),
       ...(kmsKeys?.functions ? { existingFunctionsKeyArn: kmsKeys.functions } : {}),
-      ...(credentialService ? { existingEndpoint: credentialService } : {}),
     },
   });
   const agentCore = await loadDeployConfig(configDeployRoot, process.cwd());
@@ -98,7 +98,6 @@ export async function defineExample(app: App, configPath: string, options: Examp
     imageRegistry: registryHost(config.integrations.imageRegistry),
     runtimeEnvironment: { ...environment, ...telemetry.harness, ...commandOptIn, BOTCUBE_CONFIG: runtimeBotCubeConfig },
     telemetry: { kind: config.integrations.telemetry.kind, secretIds: telemetry.secretIds },
-    ...(kmsKeys?.memory ? { existingMemoryKeyArn: kmsKeys.memory } : {}),
     ...(kmsKeys?.images ? { existingImageKeyArn: kmsKeys.images } : {}),
   }, config.integrations.awsAccess.kind);
   if (network) placeLambdasInNetwork(app, { vpcId: network.vpcId, privateSubnetIds: network.privateSubnets.map(({ subnetId }) => subnetId) });

@@ -3,7 +3,8 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { App } from 'aws-cdk-lib';
-import { activeDeployRoot, deployIdentity, deployRootConfig, projectDir } from './deploy-root.js';
+import { activeDeployRoot, deployIdentity, deployRootConfig } from './deploy-root.js';
+import { cdkPackageRoot } from './project-dir.js';
 import { defineProduction, type ProductionOptions } from './production.js';
 import { grantLambdasInline } from './lambda-inline-grants.js';
 import { productionChatImage, productionCredentialImage, serviceImages, type BotServiceDockerfiles } from './service-images.js';
@@ -34,7 +35,7 @@ export type ProductOptions = Pick<ProductionOptions, 'serving' | 'credentials' |
  */
 export function productionApp({ images: dockerfiles = {}, ...product }: ProductOptions = {}): App {
   const app = new App();
-  const repositoryRoot = path.resolve(projectDir(__dirname), process.env.BOTCUBE_REPOSITORY_ROOT ?? '../../../..');
+  const repositoryRoot = path.resolve(cdkPackageRoot, process.env.BOTCUBE_REPOSITORY_ROOT ?? '../../../..');
   const deployRoot = activeDeployRoot();
   const identity = deployIdentity(deployRoot);
   const config = deployRootConfig(deployRoot);

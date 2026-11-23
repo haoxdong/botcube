@@ -2,7 +2,6 @@ import * as path from 'node:path';
 import { readDeployment, deploymentNames, fillName, type DeploymentConfig } from 'botcube-config/read';
 import type { SynthesizedConfig } from './parking-transition.js';
 import type { DeployIdentity } from './production-identity.js';
-import { projectDir } from './project-dir.js';
 
 /**
  * The active deploy directory, named by `BOTCUBE_DEPLOY_ROOT` and resolved from the working directory.
@@ -12,8 +11,6 @@ export function activeDeployRoot(env: NodeJS.ProcessEnv = process.env): string {
   if (!root) throw new Error('BOTCUBE_DEPLOY_ROOT must point to the active deploy directory');
   return path.resolve(root);
 }
-
-export { projectDir };
 
 /** The BotCube Config beside the deploy root, which its identity is built from. */
 export function deployRootConfig(deployRoot: string): SynthesizedConfig {

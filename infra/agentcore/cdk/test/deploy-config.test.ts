@@ -2,6 +2,10 @@ import { ok as assert } from 'node:assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { App, CfnOutput, Stack } from 'aws-cdk-lib';
+import { Match, Template } from 'aws-cdk-lib/assertions';
+import { Asset } from 'aws-cdk-lib/aws-s3-assets';
+import { ModuleKind, transpileModule } from 'typescript';
 import { findConfigRoot, type AgentCoreProjectSpec } from '@aws/agentcore-cdk';
 import { loadDeployConfig } from '../lib/deploy-config';
 
@@ -145,4 +149,32 @@ test('the default Harness environment carries no dead var or rolled-out flag', a
   const names = envVars.map(variable => variable.name);
   expect(names).not.toContain('UNIFIED_TRACES_DESTINATION_ENABLED');
   expect(names).not.toContain('BOTCUBE_SNAPSHOT_PRIME');
+});
+
+test('synthesizes the Harness asset from a vendored CDK package', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'botcube-vendored-cdk-'));
+  tempRoots.push(root);
+  const original = path.resolve(__dirname, '..');
+  const vendored = path.join(root, 'botcube/infra/agentcore/cdk');
+  const modulePath = path.join(vendored, 'compiled/lib/deploy-config.js');
+  const entrypoint = 'src/botcube_harness_deepagents/serving.py';
+  const assetPath = path.join(root, 'botcube/harness/deepagents', entrypoint);
+  fs.mkdirSync(path.dirname(modulePath), { recursive: true });
+  fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+  fs.copyFileSync(path.join(original, 'package.json'), path.join(vendored, 'package.json'));
+  fs.symlinkSync(path.join(original, 'node_modules'), path.join(vendored, 'node_modules'));
+  fs.writeFileSync(path.join(root, 'cdk.json'), '{}');
+  fs.copyFileSync(path.join(botcubeRoot, 'harness/deepagents', entrypoint), assetPath);
+  const source = fs.readFileSync(path.join(original, 'lib/deploy-config.ts'), 'utf8');
+  fs.writeFileSync(
+    modulePath,
+    transpileModule(source, { compilerOptions: { module: ModuleKind.CommonJS, esModuleInterop: true } }).outputText
+  );
+
+  const config = jest.requireActual<typeof import('../lib/deploy-config')>(modulePath);
+  const deploy = await config.loadDeployConfig(PUBLIC_EXAMPLE, root);
+  const stack = new Stack(new App(), 'ForeignProject');
+  const asset = new Asset(stack, 'Harness', { path: path.join(runtimeOf(deploy.spec).codeLocation, entrypoint) });
+  new CfnOutput(stack, 'HarnessAssetKey', { value: asset.s3ObjectKey });
+  Template.fromStack(stack).hasOutput('HarnessAssetKey', { Value: Match.stringLikeRegexp('^[a-f0-9]{64}\\.py$') });
 });

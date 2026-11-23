@@ -1,3 +1,6 @@
+import { ok as assert } from 'node:assert';
+import { findPackageJSON } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { readDeployment, deploymentNames, type DeploymentConfig } from 'botcube-config/read';
 import {
   AgentCoreProjectSpecSchema,
@@ -11,20 +14,15 @@ import * as os from 'os';
 import * as path from 'path';
 import type { RuntimePlatformVersion } from './runtime-platform';
 
-/** This project's directory holds cdk.json, whether the app runs from source or from dist/. */
-function projectDir(dir: string): string {
-  if (fs.existsSync(path.join(dir, 'cdk.json'))) return dir;
-  if (path.dirname(dir) === dir) throw new Error('The AgentCore CDK app has no cdk.json above it');
-  return projectDir(path.dirname(dir));
-}
-const INFRA = path.resolve(projectDir(__dirname), '../..');
+const manifest = findPackageJSON('.', pathToFileURL(__filename));
+assert(manifest, 'The AgentCore CDK module must be inside its package');
 
 const PROJECT_DEFAULTS = { version: 1, managedBy: 'CDK', tags: { 'agentcore:created-by': 'agentcore-cli' } };
 const RUNTIME_DEFAULTS = {
   build: 'Container',
   entrypoint: 'src/botcube_harness_deepagents/serving.py',
   // Every deploy runs BotCube's Harness, beside this infra.
-  codeLocation: path.resolve(INFRA, '../harness/deepagents'),
+  codeLocation: path.resolve(path.dirname(manifest), '../../../harness/deepagents'),
   runtimeVersion: 'PYTHON_3_13',
   networkMode: 'PUBLIC',
   protocol: 'AGUI',
@@ -109,6 +107,7 @@ export interface DeployConfig {
   targets: AwsDeploymentTarget[];
   /** The Bot Image the Runtime runs, the BotCube Config's `agentCore.runtime.containerUri`; absent, it is built. */
   runtimeImage?: string;
+  existingMemoryKeyArn?: string;
   /** The BotCube Config's `tags`, on every stack. */
   tags?: Readonly<Record<string, string>>;
 }
@@ -224,5 +223,14 @@ export async function loadDeployConfig(configuredRoot: string | undefined, cwd: 
   const runtimeImage = config.agentCore?.runtime?.containerUri;
   if (!runtimeImage) throw new Error('BotCube Config agentCore.runtime.containerUri must name the published Bot Image');
   const { tags } = config;
-  return { deployRoot, identity, spec, targets, runtimeImage, ...(tags ? { tags } : {}) };
+  const existingMemoryKeyArn = config.existing.kmsKeys?.memory;
+  return {
+    deployRoot,
+    identity,
+    spec,
+    targets,
+    runtimeImage,
+    ...(tags ? { tags } : {}),
+    ...(existingMemoryKeyArn ? { existingMemoryKeyArn } : {}),
+  };
 }

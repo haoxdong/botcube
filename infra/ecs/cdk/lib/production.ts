@@ -24,14 +24,15 @@ import { addFilesLinks } from './files-links.js';
 import { PreviewChatService } from './preview-chat-service.js';
 import { PreviewOriginStack } from './preview-origin-stack.js';
 import type { CredentialServiceImage } from './credential-audit-copy.js';
-import { CREDENTIAL_SERVICE_ENV, PrivateCredentialService } from './private-credential-service.js';
+import { CREDENTIAL_SERVICE_ENV, PrivateCredentialService, type PrivateCredentialServiceProps } from './private-credential-service.js';
 import { ownedEgress, type PrivateEgressStack } from './private-egress-stack.js';
 import { nameTaskRoles } from './task-role-names.js';
 import { WebLatencyStack } from './web-latency-stack.js';
 import type { ModelsDeployment } from '../../../../config/seams.js' with { 'resolution-mode': 'import' };
 
-const projectDir = (dir: string): string => (fs.existsSync(path.join(dir, 'cdk.json')) ? dir : projectDir(path.dirname(dir)));
-const cubeRoot = path.resolve(projectDir(__dirname), '../../..');
+import { cdkPackageRoot } from './project-dir.js';
+
+const cubeRoot = path.resolve(cdkPackageRoot, '../../..');
 
 /** The cheap foundation model that summarizes each finished Turn for the Activity: `MODEL_ID` in botcube/chat's `turn-summaries.ts`. */
 const TURN_SUMMARY_MODEL = 'anthropic.claude-haiku-4-5-20251001-v1:0';
@@ -60,6 +61,8 @@ export interface Serving {
   images: { chat: ContainerImage; credential: CredentialServiceImage };
 }
 
+type CredentialOverrides = Partial<Omit<PrivateCredentialServiceProps, 'cluster' | 'chatNetwork' | 'agentNetwork' | 'image' | 'kmsKey' | 'executionRole' | 'permissionsBoundary' | 'subnets'>>;
+
 export interface ProductionOptions {
   /** Adds the product's own resources to the serving origin, such as its own login browser (ADR 0091). */
   serving?: (serving: Serving) => void;
@@ -85,7 +88,8 @@ export interface ProductionOptions {
     /** The chat image's BotCube Config path (BOTCUBE_CONFIG); absent, Chat Service defaults. */
     botcubeConfig?: string;
   };
-  credentials?: Partial<Omit<import('./private-credential-service.js').PrivateCredentialServiceProps, 'cluster' | 'chatNetwork' | 'agentNetwork' | 'image' | 'kmsKey' | 'executionRole' | 'permissionsBoundary' | 'subnets'>>;
+  credentials?: CredentialOverrides;
+  existingCredentialEndpoint?: { url: string; targetGroupArn: string; securityGroupId: string };
   /** The BotCube Config's non-Bedrock `models`, as botcube/config's `modelGatewayResources` gives them. */
   models?: ModelsDeployment;
   /** The BotCube Config's `tags`, on every stack. */
@@ -237,6 +241,7 @@ function defineStacks(app: App, options: ProductionOptions) {
     ...options.originConfig, ...optionalPhysicalName('agentComputerBrowserRoleName', filesRoles?.agentComputerBrowserRole),
   });
   const credentialConfig = identity.aws.ecs.credentialService;
+  const endpoint = options.existingCredentialEndpoint;
   const credentials = new PrivateCredentialService(origin, 'CredentialService', {
     ...(options.executionRole ? { executionRole: options.executionRole } : {}),
     ...(options.kmsKey ? { kmsKey: options.kmsKey } : {}),
@@ -247,6 +252,10 @@ function defineStacks(app: App, options: ProductionOptions) {
     image: images.credential, authBrowserId: identity.aws.agentCore.privateNatBrowser.id,
     agentComputerBrowserId: agentComputer.browser.attrBrowserId,
     ...options.credentials,
+    ...(endpoint ? { existingEndpoint: {
+      url: endpoint.url, targetGroupArn: endpoint.targetGroupArn,
+      securityGroup: ec2.SecurityGroup.fromSecurityGroupId(origin, 'EndpointBalancer', endpoint.securityGroupId, { mutable: false }),
+    } } : {}),
   });
   grantModelsEndpoint(credentials, options.models);
   // The product's service verifies BotCube's signed user tokens against this issuer's JWKS (ADR 0091).

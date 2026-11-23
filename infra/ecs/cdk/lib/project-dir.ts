@@ -1,9 +1,8 @@
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import { ok as assert } from 'node:assert';
+import { findPackageJSON } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import { dirname } from 'node:path';
 
-/** This project's directory holds cdk.json, whether the app runs from source or from dist/. */
-export function projectDir(dir: string): string {
-  if (fs.existsSync(path.join(dir, 'cdk.json'))) return dir;
-  if (path.dirname(dir) === dir) throw new Error('The ECS CDK app has no cdk.json above it');
-  return projectDir(path.dirname(dir));
-}
+const manifest = findPackageJSON('.', pathToFileURL(__filename));
+assert(manifest, 'The ECS CDK module must be inside its package');
+export const cdkPackageRoot = dirname(manifest);

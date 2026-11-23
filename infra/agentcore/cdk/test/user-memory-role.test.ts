@@ -11,7 +11,7 @@ const SPEC = readProjectSpec(DEPLOY_ROOT);
 const IDENTITY = readDeployIdentity(DEPLOY_ROOT);
 setSessionProjectRoot(agentCoreProjectRoot(readProjectSpec(DEPLOY_ROOT)));
 
-function synthesize(userMemoryRole?: AgentCoreStackProps['userMemoryRole']): Template {
+function synthesize(userMemoryRole?: AgentCoreStackProps['userMemoryRole'], existingMemoryKeyArn?: string): Template {
   return Template.fromStack(
     new AgentCoreStack(new cdk.App(), 'UserMemoryRoleStack', {
       env: { account: '123456789012', region: 'us-east-1' },
@@ -33,6 +33,7 @@ function synthesize(userMemoryRole?: AgentCoreStackProps['userMemoryRole']): Tem
         },
       },
       ...(userMemoryRole ? { userMemoryRole } : {}),
+      ...(existingMemoryKeyArn ? { existingMemoryKeyArn } : {}),
     })
   );
 }
@@ -231,5 +232,27 @@ describe('under the assume-role Turn credentials adapter', () => {
     for (const runtime of Object.values(assumed.findResources('AWS::BedrockAgentCore::Runtime'))) {
       expect(runtime.Properties.EnvironmentVariables).not.toHaveProperty('BOTCUBE_USER_MEMORY_ROLE_ARN');
     }
+  });
+});
+
+test.each([
+  { issuer: 'https://chat.example.com', roleName: 'bot-cube-user-memory' },
+  { awsAccess: 'assume-role', chatServiceTaskRole: 'chat-task', roleName: 'bot-cube-user-memory' } as const,
+])('grants the encrypted Memory key to the Turn role with %j', role => {
+  const keyArn = 'arn:aws:kms:us-east-1:123456789012:key/enterprise-memory';
+  const encrypted = synthesize(role, keyArn);
+  const roleId = encrypted.getResourceId('AWS::IAM::Role', { Properties: { RoleName: role.roleName } });
+  encrypted.hasResourceProperties('AWS::IAM::Policy', {
+    Roles: [{ Ref: roleId }],
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        {
+          Effect: 'Allow',
+          Resource: keyArn,
+          Action: ['kms:Decrypt', 'kms:Encrypt', 'kms:ReEncrypt*', 'kms:GenerateDataKey*'],
+        },
+        { Effect: 'Allow', Resource: keyArn, Action: 'kms:DescribeKey' },
+      ]),
+    },
   });
 });

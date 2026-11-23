@@ -67,11 +67,11 @@ const EXISTING = [
 ];
 const POLICY_TYPES = ['AWS::IAM::Role', 'AWS::IAM::Policy', 'AWS::IAM::ManagedPolicy', 'AWS::KMS::Key', 'AWS::S3::BucketPolicy', 'AWS::DynamoDB::ResourcePolicy'];
 
-test('grants nothing on a existing resource: no policy anywhere names one', () => {
+test('grants the Turn role its Memory key and leaves the other existing resource grants to the operator', () => {
   const granting = templates.flatMap(template => Object.entries(template.Resources)
     .filter(([, { Type }]) => POLICY_TYPES.includes(Type))
     .flatMap(([logicalId, resource]) => EXISTING.filter(name => JSON.stringify(resource).includes(name)).map(name => `${logicalId} ${name}`)));
-  expect(granting).toEqual([]);
+  expect(granting).toEqual(['UserMemoryRoleDefaultPolicy24C09E37 33333333-cccc-4ccc-8ccc-333333333333']);
 });
 
 test("places every Lambda function in the existing network's private subnets", () => {

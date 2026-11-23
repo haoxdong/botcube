@@ -246,7 +246,8 @@ export class AgentCoreStack extends Stack {
       if (props.harnessCodeLocation) {
         this.addSessionApi(props.harnessCodeLocation, memory, physicalIdentity, props);
       }
-      if (props.userMemoryRole) addUserMemoryRole(this, this.runtimes, memory.memoryArn, props.userMemoryRole);
+      if (props.userMemoryRole)
+        addUserMemoryRole(this, this.runtimes, memory.memoryArn, props.userMemoryRole, memoryKeyArn(props));
     }
   }
 

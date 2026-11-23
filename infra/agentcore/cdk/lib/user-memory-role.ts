@@ -1,5 +1,6 @@
 import { CfnOutput, Duration, type Stack } from 'aws-cdk-lib';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import { Key } from 'aws-cdk-lib/aws-kms';
 import type { TokenAudiences } from '../../../../config/seams.js' with { 'resolution-mode': 'import' };
 
 /** The audience of the Chat Service's per-Turn JWT. */
@@ -19,9 +20,23 @@ export type UserMemoryRole = { roleName: string } & (
 type Runtimes = Iterable<{ readonly runtime: { addEnvironmentVariable(name: string, value: string): void } }>;
 
 /** The Memory role each Turn's credentials come from (ADR 0067 §8), by the Turn credentials adapter. */
-export function addUserMemoryRole(stack: Stack, runtimes: Runtimes, memoryArn: string, config: UserMemoryRole): void {
-  if ('issuer' in config) webIdentityMemoryRole(stack, runtimes, memoryArn, config);
-  else assumedMemoryRole(stack, memoryArn, config);
+export function addUserMemoryRole(
+  stack: Stack,
+  runtimes: Runtimes,
+  memoryArn: string,
+  config: UserMemoryRole,
+  keyArn?: string
+): void {
+  const role =
+    'issuer' in config
+      ? webIdentityMemoryRole(stack, runtimes, memoryArn, config)
+      : assumedMemoryRole(stack, memoryArn, config);
+  if (keyArn) {
+    const key = Key.fromKeyArn(stack, 'TurnMemoryKey', keyArn);
+    key.grantEncryptDecrypt(role);
+    key.grant(role, 'kms:DescribeKey');
+  }
+  new CfnOutput(stack, 'UserMemoryRoleArn', { value: role.roleArn });
 }
 
 /**
@@ -33,7 +48,7 @@ function webIdentityMemoryRole(
   runtimes: Runtimes,
   memoryArn: string,
   config: { issuer: string; roleName: string }
-): void {
+): iam.Role {
   const issuer = URL.canParse(config.issuer) ? new URL(config.issuer) : undefined;
   if (issuer?.protocol !== 'https:' || issuer.port || issuer.origin !== config.issuer) {
     throw new Error('The Memory role issuer must be an https origin without a port');
@@ -90,7 +105,7 @@ function webIdentityMemoryRole(
   for (const env of runtimes) {
     env.runtime.addEnvironmentVariable('BOTCUBE_USER_MEMORY_ROLE_ARN', role.roleArn);
   }
-  new CfnOutput(stack, 'UserMemoryRoleArn', { value: role.roleArn });
+  return role;
 }
 
 /**
@@ -102,7 +117,7 @@ function assumedMemoryRole(
   stack: Stack,
   memoryArn: string,
   { roleName, chatServiceTaskRole }: { roleName: string; chatServiceTaskRole: string }
-): void {
+): iam.Role {
   const taskRoleArn = stack.formatArn({
     service: 'iam',
     region: '',
@@ -131,5 +146,5 @@ function assumedMemoryRole(
       resources: [memoryArn],
     })
   );
-  new CfnOutput(stack, 'UserMemoryRoleArn', { value: role.roleArn });
+  return role;
 }

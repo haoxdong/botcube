@@ -407,10 +407,17 @@ test('Sign-in Sheets use a retained RSA key behind an alias, decryptable only by
   }]);
 });
 
-test('a existing Endpoint takes the place of Cloud Map: the service registers into its target group, admits its load balancer and callers get its URL', () => {
+test('an existing Endpoint takes the place of Cloud Map: the service registers into its target group, admits its load balancer and callers get its URL', () => {
   const targetGroupArn = 'arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/corp-credentials/0123456789abcdef';
-  const template = synth(false, undefined, { existingEndpoint: { url: 'http://credentials.example.com', targetGroupArn, securityGroupId: 'sg-0loadbalancer1' } });
-  template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', { SourceSecurityGroupId: 'sg-0loadbalancer1', IpProtocol: 'tcp', FromPort: 8081, ToPort: 8081 });
+  const template = synth(false, undefined, stack => {
+    const vpc = ec2.Vpc.fromVpcAttributes(stack, 'BalancerVpc', { vpcId: 'vpc-fixture12345678', availabilityZones: ['us-east-1a'] });
+    const securityGroup = new ec2.SecurityGroup(stack, 'Balancer', { vpc, allowAllOutbound: false });
+    const existingEndpoint = { url: 'http://credentials.example.com', targetGroupArn, securityGroup };
+    return { existingEndpoint };
+  });
+  const balancer = template.getResourceId('AWS::EC2::SecurityGroup', { Properties: { GroupDescription: 'Credentials/Balancer' } });
+  template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', { SourceSecurityGroupId: { 'Fn::GetAtt': [balancer, 'GroupId'] }, IpProtocol: 'tcp', FromPort: 8081, ToPort: 8081 });
+  template.hasResourceProperties('AWS::EC2::SecurityGroupEgress', { GroupId: { 'Fn::GetAtt': [balancer, 'GroupId'] }, IpProtocol: 'tcp', FromPort: 8081, ToPort: 8081 });
   template.resourceCountIs('AWS::ServiceDiscovery::PrivateDnsNamespace', 0);
   template.resourceCountIs('AWS::ServiceDiscovery::Service', 0);
   template.hasResourceProperties('AWS::ECS::Service', {

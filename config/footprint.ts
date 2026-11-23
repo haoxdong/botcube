@@ -136,6 +136,9 @@ function existingResources(config: BotCubeConfig): { need: Need; created: string
   for (const { resource: { grant } } of createdEntries) {
     for (const { to, actions } of grant ?? []) iam[to] = { actions: [...(iam[to]?.actions ?? []), ...actions] };
   }
+  if (existing.kmsKeys?.memory) {
+    iam.userMemory = { actions: ['kms:Decrypt', 'kms:DescribeKey', 'kms:Encrypt', 'kms:GenerateDataKey*', 'kms:ReEncrypt*'] };
+  }
   if (ownEgressVpc(config)) {
     iam.sessionApi = { actions: NETWORK_INTERFACES };
     iam.auditCopy = { actions: NETWORK_INTERFACES };

@@ -167,7 +167,7 @@ export function createChatService(
   const initialRecovery = recoverPurges();
   void initialRecovery.then(() => sweepEvery(120_000, draining, recoverPurges));
   const summarizeTurn = turnSummarizer(config.turnSummaryModel);
-  const awsAccess = config.awsAccess?.kind === 'assume-role' ? assumeRoleAwsAccess(config.awsAccess.roleArn) : turnIdentity;
+  const awsAccess = config.awsAccess?.kind === 'assume-role' ? assumeRoleAwsAccess(config.awsAccess) : turnIdentity;
   const app = new Hono();
   let scheduledRunsUnavailable = false;
   if (scheduled !== null) {
