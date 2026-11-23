@@ -56,9 +56,8 @@ from opentelemetry.instrumentation.utils import unwrap
 from typing_extensions import TypedDict
 
 from . import turn_timing
-from .compaction import BackgroundCompaction, PendingSummary
 from .files import ARTIFACTS_DIRECTORY, HARNESS_DIRECTORY
-from .lazy_files import LazyFilesMiddleware
+from .lazy_files import LazyFilesMiddleware, SummaryFilesBackend
 from .llm import build_model
 from .model_request import ModelRequestBounds, count_request_tokens
 
@@ -85,7 +84,6 @@ class PlainState(DeepAgentState):
     # Session carries it, so a session API post keeps it in the next checkpoint.
     session_memory: NotRequired[Annotated[str, PrivateStateAttr]]
     last_model_call_at: NotRequired[Annotated[float, PrivateStateAttr]]
-    _pending_summary: NotRequired[Annotated[PendingSummary | None, PrivateStateAttr]]
 
 
 class _SkillsState(SkillsState):
@@ -403,15 +401,14 @@ def build_agent(
         'state_schema': PlainState,
     }
     turn_timing.graph_step('middleware')
-    compaction = SummarizationMiddleware if backend is None else BackgroundCompaction
     summarization = compute_summarization_defaults(resolved_model)
     trigger_unit, trigger_value = summarization['trigger']
     media_trigger = int(trigger_value)
     if trigger_unit == 'fraction':
         media_trigger = int(trigger_value * resolved_model.profile['max_input_tokens'])
     kwargs['middleware'] = [
-        compaction(
-            model=resolved_model, backend=StateBackend() if backend is None else backend,
+        SummarizationMiddleware(
+            model=resolved_model, backend=SummaryFilesBackend(backend) if backend is not None else StateBackend(),
             **summarization,
             trim_tokens_to_summarize=None, token_counter=partial(count_request_tokens, media_trigger=media_trigger),
         ),

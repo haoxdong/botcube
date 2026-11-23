@@ -44,7 +44,6 @@ from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
 from fastapi.testclient import TestClient
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
-    AIMessage,
     AIMessageChunk,
     BaseMessage,
     HumanMessage,
@@ -53,7 +52,7 @@ from langchain_core.messages import (
 )
 from langchain_core.messages.ai import UsageMetadata
 from langchain_core.messages.tool import tool_call_chunk
-from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import empty_checkpoint
 from langgraph_checkpoint_aws import AgentCoreMemorySaver
@@ -457,7 +456,7 @@ def test_a_turn_can_resume_with_a_screenshot(
         yield _text('Screenshot seen')
 
     monkeypatch.setattr(_ScriptedModel, '_stream', dimension_limit)
-    for text in ('read: /screenshot.png', 'Continue'):
+    for text in (f"read: {workspace / 'screenshot.png'}", 'Continue'):
         events = service.turn(text, message=text)
         assert events[-1]['type'] == 'RUN_FINISHED', events[-1]
         assert _said(events) == 'Screenshot seen'
@@ -473,45 +472,40 @@ def test_a_turn_recovers_from_an_oversized_model_request(
     service: _Service, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, proactive: bool,
 ) -> None:
     monkeypatch.setattr(serving, 'build_model', lambda **_: _ScriptedModel(
-        recorder=service.recorder, profile={'max_input_tokens': 200_000},
+        recorder=service.recorder, profile={'max_input_tokens': 55_000},
     ))
     workspace = _workspace(tmp_path, monkeypatch, 'attachments')
     (workspace / 'attachment.png').write_bytes(_png((1, 1), 5 * 1024 * 1024))
     refusals = []
+    summaries = []
     stream = _ScriptedModel._stream
 
     def byte_limit(model: _ScriptedModel, messages: list[BaseMessage], *args: Any, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
-        if messages[-1].id == 'brief':
-            yield _text('Brief seen')
-        elif any(_inline_images(messages)):
-            if messages[-1].content == 'Continue':
+        if len(messages) == 1 and '\n<messages>\n' in messages[0].text:
+            summaries.append(True)
+            yield _text('Earlier conversation included an attachment.')
+        elif messages[-1].id == 'continue':
+            if any(_inline_images(messages)):
                 refusals.append(True)
                 response = httpx.Response(413, request=httpx.Request('POST', 'https://example.test/v1/messages'))
                 raise APIStatusError('Request Entity Too Large', response=response, body=None)
+            yield _text('Echo: Continue')
+        elif any(_inline_images(messages)):
             yield _text('Attachment seen')
         else:
             yield from stream(model, messages, *args, **kwargs)
 
     monkeypatch.setattr(_ScriptedModel, '_stream', byte_limit)
-    summaries = []
-
-    def summarize(*_args: Any, **_kwargs: Any) -> ChatResult:
-        summaries.append(True)
-        return ChatResult(generations=[ChatGeneration(message=AIMessage('Earlier conversation included an attachment.'))])
-
-    monkeypatch.setattr(_ScriptedModel, '_generate', summarize)
-    if proactive:
-        assert _said(service.turn('Brief' + ' ' * 500_000, message='brief')) == 'Brief seen'
-        service.fed()
-        assert not summaries
-    assert _said(service.turn('read: /attachment.png', message='read-attachment')) == 'Attachment seen'
+    assert _said(service.turn(f"read: {workspace / 'attachment.png'}", message='read-attachment')) == 'Attachment seen'
     service.fed()
-    assert len(summaries) == int(proactive)
-    events = service.turn('Continue', message='continue')
+    assert not summaries
+    continuation = 'Earlier copper futures position. ' * 4_500 if proactive else 'Continue'
+    events = service.turn(continuation, message='continue')
 
     assert events[-1]['type'] == 'RUN_FINISHED', events[-1]
     assert _said(events) == 'Echo: Continue'
     assert len(refusals) == (0 if proactive else 1)
+    assert len(summaries) == 1
 
 
 def test_scheduled_runs_in_one_task_chat_keep_earlier_turns_for_the_agent(service: _Service) -> None:
@@ -1044,16 +1038,20 @@ def test_a_restarted_harness_uses_the_previous_turns_compaction(
 ) -> None:
     from test_history_compaction import StreamingCompactionModel
 
-    model = StreamingCompactionModel(responses=[], profile={'max_input_tokens': window},
-                            summary_started=asyncio.Event(), release_summary=asyncio.Event())
-    model.release_summary.set()
+    model = StreamingCompactionModel(responses=[], profile={'max_input_tokens': window})
     monkeypatch.setattr(serving, 'build_model', lambda **kwargs: model)
 
     first = service.turn('Earlier copper question. ' * 8_000, message='earlier')[-1]
     assert first['type'] == 'RUN_FINISHED', first
     assert model.summary_calls == 0
-    assert service.turn('Tell me about copper. ' * 4_000, message='crossing')[-1]['type'] == 'RUN_FINISHED'
+    crossing = service.turn('Tell me about copper. ' * 4_000, message='crossing')
+    assert crossing[-1]['type'] == 'RUN_FINISHED'
+    assert ''.join(event['delta'] for event in crossing if event['type'] == 'TEXT_MESSAGE_CONTENT') == 'OK'
     assert model.summary_calls == int(summarizes)
+    assert any('copper futures' in message.text for message in model.calls[-1]) is summarizes
+    if summarizes:
+        archive = next(serving._workspace().glob('conversation_history/*.md'))
+        assert 'Earlier copper question.' in archive.read_text()
     asyncio.run(session_api.post_message('user-1', 'thread-1', 'Copper note from a scheduled post.'))
     for name, value in {'_AGENTS': {}, '_BACKEND_BY_AGENT': {}, '_BACKENDS': {},
                         '_SESSION_TURNS': serving._SessionTurns()}.items():

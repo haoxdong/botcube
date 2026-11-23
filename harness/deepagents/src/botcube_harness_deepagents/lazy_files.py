@@ -10,6 +10,14 @@ from pathlib import Path
 from threading import Lock, Thread
 from typing import Any, TypeVar, get_args
 
+from deepagents.backends import CompositeBackend, FilesystemBackend
+from deepagents.backends.protocol import (
+    BackendProtocol,
+    EditResult,
+    FileDownloadResponse,
+    FileUploadResponse,
+    WriteResult,
+)
 from deepagents.middleware.filesystem import FsToolName
 from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.messages import ToolMessage
@@ -17,7 +25,6 @@ from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 
 from . import turn_timing
-from .files import install_staged_files
 from .files_mount import FilesMount, FilesMountError
 
 _WORKSPACE_TOOLS = frozenset(get_args(FsToolName))
@@ -34,6 +41,7 @@ class TurnFiles:
         self._pull: Future[None] | None = None
         self.used = False
         self._failure: FilesMountError | None = None
+        self._archives: set[asyncio.Task[Any]] = set()
 
     def prefetch(self) -> None:
         if self._files is not None:
@@ -42,6 +50,14 @@ class TurnFiles:
     async def settle_prefetch(self) -> None:
         if self.used:
             await self.aensure()
+
+    def track_archive(self, task: asyncio.Task[Any]) -> None:
+        self._archives.add(task)
+        task.add_done_callback(self._archives.discard)
+
+    async def settle_archives(self) -> None:
+        if self._archives:
+            await asyncio.gather(*self._archives, return_exceptions=True)
 
     @property
     def ready(self) -> bool:
@@ -56,10 +72,6 @@ class TurnFiles:
             pull = self._pull
         if self.used and pull is not None and pull.done():
             pull.result()
-
-    def publish_staged(self, root: Path) -> None:
-        self.ensure()
-        install_staged_files(root, self._root, self._excluded)
 
     def ensure(self) -> None:
         self.used = True
@@ -138,6 +150,45 @@ def turn_files(files: FilesMount | None, root: Path, excluded: Iterable[str]) ->
         yield readiness
     finally:
         _turn_files.reset(token)
+
+
+class SummaryFilesBackend(CompositeBackend):
+    def __init__(self, workspace: BackendProtocol) -> None:
+        root = str(workspace.cwd) if isinstance(workspace, FilesystemBackend) and not workspace.virtual_mode else '/'
+        super().__init__(default=workspace, routes={}, artifacts_root=root)
+        self._workspace = workspace
+
+    def _mounted(self) -> BackendProtocol:
+        if (files := current_turn_files()) is not None:
+            files.ensure()
+        return self._workspace
+
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        return self._mounted().download_files(paths)
+
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        return self._mounted().upload_files(files)
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        return self._mounted().write(file_path, content)
+
+    def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
+        return self._mounted().edit(file_path, old_string, new_string, replace_all)
+
+    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        # Deep Agents starts the archive read/append in a gather sibling that can outlive summary failure.
+        if (files := current_turn_files()) is not None and (task := asyncio.current_task()) is not None:
+            files.track_archive(task)
+        return await finish_in_thread(self.download_files, paths)
+
+    async def aupload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        return await finish_in_thread(self.upload_files, files)
+
+    async def awrite(self, file_path: str, content: str) -> WriteResult:
+        return await finish_in_thread(self.write, file_path, content)
+
+    async def aedit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
+        return await finish_in_thread(self.edit, file_path, old_string, new_string, replace_all)
 
 
 class LazyFilesMiddleware(AgentMiddleware):

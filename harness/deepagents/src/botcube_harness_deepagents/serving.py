@@ -964,7 +964,7 @@ class _SessionTurns:
                 with turn_files(files, root, excluded_paths(_require_bot().skills)) as readiness:
                     readiness.prefetch()
                     with prompt_cache_turn(context.session_id), collecting_turn_feeds() as feeds:
-                        publish = partial(turn.publish, put=put, files=readiness, feeds=feeds)
+                        publish = partial(turn.publish, put=put, files=readiness)
                         turn.work = reply.create_task(_turn_events(agent, input_data, reply.watching(publish)))
                     limited = await wait_for_turn(turn.work, deadline, finished=lambda: turn.finished)
                     try:
@@ -974,6 +974,7 @@ class _SessionTurns:
                             turn.work.result()
                             readiness.raise_if_failed()
                     finally:
+                        await readiness.settle_archives()
                         if turn.work.cancelled():
                             await reply.keep(agent, session)
                             await reply.answer_cut_calls(agent, session)
@@ -984,7 +985,6 @@ class _SessionTurns:
                 elif turn.completion is not None:
                     await reply.keep_failed(turn.completion, agent, session, put)
                     finished = turn.finished_without_interruption(agent)
-                    await feeds.checkpoint(agent, _session_config(session), deadline, finished)
                     turn.release(put)
                     self._feed(session, turn, feeds)
                     _settle_finished_reuse(saver, finished)

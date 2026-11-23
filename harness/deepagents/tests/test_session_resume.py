@@ -1186,22 +1186,12 @@ def test_a_session_recorded_with_a_resent_tool_result_answers_its_next_turn(
             )
 
             from botcube_harness_deepagents import agent as agent_module
-            from botcube_harness_deepagents import compaction
-            from botcube_harness_deepagents.compaction import BackgroundCompaction
 
-            # Keep the native summarizer and its cutoff logic; shorten only its
-            # trigger/retention and supply a deterministic summary model.
             monkeypatch.setattr(
-                agent_module, 'BackgroundCompaction',
-                lambda *, model, backend, **_kwargs: BackgroundCompaction(
-                    model=model,
+                agent_module, 'SummarizationMiddleware',
+                lambda *, model, backend, **_settings: SummarizationMiddleware(
+                    model=FakeListChatModel(responses=['Earlier conversation.']),
                     backend=backend, trigger=('messages', 5), keep=('messages', 3),
-                ),
-            )
-            monkeypatch.setattr(
-                compaction, 'SummarizationMiddleware',
-                lambda *, model, backend, **settings: SummarizationMiddleware(
-                    model=FakeListChatModel(responses=['Earlier conversation.']), backend=backend, **settings,
                 ),
             )
         # A fresh Harness reads the corrupted record.

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 from collections.abc import Callable, Iterable
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -17,16 +16,6 @@ ARTIFACTS_DIRECTORY = 'artifacts'
 
 class FilesBindingError(RuntimeError):
     code = 'INVALID_FILES'
-
-
-def install_staged_files(source: Path, destination: Path, excluded: Iterable[str]) -> None:
-    skip = tuple(excluded)
-    for local in source.rglob('*'):
-        name = local.relative_to(source).as_posix()
-        if local.is_file() and is_files_path(name, skip):
-            target = destination / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(local, target)
 
 
 def is_files_path(name: str, excluded: tuple[str, ...]) -> bool:

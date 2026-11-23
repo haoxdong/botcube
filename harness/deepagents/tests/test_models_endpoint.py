@@ -26,12 +26,17 @@ from deployment_fixture import ENDPOINT_MODELS, deploy
 pytestmark = pytest.mark.integration
 
 
+def _model_text(content: str | list[dict[str, Any]]) -> str:
+    text = content if isinstance(content, str) else ''.join(part['text'] for part in content)
+    return 'Earlier requests concerned copper.' if '\n<messages>\n' in text else 'Echo: ' + text
+
+
 def _responses_stream(body: dict[str, Any], tool_call: str | None) -> bytes:
     """The Responses API's event stream for one output item: a call to `tool_call` until its result is back, else `Echo: <text>`."""
     items = [{'role': 'user', 'content': body['input']}] if isinstance(body['input'], str) else body['input']
     asked = max(index for index, item in enumerate(items) if item.get('role') == 'user')
     content = items[asked]['content']
-    text = 'Echo: ' + (content if isinstance(content, str) else ''.join(part['text'] for part in content))
+    text = _model_text(content)
     answered = any(item.get('type') == 'function_call_output' for item in items[asked + 1:])
     if tool_call is not None and not answered:
         item: dict[str, Any] = {'id': 'fc_1', 'type': 'function_call', 'status': 'completed', 'call_id': 'call-1', 'name': tool_call, 'arguments': '{}'}
@@ -105,7 +110,7 @@ class StandIn:
                     self._send(200, 'text/event-stream', _responses_stream(body, stand_in.tool_call))
                     return
                 content = body['messages'][-1]['content']
-                text = 'Echo: ' + (content if isinstance(content, str) else ''.join(part['text'] for part in content))
+                text = _model_text(content)
                 if drop == 'mid-response':
                     started = {'id': 'c1', 'object': 'chat.completion.chunk', 'model': body['model'], 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': text}, 'finish_reason': None}]}
                     self.send_response(200)
@@ -522,9 +527,9 @@ def test_a_turn_that_overflows_the_context_on_either_wire_compacts_and_answers(
     result = asyncio.run(turn())
 
     assert result['messages'][-1].text == 'Echo: Reply OK.'
-    # The overflowing call, the emergency summary, then the call on the compacted history.
     assert [request['path'] for request in stand_in.requests] == [path] * 3
     event = asyncio.run(graph.aget_state(config)).values['_summarization_event']
+    assert 'Earlier requests concerned copper.' in event['summary_message'].text
     assert (tmp_path / event['file_path'].lstrip('/')).is_file()
 
 

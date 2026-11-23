@@ -33,16 +33,15 @@ def test_invalid_mount_binding_is_rejected(field: str, value: str) -> None:
         pop_files_mount({'files': files})
 
 
-def test_staged_publication_mounts_before_installing_an_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_summary_archive_waits_for_files_mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from collections.abc import Iterable
 
-    from botcube_harness_deepagents.lazy_files import TurnFiles
+    from deepagents.backends import LocalShellBackend
+
+    from botcube_harness_deepagents.lazy_files import SummaryFilesBackend, turn_files
 
     root = tmp_path / 'workspace'
     root.mkdir()
-    staging = tmp_path / 'staging'
-    staging.mkdir()
-    (staging / 'history.md').write_text('archived history')
     files = pop_files_mount({'files': binding()})
     assert isinstance(files, FilesMount)
 
@@ -51,9 +50,10 @@ def test_staged_publication_mounts_before_installing_an_archive(tmp_path: Path, 
         (destination / 'mounted').touch()
 
     monkeypatch.setattr(FilesMount, 'pull', mount)
-    readiness = TurnFiles(files, root, ())
-    readiness.publish_staged(staging)
-    assert readiness.ready
+    backend = SummaryFilesBackend(LocalShellBackend(root_dir=root, virtual_mode=True, inherit_env=False))
+    with turn_files(files, root, ()) as readiness:
+        assert backend.write('/history.md', 'archived history').error is None
+        assert readiness.ready
     assert (root / 'mounted').exists()
     assert (root / 'history.md').read_text() == 'archived history'
 

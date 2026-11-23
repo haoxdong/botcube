@@ -13,10 +13,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from botcube_harness_deepagents import agent as agent_module
 from botcube_harness_deepagents.agent import build_agent
-from botcube_harness_deepagents.compaction import BackgroundCompaction
 from botcube_harness_deepagents.conversation import conversation
 from botcube_harness_deepagents.session_agent import SessionAgent
-from botcube_harness_deepagents.turn_memory import collecting_turn_feeds
 from conftest import ToolBindableFakeModel
 
 
@@ -25,14 +23,10 @@ def test_internal_summary_stays_out_of_live_and_reloaded_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cross_threshold: bool, emergency: bool,
 ) -> None:
     summary = 'SESSION INTENT\nAnswer briefly.\nSUMMARY\nEarlier chat.\nARTIFACTS\nNone.\nNEXT STEPS\nReply OK.'
-    monkeypatch.setattr(
-        agent_module, 'BackgroundCompaction',
-        lambda *, model, backend, **_kwargs: BackgroundCompaction(
-            model=model, backend=backend, trim_tokens_to_summarize=None,
-            trigger=('messages', 4), keep=('messages', 2),
-        ),
-    )
-    responses = [summary, 'OK', 'OK'] if emergency else ['OK', summary, 'OK']
+    monkeypatch.setattr(agent_module, 'compute_summarization_defaults', lambda _model: {
+        'trigger': ('messages', 5), 'keep': ('messages', 1),
+    })
+    responses = [summary, 'OK', 'OK']
     graph = build_agent(
         model=ToolBindableFakeModel(
             responses=responses if cross_threshold else ['OK'],
@@ -69,14 +63,11 @@ async def _run_summary_turns(graph: Any, config: RunnableConfig, cross_threshold
         messages=[UserMessage(id='new-question', content='Reply OK.')],
         tools=[], context=[], forwarded_props={},
     )
-    with collecting_turn_feeds() as feeds:
-        events = [event.model_dump(exclude_none=True) async for event in agent.run(request)]
-    await feeds.checkpoint(agent, config, deadline=None, finished=True)
+    events = [event.model_dump(exclude_none=True) async for event in agent.run(request)]
     following = request.model_copy(update={
         'run_id': 'following', 'messages': [UserMessage(id='follow-up', content='Reply OK again.')],
     })
-    with collecting_turn_feeds():
-        following_events = [event async for event in agent.run(following)]
+    following_events = [event async for event in agent.run(following)]
     assert ''.join(event.delta for event in following_events if event.type == 'TEXT_MESSAGE_CONTENT') == 'OK'
     state = await graph.aget_state(config)
     return events, conversation(state.values['messages']), state.values
