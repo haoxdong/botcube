@@ -26,6 +26,30 @@ async function titleOf(threadId: string, messages: unknown[]): Promise<string> {
 }
 
 describe('a Turn', () => {
+  it('streams a Turn to its end after withholding 150,000 frames', async () => {
+    const target = await startInProcess({ overrides: {
+      credentialProps: ['testToken'],
+      invocationPayload: async (input) => ({ ...input, forwardedProps: { testToken: 'issued-private-token' } }),
+    } });
+    try {
+      const id = await target.allocate('acct_account-1', 'long-withheld-turn');
+      const frames = [
+        'data: {"type":"RUN_STARTED"}',
+        'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"issued-private-"}',
+        ...Array.from({ length: 150_000 }, (_, index) => `event: progress-${index}`),
+        'data: {"type":"RUN_FINISHED"}',
+      ];
+      target.agentcore.script(id, { kind: 'stream', frames });
+
+      const response = await postTurn(target, turn(id));
+
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe(frames.join('\n\n') + '\n\n');
+    } finally {
+      await target.stop();
+    }
+  });
+
   it('passes the browser timezone through to the Harness', async () => {
     await stack.allocate('acct_account-1', 'timezone-turn');
     const response = await postTurn(stack, JSON.stringify({

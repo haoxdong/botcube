@@ -682,10 +682,12 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
   const guard = turnCredentialGuard(credentials, turn.initialMessages, turn.held);
   const withheld: Frame[] = [];
   let hold: { since: number; kinds: string[] } | undefined;
-  const release = (at: number) => {
+  const release = (at: number, ready: Frame[]) => {
     // A hold over a second freezes the Worklog's clocks; log its length and kinds, never its content.
     if (hold !== undefined && at - hold.since > 1000) console.info(`${upstream.label} held the stream on a possible credential prefix session_id=${sessionId} held_ms=${at - hold.since} kinds=${hold.kinds.join(',')}`);
     hold = undefined;
+    for (const held of withheld) ready.push(held);
+    withheld.length = 0;
   };
   let terminal = false;
   let startFailure: { error: unknown } | undefined;
@@ -831,15 +833,10 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
         return failure(message, 'AGENTCORE_UPSTREAM_STREAM_ERROR').then((frame) => ({ ...frame, failed: true }));
       }
       withheld.push(next);
-      if (!guard.hasPendingPrefix()) {
-        release(next.readAt);
-        ready.push(...withheld.splice(0));
-      } else hold ??= { since: next.readAt, kinds: guard.pendingKinds() };
+      if (guard.hasPendingPrefix()) hold ??= { since: next.readAt, kinds: guard.pendingKinds() };
+      else release(next.readAt, ready);
     }
-    if (done && !credentialLeak) {
-      release(Date.now());
-      ready.push(...withheld.splice(0));
-    }
+    if (done && !credentialLeak) release(Date.now(), ready);
     const prior = await saveFrames(ready);
     if (prior.failed || !credentialLeak) return prior;
     if (guard.wroteHeld()) {
