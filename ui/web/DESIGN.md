@@ -104,10 +104,7 @@ size is its desktop size in `:root` and iOS's text style in the 640px query; nam
 
 ## Components
 
-Each part copies its reference and states only where it differs. The chat parts follow the ChatGPT and Claude apps;
-the rest follow iOS on a phone and macOS on a desktop. All but the File page and Close are React components in
-`src/components/ui/` over one CSS rule each, which a bot imports from `botcube-ui-web/ui`; behaviour is pinned
-by `src/app/globals.test.tsx` and the Storybook play tests.
+Each part copies its reference, states only where it differs, and is one component on ADR 0094's list.
 
 - **Bubbles:** up to 90% of the column, `xl`, hugging the widest line (`src/app/bubble-width.ts`); one line is an exact
   pill, 40px tall. The user's is `text` on `bubble`; Marq's is `text` on `white` in `rest`. One reply is one bubble:
@@ -117,13 +114,11 @@ by `src/app/globals.test.tsx` and the Storybook play tests.
   it; hover or tap swaps that for Edit and Remove (Claude Code).
 - **Worklog:** a Turn's work under one head, "Working · 9s"; one grey shimmer sweeps the live line, never colour.
 - **Chat header:** Marq centred over the scrolling messages in a frosted capsule, "is working" in `small` while he
-  bobs (Muse, Fig 11 of the [north star](../../../docs/northstars/muse-dots-and-grok-bot-for-always-on.md)). On an
-  iPhone the chat runs edge to edge under the header and Safari's toolbar, with no band of its own.
+  bobs (Muse, Fig 11 of the [north star](../../../docs/northstars/muse-dots-and-grok-bot-for-always-on.md)).
 - **Composer:** white in `rest`; the shape follows the text, never focus. One line is a pill: +, text, send (and the
   picker on a desktop). More lines or a file put the text over +, picker and send, in `xl`. Focus only lifts it to
   `float`. A desktop adds 12px each side over `canvas`; a phone has 44px targets, no disclaimer.
 - **Sidebar:** icon then label, the open row a `line` pill; shut by default on a desktop, docked with a hairline seam.
-  The phone drawer follows Muse Fig 21.
 - **List row:** a round icon tile and a title over muted lines (Muse Figs 13, 15). **Settings rows:** Codex's Schedule
   a task, a card of label-left, value-right rows.
 - **Sheet:** an iOS sheet over `--scrim`, a grabber on phones; full-width actions, a destructive one confirming first.
@@ -139,9 +134,21 @@ by `src/app/globals.test.tsx` and the Storybook play tests.
 - **Charts:** Plotly's `simple_white`, no gridlines; axes `line`, labels `text-muted` at 13px; series take Radix step 9
   in the order blue, orange, green, red, violet, teal, amber, pink. Long titles wrap; the source sits in the subtitle.
 
+## Intended
+
+Never a defect:
+
+- Marq may sit over a bubble.
+- On an iPhone the chat runs under the clock, blurred, no band.
+- The menu button floats over the chat, always round.
+- The phone sidebar is Muse Fig 21: the chat slides right, faded, rounded.
+- The phone Agent Profile covers the chat, full width.
+- A bubble's shadow follows its corners.
+- A wide table scrolls behind its edge fade.
+
 ## Exceptions
 
-Each is a real-world object the system doesn't draw, and the lock test names each one:
+Each is a real-world object the system doesn't draw; the lock test names each:
 
 - Marq's avatar is an illustration in his colours.
 - The agent's computer copies Windows 11, motion included; no rule here applies inside it.
