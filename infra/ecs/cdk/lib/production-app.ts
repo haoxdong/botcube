@@ -24,7 +24,7 @@ function checkoutCommit(root: string): string {
 }
 
 /** What a bot's own ECS app adds to BotCube's production stacks. */
-export type ProductOptions = Pick<ProductionOptions, 'serving' | 'credentials' | 'webLatency'> & {
+export type ProductOptions = Pick<ProductionOptions, 'serving' | 'credentials' | 'webLatency' | 'originConfig'> & {
   /** Its own services' Dockerfiles, which build when its BotCube Config names no image for them. */
   images?: BotServiceDockerfiles;
 };

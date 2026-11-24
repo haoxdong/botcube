@@ -279,26 +279,20 @@ export class PreviewChatService extends Construct {
     new CfnOutput(outputScope, 'ServiceName', { value: service.serviceName });
     new CfnOutput(outputScope, 'TaskDefinitionArn', { value: task.taskDefinitionArn });
     new CfnOutput(outputScope, 'ChatTableName', { value: props.chatTable.tableName });
-    // Live drains a stream for up to an hour so a deploy doesn't cut it. Park proceeds
-    // immediately instead: the dependency updates the group to no delay before the
-    // service scales to 0, and the group survives Parked (it costs nothing) so that
-    // update happens in place rather than in the cleanup after the service.
     const target = new elb.ApplicationTargetGroup(this, 'Target', {
       ...optionalPhysicalName('targetGroupName', props.targetGroupName),
       vpc, port, protocol: elb.ApplicationProtocol.HTTP, targetType: elb.TargetType.IP,
       healthCheck: { path: '/health', healthyHttpCodes: '200', interval: Duration.seconds(props.healthIntervalSeconds ?? 5), timeout: Duration.seconds(props.healthTimeoutSeconds ?? 4), healthyThresholdCount: props.healthHealthyThreshold ?? 2, unhealthyThresholdCount: props.healthUnhealthyThreshold ?? 6 },
       deregistrationDelay: Duration.seconds(props.drainSeconds ?? 3600),
     });
-    target.setAttribute('deregistration_delay.timeout_seconds', parkState(this).string(String(props.drainSeconds ?? 3600), '0'));
-    preserveTarget(service, target, providedOrigin);
-    // The origin has an ALB only while Live.
+    preserveTarget(service, target, providedOrigin, props.drainSeconds ?? 3600);
     if (!alb) {
       // An empty list removes the association in place; omitting it would keep the old one.
       (service.node.defaultChild as ecs.CfnService).loadBalancers = [];
       return;
     }
     attachIngress(this, service, target, props, alb, providedOrigin);
-    if (providedOrigin) parkServiceIngress(service, target, providedOrigin, this.container.containerName, port);
+    if (providedOrigin) parkServiceIngress(service, target, providedOrigin, this.container.containerName, port, providedOrigin.retainOriginWhileParked);
     const availabilityMetric = providedOrigin
       ? target.metrics.healthyHostCount({ statistic: 'Maximum', period })
       : new cloudwatch.Metric({
@@ -383,9 +377,13 @@ function allowIngress(network: ec2.SecurityGroup, ingress: ec2.ISecurityGroup, p
   else network.connections.allowFrom(ingress, ec2.Port.tcp(port), 'Preview ALB only');
 }
 
-function preserveTarget(service: ecs.FargateService, target: elb.ApplicationTargetGroup, providedOrigin: PreviewOriginStack | undefined): void {
+function preserveTarget(service: ecs.FargateService, target: elb.ApplicationTargetGroup, origin: PreviewOriginStack | undefined, drainSeconds: number): void {
+  if (!origin?.retainOriginWhileParked) {
+    // Retained targets keep the Live drain interval so a wake changes no target attributes.
+    target.setAttribute('deregistration_delay.timeout_seconds', parkState(service).string(String(drainSeconds), '0'));
+  }
   // Preserve the provided origin's former listener target instead of replacing it.
-  if (providedOrigin) (target.node.defaultChild as elb.CfnTargetGroup).overrideLogicalId('OriginHttpsChatServiceGroup7CF46779');
+  if (origin) (target.node.defaultChild as elb.CfnTargetGroup).overrideLogicalId('OriginHttpsChatServiceGroup7CF46779');
   service.node.addDependency(target);
 }
 

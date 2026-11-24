@@ -195,16 +195,16 @@ def stack_outputs(cloudformation):
 
 
 def prepare_live(state: TransitionState, cloudformation, probe) -> tuple[TransitionState, bool | None]:
+    origin = cloudformation.describe_stacks(StackName=STACKS['origin'])['Stacks'][0]
+    retained = any(item['OutputKey'] == 'RetainOrigin' and item['OutputValue'] == 'true' for item in origin.get('Outputs', []))
     if 'attemptId' not in state:
-        origin = cloudformation.describe_stacks(StackName=STACKS['origin'])['Stacks'][0]
-        if not any(item['ParameterKey'] == 'prepareOrigin' for item in origin['Parameters']):
+        if not retained and not any(item['ParameterKey'] == 'prepareOrigin' for item in origin['Parameters']):
             raise RuntimeError('Deploy the origin preparation parameter before requesting Live')
         return {**state, 'attemptId': uuid.uuid4().hex}, False
     token = state['attemptId']
     waiting = update_stack(cloudformation, STACKS['egress'], 'live', state.get('started', False), token=token + '-egress')
-    origin = cloudformation.describe_stacks(StackName=STACKS['origin'])['Stacks'][0]
     mode = mode_parameter(origin)[1]
-    if mode != 'live':
+    if mode != 'live' and not retained:
         update_stack(cloudformation, STACKS['origin'], mode, state.get('started', False), prepare=True, token=token + '-prepare')
     if not waiting and 'probe' not in state:
         from egress_probe import EgressProbe

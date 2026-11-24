@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from email.message import Message
 from io import BytesIO
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 import deploy_identity
 import pytest
@@ -123,6 +123,7 @@ def test_refuses_before_any_effect_if_any_stack_is_updating():
 class DeployedStack(TypedDict):
     StackStatus: str
     Parameters: list[dict[str, str]]
+    Outputs: NotRequired[list[dict[str, str]]]
 
 
 class Production(CloudFormation):
@@ -723,6 +724,18 @@ def test_nat_gates_activation_and_pending_probe_gates_live_publication():
         if state['done']:
             break
     assert state['done'] and world.stored == 'live'
+
+
+def test_retained_origin_updates_only_once_on_wake():
+    world = Production(True)
+    origin = 'bot-cube-preview-origin'
+    world.stacks[origin]['Outputs'] = [{'OutputKey': 'RetainOrigin', 'OutputValue': 'true'}]
+    world.stacks[origin]['Parameters'].pop()
+
+    assert world.complete(load(), 'live')['done']
+    assert world.effects.count(origin) == 1
+    assert world.effects.index('bot-cube-private-egress') < world.effects.index(origin)
+    assert world.stacks[origin]['Parameters'] == [{'ParameterKey': 'productionMode', 'ParameterValue': 'live'}]
 
 
 def test_lost_nat_update_response_does_not_admit_a_second_update():

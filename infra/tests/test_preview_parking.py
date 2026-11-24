@@ -83,6 +83,16 @@ class ParkedVerificationTests(unittest.TestCase):
     def test_parked_production_passes(self):
         self.assertEqual(verifier['parked_failures'](parked(), EXPECTED), [])
 
+    def test_retained_origin_requires_ingress_and_no_running_tasks(self):
+        facts = parked()
+        facts.update(retainedOrigin=True, servingResources=list(verifier['SERVING_TYPES']), targetGroupPresent=True)
+        self.assertEqual(verifier['parked_failures'](facts, EXPECTED), [])
+        facts['services']['chat-service-preview']['running'] = 1
+        facts['targetGroupPresent'] = False
+        failures = verifier['parked_failures'](facts, EXPECTED)
+        self.assertTrue(any('Retained origin is missing' in failure for failure in failures))
+        self.assertTrue(any('chat-service-preview is not at 0 tasks' in failure for failure in failures))
+
     def test_each_parked_mismatch_is_named(self):
         cases = {
             'ALB still exists': ('servingResources', ['AWS::ElasticLoadBalancingV2::LoadBalancer']),

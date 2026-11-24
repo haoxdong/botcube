@@ -52,15 +52,17 @@ export function conditionalResource(scope: Construct, resource: Construct, condi
   cfn.cfnOptions.condition = condition;
 }
 
-export function parkServiceIngress(service: ecs.FargateService, target: elb.ApplicationTargetGroup, origin: Stack, containerName: string, port: number) {
-  const state = originState(origin);
+export function parkServiceIngress(service: ecs.FargateService, target: elb.ApplicationTargetGroup, origin: Stack, containerName: string, port: number, retainOrigin: boolean) {
+  const infrastructure = retainOrigin ? undefined : originState(origin).infrastructureCondition;
   const cfnService = service.node.defaultChild as ecs.CfnService;
   cfnService.node.removeDependency(target.loadBalancerAttached);
-  cfnService.addPropertyOverride('LoadBalancers', Fn.conditionIf(state.infrastructureCondition.logicalId, [{ ContainerName: containerName, ContainerPort: port, TargetGroupArn: target.targetGroupArn }], []));
+  const attachment = [{ ContainerName: containerName, ContainerPort: port, TargetGroupArn: target.targetGroupArn }];
+  cfnService.addPropertyOverride('LoadBalancers', infrastructure ? Fn.conditionIf(infrastructure.logicalId, attachment, []) : attachment);
   for (const resource of origin.node.findAll()) {
     if (resource instanceof elb.CfnListenerRule) {
-      resource.cfnOptions.condition = state.infrastructureCondition;
-      cfnService.tags.setTag(`ParkingListener${origin.getLogicalId(resource)}`, Token.asString(Fn.conditionIf(state.infrastructureCondition.logicalId, resource.ref, 'parked')));
+      if (infrastructure) resource.cfnOptions.condition = infrastructure;
+      const listener = infrastructure ? Token.asString(Fn.conditionIf(infrastructure.logicalId, resource.ref, 'parked')) : resource.ref;
+      cfnService.tags.setTag(`ParkingListener${origin.getLogicalId(resource)}`, listener);
     }
   }
 }

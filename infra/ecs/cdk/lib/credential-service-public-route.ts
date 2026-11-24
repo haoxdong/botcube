@@ -37,7 +37,6 @@ export function publishCredentialService(origin: PreviewOriginStack, credentials
       Null: { 'dynamodb:LeadingKeys': 'false' },
     },
   }));
-  // The origin has an ALB only while Live.
   if (!origin.alb) return;
   const target = new elb.ApplicationTargetGroup(credentials, 'PublicTarget', {
     vpc: credentials.service.cluster.vpc, port: route.port, protocol: elb.ApplicationProtocol.HTTP, targetType: elb.TargetType.IP,
@@ -60,7 +59,7 @@ export function publishCredentialService(origin: PreviewOriginStack, credentials
     listener: origin.alb.listener, priority: RAW_RULE_PRIORITY, targetGroups: [target],
     conditions: [elb.ListenerCondition.hostHeaders([route.rawHostname])],
   });
-  parkServiceIngress(credentials.service, target, origin, credentials.container.containerName, route.port);
+  parkServiceIngress(credentials.service, target, origin, credentials.container.containerName, route.port, origin.retainOriginWhileParked);
 }
 
 export function rawServiceHostname({ domains, aws }: DeployIdentity): string | undefined {

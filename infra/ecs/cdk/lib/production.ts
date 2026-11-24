@@ -67,7 +67,7 @@ export interface ProductionOptions {
   serving?: (serving: Serving) => void;
   originConfig?: Pick<import('./preview-origin-stack.js').PreviewOriginProps,
     'providerTimeoutSeconds' | 'providerLogRetention' | 'connectionLogExpirationDays' | 'clientKeepAliveSeconds' |
-    'securityGroupName' | 'connectionLogsBucketName' | 'existingConnectionLogsBucketName' | 'trustStoreName' | 'loadBalancerName' | 'providerNames'> & {
+    'securityGroupName' | 'connectionLogsBucketName' | 'existingConnectionLogsBucketName' | 'trustStoreName' | 'loadBalancerName' | 'providerNames' | 'retainOriginWhileParked'> & {
       agentNetworkSecurityGroupName?: string;
       agentComputerSecurityGroupName?: string;
       agentComputerBrowserRoleName?: string;

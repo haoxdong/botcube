@@ -107,7 +107,10 @@ def egress_failures(mode: str, facts: Mapping[str, Any], expected: Mapping[str, 
 
 def idle_failures(facts: Mapping[str, Any]):
     failures = common_failures(facts)
-    if facts['servingResources']:
+    if facts.get('retainedOrigin'):
+        if not set(facts['servingResources']).issuperset(SERVING_TYPES) or not facts['targetGroupPresent']:
+            failures.append('Retained origin is missing its ALB, listener, listener rules or target group')
+    elif facts['servingResources']:
         failures.append('ALB still exists')
     failures += service_failures(facts['services'], 0, 0, 'at 0 tasks')
     if facts['reaper'] != 'DISABLED':
@@ -304,6 +307,8 @@ def main(argv: list[str]):
     facts = {
         'stacks': {'origin': origin_status},
         'servingResources': sorted(SERVING_TYPES & set(origin_types)),
+        'retainedOrigin': origin.get('RetainOrigin') == 'true',
+        'targetGroupPresent': 'AWS::ElasticLoadBalancingV2::TargetGroup' in origin_types,
         'services': service_facts(ecs), 'reaper': events.describe_rule(Name=origin['ReaperRuleName'])['State'],
         'healthCheckDisabled': health_check_disabled, 'alarmActions': alarm_actions,
         'responses': response_facts(args.state != 'live'),

@@ -1,9 +1,9 @@
-import { originState, conditionalResource } from './park-state.js';
+import { originState, parkState, conditionalResource } from './park-state.js';
 import { optionalPhysicalName } from './physical-name.js';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { CfnOutput, CfnResource, Fn, Token, CustomResource, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
+import { CfnCondition, CfnOutput, CfnResource, Fn, Token, CustomResource, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as elb from 'aws-cdk-lib/aws-elasticloadbalancingv2';
@@ -23,6 +23,7 @@ export interface PreviewOriginProps extends StackProps {
   existingConnectionLogsBucketName?: string;
   trustStoreName?: string;
   loadBalancerName?: string;
+  retainOriginWhileParked?: boolean;
   /** Names for our handlers; CDK Provider framework helpers keep generated names. */
   providerNames?: Partial<Record<'on_event' | 'is_complete', {
     functionName?: string;
@@ -82,12 +83,15 @@ function validateOrigin(props: PreviewOriginProps): void {
 export class PreviewOriginStack extends Stack {
   /** Cloudflare-only ingress, kept in both states so its rules don't churn. */
   readonly securityGroup: ec2.SecurityGroup;
-  /** Provisioned while Live or preparing ingress. */
+  readonly retainOriginWhileParked: boolean;
   readonly alb?: { loadBalancer: elb.ApplicationLoadBalancer; listener: elb.ApplicationListener };
 
   constructor(scope: Construct, id: string, props: PreviewOriginProps) {
     super(scope, id, props);
-    const state = originState(this);
+    this.retainOriginWhileParked = props.retainOriginWhileParked ?? false;
+    const state = parkState(this);
+    const infrastructure = this.retainOriginWhileParked ? undefined : originState(this).infrastructureCondition;
+    if (this.retainOriginWhileParked) new CfnOutput(this, 'RetainOrigin', { value: 'true' });
     validateOrigin(props);
     const vpc = props.vpc ?? ec2.Vpc.fromVpcAttributes(this, 'Vpc', {
       vpcId: props.vpcId,
@@ -198,9 +202,7 @@ export class PreviewOriginStack extends Stack {
       defaultAction: elb.ListenerAction.fixedResponse(503, { contentType: 'text/plain', messageBody: 'Preview Chat Service unavailable\n' }),
     });
     if (service) listener.addCertificates('ServiceIdentity', [acm.Certificate.fromCertificateArn(this, 'ServiceCertificateArn', service.certificate.getAttString('Arn'))]);
-    for (const association of [aop, productionAop, ...(service ? [service.aop] : []), ...additional.map(host => host.aop)]) {
-      (association.node.defaultChild as CfnResource).addPropertyOverride('ListenerArn', Fn.conditionIf(state.infrastructureCondition.logicalId, listener.listenerArn, { Ref: 'AWS::NoValue' }));
-    }
+    configureOriginListener(this, loadBalancer, listener, [aop, productionAop, service?.aop, ...additional.map(host => host.aop)], infrastructure);
     const worker = this.node.findChild('ParkedWorker');
     const target = Token.asString(Fn.conditionIf(state.parkedCondition.logicalId, props.parkedDnsTarget, loadBalancer.loadBalancerDnsName));
     const previewDns = dns('PreviewDns', props.hostname, aop, target);
@@ -210,8 +212,6 @@ export class PreviewOriginStack extends Stack {
     for (const record of [previewDns, productionDns, ...serviceDns, ...additionalDns]) {
       (record.node.defaultChild as CfnResource).addPropertyOverride('Worker', Fn.conditionIf(state.parkedCondition.logicalId, (worker as CustomResource).ref, { Ref: 'AWS::NoValue' }));
     }
-    conditionalResource(this, loadBalancer, state.infrastructureCondition);
-    liveListener(this, listener);
     this.alb = { loadBalancer, listener };
     new CfnOutput(this, 'ListenerArn', { value: listener.listenerArn, condition: state.liveCondition });
     new CfnOutput(this, 'LoadBalancerArn', { value: loadBalancer.loadBalancerArn, condition: state.liveCondition });
@@ -219,9 +219,15 @@ export class PreviewOriginStack extends Stack {
   }
 }
 
-function liveListener(scope: Construct, listener: elb.ApplicationListener) {
-  conditionalResource(scope, listener, originState(scope).infrastructureCondition);
+function configureOriginListener(scope: Construct, loadBalancer: elb.ApplicationLoadBalancer, listener: elb.ApplicationListener, associations: (CustomResource | undefined)[], condition: CfnCondition | undefined) {
+  const arn = condition ? Fn.conditionIf(condition.logicalId, listener.listenerArn, { Ref: 'AWS::NoValue' }) : listener.listenerArn;
+  for (const association of associations) {
+    (association?.node.defaultChild as CfnResource | undefined)?.addPropertyOverride('ListenerArn', arn);
+  }
+  if (!condition) return;
+  conditionalResource(scope, loadBalancer, condition);
+  conditionalResource(scope, listener, condition);
   for (const resource of listener.node.findAll()) {
-    if (resource instanceof elb.CfnListenerCertificate) conditionalResource(scope, resource, originState(scope).infrastructureCondition);
+    if (resource instanceof elb.CfnListenerCertificate) conditionalResource(scope, resource, condition);
   }
 }
