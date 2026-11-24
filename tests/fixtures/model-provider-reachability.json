@@ -21,6 +21,11 @@
   },
   {
     "provider": "anthropic",
+    "gateway": { "url": "https://models.example.com/v1//" },
+    "error": "integrations.modelGateway.url ends in /v1, which Anthropic's API adds itself: set integrations.modelGateway.providers.anthropic.url without /v1"
+  },
+  {
+    "provider": "anthropic",
     "gateway": {
       "url": "https://models.example.com/v1",
       "providers": {

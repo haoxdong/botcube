@@ -169,7 +169,7 @@ export function unreachedProvider(gateway: GatewayModels | { kind: 'bedrock' }, 
     const served = GATEWAY_PROVIDERS.filter((name) => gatewayServesProvider(gateway, name));
     return `integrations.modelGateway reaches the providers ${served.join(' and ')}`;
   }
-  if (provider === 'anthropic' && !gateway.providers?.anthropic?.url && /\/v1\/?$/.test(new URL(gateway.url).pathname)) {
+  if (provider === 'anthropic' && !gateway.providers?.anthropic?.url && /\/v1\/*$/.test(new URL(gateway.url).pathname)) {
     return "integrations.modelGateway.url ends in /v1, which Anthropic's API adds itself: set integrations.modelGateway.providers.anthropic.url without /v1";
   }
   return undefined;
