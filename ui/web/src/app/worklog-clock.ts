@@ -64,7 +64,7 @@ export function clockSubscriber(): AgentSubscriber {
   };
 }
 
-function useServerClock(questionId: string | undefined): WorklogClock | undefined {
+export function useServerClock(questionId: string): WorklogClock | undefined {
   const agent = useContext(WorklogAgent);
   const current = useRef<{ agent: AbstractAgent | undefined; value: unknown }>({ agent, value: agent?.state.worklog_clock });
   if (current.current.agent !== agent) current.current = { agent, value: agent?.state.worklog_clock };
@@ -79,10 +79,6 @@ function useServerClock(questionId: string | undefined): WorklogClock | undefine
     return clock?.question_id === questionId ? clock : undefined;
   }, [agent, questionId]);
   return useSyncExternalStore(subscribe, snapshot, snapshot);
-}
-
-export function useTurnClock(questionId: string | undefined, recorded: unknown): WorklogClock | undefined {
-  return useServerClock(questionId) ?? clockOf(recorded);
 }
 
 /** A replayed message as the clocks read it: its `started_at` and `ended_at` metadata, in epoch ms. */

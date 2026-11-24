@@ -13,8 +13,8 @@ import { argumentOf, ICONS, lookOf, type StepIcon } from "./worklog-tools";
 import { UNANSWERED_CALL } from "botcube-ui-web/interrupted-call";
 import { partsOf, PROPOSAL, type Part, type TurnMessage } from "./turn-parts";
 import { AnswerCards, AnswerTurn, type Published } from "./artifact-published";
-import { CLOCKS_KEPT, spanOf, startOf, useTurnClock, useWorklogClock } from "./worklog-clock";
-import { seconds, stepOf, timelineOf, totalOf } from "./worklog-timeline";
+import { CLOCKS_KEPT } from "./worklog-clock";
+import { seconds, useTurnTime, type ClockedStep, type TurnTime } from "./turn-clock";
 import { idlePreload } from "./preload";
 
 // A step's sheet loads after first load (web-cold-open-check.mjs), once the page is idle, so a tap need not wait
@@ -24,7 +24,6 @@ const StepSheet = lazy(() => loadStepSheet().then(({ StepSheet }) => ({ default:
 const preloadStepSheet = idlePreload(loadStepSheet);
 
 
-export const TurnStart = createContext<string | undefined>(undefined);
 // The steps seen arriving live, so a row CopilotKit remounts mid-run doesn't fade in again; the newest CLOCKS_KEPT.
 const arrived = new Set<string>();
 
@@ -84,7 +83,7 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
       const turn = messages.slice(first, next < 0 ? undefined : next);
       const question = messages.findLast((m, i) => i < first && m.role === "user");
       out.push(
-        <Worklog key={worklogKey(turnKey)} id={id} advanceClock={advanceClock} turn={turn} question={question} took={spanOf(turn)} startedAt={startOf(turn)} running={isRunning && started && first > lastQuestion} asked={asked}>
+        <Worklog key={worklogKey(turnKey)} id={id} advanceClock={advanceClock} turn={turn} question={question} running={isRunning && started && first > lastQuestion} asked={asked}>
           {work}
         </Worklog>,
       );
@@ -169,17 +168,20 @@ const lineStatus = (running: boolean) => (running ? { status: "running" as const
 /** Each step's whole seconds in the Worklog around it, by the step's id; none where its Turn has no timeline. */
 const StepTimes = createContext<{ each: ReadonlyMap<string, number> | undefined; arriving: boolean }>({ each: undefined, arriving: true });
 
+function stepOf(time: TurnTime, kind: ClockedStep["kind"]): { id: string; time: string } | undefined {
+  const step = time.steps.find((candidate) => candidate.kind === kind);
+  return step && { id: step.id, time: seconds(step.seconds) };
+}
+
 /**
  * Open while its Turn runs, so text written mid-Turn never folds it, and folded once it ends. A tap holds until the
  * run ends or the user asks again (`asked`, their latest message's id).
- * Live, it times the Turn itself, carrying on the clock of the head its Turn showed under `asked` before any row, else from its first replayed step (`startedAt`), as after a reload mid-Turn; replayed, its messages' stamps (`took`). With no rows it has nothing to open.
+ * Its times are its Turn's clock's (`useTurnTime`). With no rows it has nothing to open.
  */
-export function Worklog({ id, turn, question, took, startedAt, running, asked, children, advanceClock = true }: {
+export function Worklog({ id, turn, question, running, asked, children, advanceClock = true }: {
   id: string;
   turn?: readonly TurnMessage[] | undefined;
   question?: TurnMessage | undefined;
-  took?: number | undefined;
-  startedAt?: number | undefined;
   running: boolean;
   advanceClock?: boolean | undefined;
   asked: string | undefined;
@@ -190,27 +192,25 @@ export function Worklog({ id, turn, question, took, startedAt, running, asked, c
   const current = chosen?.phase === phase && chosen.asked === asked;
   if (chosen && !current) setChosen(null);
   const open = current ? chosen.open : phase === "working";
-  const serverStart = useContext(TurnStart);
-  const clock = useTurnClock(question?.id ?? asked, question?.metadata?.worklog_clock);
-  useWorklogClock(running && advanceClock && clock === undefined);
-  const timeline = timelineOf(question?.id ?? id, turn, question, running, serverStart ?? (startedAt === undefined ? undefined : new Date(startedAt).toISOString()), { viewId: id, advanceClock, clock });
-  const total = totalOf(timeline, took);
+  const time = useTurnTime(question?.id ?? id, { turn, question, running, viewId: id, advanceClock });
+  const each = new Map(time.steps.map((step) => [step.id, step.seconds]));
+  const total = time.total === undefined ? undefined : seconds(time.total);
   const title = (
-    <TraceLine {...lineStatus(running)}>
-      <TraceTitle className="worklog-title" data-live={running || undefined}>
-        {running ? `Working · ${total ?? seconds(0)}` : total === undefined ? "Worked" : `Worked for ${total}`}
+    <TraceLine {...lineStatus(!time.settled)}>
+      <TraceTitle className="worklog-title" data-live={!time.settled || undefined}>
+        {!time.settled ? `Working · ${total ?? seconds(0)}` : total === undefined ? "Worked" : `Worked for ${total}`}
       </TraceTitle>
     </TraceLine>
   );
-  const start = stepOf(timeline, "start");
-  const answer = stepOf(timeline, "answer");
-  const diagnosticView = timeline?.steps.find(step => step.kind !== "start")?.id ?? id;
+  const start = stepOf(time, "start");
+  const answer = stepOf(time, "answer");
+  const diagnosticView = time.steps.find(step => step.kind !== "start")?.id ?? id;
   if (children === undefined) return <div className="worklog" data-worklog-turn={question?.id ?? asked ?? id}><div className="worklog-head">{title}</div></div>;
   return (
     <TraceCollapsible className="worklog" data-worklog-turn={question?.id ?? asked ?? id} data-open={open || undefined} data-chosen={current || undefined} data-still={!advanceClock || undefined} open={open} onOpenChange={(next) => setChosen({ open: next, phase, asked })}>
       <TraceCollapsibleTrigger className="worklog-head">{title}</TraceCollapsibleTrigger>
       <TraceCollapsibleContent className="worklog-body">
-        <StepTimes.Provider value={{ each: timeline?.each, arriving: advanceClock }}>
+        <StepTimes.Provider value={{ each, arriving: advanceClock }}>
           <Presence>{start && (
             <motionElement.div {...presenceMotion} key="start">
               <Step diagnosticId={`${start.id}:${diagnosticView}`} kind="start" state="done" icon="start" label={<span className="worklog-step-verb">Started up</span>} time={start.time} />

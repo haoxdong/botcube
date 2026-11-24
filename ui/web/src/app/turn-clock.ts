@@ -1,4 +1,5 @@
-import { CLOCKS_KEPT, stampsOf, startOf, type Stamped, type WorklogClock, clockOf } from "./worklog-clock";
+import { createContext, useContext } from "react";
+import { CLOCKS_KEPT, clockOf, spanOf, stampsOf, startOf, useServerClock, useWorklogClock, type Stamped, type WorklogClock } from "./worklog-clock";
 import { withStorage } from "./main-chat-copy";
 
 /** A message as the timeline reads it. */
@@ -137,48 +138,58 @@ function canonicalSteps(steps: TimedStep[], turn: readonly TimelineMessage[], cl
   if (startup) startup.ended = steps.slice(1).find(step => step.began !== undefined)?.began;
 }
 
-function timingFor(id: string, turn: readonly TimelineMessage[] | undefined, question: TimelineMessage | undefined, running: boolean, serverStart: string | undefined, advanceClock: boolean, clock: WorklogClock | undefined) {
-  const canonical = clock?.version === 1 && !clock.pending;
-  const liveNow = clock?.at ?? (clock ? knownTimeOf(undefined, turn, clock.started_at ?? startOf(turn ?? []) ?? Date.now()) : Date.now());
+function originOf(clock: WorklogClock | undefined, { turn, question, running, serverStart }: TurnSources, wall: number) {
+  const liveNow = clock?.at ?? (clock ? knownTimeOf(undefined, turn, clock.started_at ?? startOf(turn ?? []) ?? wall) : wall);
   const sent = (question && stampsOf(question)?.[0]) ?? (running && serverStart !== undefined ? Date.parse(serverStart) : undefined);
-  const origin = clock?.started_at ?? sent ?? startOf(turn ?? []);
-  const kept = timingOf(question?.id ?? id, origin ?? liveNow, running, advanceClock);
-  if (kept && origin !== undefined) kept.start = canonical ? origin : Math.min(kept.start, origin);
-  const start = kept?.start ?? origin;
-  const now = advanceClock ? liveNow : knownTimeOf(kept, turn, origin ?? liveNow);
-  const recordedEnd = clock?.ended_at ?? finishedEndOf(turn, running);
-  return { canonical, kept, start, now, recordedEnd };
+  return { liveNow, origin: clock?.started_at ?? sent ?? startOf(turn ?? []) };
 }
+
+/** `serverClock`: the Chat Service's live clock; `serverStart`: its `runningSince`; `advanceClock: false`: a still view. */
+export type TurnSources = { turn?: readonly TimelineMessage[] | undefined; question?: TimelineMessage | undefined; running: boolean; serverClock?: WorklogClock | undefined; serverStart?: string | undefined; viewId?: string | undefined; advanceClock?: boolean | undefined };
+export type ClockedStep = TimedStep & { seconds: number };
+/** A Turn's whole seconds (none if untimed), its steps summing to them, and whether it ended. */
+export type TurnTime = { total: number | undefined; steps: readonly ClockedStep[]; settled: boolean };
 
 /**
- * Allocates rounded Turn time in message order. Retains displayed allocations in this tab across replay and reload.
- * Untimed when a finished step lacks an end.
+ * The one owner of which time source wins for the Turn answering `id`: the Chat Service's clock (live, else recorded on
+ * the question), then message stamps, `runningSince`, this tab's allocations, and `now`. `ticks`: its times move with `now`.
  */
-export function timelineOf(id: string, turn: readonly TimelineMessage[] | undefined, question: TimelineMessage | undefined, running: boolean, serverStart: string | undefined, { viewId = id, advanceClock = true, clock = clockOf(question?.metadata?.worklog_clock) }: { viewId?: string; advanceClock?: boolean; clock?: WorklogClock | undefined } = {}) {
-  const { canonical, kept, start, now, recordedEnd } = timingFor(id, turn, question, running, serverStart, advanceClock, clock);
-  if (start === undefined) return undefined;
-  const finishedAt = recordedEnd ?? now;
-  if (kept) kept.ended = running ? undefined : recordedEnd ?? kept.ended ?? now;
-  if (!turn?.length) return { total: Math.round(((kept?.ended ?? now) - start) / 1000), each: new Map<string, number>(), steps: [] };
-  const startId = `${question?.id ?? id}-started-up`;
-  const steps = stepsOf(turn, startId, running, canonical ? undefined : kept, finishedAt).map((step) => (step.kind === "answer" && step.ended === undefined && !running ? { ...step, ended: kept?.ended } : step));
-  if (canonical && clock) canonicalSteps(steps, turn, clock);
-  if (!canonical && !running && !kept && steps.some((step) => step.ended === undefined)) return undefined;
-  const allocation = allocationFor(kept, viewId, steps);
-  const timed = retainSeconds(stepSeconds(start, steps, now, running, kept, canonical ? recordedEnd ?? now : recordedEnd, canonical), allocation, steps);
-  const shown = timed.each.get(startId) ? steps : steps.filter((step) => step.id !== startId);
-  saveObservedTiming(kept, advanceClock);
-  return { ...timed, steps: shown };
+export function turnClock(id: string, sources: TurnSources) {
+  const { turn, question, running, serverClock, viewId = id, advanceClock = true } = sources;
+  const clock = serverClock ?? clockOf(question?.metadata?.worklog_clock);
+  const canonical = clock?.version === 1 && !clock.pending;
+  const untimed = (): TurnTime => {
+    const span = spanOf(turn ?? []);
+    return { total: span === undefined ? (running ? 0 : undefined) : Math.round(span / 1000), steps: [], settled: !running };
+  };
+  return {
+    ticks: running && advanceClock && clock === undefined,
+    at(wall: number): TurnTime {
+      const { liveNow, origin } = originOf(clock, sources, wall);
+      const kept = timingOf(id, origin ?? liveNow, running, advanceClock);
+      if (kept && origin !== undefined) kept.start = canonical ? origin : Math.min(kept.start, origin);
+      const start = kept?.start ?? origin;
+      if (start === undefined) return untimed();
+      const now = advanceClock ? liveNow : knownTimeOf(kept, turn, origin ?? liveNow);
+      const recordedEnd = clock?.ended_at ?? finishedEndOf(turn, running);
+      if (kept) kept.ended = running ? undefined : recordedEnd ?? kept.ended ?? now;
+      if (!turn?.length) return { total: Math.round(((kept?.ended ?? now) - start) / 1000), steps: [], settled: !running };
+      const startId = `${id}-started-up`;
+      const steps = stepsOf(turn, startId, running, canonical ? undefined : kept, recordedEnd ?? now).map((step) => (step.kind === "answer" && step.ended === undefined && !running ? { ...step, ended: kept?.ended } : step));
+      if (canonical) canonicalSteps(steps, turn, clock);
+      if (!canonical && !running && !kept && steps.some((step) => step.ended === undefined)) return untimed();
+      const { total, each } = retainSeconds(stepSeconds(start, steps, now, running, kept, canonical ? recordedEnd ?? now : recordedEnd, canonical), allocationFor(kept, viewId, steps), steps);
+      saveObservedTiming(kept, advanceClock);
+      return { total, steps: steps.filter((step) => step.id !== startId || each.get(startId)).map((step) => ({ ...step, seconds: each.get(step.id) ?? 0 })), settled: !running };
+    },
+  };
 }
 
-/** The Worklog's step of `kind`, with its spoken time, if its timeline has one. */
-export function stepOf(timeline: ReturnType<typeof timelineOf>, kind: TimedStep["kind"]): { id: string; time: string } | undefined {
-  const step = timeline?.steps.find((candidate) => candidate.kind === kind);
-  return step && { id: step.id, time: seconds(timeline?.each.get(step.id) ?? 0) };
-}
+export const TurnStart = createContext<string | undefined>(undefined);
 
-/** The Worklog's time from its Turn allocation, else the provided message span. */
-export function totalOf(timeline: ReturnType<typeof timelineOf>, time: number | undefined): string | undefined {
-  if (timeline) return seconds(timeline.total);
-  return time === undefined ? undefined : seconds(Math.round(time / 1000));
+/** The Turn's times now, re-read each second while they tick. */
+export function useTurnTime(id: string, sources: Omit<TurnSources, "serverClock" | "serverStart">): TurnTime {
+  const clock = turnClock(id, { ...sources, serverClock: useServerClock(id), serverStart: useContext(TurnStart) });
+  useWorklogClock(clock.ticks);
+  return clock.at(Date.now());
 }

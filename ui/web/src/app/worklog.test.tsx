@@ -7,7 +7,8 @@ import { HttpAgent } from '@ag-ui/client';
 import { WorklogAgent } from './worklog-clock';
 
 import type { TurnMessage } from './turn-parts';
-import { ThoughtStep, ToolStep, TurnStart, Worklog, worklogRows } from './worklog';
+import { TurnStart } from './turn-clock';
+import { ThoughtStep, ToolStep, Worklog, worklogRows } from './worklog';
 
 /** A publish call's result as the Artifact tool returns it. */
 const PUBLISHED = JSON.stringify({ id: '/q3', type: null, title: 'Rates chart', description: '', version: 1, path: '/q3.html' });

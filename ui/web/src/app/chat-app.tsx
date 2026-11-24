@@ -43,7 +43,7 @@ import { SidebarRow } from "./sidebar-row";
 import { ChatComputers } from "./chat-computers";
 import { SideChats } from "./side-chats";
 import { UnreadDot } from "./unread-dot";
-import { TurnStart } from "./worklog";
+import { TurnStart } from "./turn-clock";
 import { WorklogAgent } from "./worklog-clock";
 import type { ChatStop } from "./chat-surface";
 import { useArtifactWorkspace, useChatSurfaceKey } from "./artifact-request";
