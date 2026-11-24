@@ -71,7 +71,7 @@ def gateway() -> FakeGateway:
 
 
 def _deployed(endpoint: Mapping[str, Any]) -> dict[str, Any]:
-    return {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}}
+    return {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'openai:summary', **endpoint}}}
 
 
 def _endpoint(credential: Mapping[str, Any]) -> dict[str, Any]:
@@ -96,7 +96,7 @@ def _turn(session_id: str = 'thread-1') -> dict[str, str]:
 
 
 def _completion(client: TestClient, headers: Mapping[str, str] | None = None) -> httpx.Response:
-    return client.post('/models/chat/completions', content=BODY, headers=dict(headers or _turn()))
+    return client.post('/models/openai/chat/completions', content=BODY, headers=dict(headers or _turn()))
 
 
 def test_a_turn_reaches_the_gateway_with_the_endpoint_bearer_and_headers_and_none_of_the_invocation(
@@ -123,7 +123,7 @@ def test_each_relayed_call_is_in_the_audit_trail(gateway: FakeGateway, key: Path
 
     assert sink.events == [{
         'event': 'upstream_relay', 'accountId': 'acct-1', 'provider': 'models', 'sessionId': 'thread-2',
-        'method': 'POST', 'path': 'chat/completions', 'modelId': 'echo', 'timestamp': START,
+        'method': 'POST', 'path': 'openai/chat/completions', 'modelId': 'echo', 'timestamp': START,
     }]
 
 
@@ -193,26 +193,73 @@ def test_any_other_gateway_failure_is_an_error_the_harness_does_not_retry(
     assert response.json()['error']['type'] == 'models_endpoint'
 
 
-def test_a_turn_on_the_responses_wire_reaches_the_gateways_responses_api(gateway: FakeGateway, key: Path) -> None:
-    body = b'{"model":"echo","input":[{"role":"user","content":"Hello"}],"stream":true}'
-    endpoint = {'url': 'https://models.example.com/v1', 'credential': {'kind': 'file', 'path': str(key)}, 'wire': 'responses'}
-    client = _client(gateway, _deployed(endpoint))
+def test_an_openai_model_reaches_the_gateways_responses_api_at_the_gateway_url(gateway: FakeGateway, key: Path) -> None:
+    body = b'{"model":"gpt-5","input":[{"role":"user","content":"Hello"}],"stream":true}'
+    client = _client(gateway, _endpoint({'kind': 'file', 'path': str(key)}))
 
-    assert client.post('/models/responses', content=body, headers=_turn()).status_code == 200
+    assert client.post('/models/openai/responses', content=body, headers=_turn()).status_code == 200
 
     [call] = gateway.requests
     assert (call.method, str(call.url), call.content) == ('POST', 'https://models.example.com/v1/responses', body)
-    assert call.headers['authorization'] == 'Bearer sk-mounted'
+    assert (call.headers['authorization'], call.headers['x-tenant']) == ('Bearer sk-mounted', 'botcube-example')
+
+
+def test_a_provider_is_reached_at_its_own_url_with_its_own_credential_and_headers(gateway: FakeGateway, key: Path, tmp_path: Path) -> None:
+    own_key = tmp_path / 'anthropic-key'
+    own_key.write_text('sk-anthropic\n')
+    anthropic = {'url': 'https://models.example.com/anthropic', 'credential': {'kind': 'file', 'path': str(own_key)}, 'headers': {'x-route': 'messages'}}
+    config = _endpoint({'kind': 'file', 'path': str(key)})
+    config['integrations']['modelGateway']['providers'] = {'anthropic': anthropic}
+    client = _client(gateway, config)
+
+    response = client.post('/models/anthropic/v1/messages', content=BODY, headers={**_turn(), 'x-api-key': 'invocation-token'})
+
+    assert response.status_code == 200
+    [call] = gateway.requests
+    assert str(call.url) == 'https://models.example.com/anthropic/v1/messages'
+    assert call.headers['authorization'] == 'Bearer sk-anthropic'
+    assert call.headers['x-route'] == 'messages'
+    assert 'x-tenant' not in call.headers
+    assert 'x-api-key' not in call.headers
+
+
+def test_a_provider_without_its_own_credential_takes_the_gateways(gateway: FakeGateway, key: Path) -> None:
+    config = _endpoint({'kind': 'file', 'path': str(key)})
+    config['integrations']['modelGateway']['providers'] = {'anthropic': {'url': 'https://models.example.com/anthropic'}}
+
+    _client(gateway, config).post('/models/anthropic/v1/messages', content=BODY, headers=_turn())
+
+    [call] = gateway.requests
+    assert (str(call.url), call.headers['authorization'], call.headers['x-tenant']) == (
+        'https://models.example.com/anthropic/v1/messages', 'Bearer sk-mounted', 'botcube-example',
+    )
+
+
+def test_a_listed_provider_without_a_url_is_reached_at_the_gateway_url_and_an_unlisted_one_never_is(gateway: FakeGateway, key: Path) -> None:
+    config = _endpoint({'kind': 'file', 'path': str(key)})
+    config['integrations']['modelGateway']['providers'] = {'openai': {}}
+    client = _client(gateway, config)
+
+    assert client.post('/models/anthropic/v1/messages', content=BODY, headers=_turn()).status_code == 404
+    assert client.post('/models/openai/responses', content=BODY, headers=_turn()).status_code == 200
+    assert [str(call.url) for call in gateway.requests] == ['https://models.example.com/v1/responses']
+
+
+@pytest.mark.parametrize('path', ['/models/deepseek/chat/completions', '/models/chat/completions'])
+def test_a_call_naming_no_provider_the_gateway_serves_never_reaches_it(gateway: FakeGateway, key: Path, path: str) -> None:
+    response = _client(gateway, _endpoint({'kind': 'file', 'path': str(key)})).post(path, content=BODY, headers=_turn())
+
+    assert response.status_code == 404
+    assert gateway.requests == []
 
 
 def test_cache_markers_reach_the_gateway_as_the_harness_wrote_them(gateway: FakeGateway, key: Path) -> None:
-    marked = json.dumps({'model': 'echo', 'stream': True, 'messages': [
-        {'role': 'system', 'content': [{'type': 'text', 'text': 'You are BotCube.', 'cache_control': {'type': 'ephemeral'}}]},
+    marked = json.dumps({'model': 'claude-sonnet-5-5', 'stream': True, 'system': [{'type': 'text', 'text': 'You are BotCube.', 'cache_control': {'type': 'ephemeral'}}], 'messages': [
         {'role': 'user', 'content': [{'type': 'text', 'text': 'Hello', 'cache_control': {'type': 'ephemeral'}}]},
     ]}).encode()
     client = _client(gateway, _endpoint({'kind': 'file', 'path': str(key)}))
 
-    client.post('/models/chat/completions', content=marked, headers=_turn())
+    client.post('/models/anthropic/v1/messages', content=marked, headers=_turn())
 
     [call] = gateway.requests
     assert call.content == marked

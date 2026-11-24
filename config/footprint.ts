@@ -1,7 +1,9 @@
 import { outsideIssuer } from './credential-fields.js';
 import { physicalNames } from './deployment.js';
 import { footprintImages, sorted } from './footprint-images.js';
+import { modelLines, shellEnvironment } from './footprint-bot.js';
 import type { BotCubeConfig } from './schema.js';
+import type { FootprintBot } from './footprint-bot.js';
 import type { CredentialSource, EndpointTls } from './blocks.js';
 import { PRINCIPALS, type Principal } from './principals.js';
 import { NETWORK_INTERFACES, ownEgressVpc, SUPPLIABLE } from './suppliable.js';
@@ -51,8 +53,10 @@ export interface Footprint {
   /** AWS infrastructure BotCube creates after deploy, as `<action> on <resource> (<who>, <when>)`. */
   readonly runtime: string[];
   readonly iam: Partial<Record<Principal, { actions: string[]; managedPolicies: string[] }>>;
-  /** Where the models run, and over which wire an OpenAI-compatible Endpoint is called. */
-  readonly models: string;
+  /** Where the models run: the gateway, each provider's own URL on it, and each model of the bot settings with its provider. */
+  readonly models: string[];
+  /** The agent's shell variables BotCube and the bot settings set, as `NAME=value` with the relay origin's port left open. */
+  readonly shellEnvironment: string[];
   readonly egressHosts: string[];
   readonly egressFrom: Partial<Record<string, Principal[]>>;
   /** The images the deployment runs. */
@@ -104,6 +108,8 @@ export type FilesAccessPointMode = 'runtime' | 'pool';
 export interface FootprintOptions {
   /** Mirrors the CDK context: `runtime` (default) creates a User's access point on first use; `pool` leases a deploy-time one. */
   readonly filesAccessPointMode?: FilesAccessPointMode;
+  /** The Bot Image's bot settings, whose models are printed with their providers and shell environment as the shell holds it. */
+  readonly bot?: FootprintBot;
 }
 
 const FILES_ACCESS_POINTS: Readonly<Record<FilesAccessPointMode, Need>> = {
@@ -177,10 +183,15 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in AdapterSections[S]['
       },
       egressHosts: aws('bedrock-runtime'),
     },
-    'openai-compatible': ({ url, credential, tls }) => {
-      const host = new URL(url).host;
+    'openai-compatible': ({ url, credential, tls, providers = {} }) => {
       const readers = ['chatService', 'credentialService'] as const;
-      return [{ egressHosts: [host], egressFrom: { [host]: readers } }, credentialNeed('integrations.modelGateway.credential', credential, readers), ...tlsNeed('integrations.modelGateway.tls', tls, readers)];
+      const reached = (at: string): Need => ({ egressHosts: [new URL(at).host], egressFrom: { [new URL(at).host]: readers } });
+      return [
+        reached(url), credentialNeed('integrations.modelGateway.credential', credential, readers), ...tlsNeed('integrations.modelGateway.tls', tls, readers),
+        ...Object.entries(providers).flatMap(([provider, own]) => [
+          reached(own.url ?? url), ...(own.credential ? [credentialNeed(`integrations.modelGateway.providers.${provider}.credential`, own.credential, readers)] : []),
+        ]),
+      ];
     },
   },
   harnessAuth: {
@@ -244,7 +255,7 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in AdapterSections[S]['
     none: {},
   },
   proxy: {
-    // Every service and browser reaches the internet through it; the Chat Service and the Harness relay to it with its credential.
+    // Each Endpoint and network.openEgress that names it reach it, through a relay with its credential.
     forward: ({ url, credential, tls }) => [
       { egressHosts: [new URL(url).host] },
       ...(credential ? [credentialNeed('integrations.proxy.credential', credential, ['chatService', 'credentialService', 'harness'])] : []),
@@ -268,7 +279,7 @@ function tlsNeed(field: string, tls: EndpointTls | undefined, readers: readonly 
   }];
 }
 
-/** What reading `credential` at `field` needs of each of its `readers`: a secret's grant, a command they may run, or a token endpoint they reach. */
+/** What reading `credential` at `field` needs of its `readers`: a secret grant, a command, or a token endpoint. */
 function credentialNeed(field: string, credential: CredentialSource, readers: readonly Principal[]): Need {
   switch (credential.kind) {
     case 'secret':
@@ -288,7 +299,7 @@ function credentialNeed(field: string, credential: CredentialSource, readers: re
 }
 
 /** The existing, created and runtime resources, IAM actions, egress hosts, images and commands this BotCube Config needs. */
-export function footprint(config: BotCubeConfig, { filesAccessPointMode = 'runtime' }: FootprintOptions = {}): Footprint {
+export function footprint(config: BotCubeConfig, { filesAccessPointMode = 'runtime', bot }: FootprintOptions = {}): Footprint {
   const resources = existingResources(config);
   const sections: AdapterSections = { ...config.integrations, schedules: config.schedules, liveView: config.liveView };
   const needs = [BUILT_IN, config.existing.files ? {} : FILES_ACCESS_POINTS[filesAccessPointMode],
@@ -313,7 +324,8 @@ export function footprint(config: BotCubeConfig, { filesAccessPointMode = 'runti
     created: resources.created,
     runtime: needs.flatMap(need => need.runtime ?? []),
     iam,
-    models: config.integrations.modelGateway.kind === 'openai-compatible' ? `openai-compatible ${config.integrations.modelGateway.url} wire ${config.integrations.modelGateway.wire}` : config.integrations.modelGateway.kind,
+    models: modelLines(config.integrations.modelGateway, bot),
+    shellEnvironment: shellEnvironment(bot),
     egressHosts: sorted(needs.flatMap(need => need.egressHosts ?? [])),
     egressFrom: Object.fromEntries(needs.flatMap(need => Object.entries(need.egressFrom ?? {})).map(([host, from]) => [host, [...from]])),
     ...footprintImages(config, needs.flatMap(need => need.pulled ?? [])),
@@ -329,7 +341,7 @@ function adapter(section: Section, config: { kind: string }): Need[] {
 }
 
 /** The footprint as a security reviewer reads it. */
-export function formatFootprint({ names, domains, existing, created, runtime, iam, models, egressHosts, egressFrom, tls, images, buildImages, commands }: Footprint): string {
+export function formatFootprint({ names, domains, existing, created, runtime, iam, models, shellEnvironment, egressHosts, egressFrom, tls, images, buildImages, commands }: Footprint): string {
   const roles = (Object.entries(iam) as [Principal, { actions: string[]; managedPolicies: string[] }][]).flatMap(([principal, grant]) => [
     `  ${principal} (${PRINCIPALS[principal]})`,
     ...grant.actions.map(action => `    ${action}`),
@@ -345,7 +357,8 @@ export function formatFootprint({ names, domains, existing, created, runtime, ia
     'Created resources', ...created.map(resource => `  ${resource}`),
     'Created at runtime', ...runtime.map(action => `  ${action}`),
     'IAM actions', ...roles,
-    'Models', `  ${models}`,
+    'Models', ...models.map(line => `  ${line}`),
+    'Shell environment', ...shellEnvironment.map(line => `  ${line}`),
     'Egress hosts', ...egressHosts.map(host => `  ${host}${egressFrom[host] ? ` (${egressFrom[host].join(', ')})` : ''}`),
     'TLS', ...tls.map(line => `  ${line}`),
     'Images', ...images.map(image => `  ${image}`),

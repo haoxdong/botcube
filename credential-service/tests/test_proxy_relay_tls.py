@@ -15,8 +15,8 @@ from botcube_credential_service import endpoint_tls as tls_module
 from botcube_credential_service.botcube_config import load_botcube_config
 from botcube_credential_service.endpoint_tls import EndpointTlsError, endpoint_tls
 from botcube_credential_service.proxy_relay import (
+    proxy_url_from_config,
     start_proxy_relay,
-    start_proxy_relay_from_config,
 )
 from mtls_fake import (
     IMPOSTOR_IDENTITY,
@@ -128,18 +128,21 @@ def test_relay_reads_its_tls_from_the_botcube_config_file(certs: Certificates, t
         tls = {'clientCertificate': certs.files('client_a'), 'serverIdentity': SERVER_IDENTITY}
         path = tmp_path / 'botcube.yaml'
         path.write_text(json.dumps(with_required({'integrations': {'proxy': {'kind': 'forward', 'url': proxy.url, 'tls': tls}}})))
-        relay = start_proxy_relay_from_config(load_botcube_config(path), {'HTTPS_PROXY': 'http://127.0.0.1:0'})
+        relay = proxy_url_from_config(load_botcube_config(path), {})
 
         assert relay is not None
-        tunnel(relay)
+        tunnel(relay())
         assert proxy.clients() == ['client-a']
 
 
-def test_relay_does_not_start_on_a_certificate_it_cannot_read(certs: Certificates, tmp_path: Path) -> None:
+def test_relay_listens_without_reading_the_certificate_and_refuses_the_first_tunnel_naming_it(certs: Certificates, tmp_path: Path) -> None:
     missing = {'certificate': certs.files('client_a')['certificate'], 'key': str(tmp_path / 'missing.key')}
 
-    with pytest.raises(EndpointTlsError, match=r'proxy client certificate \(file .*missing\.key\)'):
-        _relay('https://127.0.0.1:9', {'clientCertificate': missing})
+    answer = tunnel(_relay('https://127.0.0.1:9', {'clientCertificate': missing})).decode('latin-1')
+
+    assert answer.split('\r\n')[0] == 'HTTP/1.1 502 Bad Gateway'
+    assert answer.split('\r\n\r\n')[1].startswith('proxy client certificate (')
+    assert f"file {tmp_path / 'missing.key'}): No such file or directory" in answer
 
 
 def test_a_certificate_command_is_refused_unless_the_deploy_opted_in() -> None:

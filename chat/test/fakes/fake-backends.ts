@@ -1,5 +1,4 @@
 import type { ScheduledRunCard } from '../../src/session-api.js';
-import type { ModelsWire } from 'botcube-config/blocks';
 import { HttpFake, sendJson } from './http-fake.js';
 
 type SessionOperation = 'get' | 'purge' | 'post';
@@ -156,7 +155,14 @@ type Content = string | null | undefined | { type: string; text?: string }[];
 
 const contentText = (content: Content) => (typeof content === 'string' ? content : (content ?? []).map(({ text }) => text ?? '').join(''));
 
-/** A chat completions request, as the Harness's agent model and the Chat Service's summary model send one. */
+/** A Messages request, as the summary model on an `anthropic` model sends one. */
+interface MessagesRequest {
+  model: string;
+  messages: { role: string; content: Content }[];
+  tool_choice?: { type: 'tool'; name: string };
+}
+
+/** A Chat Completions request, as an `openai` model sends one unless the gateway's openai provider uses Responses. */
 interface ChatCompletionsRequest {
   model: string;
   stream?: boolean;
@@ -164,7 +170,7 @@ interface ChatCompletionsRequest {
   tool_choice?: { type: 'function'; function: { name: string } };
 }
 
-/** A Responses request, as the same models send one on the Responses wire. */
+/** A Responses request, as an `openai` model sends one when the gateway's openai provider uses Responses. */
 interface ResponsesRequest {
   model: string;
   stream?: boolean;
@@ -172,9 +178,12 @@ interface ResponsesRequest {
   tool_choice?: string | { type: 'function'; name: string };
 }
 
-/** A request on either wire, as the fake answers it. */
+/** The provider API a model request comes on: OpenAI's Chat Completions or Responses, or Anthropic's Messages. */
+type ModelsApi = 'chat-completions' | 'responses' | 'messages';
+
+/** A request on either API, as the fake answers it. */
 interface ModelCall {
-  wire: ModelsWire;
+  wire: ModelsApi;
   model: string;
   stream: boolean;
   /** The tool the request forces, as the summary model does. */
@@ -187,36 +196,45 @@ interface ModelCall {
   toolAnswered: boolean;
 }
 
-/** The wire each model route serves. */
-const WIRES: Readonly<Record<string, ModelsWire>> = { '/v1/chat/completions': 'chat-completions', '/v1/responses': 'responses' };
+/** The API each model route serves. */
+const WIRES: Readonly<Record<string, ModelsApi>> = { '/v1/chat/completions': 'chat-completions', '/v1/responses': 'responses', '/v1/messages': 'messages' };
 
 function lastAskedIndex(items: ReadonlyArray<{ role?: string }>): number {
   return items.map(({ role }) => role).lastIndexOf('user');
 }
 
 /** The request on `wire`, parsed once. */
-function modelCall(wire: ModelsWire, body: string): ModelCall {
-  if (wire === 'responses') {
-    const { model, stream, input, tool_choice: choice } = JSON.parse(body) as ResponsesRequest;
-    const lastAsked = lastAskedIndex(input);
-    const results = (items: ResponsesRequest['input']) => items.flatMap(({ type, output }) => (type === 'function_call_output' ? [output ?? ''] : []));
+function modelCall(wire: ModelsApi, body: string): ModelCall {
+  if (wire === 'messages') {
+    const { model, messages, tool_choice: choice } = JSON.parse(body) as MessagesRequest;
+    const lastAsked = lastAskedIndex(messages);
     return {
-      wire, model, stream: stream === true,
-      forcedTool: typeof choice === 'object' ? choice.name : undefined,
-      asked: lastAsked < 0 ? undefined : contentText(input[lastAsked]?.content),
-      toolResults: results(input),
-      toolAnswered: results(input.slice(lastAsked + 1)).length > 0,
+      wire, model, stream: false, forcedTool: choice?.name,
+      asked: lastAsked < 0 ? undefined : contentText(messages[lastAsked]?.content),
+      toolResults: [], toolAnswered: false,
     };
   }
-  const { model, stream, messages, tool_choice: choice } = JSON.parse(body) as ChatCompletionsRequest;
-  const lastAsked = lastAskedIndex(messages);
-  const results = (items: ChatCompletionsRequest['messages']) => items.flatMap(({ role, content }) => (role === 'tool' ? [contentText(content)] : []));
+  if (wire === 'chat-completions') {
+    const { model, stream, messages, tool_choice: choice } = JSON.parse(body) as ChatCompletionsRequest;
+    const lastAsked = lastAskedIndex(messages);
+    const results = (items: ChatCompletionsRequest['messages']) => items.flatMap(({ role, content }) => (role === 'tool' ? [contentText(content)] : []));
+    return {
+      wire, model, stream: stream === true,
+      forcedTool: choice?.function.name,
+      asked: lastAsked < 0 ? undefined : contentText(messages[lastAsked]?.content),
+      toolResults: results(messages),
+      toolAnswered: results(messages.slice(lastAsked + 1)).length > 0,
+    };
+  }
+  const { model, stream, input, tool_choice: choice } = JSON.parse(body) as ResponsesRequest;
+  const lastAsked = lastAskedIndex(input);
+  const results = (items: ResponsesRequest['input']) => items.flatMap(({ type, output }) => (type === 'function_call_output' ? [output ?? ''] : []));
   return {
     wire, model, stream: stream === true,
-    forcedTool: choice?.function.name,
-    asked: lastAsked < 0 ? undefined : contentText(messages[lastAsked]?.content),
-    toolResults: results(messages),
-    toolAnswered: results(messages.slice(lastAsked + 1)).length > 0,
+    forcedTool: typeof choice === 'object' ? choice.name : undefined,
+    asked: lastAsked < 0 ? undefined : contentText(input[lastAsked]?.content),
+    toolResults: results(input),
+    toolAnswered: results(input.slice(lastAsked + 1)).length > 0,
   };
 }
 
@@ -224,8 +242,8 @@ function modelCall(wire: ModelsWire, body: string): ModelCall {
 type Answer = { id: number } & ({ text: string } | { tool: string; callId: string; arguments: string });
 
 /**
- * An OpenAI-compatible endpoint (the BotCube Config's `openai-compatible` models), at `<url>/v1`, on either wire:
- * Chat Completions and Responses. It answers a forced `turn_summary` with `turnSummary`, and any other request as
+ * A model gateway (the BotCube Config's `openai-compatible` models), serving OpenAI's Chat Completions at
+ * `<url>/v1/chat/completions` and Responses at `<url>/v1/responses`, and Anthropic's Messages, unstreamed, at `<url>/v1/messages`. It answers a forced `turn_summary` with `turnSummary`, and any other request as
  * BotCube's echo model does, streamed when asked; with `agentToolCall` set, it first calls that tool, and echoes once the
  * tool's result is back. It accepts only `apiKey` and records every request, headers included.
  */
@@ -259,7 +277,7 @@ export class FakeOpenAICompatible extends HttpFake {
       }
       if (drop === 'mid-response') {
         response.writeHead(200, { 'content-type': 'application/json', 'content-length': '1024' });
-        response.write('{"id":"chatcmpl-1","object":"chat.completion",', () => response.socket?.resetAndDestroy());
+        response.write('{"id":"resp_1","object":"response",', () => response.socket?.resetAndDestroy());
         return;
       }
       const wire = WIRES[request.path];
@@ -277,21 +295,25 @@ export class FakeOpenAICompatible extends HttpFake {
         sendJson(response, 500, { error: { message: `fake ${call.forcedTool} model failure` } });
         return;
       }
-      if (wire === 'responses') {
+      if (wire === 'messages') {
+        sendJson(response, 200, messagesBody(call.model, answer));
+        return;
+      }
+      if (wire === 'chat-completions') {
         if (!call.stream) {
-          sendJson(response, 200, responsesBody(call.model, answer));
+          sendJson(response, 200, { id: `chatcmpl-${answer.id}`, object: 'chat.completion', model: call.model, choices: [{ index: 0, message: chatMessage(answer), finish_reason: 'text' in answer ? 'stop' : 'tool_calls' }] });
           return;
         }
         response.writeHead(200, { 'content-type': 'text/event-stream' });
-        response.end(responsesStream(call.model, answer));
+        response.end(chatStream(call.model, answer));
         return;
       }
       if (!call.stream) {
-        sendJson(response, 200, { id: `chatcmpl-${answer.id}`, object: 'chat.completion', model: call.model, choices: [{ index: 0, message: chatMessage(answer), finish_reason: 'text' in answer ? 'stop' : 'tool_calls' }] });
+        sendJson(response, 200, responsesBody(call.model, answer));
         return;
       }
       response.writeHead(200, { 'content-type': 'text/event-stream' });
-      response.end(chatStream(call.model, answer));
+      response.end(responsesStream(call.model, answer));
     });
   }
 
@@ -321,8 +343,8 @@ export class FakeOpenAICompatible extends HttpFake {
     return this.calls().map(({ model }) => model);
   }
 
-  /** The wire each model request came on, in order. */
-  wires(): ModelsWire[] {
+  /** The API each model request came on, in order. */
+  wires(): ModelsApi[] {
     return this.calls().map(({ wire }) => wire);
   }
 
@@ -352,6 +374,15 @@ function chatStream(model: string, answer: Answer): string {
     ? { role: 'assistant', content: answer.text }
     : { role: 'assistant', content: null, tool_calls: [{ index: 0, ...chatToolCall(answer) }] };
   return `${chunk(delta, null)}${chunk({}, 'text' in answer ? 'stop' : 'tool_calls')}data: [DONE]\n\n`;
+}
+
+/** The answer as an unstreamed Messages reply: its text, or its call to a tool. */
+function messagesBody(model: string, answer: Answer) {
+  const content = 'text' in answer
+    ? { type: 'text', text: answer.text }
+    : { type: 'tool_use', id: answer.callId, name: answer.tool, input: JSON.parse(answer.arguments) as unknown };
+  const stop = 'text' in answer ? 'end_turn' : 'tool_use';
+  return { id: `msg_${answer.id}`, type: 'message', role: 'assistant', model, content: [content], stop_reason: stop, usage: { input_tokens: 26, output_tokens: 4 } };
 }
 
 const RESPONSES_USAGE = { input_tokens: 26, input_tokens_details: { cached_tokens: 0 }, output_tokens: 4, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 30 };

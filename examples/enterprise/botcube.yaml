@@ -73,7 +73,8 @@
       "headers": {
         "x-tenant": "botcube-example"
       },
-      "turnSummaryModel": "example-summary"
+      "proxy": "integrations.proxy",
+      "turnSummaryModel": "openai:example-summary"
     },
     "harnessAuth": {
       "kind": "jwt-bearer",
@@ -96,17 +97,20 @@
       },
       "headers": {
         "x-tenant": "botcube-example"
-      }
+      },
+      "proxy": "integrations.proxy"
     },
     "imageRegistry": {
       "url": "https://mirror.example.com/ecr-public"
     },
+    "relayProviders": {
+      "openai": {
+        "proxy": "integrations.proxy"
+      }
+    },
     "proxy": {
       "kind": "forward",
       "url": "http://proxy.example.com:3128",
-      "noProxy": [
-        ".amazonaws.com"
-      ],
       "credential": {
         "kind": "file",
         "path": "/run/secrets/botcube/proxy-token"
@@ -114,6 +118,11 @@
       "headers": {
         "x-egress-route": "botcube-example"
       }
+    }
+  },
+  "network": {
+    "openEgress": {
+      "proxy": "integrations.proxy"
     }
   },
   "existing": {

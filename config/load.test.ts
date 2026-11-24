@@ -9,6 +9,7 @@ vi.mock('node:fs', async importOriginal => {
   const fs = await importOriginal<typeof import('node:fs')>();
   return { ...fs, existsSync: (path: string) => path === '/bot/bot.yaml' ? Boolean(image.settings) : fs.existsSync(path), readFileSync: (path: string, encoding: BufferEncoding) => path === '/bot/bot.yaml' ? image.settings : fs.readFileSync(path, encoding) };
 });
+import { openEgressProxy } from './deployment.js';
 import { loadBotCube } from './load.js';
 import { BotCubeConfigError } from './parse.js';
 
@@ -17,7 +18,7 @@ const example = (name: string) => fileURLToPath(new URL(`../examples/${name}/bot
 const EXAMPLE_BOT = {
   agentIdentity: { name: 'BotCube', character: 'A template agent', avatar: '🧊' },
   accountKey: 'template',
-  models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
+  models: [{ key: 'echo', label: 'Echo', provider: 'openai' }],
   skills: ['skills/computer'],
   memory: true,
   agentComputer: { enabled: true, liveBrowser: true },
@@ -29,6 +30,8 @@ const THEME = { agentBody: '#f5d0a9', agentOutline: '#d9915a', agentDeep: '#9a5a
 const REQUIRED = JSON.parse(readFileSync(fileURLToPath(new URL('../tests/required-keys.json', import.meta.url)), 'utf8'));
 
 const DEFAULT_SECTIONS = { allowCommandCredentials: false, schedules: { kind: 'eventbridge-scheduler' }, liveView: { kind: 'agentcore-browser' }, integrations: { signIn: { kind: 'botcube-accounts' }, modelGateway: { kind: 'bedrock' }, harnessAuth: { kind: 'sigv4' }, awsAccess: { kind: 'web-identity' }, telemetry: { kind: 'xray' }, proxy: { kind: 'none' } }, network: {} };
+
+const FORWARD = { kind: 'forward', url: 'http://proxy.example.com:3128' };
 
 function configFile(config: unknown, bot: unknown = EXAMPLE_BOT): string {
   const dir = mkdtempSync(join(tmpdir(), 'config-'));
@@ -49,7 +52,7 @@ const ENTERPRISE_MODELS = {
   url: 'https://models.example.com/v1',
   credential: { kind: 'file', path: '/run/secrets/botcube/models-api-key' },
   headers: { 'x-tenant': 'botcube-example' },
-  turnSummaryModel: 'example-summary',
+  turnSummaryModel: 'openai:example-summary',
 };
 
 const SECRET_ARN = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube-example/models-api-key';
@@ -121,11 +124,12 @@ describe('the examples', () => {
       url: 'http://otel-collector.example.com:4318/v1/traces',
       credential: { kind: 'file', path: '/run/secrets/botcube/telemetry-token' },
       headers: { 'x-tenant': 'botcube-example' },
+      proxy: 'integrations.proxy',
     });
+    expect(config.integrations.modelGateway).toMatchObject({ proxy: 'integrations.proxy' });
     expect(config.integrations.proxy).toEqual({
       kind: 'forward',
       url: 'http://proxy.example.com:3128',
-      noProxy: ['.amazonaws.com'],
       credential: { kind: 'file', path: '/run/secrets/botcube/proxy-token' },
       headers: { 'x-egress-route': 'botcube-example' },
     });
@@ -133,6 +137,26 @@ describe('the examples', () => {
 });
 
 describe('a BotCube Config', () => {
+  it.each([
+    ['through the proxy it names', { openEgress: { proxy: 'integrations.proxy' } }, FORWARD],
+    ['direct when it names none', { openEgress: {} }, { kind: 'none' }],
+    ['direct without it', {}, { kind: 'none' }],
+  ])("reaches the open egress of the agent's commands and Chromium %s", (_, network, proxy) => {
+    const { config } = loadBotCube(configFile({ integrations: { proxy: FORWARD }, network }));
+    expect(openEgressProxy(config)).toEqual(proxy);
+  });
+
+  it.each([
+    ['integrations.telemetry.proxy', { integrations: { telemetry: { kind: 'otlp', url: 'https://collector.example.com/v1/traces', proxy: 'integrations.proxy' } } }],
+    ['integrations.modelGateway.proxy', { integrations: { modelGateway: { kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/secrets/models' }, turnSummaryModel: 'openai:summary', proxy: 'integrations.proxy' } } }],
+    ['network.openEgress.proxy', { network: { openEgress: { proxy: 'integrations.proxy' } } }],
+    ['integrations.signIn.proxy', { integrations: { signIn: { ...OIDC, proxy: 'integrations.proxy' } } }],
+    ['integrations.relayProviders.openai.proxy', { integrations: { relayProviders: { openai: { proxy: 'integrations.proxy' } } } }],
+  ])('stops on %s naming a proxy the deployment does not have', (field, sections) => {
+    const path = configFile(sections);
+    expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: ${field}: names integrations.proxy, which is none`);
+  });
+
   it("stops on a bot whose settings watch the live view the deployment turns off, naming both", () => {
     const path = configFile({ liveView: { kind: 'none' } });
     expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: liveView: none, but the bot settings turn agentComputer.liveBrowser on`);
@@ -140,12 +164,59 @@ describe('a BotCube Config', () => {
     expect(loadBotCube(off).config.liveView).toEqual({ kind: 'none' });
   });
 
-  it.each([
-    [{}, 'chat-completions'],
-    [{ wire: 'chat-completions' }, 'chat-completions'],
-    [{ wire: 'responses' }, 'responses'],
-  ])('calls the models Endpoint over Chat Completions unless it sets the Responses wire: %o', (wire, expected) => {
-    expect(loadBotCube(configFile({ integrations: { modelGateway: { ...ENTERPRISE_MODELS, ...wire } } })).config.integrations.modelGateway).toMatchObject({ wire: expected });
+  it('reaches each provider at its own URL, with its own credential and headers, or at the gateway URL', () => {
+    const anthropic = { url: 'https://models.example.com/anthropic', credential: { kind: 'file', path: '/run/secrets/botcube/anthropic-key' }, headers: { 'x-route': 'messages' } };
+    const bot = { ...EXAMPLE_BOT, models: [{ key: 'claude-sonnet-5-5', label: 'Sonnet', provider: 'anthropic' }, { key: 'gpt-5', label: 'GPT', provider: 'openai' }] };
+    const models = { ...ENTERPRISE_MODELS, providers: { anthropic, openai: {} } };
+    expect(loadBotCube(configFile({ integrations: { modelGateway: models } }, bot)).config.integrations.modelGateway)
+      .toEqual({ ...models, providers: { anthropic, openai: { useResponsesApi: false } } });
+  });
+
+  it('stops on a bot model on a provider the gateway does not serve, naming the model and provider', () => {
+    const bot = { ...EXAMPLE_BOT, models: [{ key: 'echo', label: 'Echo', provider: 'echo' }, { key: 'deepseek-v3.2', label: 'DeepSeek', provider: 'deepseek' }] };
+    const path = configFile({ integrations: { modelGateway: ENTERPRISE_MODELS } }, bot);
+    expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: the bot settings' model deepseek-v3.2 is on provider deepseek, but integrations.modelGateway reaches the providers anthropic and openai`);
+  });
+
+  it('stops on a bot model on a provider the gateway lists no route for, naming the model and provider', () => {
+    const bot = { ...EXAMPLE_BOT, models: [{ key: 'gpt-5', label: 'GPT', provider: 'openai' }] };
+    const path = configFile({ integrations: { modelGateway: { ...ENTERPRISE_MODELS, turnSummaryModel: 'anthropic:claude-haiku-4-5', providers: { anthropic: { url: 'https://models.example.com/anthropic' } } } } }, bot);
+    expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: the bot settings' model gpt-5 is on provider openai, but integrations.modelGateway reaches the providers anthropic`);
+  });
+
+  const V1 = "integrations.modelGateway.url ends in /v1, which Anthropic's API adds itself: set integrations.modelGateway.providers.anthropic.url without /v1";
+
+  it('stops on an anthropic bot model on a gateway URL ending in /v1 with no Anthropic URL of its own, naming the fix', () => {
+    const bot = { ...EXAMPLE_BOT, models: [{ key: 'claude-sonnet-5-5', label: 'Sonnet', provider: 'anthropic' }] };
+    const path = configFile({ integrations: { modelGateway: ENTERPRISE_MODELS } }, bot);
+    expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: the bot settings' model claude-sonnet-5-5 is on provider anthropic, but ${V1}`);
+    const own = { ...ENTERPRISE_MODELS, providers: { anthropic: { url: 'https://models.example.com/anthropic' }, openai: {} } };
+    expect(loadBotCube(configFile({ integrations: { modelGateway: own } }, bot)).bot.models).toHaveLength(1);
+  });
+
+  it('stops on an anthropic turn summary model on a gateway URL ending in /v1 with no Anthropic URL of its own, naming the fix', () => {
+    const path = configFile({ integrations: { modelGateway: { ...ENTERPRISE_MODELS, turnSummaryModel: 'anthropic:claude-haiku-4-5' } } });
+    expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: integrations.modelGateway.turnSummaryModel: On provider anthropic, but ${V1}`);
+  });
+
+  it('stops on a turn summary model on a provider the gateway lists no route for', () => {
+    const path = configFile({ integrations: { modelGateway: { ...ENTERPRISE_MODELS, providers: { anthropic: { url: 'https://models.example.com/anthropic' } } } } });
+    expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: integrations.modelGateway.turnSummaryModel: On provider openai, but integrations.modelGateway reaches the providers anthropic`);
+  });
+
+  it('reaches a listed provider with no URL of its own at the gateway URL', () => {
+    const models = { ...ENTERPRISE_MODELS, providers: { openai: {} } };
+    expect(loadBotCube(configFile({ integrations: { modelGateway: models } })).config.integrations.modelGateway).toMatchObject({ providers: { openai: {} } });
+  });
+
+  it('stops on a bot model on a provider BotCube does not call', () => {
+    const path = configFile({}, { ...EXAMPLE_BOT, models: [{ key: 'claude', label: 'Claude', provider: 'anthropic/messages' }] });
+    expect(() => loadBotCube(path)).toThrow("Bot settings /bot/bot.yaml: models.0.provider: Invalid option: expected one of \"anthropic\"|\"openai\"|\"deepseek\"|\"echo\"");
+  });
+
+  it('runs a bot model on any provider on Bedrock, with no output ceiling of its own unless it gives one', () => {
+    const bot = { ...EXAMPLE_BOT, models: [{ key: 'deepseek-v3.2', label: 'DeepSeek', provider: 'deepseek' }] };
+    expect(loadBotCube(configFile({}, bot)).bot.models).toEqual(bot.models);
   });
 
   it('names the images its services run, each an OCI reference pinned by a tag or a digest', () => {
@@ -184,7 +255,7 @@ describe('a BotCube Config', () => {
     ['an unknown key', { identty: { kind: 'botcube-accounts' } }, 'identty: Unrecognized key'],
     ['an unknown key in a section', { schedules: { kind: 'eventbridge-scheduler', table: 'x' } }, 'schedules.table: Unrecognized key'],
     ['an unknown kind', { integrations: { modelGateway: { kind: 'vertex' } } }, "integrations.modelGateway.kind: Invalid discriminator value. Expected 'bedrock' | 'openai-compatible'"],
-    ['an unknown models wire', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, wire: 'messages' } } }, 'integrations.modelGateway.wire: '],
+    ['a provider URL for a provider BotCube does not call', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, providers: { deepseek: { url: 'https://models.example.com/deepseek' } } } } }, 'integrations.modelGateway.providers'],
     ['the deleted API key field', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, apiKey: { secretId: SECRET_ARN } } } }, 'integrations.modelGateway.apiKey: Unrecognized key'],
     ['an OpenAI-compatible endpoint without its credential', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, credential: undefined } } }, 'integrations.modelGateway.credential: '],
     ['an API key written in place of its source', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, credential: 'sk-live' } } }, 'integrations.modelGateway.credential: '],
@@ -232,8 +303,12 @@ describe('a BotCube Config', () => {
     ['an OpenAI-compatible endpoint over http beyond this machine', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, url: 'http://models.example.com/v1' } } },
       'integrations.modelGateway.url: A models endpoint is an https URL; only a stand-in on this machine may use http'],
     ['an OpenAI-compatible endpoint without a turn summary model', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, turnSummaryModel: undefined } } }, 'integrations.modelGateway.turnSummaryModel: '],
-    ['cache markers in a format BotCube does not write', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, cacheMarkers: 'openai' } } }, 'integrations.modelGateway.cacheMarkers: '],
-    ['cache markers turned on as a flag', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, cacheMarkers: true } } }, 'integrations.modelGateway.cacheMarkers: '],
+    ...['example-summary', 'vertex:gemini', 'anthropic:'].map(turnSummaryModel => [
+      `a turn summary model ${turnSummaryModel}, not provider:model`, { integrations: { modelGateway: { ...ENTERPRISE_MODELS, turnSummaryModel } } },
+      'integrations.modelGateway.turnSummaryModel: Expected provider:model, such as anthropic:claude-haiku-4-5, its provider one a bot model may name',
+    ] as const),
+    ['a turn summary model on a provider the gateway does not serve', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, turnSummaryModel: 'deepseek:deepseek-v3.2' } } },
+      'integrations.modelGateway.turnSummaryModel: On provider deepseek, but integrations.modelGateway reaches the providers anthropic and openai'],
     ['a section without its kind', { integrations: { harnessAuth: {} } }, "integrations.harnessAuth.kind: Invalid discriminator value. Expected 'sigv4' | 'jwt-bearer'"],
     ['a JWT bearer without its client', { integrations: { harnessAuth: { kind: 'jwt-bearer' } } }, 'integrations.harnessAuth.clients: '],
     ['a JWT bearer on the old audience field', { integrations: { harnessAuth: { kind: 'jwt-bearer', clients: [{ clientId: 'botcube-harness' }], audience: 'botcube-harness' } } },
@@ -306,6 +381,8 @@ describe('a BotCube Config', () => {
     ['a proxy in the old shape, with no kind', { integrations: { proxy: { url: 'http://proxy:3128' } } }, 'integrations.proxy.kind: '],
     ['a Proxy-Authorization header beside the proxy credential', { integrations: { proxy: { kind: 'forward', url: 'http://proxy:3128', headers: { 'Proxy-Authorization': 'Basic x' } } } },
       'integrations.proxy.headers.Proxy-Authorization: The credential sets Proxy-Authorization'],
+    ['a proxy for the models Relay provider, which the model gateway names', { integrations: { relayProviders: { models: { proxy: 'integrations.proxy' } } } },
+      'integrations.relayProviders.models: The models Relay provider is integrations.modelGateway: name the proxy at integrations.modelGateway.proxy'],
     ...([
       ['a secret', { kind: 'secret', secretId: 'arn:aws:secretsmanager:us-east-1:000000000000:secret:proxy-token' }],
       ['a command', COMMAND],
@@ -351,13 +428,7 @@ describe('a BotCube Config', () => {
     ['a mounted file', { kind: 'file', path: '/run/secrets/botcube/models-api-key' }],
   ])('gives the models endpoint its credential from %s', (_, credential) => {
     const models = { ...ENTERPRISE_MODELS, credential };
-    expect(loadBotCube(configFile({ integrations: { modelGateway: models } })).config.integrations.modelGateway).toEqual({ ...models, wire: 'chat-completions' });
-  });
-
-  it('marks Claude cache breakpoints on the models endpoint only when the operator turns them on', () => {
-    expect(loadBotCube(configFile({ integrations: { modelGateway: ENTERPRISE_MODELS } })).config.integrations.modelGateway).not.toHaveProperty('cacheMarkers');
-    const models = { ...ENTERPRISE_MODELS, cacheMarkers: 'claude' };
-    expect(loadBotCube(configFile({ integrations: { modelGateway: models } })).config.integrations.modelGateway).toEqual({ ...models, wire: 'chat-completions' });
+    expect(loadBotCube(configFile({ integrations: { modelGateway: models } })).config.integrations.modelGateway).toEqual(models);
   });
 
   it.each([
@@ -366,7 +437,7 @@ describe('a BotCube Config', () => {
     ['a stand-in token endpoint on this machine', { ...OAUTH, tokenEndpoint: 'http://127.0.0.1:9400/token' }],
   ])('gives the models endpoint an OAuth client-credentials token from %s', (_, credential) => {
     const models = { ...ENTERPRISE_MODELS, credential };
-    expect(loadBotCube(configFile({ integrations: { modelGateway: models } })).config.integrations.modelGateway).toEqual({ ...models, wire: 'chat-completions' });
+    expect(loadBotCube(configFile({ integrations: { modelGateway: models } })).config.integrations.modelGateway).toEqual(models);
   });
 
   it('runs an opted-in command for an OAuth client secret', () => {
@@ -404,7 +475,7 @@ describe('a BotCube Config', () => {
 
   it.each(['http://localhost:8080/v1', 'http://127.0.0.1:8080/v1', 'http://[::1]:8080/v1'])('takes a stand-in models endpoint over http on this machine at %s', (url) => {
     const models = { ...ENTERPRISE_MODELS, url };
-    expect(loadBotCube(configFile({ integrations: { modelGateway: models } })).config.integrations.modelGateway).toEqual({ ...models, wire: 'chat-completions' });
+    expect(loadBotCube(configFile({ integrations: { modelGateway: models } })).config.integrations.modelGateway).toEqual(models);
   });
 
   it("takes the product's web origins, the Plan Usage owner and the automation user agents parking skips", () => {
@@ -458,7 +529,7 @@ describe('Endpoint TLS', () => {
     ['both', { clientCertificate: FILES, serverIdentity: 'https://models.example.com/gateway' }],
   ])('gives the models Endpoint, the proxy and the OTLP Endpoint %s', (_, tls) => {
     const { config } = loadBotCube(configFile({ integrations: { modelGateway: { ...ENTERPRISE_MODELS, tls }, telemetry: { ...COLLECTOR, tls }, proxy: { ...PROXY, tls } } }));
-    expect([config.integrations.modelGateway, config.integrations.proxy, config.integrations.telemetry]).toEqual([{ ...ENTERPRISE_MODELS, wire: 'chat-completions', tls }, { ...PROXY, tls }, { ...COLLECTOR, tls }]);
+    expect([config.integrations.modelGateway, config.integrations.proxy, config.integrations.telemetry]).toEqual([{ ...ENTERPRISE_MODELS, tls }, { ...PROXY, tls }, { ...COLLECTOR, tls }]);
   });
 
   it('runs an opted-in command for a client certificate, 30 s at most unless it says otherwise', () => {
@@ -511,6 +582,11 @@ describe('bot settings', () => {
   ])('stop on %s and name the field', (_, bot, field) => {
     const path = configFile({  }, bot);
     expect(() => loadBotCube(path)).toThrow(`Bot settings /bot/bot.yaml: ${field}`);
+  });
+
+  it('stop on userTokenInShell and name environment as its replacement', () => {
+    const path = configFile({  }, { ...EXAMPLE_BOT, userTokenInShell: true });
+    expect(() => loadBotCube(path)).toThrow('Bot settings /bot/bot.yaml: userTokenInShell: renamed to environment, ');
   });
 
   it('change the theme, the Memory gate and the Agent Computer switches', () => {

@@ -64,6 +64,8 @@ const MACHINERY = new Set([
   'PreviewOrigin/OriginProvider/framework-onEvent/ServiceRole', 'PreviewOrigin/OriginProvider/framework-isComplete/ServiceRole',
   'PreviewOrigin/OriginProvider/framework-onTimeout/ServiceRole', 'PreviewOrigin/OriginProvider/waiter-state-machine/Role',
   'PreviewOrigin/OriginSmokePolicy',
+  // Reads the existing Files' mount target address at deploy.
+  'PreviewOrigin/AWS679f53fac002430cb0da5b7982bd2287/ServiceRole',
   'PreviewOrigin/ChatService/Task/ExecutionRole', 'PreviewOrigin/CredentialService/Task/ExecutionRole',
   ...['onEvent', 'isComplete', 'worker'].map(handler => `PreviewOrigin/FilesPool/${handler}/ServiceRole`),
   ...['framework-onEvent', 'framework-isComplete', 'framework-onTimeout'].map(handler => `PreviewOrigin/FilesPool/Provider/${handler}/ServiceRole`),

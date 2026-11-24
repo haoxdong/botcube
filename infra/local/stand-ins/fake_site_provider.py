@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, WebSocket
 from fastapi.responses import Response
 
 from botcube_credential_service.audit import CredentialAuditRecorder
@@ -81,7 +81,7 @@ class FakeSiteProvider:
     def allows_upstream(self, method: str, path: str) -> bool:
         return (method, path) == ('GET', 'data')
 
-    async def authorize_upstream(self, invocation: CredentialServiceInvocation, request: Request, path: str) -> None:
+    async def authorize_upstream(self, invocation: CredentialServiceInvocation, request: Request | WebSocket, path: str) -> None:
         if request.url.query:
             raise HTTPException(403, 'Fake site data does not accept query parameters')
 
@@ -93,7 +93,7 @@ class FakeSiteProvider:
         return jar['cookies']
 
     async def relay(
-        self, request: Request, path: str, access: list[object], *, account_id: str, request_context: Mapping[str, str],
+        self, request: Request | WebSocket, path: str, access: list[object], *, account_id: str, request_context: Mapping[str, str],
     ) -> Response:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.get(f'{self._site_url}/data', headers={'Authorization': f'Bearer {_token(access)}'})

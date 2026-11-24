@@ -8,7 +8,9 @@ import { AGENT_COMPUTER_IDLE_SECONDS } from './agent-computer.js';
 import type { AgentComputerStarted } from './agent-computer-started.js';
 import type { TaskStopSleep } from './task-stop.js';
 import { agentComputerCdpUrls } from './agent-computer-token.js';
+import type { BotCubeConfig } from 'botcube-config';
 import { ComputerStartupCancelled, findChromium, refuseProxyCredentials, startLocalChromium, type LocalChromium } from './local-chromium.js';
+import { proxyUrl } from './proxy-relay.js';
 
 interface RunningComputer {
   readonly owner: string;
@@ -33,7 +35,7 @@ const ASLEEP: LocalComputerState = { state: 'asleep', screenshot: null };
  * private profile deleted when it sleeps. The agent reaches it through the same tokened,
  * filtered CDP channel as an AgentCore Agent Computer. It runs the Chromium `findChromium`
  * finds, looked up at each start; BOTCUBE_AGENT_COMPUTER_CDP_URL is where the Harness reaches this Chat Service's
- * `/agent-computer/cdp` when not on 127.0.0.1:$PORT.
+ * `/agent-computer/cdp` when not on 127.0.0.1:$PORT. Chromium reaches every destination but loopback through `proxy`.
  */
 export function localAgentComputer({
   history,
@@ -41,6 +43,7 @@ export function localAgentComputer({
   env,
   startPage = 'about:blank',
   started,
+  proxy = { kind: 'none' },
 }: {
   history: Pick<AccountHistory, 'owns' | 'ownsMainChat'>;
   requester: (c: Context) => Promise<Requester>;
@@ -48,8 +51,10 @@ export function localAgentComputer({
   startPage?: string | undefined;
   /** Told of each browser started, before the agent may use it (`agent-computer-started.ts`); unset, nothing is. */
   started?: AgentComputerStarted | undefined;
+  proxy?: BotCubeConfig['integrations']['proxy'];
 }) {
-  refuseProxyCredentials(env);
+  refuseProxyCredentials(proxy);
+  const through = proxyUrl(proxy, env);
   const cdpUrls = agentComputerCdpUrls(
     new URL(env.BOTCUBE_AGENT_COMPUTER_CDP_URL?.trim() || `ws://127.0.0.1:${env.PORT || '8123'}/agent-computer/cdp`).href,
     env
@@ -101,7 +106,7 @@ export function localAgentComputer({
       clearTimeout(computer.idleTimer);
       if (running.get(key) === computer) running.delete(key);
     };
-    const ready = Promise.resolve().then(() => startLocalChromium(findChromium(env), startUrl, startup.signal, env)).then(
+    const ready = Promise.resolve().then(async () => startLocalChromium(findChromium(env), startUrl, startup.signal, await through?.())).then(
       (browser) => {
         void browser.closed.then(retire, (error: unknown) => {
           const failure = new HttpError(503, 'Agent Computer profile cleanup failed');

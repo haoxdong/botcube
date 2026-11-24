@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import ssl
 from collections.abc import Iterable, Iterator, Mapping
 from copy import deepcopy
 from functools import cache
@@ -24,6 +25,12 @@ CONFIG_ENV = 'BOTCUBE_CONFIG'
 _SCHEMA = json.loads(Path(__file__).with_name('botcube.schema.json').read_text(encoding='utf8'))
 
 
+def gateway_providers() -> tuple[str, ...]:
+    """The providers a model gateway serves, as `integrations.modelGateway.providers` names them."""
+    [gateway] = (option for option in _SCHEMA['properties']['integrations']['properties']['modelGateway']['oneOf'] if 'providers' in option['properties'])
+    return tuple(gateway['properties']['providers']['properties'])
+
+
 class BotCubeConfigError(RuntimeError):
     """A BotCube Config the process cannot run on; startup stops with the field at fault."""
 
@@ -31,6 +38,16 @@ class BotCubeConfigError(RuntimeError):
 def botcube_config_from_env(env: Mapping[str, str] = os.environ) -> dict[str, Any]:
     """The BotCube Config BOTCUBE_CONFIG names, or every section's default without one."""
     return _loaded(env.get(CONFIG_ENV) or None)
+
+
+def load_ca_bundle(config: Mapping[str, Any]) -> None:
+    """The caBundle SSL_CERT_FILE and REQUESTS_CA_BUNDLE point at, loaded now: a wrong one fails startup, not the first call."""
+    if (path := config.get('caBundle')) is None:
+        return
+    try:
+        ssl.create_default_context(cafile=path)
+    except OSError as error:
+        raise BotCubeConfigError(f'caBundle {path}: {error}') from None
 
 
 def web_origins(config: Mapping[str, Any]) -> list[str]:

@@ -3,7 +3,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { App } from 'aws-cdk-lib';
-import { commandCredentialOptIn, proxyEnvironment } from '../../../../config/environment.js';
+import { commandCredentialOptIn, trustEnvironment } from '../../../../config/environment.js';
 import { registryHost } from '../../../../config/images.js';
 import { loadConfig } from '../../../../config/load.js';
 import { webOrigins } from '../../../../config/read.cjs';
@@ -65,7 +65,7 @@ export async function defineExample(app: App, configPath: string, options: Examp
   const network = ownEgressVpc(config);
   const configDeployRoot = path.join(path.dirname(path.resolve(configPath)), 'deploy');
   const identity = (options.identity ?? (same => same))(deployIdentity(configDeployRoot));
-  const environment = proxyEnvironment(config);
+  const environment = trustEnvironment(config);
   // The operator's opt-in from where the deploy runs, never from the file; it fails here on a command credential without it.
   const commandOptIn = commandCredentialOptIn(config, process.env);
   const telemetry = telemetryEnvironment(config.integrations.telemetry);
@@ -80,7 +80,7 @@ export async function defineExample(app: App, configPath: string, options: Examp
     storage: { ...(tables?.chat ? { existingChatTable: tables.chat } : {}), ...(config.existing.files ? { existingFiles: config.existing.files } : {}) },
     ...(buckets?.connectionLogs ? { originConfig: { existingConnectionLogsBucketName: buckets.connectionLogs } } : {}),
     chat: {
-      ...seams.chat, botcubeConfig, environment: commandOptIn, proxyEnvironment: environment, imageRegistry: registryHost(config.integrations.imageRegistry),
+      ...seams.chat, botcubeConfig, environment: commandOptIn, trustEnvironment: environment, imageRegistry: registryHost(config.integrations.imageRegistry),
       telemetry: config.integrations.telemetry.kind === 'xray' ? { kind: 'xray' } : { kind: config.integrations.telemetry.kind, environment: telemetry.chatService, secretIds: telemetry.secretIds },
     },
     ...(credentialService ? { existingCredentialEndpoint: credentialService } : {}),

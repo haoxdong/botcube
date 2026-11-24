@@ -1,14 +1,10 @@
 import { connect as tcpConnect, createServer, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 import type { BotCubeConfig } from 'botcube-config';
+import { ProxyAgent, type RequestInit } from 'undici';
+import { dispatcherFetch } from './dispatcher-fetch.js';
 import { credentialSource, type CredentialSource } from './credential-source.js';
 import { endpointTls, EndpointTlsError, type EndpointTls, type TlsConnectOptions } from './endpoint-tls.js';
-
-// The proxy Endpoint's credential, headers and TLS (ADR 0091). Every HTTP client in a process, and every command it
-// runs, reads HTTP(S)_PROXY once, so the process points them at this loopback relay, which opens each request to the
-// operator's proxy with the credential's current value and the client certificate as read now: a rotated or refreshed
-// token or certificate reaches the next request.
-// botcube/harness has its Python twin.
 
 /** The most a client's request head may take before the relay refuses it. */
 const MAX_HEAD_BYTES = 64 * 1024;
@@ -35,8 +31,6 @@ export interface ProxyRelayOptions {
 
 /** Serve `listen` as a forward proxy that sends each request on to `upstream`, authenticated. */
 export async function startProxyRelay({ upstream, listen, credential, headers, tls }: ProxyRelayOptions): Promise<ProxyRelay> {
-  await credential?.get();
-  await tls?.connectOptions();
   const server = createServer((client) => {
     client.on('error', () => client.destroy());
     readHead(client)
@@ -50,6 +44,7 @@ export async function startProxyRelay({ upstream, listen, credential, headers, t
     server.once('error', reject);
     server.listen(listen.port, listen.host, () => resolve());
   });
+  server.unref();
   const address = server.address();
   if (address === null || typeof address === 'string') throw new Error('The proxy relay has no TCP address');
   return {
@@ -58,24 +53,40 @@ export async function startProxyRelay({ upstream, listen, credential, headers, t
   };
 }
 
+/** Where a client reaches the BotCube Config's proxy: its URL, or this process's loopback relay to it. */
+export type ProxyUrl = () => Promise<string>;
+
+const relays = new Map<string, Promise<string>>();
+
 /**
- * The relay for the BotCube Config's `proxy`, listening where HTTPS_PROXY points (`proxyEnvironment` in
- * botcube/config) before any client connects; undefined unless the proxy takes a credential, headers or
- * TLS. A relay that cannot listen stops the process.
+ * Where this process's clients reach the BotCube Config's `proxy`, or undefined without one: the proxy's own URL, or,
+ * for a proxy taking a credential, headers or TLS, one loopback relay per process, started when first asked for.
  */
-export function startProxyRelayForConfig(proxy: BotCubeConfig['integrations']['proxy'], env: NodeJS.ProcessEnv = process.env): Promise<ProxyRelay> | undefined {
-  if (proxy.kind === 'none' || (proxy.credential === undefined && proxy.headers === undefined && proxy.tls === undefined)) return undefined;
-  const listen = env.HTTPS_PROXY ? new URL(env.HTTPS_PROXY) : undefined;
-  if (listen === undefined || !listen.hostname || !listen.port) {
-    throw new Error("HTTPS_PROXY is unset beside the BotCube Config's proxy credential, headers or TLS; the deploy points it at the proxy relay");
-  }
-  return startProxyRelay({
-    upstream: new URL(proxy.url),
-    listen: { host: listen.hostname, port: Number(listen.port) },
-    credential: proxy.credential && credentialSource('proxy', proxy.credential, { env }),
-    headers: proxy.headers ?? {},
-    tls: proxy.tls && endpointTls('proxy', proxy.tls, { env }),
-  });
+export function proxyUrl(proxy: BotCubeConfig['integrations']['proxy'], env: NodeJS.ProcessEnv = process.env): ProxyUrl | undefined {
+  if (proxy.kind === 'none') return undefined;
+  if (proxy.credential === undefined && proxy.headers === undefined && proxy.tls === undefined) return async () => proxy.url;
+  const key = JSON.stringify(proxy);
+  return () => {
+    const started = relays.get(key) ?? startProxyRelay({
+      upstream: new URL(proxy.url),
+      listen: { host: '127.0.0.1', port: 0 },
+      credential: proxy.credential && credentialSource('proxy', proxy.credential, { env }),
+      headers: proxy.headers ?? {},
+      tls: proxy.tls && endpointTls('proxy', proxy.tls, { env }),
+    }).then((relay) => relay.url);
+    relays.set(key, started);
+    return started;
+  };
+}
+
+/** `fetch` through the proxy `through` names, its agent built on the first request and again after a failed start. */
+export function proxiedFetch(through: ProxyUrl): (url: string, init: RequestInit) => Promise<Response> {
+  let agent: Promise<ProxyAgent> | undefined;
+  const built = () => (agent ??= through().then((uri) => new ProxyAgent(uri), (error: unknown) => {
+    agent = undefined;
+    throw error;
+  }));
+  return async (url, init) => dispatcherFetch(url, { ...init, dispatcher: await built() });
 }
 
 /** The client's request head, up to its blank line, and any bytes after it. */

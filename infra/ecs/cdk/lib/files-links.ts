@@ -2,6 +2,7 @@ import { FilesAccessPointPool } from './files-access-point-pool.js';
 import * as path from 'node:path';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as actions from 'aws-cdk-lib/aws-cloudwatch-actions';
+import * as cr from 'aws-cdk-lib/custom-resources';
 import { CfnOutput, Duration } from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as efs from 'aws-cdk-lib/aws-efs';
@@ -24,7 +25,7 @@ export const CHAT_FILES_MOUNT = '/mnt/files-efs';
 export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatService, storage: ChatStorageStack, browsers: { subnets: Array<{ id: string }> }, cubeRoot: string, clients: ec2.ISecurityGroup[] = [],
   mountRoleName?: string) {
   const existing = storage.existingFiles;
-  const { targets, accounts } = existing ? existingFilesNetwork(origin, existing) : createdFilesNetwork(origin, chat, storage, browsers, clients);
+  const { mountTargetIp, targets, accounts } = existing ? existingFilesNetwork(origin, existing) : createdFilesNetwork(origin, chat, storage, browsers, clients);
   const grantMount = (grant: (statement: iam.PolicyStatement) => unknown, accessPointArn: string, operator: 'StringEquals' | 'ArnLike' = 'StringEquals') => {
     if (!existing) grant(new iam.PolicyStatement({
       actions: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'],
@@ -67,11 +68,7 @@ export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatServi
   });
   grantMount(statement => mount.addToPrincipalPolicy(statement), origin.formatArn({ service: 'elasticfilesystem', resource: 'access-point', resourceName: '*' }), 'ArnLike');
   mount.grantAssumeRole(chat.task.taskRole);
-  if (!existing) {
-    const target = targets[0];
-    if (!target) throw new Error('Files EFS requires a mount target');
-    chat.container.addEnvironment('BOTCUBE_FILES_MOUNT_TARGET_IP', target.attrIpAddress);
-  }
+  chat.container.addEnvironment('BOTCUBE_FILES_MOUNT_TARGET_IP', mountTargetIp);
   chat.container.addEnvironment('BOTCUBE_FILES_EFS_ARN', storage.filesEfs.attrArn);
   chat.container.addEnvironment('BOTCUBE_FILES_MOUNT_ROLE_ARN', mount.roleArn);
   // CDK Secret's `T | undefined` getters conflict with ISecret's optional properties under exactOptionalPropertyTypes.
@@ -108,7 +105,7 @@ function addPoolAlarm(origin: PreviewOriginStack, chat: PreviewChatService, capa
   alarm.addAlarmAction(new actions.SnsAction(chat.alertsTopic));
 }
 
-interface FilesNetwork { targets: efs.CfnMountTarget[]; accounts: { id: string; attrArn: string; created?: efs.CfnAccessPoint } }
+interface FilesNetwork { mountTargetIp: string; targets: efs.CfnMountTarget[]; accounts: { id: string; attrArn: string; created?: efs.CfnAccessPoint } }
 
 function createdFilesNetwork(origin: PreviewOriginStack, chat: PreviewChatService, storage: ChatStorageStack,
   browsers: { subnets: Array<{ id: string }> }, clients: ec2.ISecurityGroup[]): FilesNetwork {
@@ -124,10 +121,22 @@ function createdFilesNetwork(origin: PreviewOriginStack, chat: PreviewChatServic
     posixUser: { uid: '1000', gid: '1000' },
     rootDirectory: { path: '/accounts', creationInfo: { ownerUid: '1000', ownerGid: '1000', permissions: '750' } },
   });
-  return { targets, accounts: { id: accounts.ref, attrArn: accounts.attrArn, created: accounts } };
+  const [first] = targets;
+  if (!first) throw new Error('Files EFS requires a mount target');
+  return { mountTargetIp: first.attrIpAddress, targets, accounts: { id: accounts.ref, attrArn: accounts.attrArn, created: accounts } };
 }
 
-function existingFilesNetwork(origin: PreviewOriginStack, { accountsAccessPointId }: ExistingFiles): FilesNetwork {
+/** The existing file system's mount target, by the address EFS reports for it, so no mount depends on the VPC's resolver. */
+function existingFilesNetwork(origin: PreviewOriginStack, { fileSystemId, accountsAccessPointId }: ExistingFiles): FilesNetwork {
   const attrArn = origin.formatArn({ service: 'elasticfilesystem', resource: 'access-point', resourceName: accountsAccessPointId });
-  return { targets: [], accounts: { id: accountsAccessPointId, attrArn } };
+  const mountTarget = new cr.AwsCustomResource(origin, 'FilesMountTarget', {
+    onUpdate: {
+      service: 'EFS', action: 'describeMountTargets', parameters: { FileSystemId: fileSystemId },
+      physicalResourceId: cr.PhysicalResourceId.of(fileSystemId), outputPaths: ['MountTargets.0.IpAddress'],
+    },
+    installLatestAwsSdk: false,
+    // A read of the mount targets' metadata on any file system, so no BotCube policy names an existing resource.
+    policy: cr.AwsCustomResourcePolicy.fromSdkCalls({ resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE }),
+  });
+  return { mountTargetIp: mountTarget.getResponseField('MountTargets.0.IpAddress'), targets: [], accounts: { id: accountsAccessPointId, attrArn } };
 }

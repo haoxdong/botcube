@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SignJWT } from 'jose';
-import type { ModelsWire } from '../../../config/blocks.js';
 import { loadConfig } from '../../../config/load.js';
 import { required } from '../required.js';
 import { frameData, sseFrames } from './browser.js';
@@ -18,17 +17,6 @@ const botcubeConfig = (example: string) => fileURLToPath(new URL(`../../../examp
 
 const scratch: string[] = [];
 afterAll(() => Promise.all(scratch.map((dir) => rm(dir, { recursive: true, force: true }))));
-
-/** The enterprise example with its models Endpoint on the Responses wire, as a Responses-only gateway needs. */
-async function enterpriseOnTheResponsesWire(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'responses-wire-'));
-  scratch.push(dir);
-  const example = botcubeConfig('enterprise');
-  const file = JSON.parse(await readFile(example, 'utf8')) as { integrations: { modelGateway: object } };
-  const path = join(dir, 'botcube.yaml');
-  await writeFile(path, JSON.stringify({ ...file, integrations: { ...file.integrations, modelGateway: { ...file.integrations.modelGateway, wire: 'responses' } } }));
-  return path;
-}
 
 /** The tool the agent's model calls on an OpenAI-compatible Endpoint before it answers, and its arguments. */
 const AGENT_TOOL_CALL = { name: 'ls', arguments: { path: '/' } };
@@ -58,18 +46,11 @@ async function conversation(path: string) {
   };
 }
 
-describe('the public and the enterprise example, on each wire of its OpenAI-compatible endpoint', () => {
+describe('the public and the enterprise example, the enterprise one on the OpenAI API of its model gateway', () => {
   let pub: Awaited<ReturnType<typeof conversation>>;
-  /** The enterprise example's conversation on each wire. */
-  let enterprise: Record<ModelsWire, Awaited<ReturnType<typeof conversation>>>;
+  let enterprise: Awaited<ReturnType<typeof conversation>>;
   beforeAll(async () => {
-    const [onPublic, onChatCompletions, onResponses] = await Promise.all([
-      conversation(botcubeConfig('public')),
-      conversation(botcubeConfig('enterprise')),
-      enterpriseOnTheResponsesWire().then(conversation),
-    ]);
-    pub = onPublic;
-    enterprise = { 'chat-completions': onChatCompletions, responses: onResponses };
+    [pub, enterprise] = await Promise.all([conversation(botcubeConfig('public')), conversation(botcubeConfig('enterprise'))]);
   }, 120_000);
 
   it('hold the same conversation with the example bot', () => {
@@ -77,27 +58,26 @@ describe('the public and the enterprise example, on each wire of its OpenAI-comp
       identity: { name: 'BotCube', character: 'A template agent', vibe: 'Direct, precise, and calm', avatar: '🧊' },
       reply: 'Echo: Hello, who are you?',
     });
-    for (const { identity, reply } of Object.values(enterprise)) expect({ identity, reply }).toEqual({ identity: pub.identity, reply: pub.reply });
+    expect({ identity: enterprise.identity, reply: enterprise.reply }).toEqual({ identity: pub.identity, reply: pub.reply });
   });
 
-  it.each(['chat-completions', 'responses'] as const)("stream the agent's tool call and its result over %s", (wire) => {
-    const turn = enterprise[wire];
-    const endpoint = required(turn.stack.openAICompatible, 'the models endpoint stand-in');
+  it("stream the agent's tool call and its result over the model's provider's own API", () => {
+    const endpoint = required(enterprise.stack.openAICompatible, 'the models endpoint stand-in');
 
-    expect({ toolCalls: turn.toolCalls, toolResults: turn.toolResults }).toEqual({ toolCalls: [AGENT_TOOL_CALL.name], toolResults: 1 });
+    expect({ toolCalls: enterprise.toolCalls, toolResults: enterprise.toolResults }).toEqual({ toolCalls: [AGENT_TOOL_CALL.name], toolResults: 1 });
     // The model's first answer called the tool; its second request carried the tool's result back, and it answered.
     expect(endpoint.toolResults()).toHaveLength(1);
-    expect(endpoint.wires()).toEqual([wire, wire, wire]);
+    // The example bot's model and the summary model are on the openai provider: OpenAI's Chat Completions API, the gateway's default.
+    expect(endpoint.wires()).toEqual(['chat-completions', 'chat-completions', 'chat-completions']);
   });
 
-  it.each(['chat-completions', 'responses'] as const)('reach their models over %s, turn summaries included, on Bedrock and on the OpenAI-compatible endpoint', (wire) => {
+  it('reach their models, turn summaries included, on Bedrock and on the model gateway', () => {
     const summarized = [{ request: 'Hello, who are you?', answer: 'Echo: Hello, who are you?' }];
     expect(pub.stack.bedrock.summarizedTurns()).toEqual(summarized);
     expect(pub.stack.openAICompatible).toBeUndefined();
 
-    const turn = enterprise[wire];
-    const endpoint = required(turn.stack.openAICompatible, 'the models endpoint stand-in');
-    expect(turn.stack.bedrock.requests).toEqual([]);
+    const endpoint = required(enterprise.stack.openAICompatible, 'the models endpoint stand-in');
+    expect(enterprise.stack.bedrock.requests).toEqual([]);
     // The agent's model by its key in the bot settings, before and after its tool call, then the summary model the BotCube Config names.
     expect(endpoint.models()).toEqual(['echo', 'echo', 'example-summary']);
     expect(endpoint.summarizedTurns()).toEqual(summarized);

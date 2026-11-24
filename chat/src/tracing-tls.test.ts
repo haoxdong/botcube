@@ -4,11 +4,10 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { context, propagation, trace } from '@opentelemetry/api';
 import type { EndpointTls } from 'botcube-config/blocks';
+import type { BotCubeConfig } from 'botcube-config';
 import { telemetryEnvironment } from 'botcube-config/telemetry';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { FakeMtlsFront, FakeMtlsProxy, IMPOSTOR_IDENTITY, mtlsCertificates, SERVER_IDENTITY, trustCa } from '../test/fakes/mtls.js';
-import { endpointTls } from './endpoint-tls.js';
-import { startProxyRelay } from './proxy-relay.js';
 import { startChatTracing } from './tracing.js';
 
 const certificates = mtlsCertificates();
@@ -49,14 +48,14 @@ afterAll(async () => {
 });
 
 /** Start the Chat Service's tracing for a BotCube Config whose OTLP Endpoint on `port` has TLS, exporting each span as it ends. */
-function startTracing(port: number, tls: EndpointTls, proxyEnv: Record<string, string> = {}): void {
-  const telemetry = { kind: 'otlp', url: `https://127.0.0.1:${port}/v1/traces`, tls } as const;
+function startTracing(port: number, tls: EndpointTls, proxy?: BotCubeConfig['integrations']['proxy']): void {
+  const telemetry: BotCubeConfig['integrations']['telemetry'] = { kind: 'otlp', url: `https://127.0.0.1:${port}/v1/traces`, tls, ...(proxy ? { proxy: 'integrations.proxy' } : {}) };
   const env = {
-    ...telemetryEnvironment(telemetry).chatService, ...proxyEnv,
+    ...telemetryEnvironment(telemetry).chatService,
     OTEL_BSP_SCHEDULE_DELAY: '1', OTEL_RESOURCE_ATTRIBUTES: '', OTEL_NODE_RESOURCE_DETECTORS: 'none',
   };
   for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
-  tracing = startChatTracing(telemetry, process.env);
+  tracing = startChatTracing(telemetry, process.env, proxy);
 }
 
 async function exported(span: string): Promise<void> {
@@ -130,23 +129,22 @@ describe('Chat traces to an OTLP Endpoint with TLS', () => {
     }
   });
 
-  it("keep the certificate and identity check through the proxy relay, which presents the proxy's own", async () => {
+  it("keep the certificate and identity check through the proxy's relay when the Endpoint names the proxy, which presents the proxy's own", async () => {
     const front = new FakeMtlsFront(certificates, collectorPort());
     const port = await front.listen();
     const proxy = new FakeMtlsProxy(certificates, 'server', { [`127.0.0.1:${port}`]: port });
-    const relay = await startProxyRelay({
-      upstream: await proxy.listen(), listen: { host: '127.0.0.1', port: 0 }, headers: {},
-      tls: endpointTls('proxy', { clientCertificate: certificates.files.clientB, serverIdentity: SERVER_IDENTITY }),
-    });
+    const upstream = await proxy.listen();
     try {
-      startTracing(port, { clientCertificate: certificates.files.clientA, serverIdentity: SERVER_IDENTITY }, { HTTPS_PROXY: relay.url, https_proxy: relay.url, NO_PROXY: '', no_proxy: '' });
+      startTracing(port, { clientCertificate: certificates.files.clientA, serverIdentity: SERVER_IDENTITY }, {
+        kind: 'forward', url: upstream.href, tls: { clientCertificate: certificates.files.clientB, serverIdentity: SERVER_IDENTITY },
+      });
 
       await exported('proxied export probe');
 
       expect([proxy.hosts(), proxy.clients(), front.clients]).toEqual([[`127.0.0.1:${port}`], ['client-b'], ['client-a']]);
     } finally {
       front.dropConnections();
-      await Promise.all([front.close(), relay.close(), proxy.close()]);
+      await Promise.all([front.close(), proxy.close()]);
     }
   });
 });

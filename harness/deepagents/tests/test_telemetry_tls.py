@@ -1,42 +1,24 @@
 """The Harness's traces to an OTLP Endpoint with TLS (ADR 0091), at a stand-in mTLS collector."""
 from __future__ import annotations
 
-import importlib.util
 import logging
-import sys
 import threading
 import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
-from botcube_harness_deepagents.endpoint_tls import endpoint_tls
-from botcube_harness_deepagents.proxy_relay import start_proxy_relay
 from botcube_harness_deepagents.trace_relay import start_trace_relay
+from credential_service_fakes import mtls_fake
 from deployment_fixture import deploy
 
 pytestmark = pytest.mark.integration
-
-
-def _credential_service_fake() -> ModuleType:
-    """The Credential Service's stand-in mTLS front and certificates, which the Harness's twin `endpoint_tls` shares."""
-    path = Path(__file__).resolve().parents[3] / 'credential-service/tests/mtls_fake.py'
-    spec = importlib.util.spec_from_file_location('mtls_fake', path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules['mtls_fake'] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-mtls_fake = _credential_service_fake()
 
 
 @dataclass
@@ -81,10 +63,11 @@ def certs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return certificates
 
 
-def deploy_collector(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, port: int, tls: dict[str, object]) -> None:
-    """A BotCube Config whose OTLP Endpoint has TLS, and the variables the deploy sets beside it (config's `telemetry.ts`)."""
+def deploy_collector(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, port: int, tls: dict[str, object], proxy: dict[str, object] | None = None) -> None:
+    """A BotCube Config whose OTLP Endpoint has TLS, through `proxy` if given, and the variables the deploy sets beside it (config's `telemetry.ts`)."""
     url = f'https://127.0.0.1:{port}/v1/traces'
-    deploy(monkeypatch, tmp_path, integrations={'telemetry': {'kind': 'otlp', 'url': url, 'tls': tls}})
+    telemetry = {'kind': 'otlp', 'url': url, 'tls': tls, **({'proxy': 'integrations.proxy'} if proxy else {})}
+    deploy(monkeypatch, tmp_path, integrations={'telemetry': telemetry, **({'proxy': proxy} if proxy else {})})
     monkeypatch.setenv('OTEL_TRACES_EXPORTER', 'otlp')
     monkeypatch.setenv('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', url)
     monkeypatch.setenv('OTEL_PYTHON_EXPORTER_OTLP_HTTP_TRACES_CREDENTIAL_PROVIDER', 'botcube')
@@ -175,16 +158,12 @@ def test_shell_command_traces_reach_the_collector_through_the_trace_relay_with_t
     assert collector.exports == [b'command spans']
 
 
-def test_traces_keep_the_certificate_and_identity_check_through_the_proxy_relay(
+def test_traces_keep_the_certificate_and_identity_check_through_the_proxys_relay_when_the_endpoint_names_it(
     certs, collector: Collector, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     with mtls_fake.mtls_front(certs, collector.port) as front, mtls_fake.mtls_proxy(certs, routes={f'127.0.0.1:{front.port}': front.port}) as proxy:
-        relay = start_proxy_relay(
-            upstream=proxy.url, listen=('127.0.0.1', 0), credential=None, headers={},
-            tls=endpoint_tls('proxy', {'clientCertificate': certs.files('client_b'), 'serverIdentity': mtls_fake.SERVER_IDENTITY}),
-        )
-        monkeypatch.setenv('HTTPS_PROXY', relay)
-        deploy_collector(monkeypatch, tmp_path, front.port, {'clientCertificate': certs.files('client_a'), 'serverIdentity': mtls_fake.SERVER_IDENTITY})
+        through = {'kind': 'forward', 'url': proxy.url, 'tls': {'clientCertificate': certs.files('client_b'), 'serverIdentity': mtls_fake.SERVER_IDENTITY}}
+        deploy_collector(monkeypatch, tmp_path, front.port, {'clientCertificate': certs.files('client_a'), 'serverIdentity': mtls_fake.SERVER_IDENTITY}, through)
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
 

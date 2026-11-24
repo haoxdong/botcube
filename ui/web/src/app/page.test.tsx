@@ -271,7 +271,7 @@ vi.mock('@bot-settings', () => ({
   default: {
     agentIdentity: { name: 'Ada', character: 'A research agent' },
     accountKey: 'ada',
-    models: [{ key: 'fast', label: 'Fast', provider: 'test' }],
+    models: [{ key: 'fast', label: 'Fast', provider: 'anthropic' }],
     theme: { agentBody: '#f5d0a9', agentOutline: '#d9915a', agentDeep: '#9a5a2b', agentDeepest: '#4a2810' },
     agentComputer: { enabled: true, liveBrowser: true },
   },

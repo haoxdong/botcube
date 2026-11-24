@@ -1,5 +1,7 @@
 import { Hono, type Context } from 'hono';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import type { BotSettings } from 'botcube-config';
+import { openEgressProxy } from 'botcube-config/deployment';
 import { loadBotCube } from 'botcube-config/load';
 import { accountCookies } from './account-cookies.js';
 import { accountDeletions, serviceHealthy } from './account-deletions.js';
@@ -128,16 +130,18 @@ export interface StockOptions {
   filesRoot?: string | undefined;
 }
 
+/** A bot model as Users pick it: its output ceiling is the Harness's alone. */
+function withoutOutputCeiling({ maxTokens: _ceiling, ...model }: BotSettings['models'][number]): AgentModel {
+  return model;
+}
+
 /** BotCube's own Chat Service, composed from the BotCube Config and the settings its Bot Image carries (ADR 0091). */
 export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions = {}): (history: AccountHistory) => StockChat {
   const { config, bot } = deployment(env);
-  if (bot.userTokenInShell === true && env.BOTCUBE_TURN_IDENTITY_KEYS === undefined) {
-    throw new Error('userTokenInShell: the user token is signed with the Turn identity keys; set BOTCUBE_TURN_IDENTITY_KEYS and BOTCUBE_PUBLIC_ORIGIN');
-  }
   const accountStore = options.accountStore ?? stockAccountStore(env);
   const store = () => accountStore;
   const cookies = accountCookies(bot.accountKey);
-  const identity = config.integrations.signIn.kind === 'oidc' ? oidcIdentity(config.integrations.signIn, env, { store, cookies, returnOrigins: allowedOrigins(config) }) : null;
+  const identity = config.integrations.signIn.kind === 'oidc' ? oidcIdentity(config.integrations.signIn, env, { store, cookies, returnOrigins: allowedOrigins(config), proxy: config.integrations.proxy }) : null;
   const files = accountFilesFromEnv(env, store, config.existing.files, options.filesRoot);
   const started = agentComputerStartedFromConfig(bot.productService?.agentComputerStartedPath, env, async (accountId) => (await accountStore.loadAccount(accountId))?.status !== 'registered');
   const credentialServiceUrl = env.BOTCUBE_CREDENTIAL_SERVICE_URL;
@@ -188,7 +192,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
     // The managed AgentCore browser when the deploy names one; a local Chromium only when it names none.
     const computer = env.AGENTCORE_AGENT_COMPUTER_BROWSER_ID?.trim()
       ? managedAgentComputer({ history, requester, env, store, files, started, profileOmitsCookieDomains: bot.agentComputer.profileOmitsCookieDomains, accountKey: bot.accountKey })
-      : (options.agentComputer ?? ((local) => local))(localAgentComputer({ history, requester, env, startPage: options.startPage, started }));
+      : (options.agentComputer ?? ((local) => local))(localAgentComputer({ history, requester, env, startPage: options.startPage, started, proxy: openEgressProxy(config) }));
     const lifecycle = accountLifecycle({ credentials, history, files: filesConfigured(env) ? files : null, computers: computer, store });
     const deletions = accountDeletions({
       store, deleteAccount: lifecycle.deleteAccount,
@@ -198,7 +202,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
     let filesRecovery: Promise<void> | undefined;
     const chat: StockChat = {
       agentDocuments: agentDocumentTemplates({ ...bot.agentIdentity, soul: bot.soul }),
-      models: bot.models,
+      models: [withoutOutputCeiling(bot.models[0]), ...bot.models.slice(1).map(withoutOutputCeiling)],
       memory: bot.memory,
       async recoverAccountDeletions() {
         if (filesConfigured(env)) {

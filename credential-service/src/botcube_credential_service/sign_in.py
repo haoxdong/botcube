@@ -316,8 +316,8 @@ async def open_browser_page(variable: str, missing: str, browser_session_id: str
     if credentials is None:
         raise CdpError('No AWS credentials for the automation stream')
     SigV4Auth(credentials.get_frozen_credentials(), 'bedrock-agentcore', client.meta.region_name).add_auth(request)
-    # certifi, like httpx and botocore here: the image has no system CA store for ssl's default context.
-    tls = ssl.create_default_context(cafile=certifi.where())
+    # The caBundle SSL_CERT_FILE names, else certifi's: the image has no system CA store for ssl's default context.
+    tls = ssl.create_default_context(cafile=os.environ.get('SSL_CERT_FILE') or certifi.where())
     async with connect(endpoint, additional_headers=dict(request.headers.items()), max_size=None, ssl=tls) as socket:
         browser_target = _AutomationStreamPage(socket)
         targets = await browser_target.send('Target.getTargets', {})

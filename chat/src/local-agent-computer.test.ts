@@ -16,7 +16,6 @@ import { localAgentComputer } from './local-agent-computer.js';
 import { startLocalChromium, type LocalChromium } from './local-chromium.js';
 import { AgentCdp } from '../test/agent-cdp.js';
 import { testChromiumPath } from '../test/chromium.js';
-import { proxyEnvironment } from '../../config/environment.js';
 
 const fixture = (name: string) => fileURLToPath(new URL(`../test/fixtures/${name}`, import.meta.url));
 
@@ -24,14 +23,14 @@ const startupDiagnostics = vi.hoisted(() => ({
   capture: undefined as { stderr: string } | undefined,
   /** Run this executable instead of the one asked for, which `spawned` records with its arguments. */
   redirect: undefined as string | undefined,
-  spawned: [] as unknown[],
+  spawned: [] as [string, readonly string[]][],
 }));
 vi.mock('node:child_process', async (original) => {
   const actual = await original<typeof import('node:child_process')>();
   return {
     ...actual,
     spawn: (...args: Parameters<typeof actual.spawn>) => {
-      startupDiagnostics.spawned.push(args.slice(0, 2));
+      startupDiagnostics.spawned.push([args[0], args[1]]);
       if (startupDiagnostics.redirect) args[0] = startupDiagnostics.redirect;
       const child = actual.spawn(...args);
       const capture = startupDiagnostics.capture;
@@ -210,15 +209,22 @@ it("with zero env, runs the Chromium on PATH on a blank page and answers on this
   expect(startupDiagnostics.spawned).toEqual([[executable, expect.not.arrayContaining([expect.stringMatching(/^--(no-)?proxy/)])]]);
 });
 
-it("under the BotCube Config's proxy, starts Chromium through it, bypassing NO_PROXY", async () => {
-  const proxy = proxyEnvironment({ integrations: { proxy: { kind: 'forward', url: 'http://proxy.example:3128', noProxy: ['.internal.test'] } } });
-  computer = localAgentComputer({ history: owning(), requester, env: { BOTCUBE_CHROMIUM_PATH: testChromiumPath(), ...proxy } });
+it("under the BotCube Config's proxy, starts Chromium through it for every destination but loopback", async () => {
+  computer = localAgentComputer({ history: owning(), requester, env: { BOTCUBE_CHROMIUM_PATH: testChromiumPath() }, proxy: { kind: 'forward', url: 'http://proxy.example:3128' } });
   await computer.warmSession({ owner: OWNER }, 'proxied-session');
   expect(await computer.state(OWNER, 'proxied-session')).toMatchObject({ state: 'awake' });
-  expect(startupDiagnostics.spawned).toEqual([[testChromiumPath(), expect.arrayContaining([
-    '--proxy-server=http://proxy.example:3128',
-    '--proxy-bypass-list=localhost;*.localhost;127.0.0.1;[::1];169.254.169.254;169.254.170.2;internal.test;*.internal.test',
-  ])]]);
+  const [chromium] = startupDiagnostics.spawned;
+  expect(chromium?.[1].filter((arg) => /^--(no-)?proxy/.test(arg))).toEqual(['--proxy-server=http://proxy.example:3128']);
+});
+
+it("under a proxy taking a credential, starts Chromium through this process's relay to it", async () => {
+  computer = localAgentComputer({
+    history: owning(), requester, env: { BOTCUBE_CHROMIUM_PATH: testChromiumPath() },
+    proxy: { kind: 'forward', url: 'http://proxy.example:3128', credential: { kind: 'file', path: '/nonexistent/proxy-token' } },
+  });
+  await computer.warmSession({ owner: OWNER }, 'relayed-session');
+  const [chromium] = startupDiagnostics.spawned;
+  expect(chromium?.[1].filter((arg) => /^--(no-)?proxy/.test(arg))).toEqual([expect.stringMatching(/^--proxy-server=http:\/\/127\.0\.0\.1:\d+$/)]);
 });
 
 it('with no Chromium on PATH or in /Applications, fails the start naming the fix', async () => {

@@ -34,7 +34,7 @@ afterEach(async () => {
 function chatService(workspace?: string) {
   const records = new AccountResources('chat', memoryDocuments());
   const files = accountFilesEfs({
-    root, mountTargetIp: () => Promise.resolve('192.0.2.12'), fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0abc',
+    root, mountTargetIp: '192.0.2.12', fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0abc',
     accessPoints: { create: async () => { throw new Error('unused'); }, delete: async () => false },
     mountCredentials: async () => { throw new Error('unused'); },
     records: () => records, linkKey: 'k'.repeat(64),

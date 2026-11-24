@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import hashlib
 import importlib
 import json
@@ -19,8 +20,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import aclosing, asynccontextmanager
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from time import perf_counter, time_ns
@@ -37,16 +37,9 @@ from ag_ui.core import (
 from ag_ui.encoder import EventEncoder
 from ag_ui_langgraph import LangGraphAgent
 from deepagents.backends import LocalShellBackend
-from deepagents.middleware._utils import append_to_system_message
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from langchain.agents.middleware.types import (
-    AgentMiddleware,
-    ModelRequest,
-    ModelResponse,
-)
 from langgraph.checkpoint.base import CheckpointTuple
-from langgraph.config import get_config
 from langgraph.store.memory import InMemoryStore
 from opentelemetry import baggage, trace
 from opentelemetry import context as otel_context
@@ -60,6 +53,7 @@ from . import (
     process_observation,
     restore_prime,
     session_memory,
+    today,
     turn_output,
     turn_timing,
 )
@@ -72,16 +66,16 @@ from .agent_documents import (
     agent_document_tools,
     pop_agent_documents,
 )
+from .agent_prompts import agent_prompts
 from .artifact import SKILLS_SOURCE, artifact_tool
 from .bot_settings import bot_from_env
-from .botcube_config import botcube_config_from_env
-from .definition import HarnessDefinition, InvocationAuth, ModelRelay
+from .botcube_config import botcube_config_from_env, load_ca_bundle
+from .definition import BotModel, HarnessDefinition, InvocationAuth, ModelRelay
 from .definition import InvocationContext as _RequestContext
 from .files import (
     FilesBindingError,
     absolute_attachment_paths,
     excluded_paths,
-    files_prompt,
     pop_files_mount,
 )
 from .files_mount import FilesMount, FilesMountError
@@ -90,7 +84,6 @@ from .llm import (
     PLAN_MODEL_PREFIX,
     PlanUsageError,
     build_model,
-    cache_markers_on,
     models_on_endpoint,
     resolve_effort,
     resolve_model,
@@ -105,7 +98,7 @@ from .prompt_cache_observability import (
     PromptCacheUsageMiddleware,
     prompt_cache_turn,
 )
-from .proxy_relay import start_proxy_relay_from_config
+from .proxy_relay import shell_proxy_environment
 from .scheduled_tasks import propose_scheduled_task
 from .session_agent import SessionAgent
 from .session_format import (
@@ -114,6 +107,7 @@ from .session_format import (
     validate_checkpoint,
 )
 from .shell_backend import WorkerShellBackend
+from .shell_relay import ShellRelay, renew
 from .snapshot_build import answer_once, prime_process, walk_graph, workspace_at
 from .sse import keep_alive
 from .steering import SteeringMiddleware, active_steering
@@ -203,6 +197,7 @@ class HarnessBot:
     apply_session_id: Callable[[LocalShellBackend, str | None], None]
     environment_cache_key: Callable[[Mapping[str, str] | None], tuple[tuple[str, str], ...]]
     default_model: str | None = None
+    models: Mapping[str, BotModel] = field(default_factory=dict)
 
 
 _bot: HarnessBot | None = None
@@ -219,13 +214,14 @@ def configure_harness_definition(definition: HarnessDefinition, default_model: s
     def build_backend(environment: dict[str, str]) -> WorkerShellBackend:
         root = _workspace()
         definition.prepare_root(root)
-        return WorkerShellBackend(
+        relay = ShellRelay(definition.shell_environment)
+        return relay.bound(WorkerShellBackend(
             root_dir=root,
             virtual_mode=False,
-            env={**environment, 'PYTHONDONTWRITEBYTECODE': '1'},
+            env={**environment, **relay.environment, **shell_proxy_environment(botcube_config_from_env()), 'PYTHONDONTWRITEBYTECODE': '1'},
             trace_relay_endpoint=harness_trace_relay(),
             inherit_env=True,
-        )
+        ))
 
     def apply_session_id(backend: LocalShellBackend, session_id: str | None) -> None:
         cast(WorkerShellBackend, backend).set_environment_variable(  # pragma: no mutate: cast is a runtime no-op
@@ -243,6 +239,7 @@ def configure_harness_definition(definition: HarnessDefinition, default_model: s
             apply_session_id=apply_session_id,
             environment_cache_key=definition.environment_cache_key,
             default_model=default_model,
+            models=definition.models,
         )
     )
 
@@ -292,23 +289,6 @@ def _error_code(error: Exception) -> str:
     return 'INTERNAL_ERROR'
 
 
-def now() -> datetime:
-    return datetime.now(UTC)
-
-
-class _TodayMiddleware(AgentMiddleware):
-    async def awrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
-    ) -> ModelResponse:
-        name = get_config().get('configurable', {}).get('timezone')
-        zone = ZoneInfo(name if name is not None else 'UTC')
-        today = now().astimezone(zone)
-        line = f'Today is {today:%A}, {today.day} {today:%B %Y} ({zone.key}).'
-        return await handler(request.override(system_message=append_to_system_message(request.system_message, line)))
-
-
 _AGENTS: dict[_AgentKey, LangGraphAgent] = {}
 _CHECKPOINTER: Any | None = None
 _STORE: InMemoryStore | None = None
@@ -329,24 +309,6 @@ def _workspace() -> Path:
     root = Path(os.path.abspath(os.getenv('BOTCUBE_WORKSPACE', '').strip() or Path.home()))
     root.mkdir(parents=True, exist_ok=True)
     return root
-
-
-def _user_prompt(
-    profile: str, root: Path, skills: Sequence[str], syncs_files: bool, documents: AgentDocuments | None,
-) -> str:
-    return '\n\n'.join(
-        part
-        for part in (
-            profile and f'<user_profile>\n{profile}\n</user_profile>',
-            syncs_files and f'<files>\n{files_prompt(root, excluded_paths(skills))}\n</files>',
-            documents.prompt() if documents else '',
-        )
-        if part
-    )
-
-
-def _bot_instructions(bot: HarnessBot, candidate: str | None) -> str:
-    return bot.system_prompt if candidate is None else candidate
 
 
 def _get_agent(
@@ -398,20 +360,24 @@ def _get_agent(
         if cached is not None:
             backend = _BACKEND_BY_AGENT[cached]
             _apply_environment(backend, environment)
+            renew(backend, model_relay)
             return cached
 
         with turn_timing.phase('memory_backends'):
             store = _ensure_memory_backends()
         with turn_timing.phase('workspace'):
             backend = _backend_for((conversation_id, session_user_id, actor_id, environment_key), environment)
+            renew(backend, model_relay)
 
         root = Path(backend.cwd)
 
         with turn_timing.phase('model_client'):
+            bot_model = _require_bot().models.get(model or '')
             m = build_model(
                 model=model,
                 effort=effort,
-                max_tokens=16000,
+                provider=bot_model.provider if bot_model else None,
+                max_tokens=bot_model.max_tokens if bot_model else None,
                 relay=None if model_relay is None else lambda: _MODEL_RELAYS[key],
             )
         prompt_cache_middleware = PromptCacheUsageMiddleware(
@@ -432,24 +398,29 @@ def _get_agent(
             memory_tools, memory_middleware = _memory_tools(store, actor_id, conversation_id)
             tools.extend(memory_tools)
             middleware.extend(memory_middleware)
-        middleware.append(_TodayMiddleware())
+        middleware.append(today.TodayMiddleware())
         if documents:
             tools.extend(agent_document_tools(documents))
-        bot_prompt = _bot_instructions(bot, bot_system_prompt)
-        system_prompt = '\n\n'.join(
-            part for part in (agent_system_prompt, bot_prompt) if part
+        prompts = agent_prompts(
+            agent_system_prompt=agent_system_prompt,
+            bot_instructions=bot.system_prompt,
+            candidate_bot_instructions=bot_system_prompt,
+            profile=invocation_prompt,
+            root=root,
+            skills=bot.skills,
+            syncs_files=syncs_files,
+            documents=documents,
         )
-        user_prompt = _user_prompt(invocation_prompt, root, bot.skills, syncs_files, documents)
         with turn_timing.phase('graph_build'):
             graph = build_agent(
                 model=m,
                 tools=tools,
                 middleware=middleware,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
+                system_prompt=prompts.system,
+                user_prompt=prompts.user,
                 backend=backend,
                 skills=bot.skills,
-                subagents=[general_purpose_subagent(bot_prompt, bot.skills)] if bot_prompt else None,
+                subagents=[general_purpose_subagent(prompts.bot, bot.skills)] if prompts.bot else None,
                 checkpointer=_CHECKPOINTER,
                 store=store if persistent_memory else None,
             )
@@ -1205,7 +1176,7 @@ def _prime_snapshot() -> None:
                 actor_id=_SNAPSHOT_ID, session_user_id=_SNAPSHOT_ID, persistent_memory=True,
                 model=_SNAPSHOT_MODEL, thread_id=_SNAPSHOT_ID, model_relay=relay, syncs_files=True,
             ))
-            model = build_model(model=_SNAPSHOT_MODEL, max_tokens=16000, relay=lambda: relay)
+            model = build_model(model=_SNAPSHOT_MODEL, relay=lambda: relay)
             asyncio.run(answer_once(model, _SNAPSHOT_ID))
         agentcore_memory_backend.prime_memory_client(AWS_REGION)
         aws_clients.prime(AWS_REGION)
@@ -1216,6 +1187,7 @@ def _prime_snapshot() -> None:
         _BACKENDS.clear()
         _BACKEND_BY_AGENT.clear()
         _MODEL_RELAYS.clear()
+        gc.collect()
         log.info('Snapshot prime completed in %.3f seconds', perf_counter() - started)
 
 
@@ -1224,12 +1196,11 @@ def main() -> None:
 
     diagnostic_response.configured_gate()
 
-    start_proxy_relay_from_config(botcube_config_from_env())
+    load_ca_bundle(botcube_config_from_env())
     importlib.import_module('openai.resources.responses')
     if AGENTCORE_MEMORY_ID:
         agentcore_memory_backend.sts_client(AWS_REGION)
     models_on_endpoint()
-    cache_markers_on()
     if _bot is None:
         configure_harness_definition(*bot_from_env())
     logging.config.dictConfig({

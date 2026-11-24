@@ -5,9 +5,10 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, WebSocket
 from fastapi.responses import Response
 from fastapi.testclient import TestClient
+from starlette.testclient import WebSocketDenialResponse
 
 from botcube_credential_service.invocation import (
     CredentialServiceInvocation,
@@ -52,7 +53,7 @@ class FakeProvider:
     def allows_upstream(self, method: str, path: str) -> bool:
         return (method, path) == ('GET', 'v1/items')
 
-    async def authorize_upstream(self, invocation: CredentialServiceInvocation, request: Request, path: str) -> None:
+    async def authorize_upstream(self, invocation: CredentialServiceInvocation, request: Request | WebSocket, path: str) -> None:
         return None
 
     async def mint_access(self, account_id: str, request_context: Mapping[str, str]) -> str:
@@ -60,8 +61,14 @@ class FakeProvider:
         return f'access-for-{account_id}'
 
     async def relay(
-        self, request: Request, path: str, access: str, *, account_id: str, request_context: Mapping[str, str],
-    ) -> Response:
+        self, request: Request | WebSocket, path: str, access: str, *, account_id: str, request_context: Mapping[str, str],
+    ) -> Response | None:
+        if isinstance(request, WebSocket):
+            self.calls.append(('relay', ('websocket', path, access, account_id)))
+            await request.accept()
+            await request.send_text(f'{await request.receive_text()} with {access}')
+            await request.close()
+            return None
         self.calls.append(('relay', (request.method, path, access, account_id)))
         return Response(content=b'relayed', status_code=200)
 
@@ -191,7 +198,7 @@ def test_linked_accounts_lists_the_providers_holding_the_accounts_linked_account
 
 def test_provider_authorization_runs_before_any_access_is_minted() -> None:
     class RefusingProvider(FakeProvider):
-        async def authorize_upstream(self, invocation: CredentialServiceInvocation, request: Request, path: str) -> None:
+        async def authorize_upstream(self, invocation: CredentialServiceInvocation, request: Request | WebSocket, path: str) -> None:
             raise HTTPException(status_code=403, detail='Invocation cannot perform this upstream request')
 
     provider = RefusingProvider()
@@ -248,3 +255,29 @@ def test_relay_accepts_any_method_without_a_transport_allowlist(method: str) -> 
 
     assert response.status_code == 200
     assert provider.calls[-1] == ('relay', (method, 'arbitrary/action', 'access-for-acct-1', 'acct-1'))
+
+
+def test_a_websocket_upgrade_on_the_relay_route_round_trips_through_the_provider_with_minted_access() -> None:
+    provider = FakeProvider()
+
+    with _client(provider).websocket_connect('/site/v1/items', headers={**_bearer(), 'X-BotCube-Session-Id': 'run-1'}) as socket:
+        socket.send_text('hello')
+        assert socket.receive_text() == 'hello with access-for-acct-1'
+
+    assert provider.calls == [
+        ('mint', ('acct-1', {'sessionId': 'run-1', 'method': 'GET', 'path': 'v1/items'})),
+        ('relay', ('websocket', 'v1/items', 'access-for-acct-1', 'acct-1')),
+    ]
+
+
+@pytest.mark.parametrize(('session_id', 'path', 'status'), [('run-2', 'v1/items', 401), ('run-1', 'v1/other', 403)])
+def test_a_websocket_upgrade_runs_the_relay_checks_before_any_access_is_minted(session_id: str, path: str, status: int) -> None:
+    provider = FakeProvider()
+
+    with pytest.raises(WebSocketDenialResponse) as denied, _client(provider).websocket_connect(
+        f'/site/{path}', headers={**_bearer(), 'X-BotCube-Session-Id': session_id},
+    ):
+        pass
+
+    assert denied.value.status_code == status
+    assert provider.calls == []

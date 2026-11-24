@@ -145,22 +145,6 @@ describe('the AgentCore upstream', () => {
     ]);
   });
 
-  it("reaches the Runtime through the BotCube Config's proxy, unless the Runtime's host is exempted", async () => {
-    const proxy = await recordingServer((response) => response.end('ok'));
-    vi.stubEnv('NODE_USE_ENV_PROXY', '1');
-    // Both spellings: undici prefers the lowercase one, which a sandbox may already set.
-    const exempt = (hosts: string) => ['NO_PROXY', 'no_proxy'].forEach((name) => vi.stubEnv(name, hosts));
-    ['HTTP_PROXY', 'http_proxy'].forEach((name) => vi.stubEnv(name, proxy.baseUrl));
-    exempt('localhost');
-
-    await (await settled(agentCore('http://runtime.example').invoke('{}', 'session-1'))).text();
-    expect(proxy.received.map(({ url }) => new URL(url).host)).toEqual(['runtime.example']);
-
-    exempt('runtime.example');
-    await settled(agentCore('http://runtime.example').invoke('{}', 'session-1')).catch(() => undefined);
-    expect(proxy.received).toHaveLength(1);
-  });
-
   it('stops the exact Runtime Session before its record is erased', async () => {
     const { baseUrl, received } = await recordingServer((response) => response.end());
 

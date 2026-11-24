@@ -40,6 +40,7 @@ it("leases a User's access point from the existing pool on first use, and names 
       BOTCUBE_FILES_EFS_ARN: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0abc',
       BOTCUBE_FILES_SIGNING_KEY: 'k'.repeat(64),
       BOTCUBE_FILES_MOUNT_ROLE_ARN: 'arn:aws:iam::123456789012:role/files-mount',
+      BOTCUBE_FILES_MOUNT_TARGET_IP: '192.0.2.12',
     };
     const existing = {
       fileSystemId: 'fs-0abc', kmsKey: 'arn:aws:kms:us-east-1:123456789012:key/files', accountsAccessPointId: 'fsap-0acc',
@@ -50,6 +51,8 @@ it("leases a User's access point from the existing pool on first use, and names 
     await files.uploadUrl('acct_a', 'first.txt');
     expect(await store.filesAccessPoint('acct_a')).toBe('arn:aws:elasticfilesystem:us-east-1:123456789012:access-point/fsap-0a1');
     await expect(files.uploadUrl('acct_b', 'second.txt')).rejects.toMatchObject({ status: 503, message: expect.stringContaining('existing.files.accessPoints') });
+    const { BOTCUBE_FILES_MOUNT_TARGET_IP: _, ...unaddressed } = env;
+    expect(() => accountFilesFromEnv(unaddressed, () => store, existing, root)()).toThrow('BOTCUBE_FILES_MOUNT_TARGET_IP required');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

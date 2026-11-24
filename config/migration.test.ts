@@ -43,6 +43,9 @@ describe('BotCube Config migration', () => {
     ['network.proxy', 'network:\n  proxy: { kind: none }\n', 'integrations.proxy'],
     ['network.corsOrigins', 'network:\n  corsOrigins: [https://chat.example.com]\n', 'domains.web and domains.webAliases'],
     ['existing.network', 'existing:\n  network: {}\n', 'existing.vpc, with network.natGateways 0'],
+    ['integrations.proxy.noProxy', 'integrations:\n  proxy: { kind: forward, url: "http://proxy.example.com:3128", noProxy: [.example.com] }\n', 'proxy: integrations.proxy on each endpoint the proxy carries; every other destination goes direct'],
+    ['integrations.modelGateway.wire', 'integrations:\n  modelGateway: { wire: responses }\n', "each model's provider in /bot/bot.yaml, anthropic or openai"],
+    ['integrations.modelGateway.cacheMarkers', 'integrations:\n  modelGateway: { cacheMarkers: claude }\n', "each Claude model's provider anthropic in /bot/bot.yaml, whose calls carry cache markers"],
   ])('rejects the nested %s and names its replacement', (key, text, replacement) => {
     expect(() => loadConfig(file(text))).toThrow(`${key}: renamed to ${replacement}`);
   });

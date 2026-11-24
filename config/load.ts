@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { parseYaml, readConfigSource } from './read.cjs';
 import { botcubeConfig, type BotSettings, type BotCubeConfig } from './schema.js';
+import { unreachedProvider } from './blocks.js';
 import { BotCubeConfigError } from './parse.js';
 import { parseBotSettings, parsed } from './parse.js';
 
@@ -14,11 +15,16 @@ export function loadConfig(path: string): BotCubeConfig {
   return parsed(botcubeConfig, readConfigSource(path, BotCubeConfigError), `BotCube Config ${path}`);
 }
 
-export function loadBotCube(path: string): Deployment {
+/** A deployment: its BotCube Config at `path`, and the bot settings its Bot Image holds at `botPath`. */
+export function loadBotCube(path: string, botPath = '/bot/bot.yaml'): Deployment {
   const config = loadConfig(path);
-  const bot = loadBotSettings('/bot/bot.yaml');
+  const bot = loadBotSettings(botPath);
   if (config.liveView.kind === 'none' && bot.agentComputer.liveBrowser) {
     throw new BotCubeConfigError(`BotCube Config ${path}: liveView: none, but the bot settings turn agentComputer.liveBrowser on`);
+  }
+  for (const { key, provider } of bot.models) {
+    const unreached = unreachedProvider(config.integrations.modelGateway, provider);
+    if (unreached) throw new BotCubeConfigError(`BotCube Config ${path}: the bot settings' model ${key} is on provider ${provider}, but ${unreached}`);
   }
   return { config, bot };
 }

@@ -28,7 +28,8 @@ const existingFiles = z
   })
   .describe(
     'The Files file system and the access points Users lease from it: BotCube creates neither, and no access point at runtime. '
-    + "The existing VPC must use Amazon-provided DNS (enableDnsSupport and enableDnsHostnames): the Chat Service finds the file system's mount target as <fileSystemId>.efs.<region>.amazonaws.com.",
+    + "Each Turn mounts Files by the mount target's address, which the deploy reads from EFS. "
+    + "ECS mounts the Chat Service's own volume by <fileSystemId>.efs.<region>.amazonaws.com, so the VPC's resolver must answer that name.",
   );
 
 const kmsAliasArn = z

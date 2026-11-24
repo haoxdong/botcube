@@ -3,7 +3,7 @@ import type { AgentModel } from './models.js';
 import type { Requester } from './requester.js';
 import { createHash } from 'node:crypto';
 import type { BotCubeConfig } from 'botcube-config';
-import type { ModelsWire } from 'botcube-config/blocks';
+import { isGatewayProvider, providerModel } from 'botcube-config/blocks';
 import { z } from 'zod';
 import { awsFetch } from './aws.js';
 import { endpoint, type Endpoint } from './endpoint.js';
@@ -29,17 +29,16 @@ export interface BedrockSummaryModel {
   url: string;
 }
 
-/** The summary model on an OpenAI-compatible Endpoint (the BotCube Config's `models` section, ADR 0091). */
-export interface OpenAICompatibleSummaryModel {
+/** The summary model on the model gateway (the BotCube Config's `modelGateway`, ADR 0091), called on its provider's own API. */
+export interface GatewaySummaryModel {
   kind: 'openai-compatible';
   endpoint: Endpoint;
   model: string;
-  /** The OpenAI API the Endpoint is called over. */
-  wire: ModelsWire;
+  api: GatewayApi;
 }
 
 /** Where the summary model is called. */
-export type TurnSummaryModel = BedrockSummaryModel | OpenAICompatibleSummaryModel;
+export type TurnSummaryModel = BedrockSummaryModel | GatewaySummaryModel;
 
 /** The model Turn summaries run on; the production stack's Bedrock grant (`TURN_SUMMARY_MODEL`) names it too. */
 const MODEL_ID = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
@@ -50,12 +49,18 @@ You are given, as JSON, the user's request and the agent's last answer.
 Answer with the ${SUMMARY_TOOL} tool: a title of two to five words naming the task, and a one-line summary, in the past tense, of what the agent did or found.`;
 
 /**
- * The summary model the BotCube Config's `models` section names: the `turnSummaryModel` on its OpenAI-compatible
- * Endpoint, else Bedrock's in this region.
+ * The summary model the BotCube Config's `modelGateway` names: the gateway's `turnSummaryModel`, `provider:model`, where
+ * `providers` serves that provider or else at the gateway's URL, as the Harness calls it; else Bedrock's in this region.
  */
-export function turnSummaryModel(models: BotCubeConfig['integrations']['modelGateway'], env: NodeJS.ProcessEnv, region: string): TurnSummaryModel {
+export function turnSummaryModel(models: BotCubeConfig['integrations']['modelGateway'], env: NodeJS.ProcessEnv, region: string, proxy?: BotCubeConfig['integrations']['proxy']): TurnSummaryModel {
   if (models.kind === 'openai-compatible') {
-    return { kind: 'openai-compatible', endpoint: endpoint('models', models, env), model: models.turnSummaryModel, wire: models.wire };
+    const summary = providerModel(models.turnSummaryModel);
+    if (summary === undefined || !isGatewayProvider(summary.provider)) throw new Error(`turnSummaryModel ${models.turnSummaryModel}: not a gateway model, which the BotCube Config's schema checks`);
+    const provider = summary.provider;
+    const api = provider === 'anthropic' ? 'messages' : models.providers?.openai?.useResponsesApi ? 'responses' : 'chat-completions';
+    const route = models.providers?.[provider];
+    const reached = { ...models, ...route, url: route?.url ?? models.url, credential: route?.credential ?? models.credential };
+    return { kind: 'openai-compatible', endpoint: endpoint('models', reached, env, proxy), model: summary.model, api };
   }
   const bedrock = (env.AWS_ENDPOINT_URL_BEDROCK_RUNTIME || `https://bedrock-runtime.${region}.amazonaws.com`).replace(/\/+$/, '');
   return { kind: 'bedrock', region, url: `${bedrock}/model/${encodeURIComponent(MODEL_ID)}/converse` };
@@ -65,7 +70,7 @@ export function turnSummaryModel(models: BotCubeConfig['integrations']['modelGat
 export function turnSummarizer(model: TurnSummaryModel): TurnSummarizer {
   switch (model.kind) {
     case 'bedrock': return bedrockTurnSummarizer(model);
-    case 'openai-compatible': return openAICompatibleTurnSummarizer(model);
+    case 'openai-compatible': return gatewayTurnSummarizer(model);
   }
 }
 
@@ -88,11 +93,20 @@ const chatCompletion = z.object({
 const responsesAnswer = z.object({
   output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional() })),
 });
+const messagesAnswer = z.object({
+  content: z.array(z.object({ type: z.string(), name: z.string().optional(), input: z.unknown() })),
+});
 
-/** The forced summary tool's call on each wire: its path and request body, and the call's arguments in the answer. */
-const SUMMARY_CALL: { readonly [W in ModelsWire]: { path: string; body(model: string, turn: FinishedTurn): unknown; arguments(answer: unknown): string | undefined } } = {
+type GatewayApi = 'chat-completions' | 'responses' | 'messages';
+
+/**
+ * The forced summary tool's call on each provider API, as LangChain's `init_chat_model` calls it for the Harness:
+ * its path, headers and request body, and the call's input in the answer.
+ */
+const SUMMARY_CALL: { readonly [A in GatewayApi]: { path: string; headers: Record<string, string>; body(model: string, turn: FinishedTurn): unknown; input(answer: unknown): unknown } } = {
   'chat-completions': {
     path: '/chat/completions',
+    headers: {},
     body: (model, turn) => ({
       model,
       messages: [
@@ -104,10 +118,11 @@ const SUMMARY_CALL: { readonly [W in ModelsWire]: { path: string; body(model: st
       tools: [{ type: 'function', function: { name: SUMMARY_TOOL, description: SUMMARY_TOOL_DESCRIPTION, parameters: SUMMARY_PARAMETERS } }],
       tool_choice: { type: 'function', function: { name: SUMMARY_TOOL } },
     }),
-    arguments: (answer) => chatCompletion.safeParse(answer).data?.choices[0]?.message.tool_calls?.find((call) => call.function.name === SUMMARY_TOOL)?.function.arguments,
+    input: (answer) => parsedArguments(chatCompletion.safeParse(answer).data?.choices[0]?.message.tool_calls?.find((call) => call.function.name === SUMMARY_TOOL)?.function.arguments),
   },
   responses: {
     path: '/responses',
+    headers: {},
     body: (model, turn) => ({
       model,
       instructions: SYSTEM_PROMPT,
@@ -117,22 +132,35 @@ const SUMMARY_CALL: { readonly [W in ModelsWire]: { path: string; body(model: st
       tools: [{ type: 'function', name: SUMMARY_TOOL, description: SUMMARY_TOOL_DESCRIPTION, parameters: SUMMARY_PARAMETERS }],
       tool_choice: { type: 'function', name: SUMMARY_TOOL },
     }),
-    arguments: (answer) => responsesAnswer.safeParse(answer).data?.output.find((item) => item.type === 'function_call' && item.name === SUMMARY_TOOL)?.arguments,
+    input: (answer) => parsedArguments(responsesAnswer.safeParse(answer).data?.output.find((item) => item.type === 'function_call' && item.name === SUMMARY_TOOL)?.arguments),
+  },
+  messages: {
+    path: '/v1/messages',
+    headers: { 'anthropic-version': '2023-06-01' },
+    body: (model, turn) => ({
+      model,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: JSON.stringify(turn) }],
+      max_tokens: 512,
+      temperature: 0,
+      tools: [{ name: SUMMARY_TOOL, description: SUMMARY_TOOL_DESCRIPTION, input_schema: SUMMARY_PARAMETERS }],
+      tool_choice: { type: 'tool', name: SUMMARY_TOOL },
+    }),
+    input: (answer) => messagesAnswer.safeParse(answer).data?.content.find((block) => block.type === 'tool_use' && block.name === SUMMARY_TOOL)?.input,
   },
 };
 
-/** The summary model on an OpenAI-compatible endpoint, over its wire, answering with the same forced tool as on Bedrock. */
-export function openAICompatibleTurnSummarizer({ endpoint, model, wire }: OpenAICompatibleSummaryModel): TurnSummarizer {
-  const call = SUMMARY_CALL[wire];
+/** The summary model on the model gateway, on its provider's API, answering with the same forced tool as on Bedrock. */
+export function gatewayTurnSummarizer({ endpoint, model, api }: GatewaySummaryModel): TurnSummarizer {
+  const call = SUMMARY_CALL[api];
   return async (turn) => {
     const response = await endpoint.fetch(call.path, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...call.headers },
       body: JSON.stringify(call.body(model, turn)),
     });
     if (!response.ok) throw new Error(`The summary model answered HTTP ${response.status}`);
-    const args = call.arguments(await response.json());
-    return summaryInput(args === undefined ? undefined : parsedArguments(args));
+    return summaryInput(call.input(await response.json()));
   };
 }
 
@@ -165,8 +193,7 @@ export async function summarizePlanTurn(
   } });
   parser.feed(await response.text());
   if (completed === undefined) throw new Error('The plan summary response stream ended before completion');
-  const args = SUMMARY_CALL.responses.arguments({ output }) ?? SUMMARY_CALL.responses.arguments(completed);
-  return summaryInput(args === undefined ? undefined : parsedArguments(args));
+  return summaryInput(SUMMARY_CALL.responses.input({ output }) ?? SUMMARY_CALL.responses.input(completed));
 }
 
 function planSummaryError(body: unknown, fallback: string): Error {
@@ -177,7 +204,8 @@ function planSummaryError(body: unknown, fallback: string): Error {
   return new Error(`The plan summary model answered ${fallback}`);
 }
 
-function parsedArguments(text: string): unknown {
+function parsedArguments(text: string | undefined): unknown {
+  if (text === undefined) return undefined;
   try {
     return JSON.parse(text);
   } catch {

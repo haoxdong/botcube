@@ -6,13 +6,12 @@ import { required } from '../required.js';
 import { Browser } from './browser.js';
 import { loadConfig } from '../../../config/load.js';
 import { readConfig } from '../../../config/read.cjs';
-import { proxyEnvironment } from '../../../config/environment.js';
 import { telemetryEnvironment } from '../../../config/telemetry.js';
 import { FakeBedrock, FakeOpenAICompatible } from '../fakes/fake-backends.js';
 import { FakeForwardProxy, FakeOtlpCollector } from '../fakes/egress.js';
 import { FakeMtlsFront, FakeMtlsProxy, mtlsCertificates, SERVER_IDENTITY, type MtlsCertificates } from '../fakes/mtls.js';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../fakes/stack.js';
-import { freePort, startOnFreePort, startProcess, type RunningProcess } from '../fakes/process.js';
+import { startOnFreePort, startProcess, type RunningProcess } from '../fakes/process.js';
 import { createScheduledRuns, SchedulerView } from '../fakes/scheduler.js';
 import { motoEndpoint } from '../fakes/moto.js';
 import { FakeJwtAuthorizer } from '../fakes/jwt-authorizer.js';
@@ -130,7 +129,7 @@ export async function startLocalStack(options: {
     const modelsStandIn = await standInModels(models, openAICompatible, home, mtls);
     const botcubeConfig = await standInBotCubeConfig(deploymentPath, config, home, { ...egress?.offline, ...modelsStandIn });
     // The Harness serves the bot settings the BotCube Config's `bot` names, as the example bot's image does.
-    Object.assign(pythonEnv, egress?.environment, mtls?.pythonTrust, { BOTCUBE_CONFIG: botcubeConfig }, options.harnessEnv);
+    Object.assign(pythonEnv, egress?.telemetry?.harness, mtls?.pythonTrust, { BOTCUBE_CONFIG: botcubeConfig }, options.harnessEnv);
     const start = async (command: string, env: NodeJS.ProcessEnv, path: string, listeningPrefix: string) => {
       const running = await startOnFreePort((port) => ({
         command,
@@ -148,7 +147,6 @@ export async function startLocalStack(options: {
           PATH: process.env.PATH,
           HOME: home,
           BOTCUBE_CREDENTIAL_INVOCATION_SECRET: MODELS_INVOCATION_SECRET,
-          ...egress?.credentialEnvironment,
           BOTCUBE_CONFIG: botcubeConfig, BOTCUBE_TEST_IMAGE_SETTINGS: fileURLToPath(new URL('../../../examples/bot/bot.yaml', import.meta.url)),
           ...mtls?.pythonTrust,
         },
@@ -196,7 +194,7 @@ export async function startLocalStack(options: {
           BOTCUBE_SCHEDULED_RUNS_QUEUE_ARN: scheduledRuns.queueArn,
           BOTCUBE_SCHEDULED_RUNS_QUEUE_URL: scheduledRuns.queueUrl,
         } : {}),
-        ...egress?.chatEnvironment,
+        ...egress?.telemetry?.chatService,
         ...mtls?.chatTrust,
         ...credentialService,
         ...awsAccessEnv(config, dynamodbEndpoint),
@@ -225,9 +223,8 @@ interface EgressStandIns {
   readonly collector: FakeOtlpCollector | undefined;
   /** The sections the BotCube Config stand-in takes in place of the deployed proxy and telemetry. */
   readonly offline: { proxy: BotCubeConfig['integrations']['proxy']; telemetry: BotCubeConfig['integrations']['telemetry'] };
-  readonly environment: Record<string, string>;
-  readonly chatEnvironment: Record<string, string>;
-  readonly credentialEnvironment: Record<string, string>;
+  /** The OTLP variables the deploy sets beside an `otlp` telemetry section. */
+  readonly telemetry: ReturnType<typeof telemetryEnvironment> | undefined;
 }
 
 /** The models Endpoint's host behind the mTLS stand-ins, reached only through the proxy, which routes it to the front. */
@@ -257,7 +254,7 @@ async function mtlsStandIns(models: FakeOpenAICompatible, home: string): Promise
  * The BotCube Config's proxy offline, carrying its collector's host to a stand-in collector that takes only the
  * telemetry Endpoint's stand-in token, held in a file as a secret injector mounts it; and the standard variables the deploy
  * sets beside the BotCube Config. A proxy with a credential takes only its stand-in token, from a file, which the Chat Service, the Harness and the Credential Service
- * each send through their own relay, on a port of their own here as each has its own loopback when deployed.
+ * each send through their own relay, each on a free loopback port.
  */
 async function egressStandIns(config: BotCubeConfig | undefined, home: string, mtls?: MtlsStandIns): Promise<EgressStandIns | undefined> {
   const proxy = config?.integrations.proxy;
@@ -286,9 +283,7 @@ async function egressStandIns(config: BotCubeConfig | undefined, home: string, m
     proxy: standIn,
     collector,
     offline,
-    environment: { ...proxyEnvironment({ integrations: { proxy: offline.proxy } }, { relayPort: await freePort() }), ...telemetry?.harness },
-    chatEnvironment: { ...proxyEnvironment({ integrations: { proxy: offline.proxy } }, { relayPort: await freePort() }), ...telemetry?.chatService },
-    credentialEnvironment: proxyEnvironment({ integrations: { proxy: offline.proxy } }, { relayPort: await freePort() }),
+    telemetry,
   };
 }
 
@@ -335,12 +330,14 @@ function awsAccessEnv(config: BotCubeConfig, sts: string): NodeJS.ProcessEnv {
 /** The BotCube Config's models Endpoint at its stand-in, behind the mTLS stand-ins when given. */
 async function standInModels(models: BotCubeConfig['integrations']['modelGateway'], openAICompatible: FakeOpenAICompatible | undefined, home: string, mtls: MtlsStandIns | undefined) {
   if (openAICompatible === undefined || models.kind !== 'openai-compatible') return undefined;
+  // The stand-in on loopback is reached direct; behind the mTLS stand-ins, only through the proxy.
+  const { proxy, ...direct } = models;
   return {
     models: {
-      ...models,
+      ...direct,
       url: mtls ? `https://${MTLS_MODELS_HOST}/v1` : `${openAICompatible.url}/v1`,
       credential: { kind: 'file', path: await keyFile(home, openAICompatible.apiKey) },
-      ...(mtls ? { tls: { clientCertificate: mtls.certificates.files.clientA, serverIdentity: SERVER_IDENTITY } } : {}),
+      ...(mtls ? { tls: { clientCertificate: mtls.certificates.files.clientA, serverIdentity: SERVER_IDENTITY }, proxy: proxy ?? 'integrations.proxy' } : {}),
     } satisfies BotCubeConfig['integrations']['modelGateway'],
   };
 }

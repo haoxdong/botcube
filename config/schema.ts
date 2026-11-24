@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { HarnessAuth, TokenAudiences } from './seams.js';
 import { outsideIssuer, withClientSecret, type CredentialField } from 'botcube-config/credential-fields';
-import { cacheMarkers, credentialSource, endpoint, endpointHeaders, endpointTls, headersBeside, httpsOrLoopback, modelsWire, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource, type EndpointTls } from 'botcube-config/blocks';
+import { proxiedFields } from 'botcube-config/proxied-fields';
+import { absolutePath, credentialSource, endpointHeaders, endpointTls, forwardProxy, gatewayModels, modelProvider, proxyReference, relayProviders, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource, type EndpointTls } from 'botcube-config/blocks';
 import { existing } from 'botcube-config/existing';
-import { agentCore, alarms, cloudflare, deploymentKeys, natGateways, natRouteTables, parking, publicIp, RETIRED_FILES, services } from 'botcube-config/deployment';
+import { agentCore, alarms, cloudflare, deploymentKeys, natGateways, natRouteTables, openEgress, parking, publicIp, RETIRED_FILES, services } from 'botcube-config/deployment';
 import { imageRegistry } from 'botcube-config/images';
 import { userPool } from 'botcube-config/user-pool';
-import { renamedKeys } from 'botcube-config/renamed-keys';
+import { renamedBotKeys, renamedKeys } from 'botcube-config/renamed-keys';
 
 
 const schemaReference = z.string().optional().describe('The JSON Schema this file follows, for editors.');
@@ -15,7 +16,8 @@ const model = z.strictObject({
   key: z.string().min(1),
   label: z.string().min(1),
   description: z.string().min(1).optional(),
-  provider: z.string().min(1).describe("Whose model it is: a Session's Turns all run on its first Turn's provider."),
+  provider: modelProvider.describe("A Session's Turns all run on its first Turn's provider."),
+  maxTokens: z.number().int().positive().optional().describe("The most output tokens one call to the model may write, as LiteLLM's max_tokens; absent, LangChain's default; required on a model gateway for a model LangChain has no profile for."),
 });
 
 const agentColour = z.string().regex(/^#[0-9a-f]{6}$/i, 'Expected a colour as #rrggbb');
@@ -60,10 +62,15 @@ export const botSettings = z
       .array(z.string().min(1))
       .optional()
       .describe("Skill directories, relative to this file, each holding a SKILL.md; the bot's image copies them beside it."),
-    userTokenInShell: z
-      .boolean()
+    environment: z
+      .record(
+        z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'Expected a variable name'),
+        z.string().regex(/^(?:[^$]|\$\$|\$\{BOTCUBE_RELAY_URL\})*$/, 'Expected a literal value, where ${BOTCUBE_RELAY_URL} is the one variable and $$ a literal $'),
+      )
       .optional()
-      .describe("Whether the agent's shell holds the Turn's signed user token as BOTCUBE_USER_TOKEN, for the bot's CLIs to call its own service as the User; absent, it does not. Only for a bot with its own service."),
+      .describe(
+        "Variables the agent's shell holds, as Docker Compose's `environment`: each value is literal, with ${BOTCUBE_RELAY_URL}, the agent's loopback origin, interpolated. A request to `${BOTCUBE_RELAY_URL}/<provider>/…` reaches that Credential Service Relay provider with the Turn's credential; the loopback forwards only the providers these values name, such as `SITE_URL: ${BOTCUBE_RELAY_URL}/site`.",
+      ),
     ...webUiSettings,
     productName: z.string().trim().min(1).optional().describe("The product's name, as Users see it."),
     productService: z.strictObject({
@@ -101,6 +108,7 @@ const identity = z.discriminatedUnion('kind', [
       name: z.string().min(1),
     })).optional().describe("The AWS resources the deployment runs the provider on, beside BotCube's own, which the footprint lists."),
     userPool: userPool.optional(),
+    proxy: proxyReference.optional().describe("The issuer's calls go through integrations.proxy; absent, direct."),
   }).superRefine(({ clients }, context) => {
     clients.forEach(({ clientId }, index) => {
       const first = clients.findIndex((other) => other.clientId === clientId);
@@ -112,14 +120,7 @@ const models = z.discriminatedUnion('kind', [
   kindOnly('bedrock').extend({
     turnSummaryModel: z.string().min(1).optional().describe("The Bedrock model that summarizes each finished Turn; absent, BotCube's own."),
   }),
-  endpoint.extend({
-    kind: z.literal('openai-compatible'),
-    url: z.url().refine(httpsOrLoopback, 'A models endpoint is an https URL; only a stand-in on this machine may use http')
-      .describe("The endpoint's OpenAI API base URL, such as https://models.example.com/v1."),
-    turnSummaryModel: z.string().min(1).describe('The model on the endpoint that summarizes each finished Turn for the Activity.'),
-    wire: modelsWire.default('chat-completions'),
-    cacheMarkers: cacheMarkers.optional(),
-  }).describe("Every model on an OpenAI-compatible endpoint, by its key in the bot settings; Plan Usage models still run through the Credential Service."),
+  gatewayModels,
 ]);
 /** The audience of each kind of token BotCube's Chat Service signs; botcube/chat signs with these. */
 export const TOKEN_AUDIENCES = { turnIdentity: 'sts.amazonaws.com', user: 'botcube-user' } as const satisfies TokenAudiences;
@@ -188,27 +189,10 @@ const telemetry = z.discriminatedUnion('kind', [
     credential: credentialSource.optional().describe('Sent as `Authorization: Bearer <value>`; absent, exports are unauthenticated.'),
     headers: endpointHeaders,
     tls: endpointTls.optional(),
+    proxy: proxyReference.optional(),
   }).refine(({ url, tls }) => tls === undefined || url.startsWith('https:'), { path: ['tls'], message: 'TLS needs the OTLP Endpoint at an https URL' })
     .describe("The operator's own OTLP collector, an Endpoint both services export to directly."),
   kindOnly('none').describe('No traces leave the services, and no collector or X-Ray grant is created.'),
-]);
-
-const proxy = z.discriminatedUnion('kind', [
-  z.strictObject({
-    kind: z.literal('forward'),
-    url: httpUrl.describe('The forward proxy outbound HTTP and HTTPS go through, as HTTP_PROXY and HTTPS_PROXY.'),
-    noProxy: z
-      .array(z.string().min(1))
-      .optional()
-      .describe('Hosts and domain suffixes reached directly, as NO_PROXY; loopback and the AWS metadata addresses always are.'),
-    credential: credentialSource
-      .refine((source) => source.kind === 'file', 'A proxy credential is read from a file; any other source would reach out through the proxy it authenticates')
-      .optional()
-      .describe("A file, sent as `Proxy-Authorization: Bearer <value>` on each tunnel and request, read again as it rotates; absent, the proxy takes none."),
-    headers: headersBeside('Proxy-Authorization', 'each tunnel and request the proxy carries'),
-    tls: endpointTls.optional(),
-  }).refine(({ url, tls }) => tls === undefined || url.startsWith('https:'), { path: ['tls'], message: 'TLS needs the proxy at an https URL' }).describe("The operator's forward proxy, an Endpoint the Chat Service, the Harness and the commands it runs reach the internet through."),
-  kindOnly('none').describe('Outbound traffic goes direct.'),
 ]);
 
 /** The BotCube Config's sections, for a process that reads some of them; `botcubeConfig` checks the whole file. */
@@ -219,6 +203,9 @@ export const configSections = z.strictObject({
     .boolean()
     .default(false)
     .describe('Whether a credential may come from a command, which then runs as the service; whoever can edit this file chooses that command.'),
+  caBundle: absolutePath.optional().describe(
+    'A PEM file of the roots every process checks the proxy and endpoints against, as SSL_CERT_FILE, NODE_EXTRA_CA_CERTS and REQUESTS_CA_BUNDLE; loaded at startup. Absent, each image keeps its own.',
+  ),
   integrations: z.strictObject({
     signIn: identity.default({ kind: 'botcube-accounts' }).describe('How Users sign in.'),
     modelGateway: models.default({ kind: 'bedrock' }).describe('Where models run.'),
@@ -226,13 +213,15 @@ export const configSections = z.strictObject({
     awsAccess: awsAccess.default({ kind: 'web-identity' }),
     imageRegistry,
     telemetry: telemetry.default({ kind: 'xray' }),
-    proxy: proxy.default({ kind: 'none' }),
+    relayProviders,
+    proxy: forwardProxy.default({ kind: 'none' }),
   }).prefault({}),
   services,
   agentCore,
   network: z.strictObject({
     natGateways,
     publicIp,
+    openEgress,
   }).prefault({}),
   cloudflare,
   schedules: schedules.default({ kind: 'eventbridge-scheduler' }),
@@ -272,6 +261,7 @@ export function credentialFields({ integrations: { signIn: identity, modelGatewa
     ...(telemetry.kind === 'otlp' && telemetry.credential ? [[['integrations','telemetry', 'credential'], telemetry.credential] satisfies CredentialField] : []),
     ...(identity.kind === 'oidc' ? identity.clients.map(({ clientSecret }, index): CredentialField => [['integrations','signIn', 'clients', index, 'clientSecret'], clientSecret]) : []),
     ...(models.kind === 'openai-compatible' ? [[['integrations','modelGateway', 'credential'], models.credential] satisfies CredentialField] : []),
+    ...(models.kind === 'openai-compatible' ? Object.entries<{ credential?: CredentialSource | undefined } | undefined>(models.providers ?? {}).flatMap(([provider, route]): CredentialField[] => route?.credential ? [[['integrations', 'modelGateway', 'providers', provider, 'credential'], route.credential]] : []) : []),
   ];
   return fields.flatMap(withClientSecret);
 }
@@ -285,6 +275,9 @@ export const botcubeConfig = configSections.superRefine((config, context) => {
     if (source.kind === 'botcube') {
       context.addIssue({ code: 'custom', path, message: 'A botcube token is the Harness bearer, which the Chat Service signs for harnessAuth; no configured credential takes one' });
     }
+  }
+  for (const path of config.integrations.proxy.kind === 'none' ? proxiedFields(config) : []) {
+    context.addIssue({ code: 'custom', path, message: 'names integrations.proxy, which is none' });
   }
   for (const path of natRouteTables(config)) {
     context.addIssue({ code: 'custom', path, message: 'With network.natGateways 1, BotCube routes each private subnet to the NAT: give its route table' });
@@ -300,7 +293,7 @@ export type BotCubeConfig = z.output<typeof botcubeConfig>;
 
 /** The JSON Schemas of the files integrators write, for editors and for processes outside TypeScript. */
 export const jsonSchemas = () => ({
-  'bot.schema.json': z.toJSONSchema(botSettings, { io: 'input' }),
+  'bot.schema.json': { ...z.toJSONSchema(botSettings, { io: 'input' }), 'x-renamed-keys': renamedBotKeys },
   'botcube.schema.json': { ...z.toJSONSchema(botcubeConfig, { io: 'input' }), 'x-renamed-keys': renamedKeys, 'x-retired-files': RETIRED_FILES },
 });
 

@@ -90,7 +90,7 @@ export const SUPPLIABLE: Readonly<Record<string, Suppliable>> = {
       .map(([to, role]) => ({ to, role: `aws.iam.${role}`, actions: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'] })),
     others: {
       'NFS clients in the existing private subnets': ["TCP 2049 to the file system's mount target in each subnet"],
-      'the existing VPC': ['Amazon-provided DNS, by which the Chat Service finds the mount target as <fileSystemId>.efs.<region>.amazonaws.com'],
+      'the existing VPC': ["a resolver that answers <fileSystemId>.efs.<region>.amazonaws.com, the name ECS mounts the Chat Service's own Files volume by: ECS takes no mount target address"],
     },
   },
 };

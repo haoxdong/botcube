@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import socket
 import socketserver
 from collections.abc import Iterator
 from pathlib import Path
 from threading import Thread
-from typing import ClassVar
+from typing import Any, ClassVar
 
+import httpx
 import pytest
+from starlette.requests import Request
 
+from botcube_credential_service.audit import CredentialAuditRecorder
+from botcube_credential_service.openai import OpenAIProvider
 from botcube_credential_service.proxy_relay import (
+    proxy_url_from_config,
+    relay_provider_proxy,
     start_proxy_relay,
-    start_proxy_relay_from_config,
 )
 
 pytestmark = pytest.mark.integration
@@ -78,11 +84,9 @@ def _header(head: str, name: str) -> list[str]:
 
 
 def _from_config(url: str, token: Path, **proxy: object) -> str:
-    relay = start_proxy_relay_from_config(
-        {'integrations': {'proxy': {'kind': 'forward', 'url': url, 'credential': {'kind': 'file', 'path': str(token)}, **proxy}}}, {'HTTPS_PROXY': 'http://127.0.0.1:0'},
-    )
+    relay = proxy_url_from_config({'integrations': {'proxy': {'kind': 'forward', 'url': url, 'credential': {'kind': 'file', 'path': str(token)}, **proxy}}}, {})
     assert relay is not None
-    return relay
+    return relay()
 
 
 def test_relay_opens_each_tunnel_with_the_files_current_value_and_the_headers(upstream: tuple[str, list[str]], tmp_path: Path) -> None:
@@ -125,11 +129,62 @@ def test_relay_answers_502_naming_the_credential_and_opens_nothing_when_it_fails
     assert heads == []
 
 
-@pytest.mark.parametrize('proxy', [{'kind': 'none'}, {'kind': 'forward', 'url': 'http://proxy.example.com:3128'}])
-def test_no_relay_without_a_proxy_credential_or_headers(proxy: dict[str, str]) -> None:
-    assert start_proxy_relay_from_config({'integrations': {'proxy': proxy}}, {'HTTPS_PROXY': 'http://proxy.example.com:3128'}) is None
+def test_no_proxy_url_without_a_proxy() -> None:
+    assert proxy_url_from_config({'integrations': {'proxy': {'kind': 'none'}}}, {}) is None
 
 
-def test_a_relayed_proxy_needs_https_proxy_pointed_at_the_relay() -> None:
-    with pytest.raises(RuntimeError, match='^HTTPS_PROXY is unset beside the BotCube Config'):
-        start_proxy_relay_from_config({'integrations': {'proxy': {'kind': 'forward', 'url': 'http://proxy.example.com:3128', 'headers': {'x-tenant': 'a'}}}}, {})
+def test_the_proxy_itself_without_a_credential_headers_or_tls() -> None:
+    url = proxy_url_from_config({'integrations': {'proxy': {'kind': 'forward', 'url': 'http://proxy.example.com:3128'}}}, {})
+
+    assert url is not None
+    assert url() == 'http://proxy.example.com:3128'
+
+
+def test_one_loopback_relay_per_process_for_a_proxy_with_headers(upstream: tuple[str, list[str]]) -> None:
+    url, heads = upstream
+    config = {'integrations': {'proxy': {'kind': 'forward', 'url': url, 'headers': {'x-tenant': 'one-relay'}}}}
+    first, second = proxy_url_from_config(config, {}), proxy_url_from_config(config, {})
+    assert first is not None and second is not None
+
+    relay = first()
+
+    assert relay.startswith('http://127.0.0.1:')
+    assert second() == relay
+    _exchange(relay, 'CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n', b'hello')
+    assert [_header(head, 'x-tenant') for head in heads] == [['one-relay']]
+
+
+@pytest.mark.parametrize(('relay_providers', 'through'), [
+    ({'openai': {'proxy': 'integrations.proxy'}}, 'http://proxy.example.com:3128'),
+    ({'openai': {}}, None),
+    ({'site': {'proxy': 'integrations.proxy'}}, None),
+    (None, None),
+])
+def test_a_relay_provider_reaches_its_upstream_through_the_proxy_only_when_its_entry_names_it(
+    relay_providers: dict[str, dict[str, str]] | None, through: str | None,
+) -> None:
+    proxy = {'kind': 'forward', 'url': 'http://proxy.example.com:3128'}
+    config = {'integrations': {'proxy': proxy, **({} if relay_providers is None else {'relayProviders': relay_providers})}}
+
+    url = relay_provider_proxy(config, 'openai', {})
+
+    assert (url() if url else None) == through
+
+
+def test_the_openai_relay_provider_calls_openai_through_the_proxy_it_is_given(upstream: tuple[str, list[str]]) -> None:
+    url, heads = upstream
+    provider = OpenAIProvider(lambda: pytest.fail('a relayed call reads no Vault'), audit=CredentialAuditRecorder(), proxy=lambda: url)
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': b'', 'more_body': False}
+
+    async def relay() -> None:
+        request = Request({'type': 'http', 'method': 'GET', 'path': '/v1/models', 'query_string': b'', 'headers': []}, receive)
+        try:
+            with pytest.raises(httpx.TransportError):
+                await provider.relay(request, 'v1/models', 'access', account_id='acct-1', request_context={})
+        finally:
+            await provider.aclose()
+
+    asyncio.run(relay())
+    assert [head.split('\r\n')[0] for head in heads] == ['CONNECT api.openai.com:443 HTTP/1.1']

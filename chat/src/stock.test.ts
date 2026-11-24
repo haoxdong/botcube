@@ -88,17 +88,10 @@ describe('the stock Chat Service', () => {
     expect(() => stockChatService({ BOTCUBE_CONFIG: path })).toThrow(`Bot settings /bot/bot.yaml: agentIdentity.character: `);
   });
 
-  it('stops before serving a bot that wants the user token in its shell when there are no Turn identity keys to sign it', () => {
-    const path = botcubeConfig({ agentIdentity: { name: 'Quill', character: 'A drafting agent' }, accountKey: 'quill', userTokenInShell: true, models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] });
-
-    expect(() => stockChatService({ BOTCUBE_CONFIG: path })).toThrow('userTokenInShell: the user token is signed with the Turn identity keys; set BOTCUBE_TURN_IDENTITY_KEYS and BOTCUBE_PUBLIC_ORIGIN');
-    expect(() => stockChatService({ BOTCUBE_CONFIG: path, BOTCUBE_TURN_IDENTITY_KEYS: '[]' })).not.toThrow();
-  });
-
   it('offers only the bot settings\' models, with no account models', async () => {
     const service = stockChatService({ BOTCUBE_CONFIG: PUBLIC_EXAMPLE })(history);
 
-    expect(service.models).toEqual([{ key: 'echo', label: 'Echo', provider: 'echo' }]);
+    expect(service.models).toEqual([{ key: 'echo', label: 'Echo', provider: 'openai' }]);
     expect(await service.accountModels({ owner: 'owner' })).toEqual([]);
   });
 
@@ -488,7 +481,7 @@ describe("the stock Chat Service's Plan Usage", () => {
         ...(method === 'POST' ? { body: JSON.stringify({ subject: 'openai-http-owner', refreshToken: 'rt' }) } : {}),
       });
 
-      expect(await models()).toEqual([{ key: 'echo', label: 'Echo', provider: 'echo' }]);
+      expect(await models()).toEqual([{ key: 'echo', label: 'Echo', provider: 'openai' }]);
       const signedIn = await operator('POST', 'credential_capture');
       expect([signedIn.status, await signedIn.json()]).toEqual([200, { status: 'stored', subject: 'openai-http-owner' }]);
       expect(await models()).toEqual([model]);
@@ -496,7 +489,7 @@ describe("the stock Chat Service's Plan Usage", () => {
       const signedOut = await operator('DELETE', 'credential_revocation');
       expect([signedOut.status, await signedOut.json()]).toEqual([200, { status: 'removed' }]);
       expect(vault.has(owner)).toBe(false);
-      expect(await models()).toEqual([{ key: 'echo', label: 'Echo', provider: 'echo' }]);
+      expect(await models()).toEqual([{ key: 'echo', label: 'Echo', provider: 'openai' }]);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       vi.unstubAllEnvs();

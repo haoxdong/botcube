@@ -1,8 +1,10 @@
+import type { BotCubeConfig } from 'botcube-config';
 import type { Endpoint as EndpointConfig } from 'botcube-config/blocks';
-import { Agent, buildConnector, EnvHttpProxyAgent, Pool, type Dispatcher } from 'undici';
+import { Agent, buildConnector, Pool, ProxyAgent, type Dispatcher } from 'undici';
 import { credentialSource, type CredentialSource } from './credential-source.js';
 import { dispatcherFetch } from './dispatcher-fetch.js';
 import { endpointTls, type EndpointTls } from './endpoint-tls.js';
+import { proxyUrl, type ProxyUrl } from './proxy-relay.js';
 
 const RETRIED_STATUSES = new Set([502, 503, 504]);
 const DROPPED_BEFORE_RESPONSE_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'UND_ERR_CONNECT_TIMEOUT']);
@@ -26,11 +28,14 @@ export interface Endpoint {
   fetch(path: string, init: EndpointRequest): Promise<Response>;
 }
 
-export function endpoint(seam: string, config: EndpointConfig, env: NodeJS.ProcessEnv = process.env): Endpoint {
+/** The Endpoint `config` names, reached through the BotCube Config's `proxy` when it names it and direct otherwise. */
+export function endpoint(seam: string, config: EndpointConfig, env: NodeJS.ProcessEnv = process.env, proxy: BotCubeConfig['integrations']['proxy'] = { kind: 'none' }): Endpoint {
   const credential = credentialSource(seam, config.credential, { env });
   const url = config.url.replace(/\/+$/, '');
   if (config.tls && new URL(url).protocol !== 'https:') throw new Error(`${seam} TLS: the Endpoint ${config.url} is not https`);
-  const send = config.tls ? tlsFetch(endpointTls(seam, config.tls, { env }), env) : fetch;
+  const tls = config.tls && endpointTls(seam, config.tls, { env });
+  const through = config.proxy && proxyUrl(proxy, env);
+  const send = tls || through ? dispatchedFetch(tls, through) : fetch;
   return {
     url,
     credential,
@@ -71,14 +76,19 @@ function hasErrorCode(cause: unknown): cause is Error & { code: string } {
 }
 
 /**
- * `fetch` presenting the Endpoint's client certificate as read for each new connection, and checking its identity in
- * the handshake, before the bearer is sent. With NODE_USE_ENV_PROXY set, as Node's own `fetch` reads it, the handshake
- * runs through the tunnel of the proxy the environment names.
+ * `fetch` through the proxy `through` names, built on the first request, and presenting the Endpoint's client
+ * certificate as read for each new connection, checking its identity in the handshake before the bearer is sent; with
+ * a proxy, the handshake runs through its tunnel.
  */
-function tlsFetch(tls: EndpointTls, env: NodeJS.ProcessEnv): Fetch {
-  const factory = (origin: string | URL, options: object): Dispatcher => new Pool(origin, { ...options, connect: tlsConnector(tls, proxyTunnel(options)) });
-  const dispatcher = env.NODE_USE_ENV_PROXY === '1' ? new EnvHttpProxyAgent({ factory }) : new Agent({ factory });
-  return (url, { method, headers, body, signal }) => dispatcherFetch(url, { method, headers, body: body ?? null, signal: signal ?? null, dispatcher });
+function dispatchedFetch(tls: EndpointTls | undefined, through: ProxyUrl | undefined): Fetch {
+  const factory = tls && ((origin: string | URL, options: object): Dispatcher => new Pool(origin, { ...options, connect: tlsConnector(tls, proxyTunnel(options)) }));
+  const build = async (): Promise<Dispatcher> => {
+    if (through === undefined) return new Agent(factory ? { factory } : {});
+    return new ProxyAgent({ uri: await through(), ...(factory ? { factory } : {}) });
+  };
+  let dispatcher: Promise<Dispatcher> | undefined;
+  return async (url, { method, headers, body, signal }) =>
+    dispatcherFetch(url, { method, headers, body: body ?? null, signal: signal ?? null, dispatcher: await (dispatcher ??= build()) });
 }
 
 /**

@@ -167,7 +167,7 @@ def test_model_falls_back_to_the_default_aws_region(monkeypatch: pytest.MonkeyPa
     build_model(model='deepseek.v3.2')
 
     assert calls == [{
-        'model': 'deepseek.v3.2', 'temperature': 0, 'max_tokens': 128, 'region_name': 'eu-west-1', **SHARED_CLIENTS,
+        'model': 'deepseek.v3.2', 'temperature': 0, 'max_tokens': 16000, 'region_name': 'eu-west-1', **SHARED_CLIENTS,
         'additional_model_request_fields': {'reasoning_config': 'high'},
     }]
 
@@ -234,7 +234,7 @@ def test_model_defaults_to_sonnet(monkeypatch: pytest.MonkeyPatch, kwargs_record
         {
             'model': 'us.anthropic.claude-sonnet-4-6',
             'temperature': None,
-            'max_tokens': 128,
+            'max_tokens': 16000,
             'additional_model_request_fields': {
                 'thinking': {'type': 'adaptive', 'display': 'summarized'},
                 'output_config': {'effort': 'medium'},
@@ -274,7 +274,7 @@ def test_model_falls_back_to_converse_for_non_openai(monkeypatch: pytest.MonkeyP
         {
             'model': 'deepseek.v3.2',
             'temperature': 0,
-            'max_tokens': 128,
+            'max_tokens': 16000,
             'additional_model_request_fields': {'reasoning_config': 'high'},
         }
     ]
@@ -295,7 +295,7 @@ def test_model_enables_adaptive_thinking_with_effort(monkeypatch: pytest.MonkeyP
         {
             'model': 'us.anthropic.claude-sonnet-4-6',
             'temperature': None,
-            'max_tokens': 128,
+            'max_tokens': 16000,
             'additional_model_request_fields': {
                 'thinking': {'type': 'adaptive', 'display': 'summarized'},
                 'output_config': {'effort': 'medium'},

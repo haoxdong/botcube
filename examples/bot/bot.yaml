@@ -7,7 +7,7 @@
   },
   "accountKey": "template",
   "productName": "BotCube",
-  "models": [{ "key": "echo", "label": "Echo", "provider": "echo" }],
+  "models": [{ "key": "echo", "label": "Echo", "provider": "openai" }],
   "skills": ["skills/computer"],
   "memory": true,
   "agentComputer": {

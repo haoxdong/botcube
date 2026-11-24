@@ -168,7 +168,7 @@ describe('the Chat Service served from the environment', () => {
     }
 
     it("the models Endpoint's", async () => {
-      const models = { kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: { kind: 'file', path: absent }, turnSummaryModel: 'example-summary' };
+      const models = { kind: 'openai-compatible', url: 'https://models.example.com', credential: { kind: 'file', path: absent }, turnSummaryModel: 'openai:example-summary' };
       const env = { BOTCUBE_CONFIG: testBotCubeConfig(undefined, { integrations: { modelGateway: models } }) };
       expect(await exitsWith(overrides, env)).toContain(`models credential (file ${absent}): ENOENT`);
     });

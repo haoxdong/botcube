@@ -1,4 +1,3 @@
-import { lookup } from 'node:dns/promises';
 import type { BotCubeConfig } from 'botcube-config';
 import { ecsCleanupWorker } from './files-cleanup-worker.js';
 import { filesPoolManifest, s3PoolAccessPoints } from './files-pool-manifest.js';
@@ -22,21 +21,14 @@ function existingAccessPoints({ accessPoints }: ExistingFiles, fileSystemArn: st
   return pooledAccessPoints(slots, records, { pool: 'existing.files.accessPoints' });
 }
 
-/** The existing file system's mount target in this subnet's Availability Zone, by the name Amazon-provided VPC DNS gives it. */
-const mountTargetOf = ({ fileSystemId }: ExistingFiles, fileSystemArn: string) => async () => {
-  const [, , , region] = fileSystemArn.split(':');
-  return (await lookup(`${fileSystemId}.efs.${region}.amazonaws.com`, { family: 4 })).address;
-};
-
 function efsFilesFromEnv(env: NodeJS.ProcessEnv, records: () => FilesRecords, root: string, existing?: ExistingFiles): AccountFiles {
-  const required = existing ? EFS_SETTINGS.filter((name) => name !== 'BOTCUBE_FILES_MOUNT_TARGET_IP') : EFS_SETTINGS;
-  const missing = required.filter((name) => !env[name]?.trim());
+  const missing = EFS_SETTINGS.filter((name) => !env[name]?.trim());
   if (missing.length > 0) throw new HttpError(503, `Files on EFS are not configured: ${missing.join(', ')} required`);
   const setting = (name: (typeof EFS_SETTINGS)[number]) => env[name]?.trim() ?? '';
   const fileSystemArn = setting('BOTCUBE_FILES_EFS_ARN');
   return accountFilesEfs({
     root,
-    mountTargetIp: existing ? mountTargetOf(existing, fileSystemArn) : () => Promise.resolve(setting('BOTCUBE_FILES_MOUNT_TARGET_IP')),
+    mountTargetIp: setting('BOTCUBE_FILES_MOUNT_TARGET_IP'),
     fileSystemArn,
     accessPoints: existing ? existingAccessPoints(existing, fileSystemArn, records) : env.BOTCUBE_FILES_POOL_MANIFEST !== undefined
       ? s3PoolAccessPoints(filesPoolManifest.parse(JSON.parse(env.BOTCUBE_FILES_POOL_MANIFEST)), records)

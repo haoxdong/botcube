@@ -12,10 +12,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from botcube_credential_service.audit import CredentialAuditRecorder
-from botcube_credential_service.endpoint_tls import EndpointTlsError, endpoint_tls
+from botcube_credential_service.endpoint_tls import EndpointTlsError
 from botcube_credential_service.invocation import sign_credential_service_invocation
 from botcube_credential_service.models import models_provider_from_config
-from botcube_credential_service.proxy_relay import start_proxy_relay
 from botcube_credential_service.server import CredentialServiceSettings, create_app
 from mtls_fake import (
     IMPOSTOR_IDENTITY,
@@ -86,9 +85,10 @@ def key(tmp_path: Path) -> Path:
 
 
 @contextlib.contextmanager
-def _credential_service(port: int, key: Path, tls: dict[str, Any]) -> Generator[TestClient]:
-    endpoint = {'url': f'https://127.0.0.1:{port}/v1', 'credential': {'kind': 'file', 'path': str(key)}, 'tls': tls}
-    provider = models_provider_from_config(CredentialAuditRecorder(), {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}}, {})
+def _credential_service(port: int, key: Path, tls: dict[str, Any], proxy: dict[str, Any] | None = None) -> Generator[TestClient]:
+    endpoint = {'url': f'https://127.0.0.1:{port}/v1', 'credential': {'kind': 'file', 'path': str(key)}, 'tls': tls, **({'proxy': 'integrations.proxy'} if proxy else {})}
+    integrations = {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'openai:summary', **endpoint}, 'proxy': proxy or {'kind': 'none'}}
+    provider = models_provider_from_config(CredentialAuditRecorder(), {'integrations': integrations}, {})
     assert provider is not None
     settings = CredentialServiceSettings(name='test-credential-service', invocation_secret=lambda: SECRET)
     with TestClient(create_app(settings, [provider])) as client:
@@ -98,7 +98,7 @@ def _credential_service(port: int, key: Path, tls: dict[str, Any]) -> Generator[
 def _completion(client: TestClient) -> Any:
     token = sign_credential_service_invocation(SECRET, 'acct-1', 'thread-1', model_provider='example', model_id='echo')
     headers = {'Authorization': f'Bearer {token}', 'X-BotCube-Session-Id': 'thread-1', 'content-type': 'application/json'}
-    return client.post('/models/chat/completions', content=BODY, headers=headers)
+    return client.post('/models/openai/chat/completions', content=BODY, headers=headers)
 
 
 def test_the_agents_model_calls_present_the_client_certificate_to_an_endpoint_carrying_the_expected_identity(
@@ -138,28 +138,34 @@ def test_an_endpoint_carrying_another_identity_is_refused_before_the_bearer_is_s
         assert _Gateway.bearers == []
 
 
-def test_the_agents_model_calls_go_through_the_proxy_relay_presenting_both_certificates(
-    certs: Certificates, gateway: int, key: Path, monkeypatch: pytest.MonkeyPatch,
+def test_the_agents_model_calls_go_through_the_proxys_relay_when_the_endpoint_names_it_presenting_both_certificates(
+    certs: Certificates, gateway: int, key: Path,
 ) -> None:
     with mtls_front(certs, gateway) as front, mtls_proxy(certs, routes={f'127.0.0.1:{front.port}': front.port}) as proxy:
-        relay = start_proxy_relay(
-            upstream=proxy.url, listen=('127.0.0.1', 0), credential=None, headers={},
-            tls=endpoint_tls('proxy', {'clientCertificate': certs.files('client_b'), 'serverIdentity': SERVER_IDENTITY}, env={}),
-        )
-        monkeypatch.setenv('HTTPS_PROXY', relay)
-        with _credential_service(front.port, key, {'clientCertificate': certs.files('client_a'), 'serverIdentity': SERVER_IDENTITY}) as client:
+        through = {'kind': 'forward', 'url': proxy.url, 'tls': {'clientCertificate': certs.files('client_b'), 'serverIdentity': SERVER_IDENTITY}}
+        with _credential_service(front.port, key, {'clientCertificate': certs.files('client_a'), 'serverIdentity': SERVER_IDENTITY}, through) as client:
             response = _completion(client)
 
         assert response.status_code == 200
         assert (proxy.hosts(), proxy.clients(), front.clients) == ([f'127.0.0.1:{front.port}'], ['client-b'], ['client-a'])
 
 
-def test_an_impostor_reached_through_an_https_proxy_is_refused_before_the_bearer_is_sent(
-    certs: Certificates, gateway: int, key: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    with mtls_front(certs, gateway, 'impostor') as front, mtls_proxy(certs, 'localhost', {f'127.0.0.1:{front.port}': front.port}, client_certificate=False) as proxy:
+def test_the_agents_model_calls_go_direct_when_the_endpoint_names_no_proxy(certs: Certificates, gateway: int, key: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    with mtls_front(certs, gateway) as front, mtls_proxy(certs, routes={f'127.0.0.1:{front.port}': front.port}) as proxy:
         monkeypatch.setenv('HTTPS_PROXY', proxy.url)
         with _credential_service(front.port, key, {'clientCertificate': certs.files('client_a'), 'serverIdentity': SERVER_IDENTITY}) as client:
+            response = _completion(client)
+
+        assert response.status_code == 200
+        assert (proxy.hosts(), front.clients) == ([], ['client-a'])
+
+
+def test_an_impostor_reached_through_an_https_proxy_is_refused_before_the_bearer_is_sent(
+    certs: Certificates, gateway: int, key: Path,
+) -> None:
+    with mtls_front(certs, gateway, 'impostor') as front, mtls_proxy(certs, 'localhost', {f'127.0.0.1:{front.port}': front.port}, client_certificate=False) as proxy:
+        through = {'kind': 'forward', 'url': proxy.url}
+        with _credential_service(front.port, key, {'clientCertificate': certs.files('client_a'), 'serverIdentity': SERVER_IDENTITY}, through) as client:
             response = _completion(client)
 
         assert proxy.hosts() == [f'127.0.0.1:{front.port}']
@@ -175,20 +181,20 @@ def test_startup_fails_naming_the_models_seam_and_the_file_when_the_certificate_
     }
 
     with pytest.raises(EndpointTlsError, match=r'^models client certificate \(file .*svid\.pem, file .*svid-key\.pem\)'):
-        models_provider_from_config(CredentialAuditRecorder(), {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}}, {})
+        models_provider_from_config(CredentialAuditRecorder(), {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'openai:summary', **endpoint}}}, {})
 
 
 def test_startup_fails_when_the_endpoint_url_cannot_carry_tls(key: Path) -> None:
     endpoint = {'url': 'http://models.example.com/v1', 'credential': {'kind': 'file', 'path': str(key)}, 'tls': {'serverIdentity': SERVER_IDENTITY}}
 
     with pytest.raises(EndpointTlsError, match=r'^models TLS: the Endpoint http://models\.example\.com/v1 is not https'):
-        models_provider_from_config(CredentialAuditRecorder(), {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}}, {})
+        models_provider_from_config(CredentialAuditRecorder(), {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'openai:summary', **endpoint}}}, {})
 
 
 def test_an_impostor_is_refused_however_the_endpoint_host_is_spelt(certs: Certificates, gateway: int, key: Path) -> None:
     with mtls_front(certs, gateway, 'impostor') as front:
         endpoint = {'url': f'https://LocalHost:{front.port}/v1', 'credential': {'kind': 'file', 'path': str(key)}, 'tls': {'serverIdentity': SERVER_IDENTITY}}
-        provider = models_provider_from_config(CredentialAuditRecorder(), {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}}, {})
+        provider = models_provider_from_config(CredentialAuditRecorder(), {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'openai:summary', **endpoint}}}, {})
         assert provider is not None
         settings = CredentialServiceSettings(name='test-credential-service', invocation_secret=lambda: SECRET)
         with TestClient(create_app(settings, [provider])) as client:
@@ -212,4 +218,4 @@ def test_an_empty_tls_block_is_refused_at_startup_not_read_as_no_tls(key: Path) 
     endpoint = {'url': 'https://models.example.com/v1', 'credential': {'kind': 'file', 'path': str(key)}, 'tls': {}}
 
     with pytest.raises(EndpointTlsError, match=r'^models TLS: '):
-        models_provider_from_config(CredentialAuditRecorder(), {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}}, {})
+        models_provider_from_config(CredentialAuditRecorder(), {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'openai:summary', **endpoint}}}, {})

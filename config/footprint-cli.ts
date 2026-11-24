@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 import { footprint, formatFootprint, type FilesAccessPointMode, type FootprintOptions } from './footprint.js';
-import { loadConfig } from './load.js';
+import { loadBotCube, loadConfig } from './load.js';
 import { BotCubeConfigError } from './parse.js';
 
 export interface CliIo {
@@ -8,7 +8,7 @@ export interface CliIo {
   readonly stderr: (text: string) => void;
 }
 
-const USAGE = 'Usage: botcube footprint [--files-access-point-mode <runtime|pool>] <botcube.yaml>\n';
+const USAGE = 'Usage: botcube footprint [--files-access-point-mode <runtime|pool>] [--bot <bot.yaml>] <botcube.yaml>\n';
 const MODES: readonly string[] = ['runtime', 'pool'] satisfies FilesAccessPointMode[];
 const isMode = (value: string | undefined): value is FilesAccessPointMode | undefined => value === undefined || MODES.includes(value);
 
@@ -20,7 +20,8 @@ export function main(argv: readonly string[], io: CliIo): number {
     return 2;
   }
   try {
-    io.stdout(formatFootprint(footprint(loadConfig(parsed.path), parsed.options)));
+    const { config, bot } = parsed.bot ? loadBotCube(parsed.path, parsed.bot) : { config: loadConfig(parsed.path), bot: undefined };
+    io.stdout(formatFootprint(footprint(config, { ...parsed.options, ...(bot ? { bot } : {}) })));
     return 0;
   } catch (error) {
     if (!(error instanceof BotCubeConfigError)) throw error;
@@ -29,15 +30,15 @@ export function main(argv: readonly string[], io: CliIo): number {
   }
 }
 
-function parseFlags(argv: readonly string[]): { path: string; options: FootprintOptions } | undefined {
+function parseFlags(argv: readonly string[]): { path: string; bot: string | undefined; options: FootprintOptions } | undefined {
   try {
     const { values, positionals } = parseArgs({
       args: [...argv], allowPositionals: true, strict: true,
-      options: { 'files-access-point-mode': { type: 'string' } },
+      options: { 'files-access-point-mode': { type: 'string' }, bot: { type: 'string' } },
     });
     const [command, path, ...rest] = positionals;
     const mode = values['files-access-point-mode'];
-    return command === 'footprint' && path && rest.length === 0 && isMode(mode) ? { path, options: mode ? { filesAccessPointMode: mode } : {} } : undefined;
+    return command === 'footprint' && path && rest.length === 0 && isMode(mode) ? { path, bot: values.bot, options: mode ? { filesAccessPointMode: mode } : {} } : undefined;
   } catch (error) {
     if (error instanceof TypeError && 'code' in error && String(error.code).startsWith('ERR_PARSE_ARGS_')) return undefined;
     throw error;

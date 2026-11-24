@@ -1,10 +1,13 @@
 import type { z } from 'zod';
 import { botSettings, type BotSettings } from 'botcube-config';
+import { renamedBotKeys } from 'botcube-config/renamed-keys';
 
 // Parsing without the file system, so a browser bundle can check the bot settings it was built with.
 
 /** Bot settings a bot bundles, checked against the seam file's schema; `source` names them in the error. */
 export function parseBotSettings(value: unknown, source: string): BotSettings {
+  const renamed = isRecord(value) ? Object.entries(renamedBotKeys).find(([key]) => Object.hasOwn(value, key)) : undefined;
+  if (renamed) throw new BotCubeConfigError(`${source}: ${renamed[0]}: renamed to ${renamed[1]}`);
   return parsed(botSettings, value, source);
 }
 

@@ -20,6 +20,14 @@ export const renamedKeys = {
   'network.proxy': 'integrations.proxy',
   'network.corsOrigins': WEB_ORIGINS,
   'existing.network': 'existing.vpc, with network.natGateways 0',
+  'integrations.proxy.noProxy': 'proxy: integrations.proxy on each endpoint the proxy carries; every other destination goes direct',
+  'integrations.modelGateway.wire': "each model's provider in /bot/bot.yaml, anthropic or openai",
+  'integrations.modelGateway.cacheMarkers': "each Claude model's provider anthropic in /bot/bot.yaml, whose calls carry cache markers",
   /** A Credential Source's, wherever one sits. */
   '**.secretArn': "secretId, the secret's name or ARN",
+};
+
+/** Each key the bot settings no longer take, and what replaced it. */
+export const renamedBotKeys: Readonly<Record<string, string>> = {
+  userTokenInShell: 'environment, where a CLI reaches its Relay provider at ${BOTCUBE_RELAY_URL}/<provider> with no credential in the shell',
 };

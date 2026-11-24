@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { proxyReference } from 'botcube-config/blocks';
 import { containerUri, serviceImages } from 'botcube-config/images';
 import { fillName, DERIVED_NAMES } from './names.cjs';
 
@@ -88,6 +89,16 @@ export const publicIp = z
   .ipv4()
   .optional()
   .describe("As AWS::EC2::EIP PublicIp: the Elastic IP BotCube's NAT egress leaves through, which the egress stack owns once imported; with natGateways 1.");
+
+export const openEgress = z
+  .strictObject({ proxy: proxyReference.optional() })
+  .optional()
+  .describe("Where the agent's commands and the Agent Computer's Chromium reach every destination but loopback, which no Endpoint names.");
+
+/** The proxy open egress goes through: integrations.proxy when network.openEgress names it, else none. */
+export function openEgressProxy<Proxy>(config: { integrations: { proxy: Proxy }; network: { openEgress?: { proxy?: string | undefined } | undefined } }): Proxy | { kind: 'none' } {
+  return config.network.openEgress?.proxy ? config.integrations.proxy : { kind: 'none' };
+}
 
 export const cloudflare = z
   .strictObject({

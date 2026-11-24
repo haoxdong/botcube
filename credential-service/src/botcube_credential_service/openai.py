@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, WebSocket
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .answer_boundary import CredentialAnswerBoundary
@@ -190,8 +190,10 @@ class OpenAIProvider:
         audit: CredentialAuditRecorder,
         transport: httpx.AsyncBaseTransport | None = None,
         clock: Callable[[], float] = time.time,
+        proxy: Callable[[], str] | None = None,
     ) -> None:
         self._vault = vault
+        self._proxy = proxy
         self._audit = audit
         self._clock = clock
         self._settings = OpenAISettings()
@@ -210,6 +212,7 @@ class OpenAIProvider:
         if self._client is None:
             self._client = httpx.AsyncClient(
                 transport=self._transport,
+                proxy=self._proxy() if self._proxy else None,
                 timeout=httpx.Timeout(self._read_timeout_seconds, connect=self._connect_timeout_seconds),
                 cookies=isolated_cookie_jar(),
             )
@@ -426,8 +429,8 @@ class OpenAIProvider:
             raise _revoked(f'OpenAI refused the token refresh with {detail}')
         raise _unavailable(f'OpenAI failed the token refresh with {detail}')
 
-    async def authorize_upstream(self, invocation: CredentialServiceInvocation, request: Request, path: str) -> None:
-        if request.method != 'POST':
+    async def authorize_upstream(self, invocation: CredentialServiceInvocation, request: Request | WebSocket, path: str) -> None:
+        if isinstance(request, WebSocket) or request.method != 'POST':
             return
         if invocation.model_provider != OPENAI_PROVIDER or invocation.model_id is None:
             raise HTTPException(status_code=403, detail='This invocation is not authorized for an OpenAI model')
@@ -440,13 +443,15 @@ class OpenAIProvider:
 
     async def relay(
         self,
-        request: Request,
+        request: Request | WebSocket,
         path: str,
         access: str,
         *,
         account_id: str,
         request_context: Mapping[str, str],
     ) -> Response:
+        if isinstance(request, WebSocket):
+            raise HTTPException(status_code=501, detail='The OpenAI relay relays HTTP only')
         context = _timing_context(request, request_context) if path == _RESPONSES_PATH else None
         self._audit.record_upstream_relay(
             account_id, OPENAI_PROVIDER, request_context if context is None else context,

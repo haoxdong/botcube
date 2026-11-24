@@ -48,7 +48,7 @@ function setup() {
   const access = fakeAccessPoints();
   const minted: string[] = [];
   const files = accountFilesEfs({
-    root, mountTargetIp: () => Promise.resolve('192.0.2.12'), fileSystemArn: FILE_SYSTEM_ARN, accessPoints: access.points, records: () => records, linkKey: LINK_KEY,
+    root, mountTargetIp: '192.0.2.12', fileSystemArn: FILE_SYSTEM_ARN, accessPoints: access.points, records: () => records, linkKey: LINK_KEY,
     mountCredentials: async (accessPointArn) => {
       minted.push(accessPointArn);
       return { accessKeyId: 'AKIA', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date(Date.now() + 3_600_000).toISOString() };

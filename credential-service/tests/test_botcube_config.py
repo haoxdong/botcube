@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import certifi
 import pytest
 
 from botcube_credential_service import botcube_config
@@ -68,7 +69,7 @@ def test_an_empty_file_stops_startup_naming_each_key_a_deployment_gives(tmp_path
 
 def test_a_valid_file_gives_its_sections_and_the_defaults_of_those_it_leaves_out(tmp_path: Path) -> None:
     config = load_botcube_config(_file(tmp_path, {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'url': 'https://models.example.com/v1',
-                                                     'credential': {'kind': 'file', 'path': '/run/secrets/key'}, 'turnSummaryModel': 'summary'}}}))
+                                                     'credential': {'kind': 'file', 'path': '/run/secrets/key'}, 'turnSummaryModel': 'openai:summary'}}}))
 
     assert config['integrations']['modelGateway']['url'] == 'https://models.example.com/v1'
     assert config['integrations']['proxy'] == {'kind': 'none'}
@@ -134,6 +135,27 @@ def test_the_credential_service_stops_before_it_serves_on_a_file_the_schema_refu
 
     with pytest.raises(BotCubeConfigError, match=f"^BotCube Config {path}: integrations.proxy.url: 'url' is a required property"):
         create_app(CredentialServiceSettings('test', lambda: 'secret'), [])
+
+
+@pytest.mark.parametrize(('bundle', 'reason'), [
+    ('absent.pem', 'No such file or directory'),
+    ('not-a-certificate.pem', 'no certificate or crl found'),
+])
+def test_the_credential_service_stops_before_it_serves_on_a_ca_bundle_it_cannot_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bundle: str, reason: str,
+) -> None:
+    (tmp_path / 'not-a-certificate.pem').write_text('not a certificate')
+    path = tmp_path / bundle
+    monkeypatch.setenv('BOTCUBE_CONFIG', str(_file(tmp_path, {'caBundle': str(path)})))
+
+    with pytest.raises(BotCubeConfigError, match=f'^caBundle {path}: .*{reason}'):
+        create_app(CredentialServiceSettings('test', lambda: 'secret'), [])
+
+
+def test_the_credential_service_starts_on_a_ca_bundle_holding_a_certificate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('BOTCUBE_CONFIG', str(_file(tmp_path, {'caBundle': certifi.where()})))
+
+    create_app(CredentialServiceSettings('test', lambda: 'secret'), [])
 
 
 def test_the_vendored_schema_is_the_canonical_schema_byte_for_byte() -> None:

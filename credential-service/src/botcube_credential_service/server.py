@@ -7,16 +7,15 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, Response
 
-from .botcube_config import botcube_config_from_env
+from .botcube_config import botcube_config_from_env, load_ca_bundle
 from .invocation import (
     CredentialServiceInvocation,
     verify_credential_service_invocation,
 )
 from .provider import CredentialProvider, UpstreamRefusal
-from .proxy_relay import start_proxy_relay_from_config
 
 _LOG = logging.getLogger(__name__)
 
@@ -76,7 +75,7 @@ class InvocationGuard:
             raise HTTPException(status_code=401, detail='Invalid Credential Service invocation token')
         return invocation
 
-    def verify_request(self, request: Request, scope: str | None) -> CredentialServiceInvocation:
+    def verify_request(self, request: Request | WebSocket, scope: str | None) -> CredentialServiceInvocation:
         return self.verify_account(request.headers.get('authorization'), request.headers.get(ACCOUNT_HEADER), scope)
 
 
@@ -98,11 +97,10 @@ def request_context(invocation: CredentialServiceInvocation, method: str, path: 
 
 def create_app(settings: CredentialServiceSettings, providers: Sequence[CredentialProvider[Any]]) -> FastAPI:
     botcube_config = botcube_config_from_env()
+    load_ca_bundle(botcube_config)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
-        # The OpenAI relay and the sign-in socket reach the operator's proxy through this process's relay.
-        start_proxy_relay_from_config(botcube_config)
         async with AsyncExitStack() as cleanup:
             for provider in providers:
                 cleanup.push_async_callback(provider.aclose)
@@ -171,25 +169,33 @@ def _mount(
 
     app.include_router(provider.routes(guard), prefix=prefix)
 
-    @app.api_route(prefix + '/{path:path}', methods=[], operation_id=provider.name)
-    async def relay(path: str, request: Request) -> Response:
-        request.state.credential_received_at = time.monotonic()
-        invocation = guard.verify_request(request, None)
-        session_id = (request.headers.get(SESSION_HEADER) or '').strip()
+    async def relay_call(connection: Request | WebSocket, method: str, path: str) -> Response | None:
+        connection.state.credential_received_at = time.monotonic()
+        invocation = guard.verify_request(connection, None)
+        session_id = (connection.headers.get(SESSION_HEADER) or '').strip()
         if not session_id or session_id != invocation.session_id:
             raise HTTPException(status_code=401, detail='Invalid Credential Service invocation token')
-        method, upstream_path = request.method.upper(), path.lstrip('/')
+        upstream_path = path.lstrip('/')
         if not provider.allows_upstream(method, upstream_path):
             _LOG.warning('Credential Service refused upstream %s %s', method, upstream_path)
             raise HTTPException(status_code=403, detail={
                 'code': 'gateway_refused',
                 'message': f'Credential Service only allows {provider.upstream_scope}',
             })
-        await provider.authorize_upstream(invocation, request, upstream_path)
-        context = request_context(invocation, request.method, path)
+        await provider.authorize_upstream(invocation, connection, upstream_path)
+        context = request_context(invocation, method, path)
         account_id = _credential_account(settings, provider, invocation)
         access = await provider.mint_access(account_id, context)
-        return await provider.relay(request, path, access, account_id=account_id, request_context=context)
+        return await provider.relay(connection, path, access, account_id=account_id, request_context=context)
+
+    @app.api_route(prefix + '/{path:path}', methods=[], operation_id=provider.name, response_model=None)
+    async def relay(path: str, request: Request) -> Response | None:
+        return await relay_call(request, request.method.upper(), path)
+
+    # An HTTP Upgrade on the same route: the same checks, then the provider takes the socket.
+    @app.websocket(prefix + '/{path:path}')
+    async def relay_socket(path: str, websocket: WebSocket) -> None:
+        await relay_call(websocket, 'GET', path)
 
 
 def _credential_account(

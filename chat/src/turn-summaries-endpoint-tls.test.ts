@@ -2,11 +2,9 @@ import { copyFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BotCubeConfig } from 'botcube-config';
 import type { EndpointTls } from 'botcube-config/blocks';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { FakeOpenAICompatible } from '../test/fakes/fake-backends.js';
 import { FakeMtlsFront, FakeMtlsProxy, mtlsCertificates, SERVER_IDENTITY, trustCa } from '../test/fakes/mtls.js';
-import { endpointTls } from './endpoint-tls.js';
-import { startProxyRelay } from './proxy-relay.js';
 import { turnSummarizer, turnSummaryModel } from './turn-summaries.js';
 
 const certificates = mtlsCertificates();
@@ -41,16 +39,12 @@ afterAll(async () => {
 
 /** The BotCube Config's `models` section for an Endpoint with TLS, at the stand-in's mTLS front. */
 function deployed(tls: EndpointTls): BotCubeConfig['integrations']['modelGateway'] {
-  return { kind: 'openai-compatible', url, credential: { kind: 'file', path: keyFile }, turnSummaryModel: 'example-summary', wire: 'chat-completions', tls };
+  return { kind: 'openai-compatible', url, credential: { kind: 'file', path: keyFile }, turnSummaryModel: 'openai:example-summary', tls };
 }
 
 const turn = { request: 'Hello, who are you?', answer: 'Echo: Hello, who are you?' };
-const summarize = (models: BotCubeConfig['integrations']['modelGateway'], env: NodeJS.ProcessEnv = {}) => turnSummarizer(turnSummaryModel(models, env, 'us-east-1'))(turn);
+const summarize = (models: BotCubeConfig['integrations']['modelGateway'], proxy?: BotCubeConfig['integrations']['proxy']) => turnSummarizer(turnSummaryModel(models, {}, 'us-east-1', proxy))(turn);
 const SUMMARY = { title: 'Answered a question', summary: 'Replied to the user' };
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 describe('Turn summaries on a models Endpoint with TLS', () => {
   it('present the client certificate to an Endpoint carrying the expected identity', async () => {
@@ -71,22 +65,28 @@ describe('Turn summaries on a models Endpoint with TLS', () => {
     expect(front.clients).toEqual(['client-a', 'client-b']);
   });
 
-  it("go through the proxy relay, which presents the proxy's certificate, and present the Endpoint's own through the tunnel", async () => {
-    const proxy = new FakeMtlsProxy(certificates, 'server', { [new URL(url).host]: Number(new URL(url).port) });
-    const relay = await startProxyRelay({
-      upstream: await proxy.listen(), listen: { host: '127.0.0.1', port: 0 }, headers: {},
-      tls: endpointTls('proxy', { clientCertificate: certificates.files.clientB, serverIdentity: SERVER_IDENTITY }),
+  describe('beside a proxy with TLS', () => {
+    let proxy: FakeMtlsProxy;
+    let viaProxy: BotCubeConfig['integrations']['proxy'];
+    beforeAll(async () => {
+      proxy = new FakeMtlsProxy(certificates, 'server', { [new URL(url).host]: Number(new URL(url).port) });
+      viaProxy = { kind: 'forward', url: (await proxy.listen()).href, tls: { clientCertificate: certificates.files.clientB, serverIdentity: SERVER_IDENTITY } };
     });
-    try {
-      for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) vi.stubEnv(name, relay.url);
-      for (const name of ['NO_PROXY', 'no_proxy']) vi.stubEnv(name, '');
+    afterAll(() => proxy.close());
+    beforeEach(() => proxy.connections.length = 0);
 
-      expect(await summarize(deployed({ clientCertificate: files, serverIdentity: SERVER_IDENTITY }), { NODE_USE_ENV_PROXY: '1' })).toEqual(SUMMARY);
+    it("go through the proxy's relay when the Endpoint names it, presenting the proxy's certificate and the Endpoint's own through the tunnel", async () => {
+      const named = { ...deployed({ clientCertificate: files, serverIdentity: SERVER_IDENTITY }), proxy: 'integrations.proxy' } as const;
+
+      expect(await summarize(named, viaProxy)).toEqual(SUMMARY);
 
       expect([proxy.hosts(), proxy.clients(), front.clients]).toEqual([[new URL(url).host], ['client-b'], ['client-a']]);
-    } finally {
-      front.dropConnections();
-      await Promise.all([relay.close(), proxy.close()]);
-    }
+    });
+
+    it('go direct when the Endpoint names no proxy', async () => {
+      expect(await summarize(deployed({ clientCertificate: files, serverIdentity: SERVER_IDENTITY }), viaProxy)).toEqual(SUMMARY);
+
+      expect([proxy.hosts(), front.clients]).toEqual([[], ['client-a']]);
+    });
   });
 });

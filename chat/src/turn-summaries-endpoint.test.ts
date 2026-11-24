@@ -36,47 +36,54 @@ function deployed(models: Partial<Extract<BotCubeConfig['integrations']['modelGa
     url: `${endpoint.url}/v1`,
     credential: { kind: 'file', path: keyFile },
     headers: { 'x-tenant': 'botcube-example' },
-    turnSummaryModel: 'example-summary',
-    wire: 'chat-completions',
+    turnSummaryModel: 'openai:example-summary',
     ...models,
   };
 }
 
 const turn = { request: 'Hello, who are you?', answer: 'Echo: Hello, who are you?' };
 const summarize = (models: BotCubeConfig['integrations']['modelGateway']) => turnSummarizer(turnSummaryModel(models, {}, 'us-east-1'))(turn);
+const sent = () => endpoint.requests.map(({ method, path }) => `${method} ${path}`);
 
-describe('Turn summaries on an OpenAI-compatible models Endpoint', () => {
-  it("send the Endpoint's credential as the bearer token, and its headers", async () => {
+describe('Turn summaries on a model gateway', () => {
+  it("summarize on an openai model through OpenAI's Chat Completions API, with the gateway's credential as the bearer token, and its headers", async () => {
     expect(await summarize(deployed())).toEqual({ title: 'Answered a question', summary: 'Replied to the user' });
 
+    expect(sent()).toEqual(['POST /v1/chat/completions']);
     expect(endpoint.summarizedTurns()).toEqual([turn]);
     expect(endpoint.models()).toEqual(['example-summary']);
     expect(endpoint.requests[0]?.headers).toMatchObject({ authorization: `Bearer ${API_KEY}`, 'x-tenant': 'botcube-example' });
   });
 
-  it('ask the Responses API on the Responses wire, with the same forced tool, bearer and headers', async () => {
-    expect(await summarize(deployed({ wire: 'responses' }))).toEqual({ title: 'Answered a question', summary: 'Replied to the user' });
+  it("summarize on an openai model through OpenAI's Responses API when the gateway's openai provider uses it", async () => {
+    expect(await summarize(deployed({ providers: { openai: { useResponsesApi: true } } }))).toEqual({ title: 'Answered a question', summary: 'Replied to the user' });
 
-    expect(endpoint.requests.map(({ method, path }) => `${method} ${path}`)).toEqual(['POST /v1/responses']);
+    expect(sent()).toEqual(['POST /v1/responses']);
     expect(endpoint.summarizedTurns()).toEqual([turn]);
-    expect(endpoint.models()).toEqual(['example-summary']);
-    expect(endpoint.requests[0]?.headers).toMatchObject({ authorization: `Bearer ${API_KEY}`, 'x-tenant': 'botcube-example' });
   });
 
-  it('fail on the Responses wire when the model answers without the summary tool', async () => {
+  it("summarize on an anthropic model through Anthropic's Messages API, at the provider's own URL with its own headers", async () => {
+    const models = deployed({ turnSummaryModel: 'anthropic:claude-haiku-4-5', providers: { anthropic: { url: endpoint.url, headers: { 'x-tenant': 'botcube-claude' } } } });
+
+    expect(await summarize(models)).toEqual({ title: 'Answered a question', summary: 'Replied to the user' });
+
+    expect(sent()).toEqual(['POST /v1/messages']);
+    expect(endpoint.summarizedTurns()).toEqual([turn]);
+    expect(endpoint.models()).toEqual(['claude-haiku-4-5']);
+    expect(endpoint.requests[0]?.headers).toMatchObject({ authorization: `Bearer ${API_KEY}`, 'anthropic-version': '2023-06-01', 'x-tenant': 'botcube-claude' });
+  });
+
+  it.each([
+    { api: 'Chat Completions', turnSummaryModel: 'openai:example-summary', providers: () => ({ openai: { useResponsesApi: false } }) },
+    { api: 'Responses', turnSummaryModel: 'openai:example-summary', providers: () => ({ openai: { useResponsesApi: true } }) },
+    { api: 'Messages', turnSummaryModel: 'anthropic:claude-haiku-4-5', providers: () => ({ anthropic: { url: endpoint.url } }) },
+  ])('fail when the summary model answers on $api without the summary tool', async ({ turnSummaryModel, providers }) => {
     endpoint.turnSummary = 'no-tool';
     try {
-      await expect(summarize(deployed({ wire: 'responses' }))).rejects.toThrow('The summary model answered without a title and summary');
+      await expect(summarize(deployed({ turnSummaryModel, providers: providers() }))).rejects.toThrow('The summary model answered without a title and summary');
     } finally {
       endpoint.turnSummary = { title: 'Answered a question', summary: 'Replied to the user' };
     }
-  });
-
-  it('keep working on an Endpoint whose cache markers only the Harness writes', async () => {
-    expect(await summarize(deployed({ cacheMarkers: 'claude' }))).toEqual({ title: 'Answered a question', summary: 'Replied to the user' });
-
-    expect(endpoint.summarizedTurns()).toEqual([turn]);
-    expect(endpoint.requests[0]?.body).not.toContain('cache_control');
   });
 
   it.each([502, 503, 504])('retry an HTTP %i before the first byte', async (status) => {

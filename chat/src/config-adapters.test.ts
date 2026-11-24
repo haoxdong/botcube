@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { stageBotImage } from '../test/bot-image.js';
 import { withRequired } from '../test/stock-bot.js';
+import { mtlsCertificates } from '../test/fakes/mtls.js';
 import { configAdapters } from './config-adapters.js';
 import { serveChatService } from './server.js';
 
@@ -90,6 +91,26 @@ describe("the Chat Service's adapters", () => {
     };
 
     expect(() => serveChatService(env)).toThrow("BOTCUBE_PARK_STATE_PARAMETER needs the bot settings' productName, the name a skipped run says was paused");
+  });
+
+  it.each([
+    ['missing', () => '/run/absent/ca-bundle.pem', 'ENOENT'],
+    ['holding no certificate', () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'chat-trust-')), 'ca-bundle.pem');
+      writeFileSync(path, 'not a certificate');
+      return path;
+    }, 'error:0480006C:PEM routines::no start line'],
+  ])('stop the Chat Service starting, before it listens, when its caBundle is %s', (_, bundle, reason) => {
+    const path = bundle();
+
+    expect(() => serveChatService({ PORT: '0', BOTCUBE_CONFIG: botcubeConfig({ caBundle: path }) })).toThrow(`caBundle ${path}: ${reason}`);
+  });
+
+  it('start on a caBundle holding a certificate', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'chat-trust-')), 'ca-bundle.pem');
+    writeFileSync(path, mtlsCertificates().authority);
+
+    expect(() => configAdapters({ BOTCUBE_CONFIG: botcubeConfig({ caBundle: path }) })).not.toThrow();
   });
 
   it('stop the Chat Service starting, before it listens, when the chosen kind is missing its environment', () => {

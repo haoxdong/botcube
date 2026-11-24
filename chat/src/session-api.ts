@@ -1,5 +1,5 @@
 import pLimit from 'p-limit';
-import { Agent, EnvHttpProxyAgent, type Dispatcher } from 'undici';
+import { Agent, type Dispatcher } from 'undici';
 import { awsFetch } from './aws.js';
 import { dispatcherFetch } from './dispatcher-fetch.js';
 import { HttpError } from './http-error.js';
@@ -65,11 +65,9 @@ const LAMBDA_MAX_INVOCATION_MS = 900_000;
 /**
  * The session API's connections, with no headers or body timeout: a call's own timeout is its only deadline.
  * Undici's defaults, 300 s each, would cut short a purge the function runs for up to 900 s.
- * Under the BotCube Config's proxy (NODE_USE_ENV_PROXY), through HTTP(S)_PROXY except NO_PROXY's hosts.
  */
 function sessionApiDispatcher(): Dispatcher {
-  const options = { headersTimeout: 0, bodyTimeout: 0 };
-  return process.env.NODE_USE_ENV_PROXY === '1' ? new EnvHttpProxyAgent(options) : new Agent(options);
+  return new Agent({ headersTimeout: 0, bodyTimeout: 0 });
 }
 
 /** The process's session API: one per Chat Service, so its calls share SESSION_API_CALLS_AT_ONCE. */

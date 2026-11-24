@@ -1,19 +1,21 @@
-"""The proxy Endpoint's credential and headers (ADR 0091), the Python twin of botcube/chat's `proxy-relay.ts`.
+"""The proxy Endpoint's credential, headers and TLS (ADR 0091), the Python twin of botcube/chat's `proxy-relay.ts`.
 
-Every HTTP client in the Harness, and every command it runs, reads HTTP(S)_PROXY once, so the deploy points them at
-this loopback relay (`proxyEnvironment` in botcube/config), which opens each request to the proxy the
-BotCube Config names with the Credential Source's current value: a rotated or refreshed token reaches the next request.
+An HTTP client, or a command the agent runs, takes its proxy once, so one that goes through the proxy is pointed at
+this loopback relay, which opens each request to the proxy the BotCube Config names with the Credential Source's
+current value and the client certificate as read now: a rotated or refreshed token or certificate reaches the next
+request. Neither is read before the first request.
 """
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import socket
 import socketserver
 import ssl
-from collections.abc import Mapping
-from threading import Thread
+from collections.abc import Callable, Mapping
+from threading import Lock, Thread
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -34,17 +36,43 @@ _MAX_HEAD_BYTES = 64 * 1024
 _REPLACED = {'proxy-authorization', 'proxy-connection', 'connection'}
 
 
-def start_proxy_relay_from_config(config: Mapping[str, Any], env: Mapping[str, str] = os.environ) -> str | None:
-    """The relay for the BotCube Config's proxy, listening where HTTPS_PROXY points; None unless it has a credential, headers or TLS."""
+# Where the agent's commands reach directly under a proxy: loopback, and the instance and task metadata addresses.
+_SHELL_DIRECT = 'localhost,127.0.0.1,::1,169.254.169.254,169.254.170.2'
+
+_relays: dict[str, str] = {}
+_relays_lock = Lock()
+
+
+def proxy_url_from_config(config: Mapping[str, Any], env: Mapping[str, str] = os.environ) -> Callable[[], str] | None:
+    """
+    Where this process's clients reach the BotCube Config's proxy, or None without one: the proxy's own URL, or, for a
+    proxy taking a credential, headers or TLS, one loopback relay per process, started when first asked for.
+    """
     proxy = config['integrations']['proxy']
-    if proxy['kind'] == 'none' or not {'credential', 'headers', 'tls'} & proxy.keys():
+    if proxy['kind'] == 'none':
         return None
-    listen = urlsplit(env.get('HTTPS_PROXY') or '')
-    if not listen.hostname or listen.port is None:
-        raise RuntimeError("HTTPS_PROXY is unset beside the BotCube Config's proxy credential, headers or TLS; the deploy points it at the proxy relay")
+    if not {'credential', 'headers', 'tls'} & proxy.keys():
+        return lambda: proxy['url']
+    key = json.dumps(proxy, sort_keys=True)
     credential = credential_source('proxy', proxy['credential'], env=env) if 'credential' in proxy else None
     tls = endpoint_tls('proxy', proxy['tls'], env=env) if 'tls' in proxy else None
-    return start_proxy_relay(upstream=proxy['url'], listen=(listen.hostname, listen.port), credential=credential, headers=proxy.get('headers', {}), tls=tls)
+
+    def relay() -> str:
+        with _relays_lock:
+            if key not in _relays:
+                _relays[key] = start_proxy_relay(upstream=proxy['url'], listen=('127.0.0.1', 0), credential=credential, headers=proxy.get('headers', {}), tls=tls)
+            return _relays[key]
+
+    return relay
+
+
+def shell_proxy_environment(config: Mapping[str, Any], env: Mapping[str, str] = os.environ) -> dict[str, str]:
+    """The variables that send the agent's commands, but to loopback and the metadata addresses, through the proxy network.openEgress names."""
+    url = proxy_url_from_config(config, env) if config['network'].get('openEgress', {}).get('proxy') else None
+    if url is None:
+        return {}
+    proxy = url()
+    return {'HTTP_PROXY': proxy, 'HTTPS_PROXY': proxy, 'NO_PROXY': _SHELL_DIRECT, 'NODE_USE_ENV_PROXY': '1'}
 
 
 def start_proxy_relay(
@@ -54,8 +82,6 @@ def start_proxy_relay(
     target = urlsplit(upstream)
     secure = target.scheme == 'https'
     address = (target.hostname or '', target.port or (443 if secure else 80))
-    if tls is not None:
-        tls.context()
 
     class Relay(socketserver.BaseRequestHandler):
         def handle(self) -> None:

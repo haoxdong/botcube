@@ -141,13 +141,17 @@ describe('the proxy relay to a proxy with TLS', () => {
     expect(proxy.connections).toEqual([]);
   });
 
-  it('does not listen on a client certificate it cannot read, naming the file and no key', async () => {
+  it('listens without reading the client certificate, and answers the first connection 502 naming the file and no key', async () => {
     const missing = { certificate: certificates.files.clientA.certificate, key: join(certificates.dir, 'missing.key') };
-    const relay = startProxyRelay({
+    const relay = await startProxyRelay({
       upstream: new URL('https://127.0.0.1:9'), listen: { host: '127.0.0.1', port: 0 }, headers: {}, tls: endpointTls('proxy', { clientCertificate: missing }),
     });
+    opened.push(relay);
 
-    await expect(relay).rejects.toThrow(`proxy client certificate (file ${missing.key}): ENOENT`);
+    const answer = await tunnel(relay);
+
+    expect(answer.split('\r\n')[0]).toBe('HTTP/1.1 502 Bad Gateway');
+    expect(answer).toContain(`proxy client certificate (file ${missing.key}): ENOENT`);
   });
 });
 

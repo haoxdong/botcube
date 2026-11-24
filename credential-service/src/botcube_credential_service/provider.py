@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 if TYPE_CHECKING:
-    from fastapi import APIRouter, Request
+    from fastapi import APIRouter, Request, WebSocket
     from fastapi.responses import Response
 
     from .invocation import CredentialServiceInvocation
@@ -63,7 +63,7 @@ class CredentialProvider(Protocol[Access]):
         """Whether access may be attached to this upstream call; `path` has no leading slash."""
         ...
 
-    async def authorize_upstream(self, invocation: CredentialServiceInvocation, request: Request, path: str) -> None:
+    async def authorize_upstream(self, invocation: CredentialServiceInvocation, request: Request | WebSocket, path: str) -> None:
         """Reject requests outside the signed invocation's provider policy before minting access."""
         ...
 
@@ -73,14 +73,16 @@ class CredentialProvider(Protocol[Access]):
 
     async def relay(
         self,
-        request: Request,
+        request: Request | WebSocket,
         path: str,
         access: Access,
         *,
         account_id: str,
         request_context: Mapping[str, str],
-    ) -> Response:
-        """Send an allowed upstream call with the account's access attached, and answer the upstream response."""
+    ) -> Response | None:
+        """Send an allowed upstream call with the account's access attached, and answer the upstream response.
+
+        On an HTTP Upgrade `request` is the WebSocket: the provider accepts and relays it, and answers None."""
         ...
 
     def routes(self, guard: InvocationGuard) -> APIRouter:

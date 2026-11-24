@@ -20,7 +20,6 @@ from opentelemetry.instrumentation import auto_instrumentation
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from botcube_harness_deepagents._shell_process import Request, Result
-from botcube_harness_deepagents.bot_settings import USER_TOKEN_ENV
 from botcube_harness_deepagents.trace_relay import count_failures_under
 from botcube_harness_deepagents.trace_secrets import (
     MIN_LITERAL_SECRET,
@@ -190,8 +189,6 @@ class WorkerShellBackend(LocalShellBackend):
 
     def _credentials(self) -> list[str]:
         current = set(environment_secrets(self._env, include_session_names=False))
-        if token := self._env.get(USER_TOKEN_ENV):
-            current.add(token)
         if cdp := self._env.get('AGENT_BROWSER_CDP'):
             current.add(cdp)
             current.update(value for values in parse_qs(urlsplit(cdp).query).values() for value in values)

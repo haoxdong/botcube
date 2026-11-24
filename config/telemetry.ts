@@ -14,7 +14,7 @@ export interface TelemetryDeployment {
 }
 
 /**
- * How the `telemetry` section is deployed: under `otlp` both services export straight to the Endpoint with
+ * How the `telemetry` section is deployed: under `otlp` both services export to the Endpoint, through the proxy when it names it, with
  * OpenTelemetry's standard variables, the credential read from the BotCube Config; under `none` neither exports.
  */
 export function telemetryEnvironment(telemetry: BotCubeConfig['integrations']['telemetry']): TelemetryDeployment {
@@ -22,7 +22,7 @@ export function telemetryEnvironment(telemetry: BotCubeConfig['integrations']['t
   if (telemetry.kind === 'none') {
     return { chatService: {}, harness: { OTEL_SDK_DISABLED: 'true', OTEL_TRACES_EXPORTER: 'none', AGENT_OBSERVABILITY_ENABLED: 'false' }, secretIds: [] };
   }
-  const { url, credential, headers, tls } = telemetry;
+  const { url, credential, headers, tls, proxy } = telemetry;
   const shared = {
     OTEL_TRACES_EXPORTER: 'otlp',
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: url,
@@ -30,7 +30,7 @@ export function telemetryEnvironment(telemetry: BotCubeConfig['integrations']['t
   };
   return {
     chatService: shared,
-    harness: { ...shared, ...(credential || tls ? { OTEL_PYTHON_EXPORTER_OTLP_HTTP_TRACES_CREDENTIAL_PROVIDER: HARNESS_CREDENTIAL_PROVIDER } : {}) },
+    harness: { ...shared, ...(credential || tls || proxy ? { OTEL_PYTHON_EXPORTER_OTLP_HTTP_TRACES_CREDENTIAL_PROVIDER: HARNESS_CREDENTIAL_PROVIDER } : {}) },
     secretIds: credential ? secretIds(credential) : [],
   };
 }

@@ -51,12 +51,14 @@ def prime(region: str, *, root: Path = ROOT, mount: Callable[[Sequence[str]], No
 
 
 def hold_in_memory(root: Path) -> None:
-    """The CA bundles on a tmpfs, named by the variables OpenSSL and botocore read. The resolver's files stay on disk:
-    a copy would freeze them at the snapshot, and a restored microVM may need its own."""
+    """The CA bundles on a tmpfs, named by the variables OpenSSL and botocore read: the BotCube Config's caBundle, as
+    the deploy sets SSL_CERT_FILE, or the system's. The resolver's files stay on disk: a copy would freeze them at the
+    snapshot, and a restored microVM may need its own."""
     root.mkdir(parents=True)
     system = ssl.get_default_verify_paths().openssl_cafile
     # Some Pythons (uv's CPython) name a system bundle the image lacks; certifi's then serves OpenSSL too.
-    bundles = {'SSL_CERT_FILE': system if os.path.isfile(system) else certifi.where(), 'AWS_CA_BUNDLE': certifi.where()}
+    trusted = os.environ.get('SSL_CERT_FILE') or (system if os.path.isfile(system) else certifi.where())
+    bundles = {'SSL_CERT_FILE': trusted, 'AWS_CA_BUNDLE': certifi.where()}
     for variable, source in bundles.items():
         copy = root / f'{variable.lower()}.pem'
         shutil.copyfile(source, copy)

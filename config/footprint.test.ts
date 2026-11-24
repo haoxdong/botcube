@@ -18,7 +18,7 @@ function section(printed: string, heading: string): string[] {
 
 it.each(['public', 'enterprise'])('prints the %s example as existing, created and runtime-created resources, IAM actions, egress hosts, images and commands', (name) => {
   const headings = printedFor(name).split('\n').filter((line) => line && !line.startsWith(' '));
-  expect(headings).toEqual(['Names', 'Domains', 'Existing resources', 'Created resources', 'Created at runtime', 'IAM actions', 'Models', 'Egress hosts', 'TLS', 'Images', 'Build images', 'Commands']);
+  expect(headings).toEqual(['Names', 'Domains', 'Existing resources', 'Created resources', 'Created at runtime', 'IAM actions', 'Models', 'Shell environment', 'Egress hosts', 'TLS', 'Images', 'Build images', 'Commands']);
 });
 
 it("names the enterprise example's OIDC issuer host among its egress hosts", () => {
@@ -72,7 +72,7 @@ describe('the enterprise example', () => {
       '    grant Agent Computer browser (role aws.iam.agentComputerBrowserRole): elasticfilesystem:ClientMount elasticfilesystem:ClientWrite',
       "    grant a Turn's Files mount (role aws.iam.filesMountRole): elasticfilesystem:ClientMount elasticfilesystem:ClientWrite",
       "    grant NFS clients in the existing private subnets: TCP 2049 to the file system's mount target in each subnet",
-      "    grant the existing VPC: Amazon-provided DNS, by which the Chat Service finds the mount target as <fileSystemId>.efs.<region>.amazonaws.com",
+      "    grant the existing VPC: a resolver that answers <fileSystemId>.efs.<region>.amazonaws.com, the name ECS mounts the Chat Service's own Files volume by: ECS takes no mount target address",
     ]);
   });
 
@@ -226,10 +226,33 @@ describe("the models Endpoint's credential", () => {
     expect(needs.commands.filter((command) => command.startsWith('integrations.modelGateway.'))).toEqual([]);
   });
 
-  it('prints the wire its models are called over: Chat Completions by default, or Responses', () => {
-    expect(section(formatFootprint(footprint(config)), 'Models')).toEqual(['  openai-compatible https://models.example.com/v1 wire chat-completions']);
-    expect(section(formatFootprint(footprint({ ...config, integrations: { ...config.integrations,  modelGateway: { ...models, wire: 'responses' } } })), 'Models'))
-      .toEqual(['  openai-compatible https://models.example.com/v1 wire responses']);
+  const anthropic = { url: 'https://anthropic.models.example.com', credential: { kind: 'secret', secretId: 'botcube/anthropic-key' } } as const;
+  const bot = { models: [{ key: 'claude-sonnet-5-5', label: 'Sonnet', provider: 'anthropic', maxTokens: 64000 }, { key: 'gpt-5', label: 'GPT', provider: 'openai', maxTokens: 16000 }] };
+
+  it("prints the gateway's URL, each provider's own, and each model of the bot settings with its provider", () => {
+    const printed = formatFootprint(footprint({ ...config, integrations: { ...config.integrations, modelGateway: { ...models, providers: { anthropic } } } }, { bot }));
+    expect(section(printed, 'Models')).toEqual([
+      '  openai-compatible https://models.example.com/v1',
+      '  provider anthropic https://anthropic.models.example.com',
+      '  model claude-sonnet-5-5: anthropic',
+      '  model gpt-5: openai',
+    ]);
+  });
+
+  it("prints the bot settings' shell environment as the shell holds it, the relay origin's port chosen at runtime", () => {
+    const environment = { SITE_URL: '${BOTCUBE_RELAY_URL}/site', NOTE: 'cost $$5' };
+    const printed = formatFootprint(footprint(config, { bot: { ...bot, environment } }));
+    expect(section(printed, 'Shell environment')).toEqual([
+      '  BOTCUBE_RELAY_URL=http://127.0.0.1:<port>',
+      '  SITE_URL=http://127.0.0.1:<port>/site',
+      '  NOTE=cost $5',
+    ]);
+  });
+
+  it("reaches a provider's own URL with its own credential from the same readers as the gateway's", () => {
+    const needs = footprint({ ...config, integrations: { ...config.integrations, modelGateway: { ...models, providers: { anthropic } } } });
+    expect(section(formatFootprint(needs), 'Egress hosts')).toContain('  anthropic.models.example.com (chatService, credentialService)');
+    expect(needs.iam.credentialService?.actions).toContain('secretsmanager:GetSecretValue');
   });
 
   it("is reached by the Chat Service for Turn summaries and the Credential Service for the agent's relayed calls, never the Harness", () => {

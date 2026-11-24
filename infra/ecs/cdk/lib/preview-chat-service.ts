@@ -29,8 +29,8 @@ export interface ChatServiceIngress {
 export interface PreviewChatServiceProps extends ScheduledRunsProps {
   /** Additional bot configuration; framework-owned environment keys take precedence. */
   environment?: Record<string, string>;
-  /** The proxy variables every container gets: the Chat Service and its collector, and a product's own tasks. */
-  proxyEnvironment?: Record<string, string>;
+  /** The trust root variables every container gets: the Chat Service and its collector, and a product's own tasks. */
+  trustEnvironment?: Record<string, string>;
   /**
    * The BotCube Config's `telemetry` adapter; absent, X-Ray through a collector sidecar. `otlp` exports straight to
    * its Endpoint with `environment`, granted `secretIds`; `none` creates no collector, grant or exporter.
@@ -174,7 +174,7 @@ export class PreviewChatService extends Construct {
       portMappings: [{ containerPort: port }],
       environment: {
         ...props.environment,
-        ...props.proxyEnvironment,
+        ...props.trustEnvironment,
         AWS_DEFAULT_REGION: origin.region,
         AWS_REGION: origin.region,
         ...(props.runtimeArn ? { AGENTCORE_RUNTIME_ARN: props.runtimeArn } : {}),
@@ -191,7 +191,7 @@ export class PreviewChatService extends Construct {
       // Allow task-stop cleanup before ECS sends SIGKILL.
       stopTimeout: Duration.seconds(props.containerStopTimeoutSeconds ?? 120),
     });
-    if (telemetry.kind === 'xray') addXrayCollector(task, this.container, origin, logGroup, props.proxyEnvironment, props.imageRegistry);
+    if (telemetry.kind === 'xray') addXrayCollector(task, this.container, origin, logGroup, props.trustEnvironment, props.imageRegistry);
     else grantSecretReads(task, task, telemetry.secretIds);
     addScheduledRuns(this, origin, task, this.container, props);
     const service = this.service = new ecs.FargateService(this, 'Service', {
@@ -396,7 +396,7 @@ function preserveTarget(service: ecs.FargateService, target: elb.ApplicationTarg
 }
 
 /** X-Ray, the default telemetry: a collector sidecar batches the Chat Service's spans and exports them, X-Ray granted. */
-function addXrayCollector(task: ecs.FargateTaskDefinition, container: ecs.ContainerDefinition, origin: Stack, logGroup: logs.ILogGroup, proxyEnvironment: Record<string, string> | undefined, imageRegistry: string | undefined): void {
+function addXrayCollector(task: ecs.FargateTaskDefinition, container: ecs.ContainerDefinition, origin: Stack, logGroup: logs.ILogGroup, trustEnvironment: Record<string, string> | undefined, imageRegistry: string | undefined): void {
   const collector = task.addContainer('otel-collector', {
     image: ecs.ContainerImage.fromRegistry(`${imageRegistry ?? 'public.ecr.aws'}/aws-observability/aws-otel-collector:v0.50.0`),
     essential: false,
@@ -404,7 +404,7 @@ function addXrayCollector(task: ecs.FargateTaskDefinition, container: ecs.Contai
     memoryReservationMiB: 128,
     command: ['--config=env:OTEL_CONFIG'],
     environment: {
-      ...proxyEnvironment,
+      ...trustEnvironment,
       AWS_REGION: origin.region,
       GOMEMLIMIT: '200MiB',
       OTEL_CONFIG: JSON.stringify({

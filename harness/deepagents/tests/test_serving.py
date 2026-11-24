@@ -78,6 +78,7 @@ from botcube_harness_deepagents import (
     serving,
     session_api,
     session_memory,
+    today,
 )
 from botcube_harness_deepagents.conversation import reasoning_blocks
 from botcube_harness_deepagents.definition import HarnessDefinition
@@ -595,7 +596,7 @@ def test_each_part_of_an_invocations_identity_gets_its_own_agent(service: _Servi
 def test_the_model_is_built_from_the_forwarded_model_and_effort(service: _Service) -> None:
     service.turn('hello', model='opus-4.6', effort='max')
 
-    assert service.recorder.builds == [{'model': 'opus-4.6', 'effort': 'max', 'max_tokens': 16000, 'relay': None}]
+    assert service.recorder.builds == [{'model': 'opus-4.6', 'effort': 'max', 'provider': None, 'max_tokens': None, 'relay': None}]
 
 
 def test_each_turns_prompt_cache_usage_is_logged_with_its_thread_model_and_effort(service: _Service, caplog: pytest.LogCaptureFixture) -> None:
@@ -660,6 +661,16 @@ def test_the_sandbox_shell_sees_the_invocation_and_process_environment(service: 
     events = service.turn(command, env={'ACCOUNT': 'acct-1'})
 
     assert _tool_output(events) == 'acct-1 from-process\n\n[Command succeeded with exit code 0]'
+
+
+def test_the_sandbox_shell_reaches_every_destination_but_loopback_through_the_proxy_open_egress_names(
+    service: _Service, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    deploy(monkeypatch, tmp_path, integrations={'proxy': {'kind': 'forward', 'url': 'http://proxy.example.com:3128'}}, network={'openEgress': {'proxy': 'integrations.proxy'}})
+
+    events = service.turn('run: echo "$HTTPS_PROXY $NO_PROXY"')
+
+    assert _tool_output(events) == 'http://proxy.example.com:3128 localhost,127.0.0.1,::1,169.254.169.254,169.254.170.2\n\n[Command succeeded with exit code 0]'
 
 
 def test_the_sandbox_shell_carries_the_logical_session_id(service: _Service) -> None:
@@ -2004,7 +2015,7 @@ def test_every_turn_tells_the_agent_today_s_date_even_when_its_agent_is_cached_a
     service: _Service, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = iter([datetime(2026, 10, 24, 23, 59, tzinfo=UTC), datetime(2026, 10, 25, 0, 1, tzinfo=UTC)])
-    monkeypatch.setattr(serving, 'now', lambda: next(clock), raising=False)
+    monkeypatch.setattr(today, 'now', lambda: next(clock))
     service.turn('say: before midnight')
     service.turn('say: after midnight')
 
@@ -2021,7 +2032,7 @@ def test_every_turn_tells_the_agent_today_s_date_even_when_its_agent_is_cached_a
 def test_today_uses_the_turn_timezone_or_utc(
     service: _Service, monkeypatch: pytest.MonkeyPatch, timezone: Any, expected: str,
 ) -> None:
-    monkeypatch.setattr(serving, 'now', lambda: datetime(2026, 10, 29, 2, tzinfo=UTC))
+    monkeypatch.setattr(today, 'now', lambda: datetime(2026, 10, 29, 2, tzinfo=UTC))
     service.turn('say: date', timezone=timezone)
     assert re.findall(r'Today is .*', service.recorder.prompts[0]) == [expected]
 
@@ -2041,7 +2052,7 @@ def test_invalid_turn_timezone_is_rejected_before_streaming(service: _Service, t
 def test_timezone_changes_and_omission_do_not_rebuild_or_leak_from_the_cached_agent(
     service: _Service, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(serving, 'now', lambda: datetime(2026, 10, 29, 2, tzinfo=UTC))
+    monkeypatch.setattr(today, 'now', lambda: datetime(2026, 10, 29, 2, tzinfo=UTC))
     service.turn('say: New York', timezone='America/New_York')
     service.turn('say: Tokyo', timezone='Asia/Tokyo')
     service.turn('say: UTC')
@@ -3014,6 +3025,21 @@ def start(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Callable[
 
 def test_the_service_serves_on_every_interface_at_port_8080(start: Callable[[], list[tuple[Any, dict[str, Any]]]]) -> None:
     assert start() == [(serving.app, {'host': '0.0.0.0', 'port': 8080})]
+
+
+@pytest.mark.parametrize('bundle', ['absent', 'not-pem'])
+def test_the_service_fails_to_start_on_a_ca_bundle_it_cannot_load(
+    start: Callable[[], list[tuple[Any, dict[str, Any]]]], monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bundle: str,
+) -> None:
+    from botcube_harness_deepagents.botcube_config import BotCubeConfigError
+
+    path = tmp_path / 'ca-bundle.pem'
+    if bundle == 'not-pem':
+        path.write_text('not a certificate\n')
+    deploy(monkeypatch, tmp_path, caBundle=str(path))
+
+    with pytest.raises(BotCubeConfigError, match=f'^caBundle {path}: '):
+        start()
 
 
 def test_the_service_serves_on_the_configured_port(start: Callable[[], list[tuple[Any, dict[str, Any]]]], monkeypatch: pytest.MonkeyPatch) -> None:

@@ -5,23 +5,24 @@ import contextlib
 import os
 import ssl
 import time
-import urllib.request
 from collections.abc import AsyncIterator, Callable, Generator, Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import anyio
 import httpcore
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, WebSocket
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from .botcube_config import gateway_providers
 from .credential_source import (
     CredentialSource,
     CredentialSourceError,
     credential_source,
 )
 from .endpoint_tls import EndpointTls, EndpointTlsError, endpoint_tls
-from .provider import UpstreamRefusal
+from .proxy_relay import proxy_url_from_config
 
 if TYPE_CHECKING:
     from fastapi import Request
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
     from .server import InvocationGuard
 
 MODELS_PROVIDER = 'models'
-_NOT_FORWARDED = frozenset({'authorization', 'host', 'content-length', 'connection', 'transfer-encoding', 'x-botcube-account-id', 'x-botcube-session-id'})
+_NOT_FORWARDED = frozenset({'authorization', 'x-api-key', 'host', 'content-length', 'connection', 'transfer-encoding', 'x-botcube-account-id', 'x-botcube-session-id'})
 _READ_TIMEOUT_SECONDS = 300
 _CONNECT_TIMEOUT_SECONDS = 30
 _HOP_BY_HOP = frozenset({'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade'})
@@ -45,18 +46,34 @@ def models_provider_from_config(
     transport: httpx.AsyncBaseTransport | None = None,
     now: Callable[[], float] = time.time,
 ) -> ModelsEndpointProvider | None:
-    """The relay to the BotCube Config's OpenAI-compatible `models` Endpoint, or None on Bedrock."""
+    """The relay to the BotCube Config's model gateway, each provider at its own URL, or None on Bedrock."""
     models = config['integrations']['modelGateway']
     if models['kind'] != 'openai-compatible':
         return None
-    credential = credential_source('models', models['credential'], env=env, now=now)
-    credential.get()
+    gateway = credential_source('models', models['credential'], env=env, now=now)
+    gateway.get()
+    routes: dict[str, ProviderRoute] = {}
+    for provider, own in (models.get('providers') or dict.fromkeys(gateway_providers(), {})).items():
+        credential = gateway
+        if 'credential' in own:
+            credential = credential_source(f'models {provider}', own['credential'], env=env, now=now)
+            credential.get()
+        headers = own.get('headers', models.get('headers')) or {}
+        routes[provider] = ProviderRoute(own.get('url', models['url']).rstrip('/'), dict(headers), credential)
     tls = endpoint_tls('models', models['tls'], env=env) if 'tls' in models else None
     if tls is not None:
         tls.context()
-    return ModelsEndpointProvider(
-        models['url'].rstrip('/'), dict(models.get('headers') or {}), credential, audit=audit, transport=transport, tls=tls,
-    )
+    through = proxy_url_from_config(config, env) if models.get('proxy') else None
+    return ModelsEndpointProvider(routes, audit=audit, transport=transport, tls=tls, proxy=through() if through else None)
+
+
+@dataclass(frozen=True)
+class ProviderRoute:
+    """Where the gateway serves one provider's own API, and the credential and headers sent there."""
+
+    url: str
+    headers: Mapping[str, str]
+    credential: CredentialSource
 
 
 class ModelsEndpointProvider:
@@ -66,26 +83,27 @@ class ModelsEndpointProvider:
 
     def __init__(
         self,
-        url: str,
-        headers: Mapping[str, str],
-        credential: CredentialSource,
+        routes: Mapping[str, ProviderRoute],
         *,
         audit: CredentialAuditRecorder,
         transport: httpx.AsyncBaseTransport | None = None,
         tls: EndpointTls | None = None,
+        proxy: str | None = None,
     ) -> None:
-        self._url = url
-        self._headers = headers
-        self._credential = credential
+        self._routes = routes
         self._audit = audit
-        if tls is not None:
-            transport = _EndpointTransport(url, tls)
-        self._client = httpx.AsyncClient(
-            transport=transport, timeout=httpx.Timeout(_READ_TIMEOUT_SECONDS, connect=_CONNECT_TIMEOUT_SECONDS),
-        )
+        self._clients = {
+            provider: httpx.AsyncClient(
+                transport=_EndpointTransport(route.url, tls, proxy) if tls is not None else transport,
+                proxy=None if tls is not None else proxy,
+                timeout=httpx.Timeout(_READ_TIMEOUT_SECONDS, connect=_CONNECT_TIMEOUT_SECONDS),
+            )
+            for provider, route in routes.items()
+        }
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        for client in self._clients.values():
+            await client.aclose()
 
     def ready(self) -> None:
         return
@@ -102,28 +120,36 @@ class ModelsEndpointProvider:
     def allows_upstream(self, method: str, path: str) -> bool:
         return True
 
-    async def authorize_upstream(self, invocation: CredentialServiceInvocation, request: Request, path: str) -> None:
-        return
+    async def authorize_upstream(self, invocation: CredentialServiceInvocation, request: Request | WebSocket, path: str) -> None:
+        if path.split('/', 1)[0] not in self._routes:
+            raise HTTPException(status_code=404, detail=f'The model gateway serves the providers {" and ".join(self._routes)}, under their names')
 
     async def mint_access(self, account_id: str, request_context: Mapping[str, str]) -> str:
-        try:
-            return (await asyncio.to_thread(self._credential.get)).value
-        except CredentialSourceError as error:
-            raise UpstreamRefusal(500, {'error': {'message': str(error), 'type': 'models_credential'}}) from None
+        """No access of its own: `relay` reads the credential of the provider the call names."""
+        return ''
 
     async def relay(
-        self, request: Request, path: str, access: str, *, account_id: str, request_context: Mapping[str, str],
+        self, request: Request | WebSocket, path: str, access: str, *, account_id: str, request_context: Mapping[str, str],
     ) -> Response:
+        if isinstance(request, WebSocket):
+            raise HTTPException(status_code=501, detail='The models Endpoint relays HTTP only')
+        provider, _, rest = path.partition('/')
+        route = self._routes[provider]
+        try:
+            bearer = (await asyncio.to_thread(route.credential.get)).value
+        except CredentialSourceError as error:
+            return JSONResponse({'error': {'message': str(error), 'type': 'models_credential'}}, status_code=500)
         self._audit.record_upstream_relay(account_id, MODELS_PROVIDER, request_context)
         forwarded = {name: value for name, value in request.headers.items() if name not in _NOT_FORWARDED}
-        upstream_request = self._client.build_request(
-            request.method, f'{self._url}/{path}', params=request.url.query or None,
-            headers={**forwarded, **self._headers, 'authorization': f'Bearer {access}'}, content=await request.body(),
+        client = self._clients[provider]
+        upstream_request = client.build_request(
+            request.method, f'{route.url}/{rest}', params=request.url.query or None,
+            headers={**forwarded, **route.headers, 'authorization': f'Bearer {bearer}'}, content=await request.body(),
         )
         try:
-            upstream = await self._client.send(upstream_request, stream=True)
+            upstream = await client.send(upstream_request, stream=True)
         except httpx.TransportError as error:
-            message = f'The models Endpoint {self._url} did not answer: {error!r}'
+            message = f'The models Endpoint {route.url} did not answer: {error!r}'
             if _dropped_before_response(error):
                 return JSONResponse({'error': {'message': message, 'type': 'models_endpoint'}}, status_code=502)
             return JSONResponse({'error': {'message': message, 'type': 'models_endpoint'}}, status_code=500)
@@ -155,17 +181,17 @@ class _EndpointTransport(httpx.AsyncBaseTransport):
     """
     httpx's transport for an Endpoint with TLS: httpx reads one SSL context per client, so this owns the httpcore pool
     and gives it a network backend that opens each Endpoint handshake with the certificate as read now. Trust roots
-    are the system's and SSL_CERT_FILE's; the proxy comes from the environment as httpx would take it.
+    are the system's and SSL_CERT_FILE's; the handshake runs through the tunnel of `proxy` when given.
     """
 
-    def __init__(self, url: str, tls: EndpointTls) -> None:
+    def __init__(self, url: str, tls: EndpointTls, proxy: str | None = None) -> None:
         origin = httpx.URL(url)
         if origin.scheme != 'https':
             raise EndpointTlsError(f'models TLS: the Endpoint {url} is not https')
         endpoint_context = ssl.create_default_context()
         self._pool = httpcore.AsyncConnectionPool(
             ssl_context=endpoint_context,
-            proxy=_environment_proxy(origin),
+            proxy=_proxy(proxy),
             network_backend=_TlsBackend(_anyio_backend(), tls, endpoint_context),
         )
 
@@ -191,10 +217,8 @@ def _anyio_backend() -> httpcore.AsyncNetworkBackend:
     return backend
 
 
-def _environment_proxy(origin: httpx.URL) -> httpcore.Proxy | None:
-    proxies = urllib.request.getproxies()
-    address = proxies.get('https') or proxies.get('all')
-    if not address or urllib.request.proxy_bypass(origin.host):
+def _proxy(address: str | None) -> httpcore.Proxy | None:
+    if address is None:
         return None
     proxy = httpx.Proxy(address)
     return httpcore.Proxy(

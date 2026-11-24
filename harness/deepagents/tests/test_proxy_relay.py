@@ -5,16 +5,18 @@ import socketserver
 from collections.abc import Iterator
 from pathlib import Path
 from threading import Thread
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 
-from botcube_harness_deepagents import endpoint_tls
+from botcube_harness_deepagents import endpoint_tls, restore_prime
 from botcube_harness_deepagents.credential_source import credential_source
 from botcube_harness_deepagents.proxy_relay import (
+    proxy_url_from_config,
+    shell_proxy_environment,
     start_proxy_relay,
-    start_proxy_relay_from_config,
 )
+from credential_service_fakes import mtls_fake
 
 pytestmark = pytest.mark.integration
 
@@ -115,31 +117,65 @@ def test_relay_authenticates_a_plain_http_request_one_to_a_connection(upstream: 
 def test_relay_answers_502_naming_the_credential_and_opens_nothing_when_it_fails(upstream: tuple[str, list[str]], tmp_path: Path) -> None:
     url, heads = upstream
     missing = tmp_path / 'proxy-token'
-    relay = start_proxy_relay_from_config(
-        {'integrations': {'proxy': {'kind': 'forward', 'url': url, 'credential': {'kind': 'file', 'path': str(missing)}}}}, {'HTTPS_PROXY': 'http://127.0.0.1:0'},
-    )
+    relay = proxy_url_from_config({'integrations': {'proxy': {'kind': 'forward', 'url': url, 'credential': {'kind': 'file', 'path': str(missing)}}}}, {})
     assert relay is not None
 
-    answer = _exchange(relay, 'CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n').decode('latin-1')
+    answer = _exchange(relay(), 'CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n').decode('latin-1')
 
     assert answer.split('\r\n')[0] == 'HTTP/1.1 502 Bad Gateway'
     assert f'proxy credential (file {missing})' in answer
     assert heads == []
 
 
-@pytest.mark.parametrize('proxy', [{'kind': 'none'}, {'kind': 'forward', 'url': 'http://proxy.example.com:3128'}])
-def test_no_relay_without_a_proxy_credential_or_headers(proxy: dict[str, str]) -> None:
-    assert start_proxy_relay_from_config({'integrations': {'proxy': proxy}}, {'HTTPS_PROXY': 'http://proxy.example.com:3128'}) is None
+def test_no_proxy_url_without_a_proxy() -> None:
+    assert proxy_url_from_config({'integrations': {'proxy': {'kind': 'none'}}}, {}) is None
 
 
-def test_a_relayed_proxy_needs_https_proxy_pointed_at_the_relay() -> None:
-    with pytest.raises(RuntimeError, match='^HTTPS_PROXY is unset beside the BotCube Config'):
-        start_proxy_relay_from_config({'integrations': {'proxy': {'kind': 'forward', 'url': 'http://proxy.example.com:3128', 'headers': {'x-tenant': 'a'}}}}, {})
+def test_the_proxy_itself_without_a_credential_headers_or_tls() -> None:
+    url = proxy_url_from_config({'integrations': {'proxy': {'kind': 'forward', 'url': 'http://proxy.example.com:3128'}}}, {})
+
+    assert url is not None
+    assert url() == 'http://proxy.example.com:3128'
+
+
+def test_one_loopback_relay_per_process_for_a_proxy_with_headers(upstream: tuple[str, list[str]]) -> None:
+    url, heads = upstream
+    config = {'integrations': {'proxy': {'kind': 'forward', 'url': url, 'headers': {'x-tenant': 'one-relay'}}}}
+    first, second = proxy_url_from_config(config, {}), proxy_url_from_config(config, {})
+    assert first is not None and second is not None
+
+    relay = first()
+
+    assert relay.startswith('http://127.0.0.1:')
+    assert second() == relay
+    _exchange(relay, 'CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n', b'hello')
+    assert [_header(head, 'x-tenant') for head in heads] == [['one-relay']]
 
 
 def test_refuses_a_malformed_proxy_tls_block_naming_it() -> None:
     with pytest.raises(endpoint_tls.EndpointTlsError, match='^proxy TLS: '):
-        start_proxy_relay_from_config({'integrations': {'proxy': {'kind': 'forward', 'url': 'https://proxy.example.com:3129', 'tls': {}}}}, {'HTTPS_PROXY': 'http://127.0.0.1:0'})
+        proxy_url_from_config({'integrations': {'proxy': {'kind': 'forward', 'url': 'https://proxy.example.com:3129', 'tls': {}}}}, {})
+
+
+FORWARD = {'kind': 'forward', 'url': 'http://proxy.example.com:3128'}
+
+
+def test_the_agents_commands_go_direct_without_a_proxy() -> None:
+    assert shell_proxy_environment({'integrations': {'proxy': {'kind': 'none'}}, 'network': {}}, {}) == {}
+
+
+@pytest.mark.parametrize('network', [{}, {'openEgress': {}}])
+def test_the_agents_commands_go_direct_when_open_egress_names_no_proxy(network: dict[str, Any]) -> None:
+    assert shell_proxy_environment({'integrations': {'proxy': FORWARD}, 'network': network}, {}) == {}
+
+
+def test_the_agents_commands_reach_every_destination_but_loopback_and_the_metadata_addresses_through_the_proxy_open_egress_names() -> None:
+    assert shell_proxy_environment({'integrations': {'proxy': FORWARD}, 'network': {'openEgress': {'proxy': 'integrations.proxy'}}}, {}) == {
+        'HTTP_PROXY': 'http://proxy.example.com:3128',
+        'HTTPS_PROXY': 'http://proxy.example.com:3128',
+        'NO_PROXY': 'localhost,127.0.0.1,::1,169.254.169.254,169.254.170.2',
+        'NODE_USE_ENV_PROXY': '1',
+    }
 
 
 def test_an_unreachable_proxy_drops_the_client_with_no_answer() -> None:
@@ -149,6 +185,19 @@ def test_an_unreachable_proxy_drops_the_client_with_no_answer() -> None:
     relay = start_proxy_relay(upstream=f'http://127.0.0.1:{port}', listen=('127.0.0.1', 0), credential=None, headers={})
 
     assert _exchange(relay, 'CONNECT models.example.com:443 HTTP/1.1\r\nHost: models.example.com:443\r\n\r\n') == b''
+
+
+def test_relay_reaches_a_proxy_signed_by_the_ca_bundle_after_the_snapshot_prime_too(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    certs = mtls_fake.certificates(tmp_path)
+    for variable in ('AWS_CA_BUNDLE', 'SSL_CERT_DIR'):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv('SSL_CERT_FILE', str(certs.authority))
+    restore_prime.hold_in_memory(tmp_path / 'restore')
+
+    with mtls_fake.mtls_proxy(certs, 'localhost', client_certificate=False) as proxy:
+        relay = start_proxy_relay(upstream=proxy.url, listen=('127.0.0.1', 0), credential=None, headers={'x-egress-route': 'botcube'})
+
+        assert mtls_fake.tunnel(relay) == b'HTTP/1.1 200 Connection Established\r\n\r\nhello'
 
 
 def test_endpoint_tls_is_byte_identical_to_the_credential_services_which_tests_it() -> None:

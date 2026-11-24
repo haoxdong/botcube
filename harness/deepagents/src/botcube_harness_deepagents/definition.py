@@ -39,6 +39,14 @@ def openai_model_relay(
 
 
 @dataclass(frozen=True)
+class BotModel:
+    """How a bot model is called: its provider, by LangChain's name, and its output ceiling."""
+
+    provider: str
+    max_tokens: int | None
+
+
+@dataclass(frozen=True)
 class InvocationAuth:
     actor_id: str | None
     persistent_memory: bool
@@ -97,3 +105,5 @@ class HarnessDefinition:
     session_id_env_var: str
     environment_cache_key: EnvironmentCacheKey
     system_prompt: str = ''
+    models: Mapping[str, BotModel] = field(default_factory=dict)
+    shell_environment: Mapping[str, str] = field(default_factory=dict)

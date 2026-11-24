@@ -51,7 +51,7 @@ it('quarantines retirement, wipes late writes, and reuses an empty slot', async 
   const pool = pooledAccessPoints([{ arn, directory }], () => store, { startingSlot: () => 0 });
   const files = userFilesEfs({
     root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001',
-    mountTargetIp: () => Promise.resolve('192.0.2.1'), accessPoints: pool, records: () => store,
+    mountTargetIp: '192.0.2.1', accessPoints: pool, records: () => store,
     linkKey: 'key',
     mountCredentials: async () => ({ accessKeyId: 'key', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date().toISOString() }),
   });
@@ -107,7 +107,7 @@ it('blocks a competing cleanup worker before it can wipe a reassigned directory'
   const pool = pooledAccessPoints([{ arn, directory }], () => store, { startingSlot: () => 0 });
   const files = userFilesEfs({
     root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001',
-    mountTargetIp: () => Promise.resolve('192.0.2.1'), accessPoints: pool, records: () => store,
+    mountTargetIp: '192.0.2.1', accessPoints: pool, records: () => store,
     linkKey: 'key',
     mountCredentials: async () => ({ accessKeyId: 'key', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date().toISOString() }),
   });
@@ -151,7 +151,7 @@ it('prevents destination retirement while an incoming transfer is writing', asyn
   const pool = pooledAccessPoints([{ arn, directory }, { arn: `${arn}2`, directory: second }], () => store, { startingSlot: () => 0 });
   const files = userFilesEfs({
     root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001',
-    mountTargetIp: () => Promise.resolve('192.0.2.1'), accessPoints: pool, records: () => store,
+    mountTargetIp: '192.0.2.1', accessPoints: pool, records: () => store,
     linkKey: 'key',
     mountCredentials: async () => ({ accessKeyId: 'key', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date().toISOString() }),
   });
@@ -194,7 +194,7 @@ it('retains capacity when a retirement wipe fails', async () => {
   const pool = pooledAccessPoints([{ arn, directory }], () => store, { startingSlot: () => 0 });
   const files = userFilesEfs({
     root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001',
-    mountTargetIp: () => Promise.resolve('192.0.2.1'), accessPoints: pool, records: () => store,
+    mountTargetIp: '192.0.2.1', accessPoints: pool, records: () => store,
     linkKey: 'key',
     mountCredentials: async () => ({ accessKeyId: 'key', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date().toISOString() }),
   });
@@ -220,7 +220,7 @@ it('refuses credentials from a paused wake after retirement and slot reuse', asy
   const started = new Promise<void>(resolve => { entered = resolve; });
   const files = userFilesEfs({
     root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001',
-    mountTargetIp: () => Promise.resolve('192.0.2.1'), accessPoints: pool, records: () => store,
+    mountTargetIp: '192.0.2.1', accessPoints: pool, records: () => store,
     linkKey: 'key',
     mountCredentials: async () => {
       entered();
@@ -261,7 +261,7 @@ it('recovers both claims of a crashed transfer without a DynamoDB edit', async (
   const store = records();
   const second = { arn: `${arn}2`, directory: '/accounts/00000000000000000000000000000002' };
   const pool = pooledAccessPoints([{ arn, directory }, second], () => store, { startingSlot: () => 0 });
-  const files = userFilesEfs({ root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001', mountTargetIp: () => Promise.resolve('192.0.2.1'), accessPoints: pool, records: () => store, linkKey: 'key', mountCredentials: async () => ({ accessKeyId: 'key', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date().toISOString() }), cleanupWorker: { identity: async () => ({ cluster: 'cluster', taskArn: 'new-task' }), stopped: async claim => claim.taskArn === 'dead-task' } });
+  const files = userFilesEfs({ root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001', mountTargetIp: '192.0.2.1', accessPoints: pool, records: () => store, linkKey: 'key', mountCredentials: async () => ({ accessKeyId: 'key', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date().toISOString() }), cleanupWorker: { identity: async () => ({ cluster: 'cluster', taskArn: 'new-task' }), stopped: async claim => claim.taskArn === 'dead-task' } });
   try {
     await files.mount('acct_a');
     await files.mount('acct_b');
@@ -282,22 +282,4 @@ it('recovers both claims of a crashed transfer without a DynamoDB edit', async (
     await files.mount('acct_c');
     expect(await files.list('acct_c')).toEqual([]);
   } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-it('leases no access point when the mount target cannot be found', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'files-pool-dns-'));
-  const store = records();
-  const files = userFilesEfs({
-    root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001',
-    mountTargetIp: () => Promise.reject(new Error('getaddrinfo ENOTFOUND')),
-    accessPoints: pooledAccessPoints([{ arn, directory }], () => store, { startingSlot: () => 0 }), records: () => store,
-    linkKey: 'key',
-    mountCredentials: async () => ({ accessKeyId: 'key', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date().toISOString() }),
-  });
-  try {
-    await expect(files.mountBinding('acct_a')).rejects.toThrow('ENOTFOUND');
-    expect(await store.filesAccessPoint('acct_a')).toBeNull();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
 });

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections.abc import Callable, Iterator
@@ -15,7 +14,7 @@ from fastapi.testclient import TestClient
 from agentcore_fake import turn_identity
 from botcube_harness_deepagents import serving, session_api
 from botcube_harness_deepagents.bot_settings import BotSettingsError, load_bot_settings
-from deployment_fixture import deploy
+from deployment_fixture import ENDPOINT_MODELS, deploy
 from test_serving import _Recorder, _ScriptedModel, _Service, _tool_output
 from test_serving import start as start
 
@@ -41,7 +40,7 @@ def _bot(root: Path, **settings: Any) -> Path:
     return path
 
 
-def _deployed(monkeypatch: pytest.MonkeyPatch, root: Path, bot: Path) -> Path:
+def _deployed(monkeypatch: pytest.MonkeyPatch, root: Path, bot: Path, **sections: Any) -> Path:
     """A BotCube Config in its own directory, naming the bot settings relative to itself as the examples' do."""
     directory = root / 'deployment'
     directory.mkdir()
@@ -52,7 +51,7 @@ def _deployed(monkeypatch: pytest.MonkeyPatch, root: Path, bot: Path) -> Path:
         return original(bot)
 
     monkeypatch.setattr('botcube_harness_deepagents.bot_settings.load_bot_settings', image_settings)
-    return deploy(monkeypatch, directory)
+    return deploy(monkeypatch, directory, **sections)
 
 
 @pytest.fixture
@@ -113,57 +112,19 @@ def test_a_turn_runs_on_the_model_it_names(bot_service: _Service) -> None:
     assert bot_service.recorder.builds[-1]['model'] == 'opus-4.6'
 
 
-def _signed(subject: str) -> str:
-    return f'eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ7{subject}In0.{hashlib.sha256(subject.encode()).hexdigest()}'
+@pytest.mark.parametrize('bot_service', [{'models': [
+    {'key': 'claude-sonnet-5-5', 'label': 'Sonnet', 'provider': 'anthropic'},
+    {'key': 'gpt-5', 'label': 'GPT', 'provider': 'openai', 'maxTokens': 32000},
+]}], indirect=True)
+def test_a_turns_model_is_built_on_its_provider_under_its_output_ceiling(bot_service: _Service) -> None:
+    bot_service.turn('hello')
+    bot_service.turn('hello', model='gpt-5', thread='thread-gpt')
+
+    assert [(build['model'], build['provider'], build['max_tokens']) for build in bot_service.recorder.builds] == [
+        ('claude-sonnet-5-5', 'anthropic', None), ('gpt-5', 'openai', 32000),
+    ]
 
 
-def _shell_reading(token: str) -> str:
-    return f'{hashlib.sha256(token.encode()).hexdigest()}  -'
-
-
-_PRINT_ENVIRONMENT = 'run: env; printf %s "$BOTCUBE_USER_TOKEN" | sha256sum'
-
-
-@pytest.mark.parametrize('bot_service', [{'userTokenInShell': True}], indirect=True)
-def test_an_opted_in_bot_s_shell_holds_the_turn_s_user_token_which_the_model_and_transcript_never_see(
-    bot_service: _Service, caplog: pytest.LogCaptureFixture,
-) -> None:
-    token = _signed('user-1')
-
-    events = bot_service.turn(_PRINT_ENVIRONMENT, userToken=token)
-
-    output = _tool_output(events)
-    assert _shell_reading(token) in output
-    assert 'BOTCUBE_USER_TOKEN=[redacted]' in output
-    seen = json.dumps([events, bot_service.recorder.prompts, bot_service.recorder.heard])
-    assert token not in seen
-    assert 'harness_shell_output' in caplog.text
-    assert token not in caplog.text
-
-
-@pytest.mark.parametrize('bot_service', [{'userTokenInShell': True}], indirect=True)
-def test_each_turn_s_shell_holds_that_turn_s_user_token(bot_service: _Service) -> None:
-    bot_service.turn(_PRINT_ENVIRONMENT, userToken=_signed('first'))
-
-    events = bot_service.turn(_PRINT_ENVIRONMENT, userToken=_signed('second'))
-
-    assert _shell_reading(_signed('second')) in _tool_output(events)
-
-
-@pytest.mark.parametrize('bot_service', [{'userTokenInShell': True}], indirect=True)
-def test_a_turn_without_a_user_token_leaves_none_from_an_earlier_turn_in_the_shell(bot_service: _Service) -> None:
-    bot_service.turn(_PRINT_ENVIRONMENT, userToken=_signed('first'))
-
-    events = bot_service.turn('run: printf "[%s]" "$BOTCUBE_USER_TOKEN"')
-
-    assert _tool_output(events).startswith('[]')
-
-
-@pytest.mark.parametrize('bot_service', [{}, {'userTokenInShell': False}], indirect=True)
-def test_a_bot_keeps_the_user_token_out_of_its_shell_unless_it_opts_in(bot_service: _Service) -> None:
-    events = bot_service.turn('run: printenv BOTCUBE_USER_TOKEN || echo absent', userToken=_signed('user-1'))
-
-    assert _tool_output(events).startswith('absent\n')
 def test_a_turn_acts_as_the_actor_its_identity_names(bot_service: _Service) -> None:
     # A Session filed under an older ID: the acting User is the Turn identity's actor, not the Session's filing ID.
     bot_service.turn('hello', user='older-filing', turnIdentity=turn_identity('current-actor', 'older-filing'))
@@ -208,7 +169,7 @@ def test_a_traffic_change_reaches_the_cached_agent_without_a_rebuild(bot_service
         ({'models': []}, 'models'),
         ({'skills': ['skills/missing']}, 'skills.0'),
         ({'skills': ['skills/greeting', 'other/greeting']}, 'skills.1'),
-        ({'userTokenInShell': 'yes'}, 'userTokenInShell'),
+        ({'environment': {'HOME_DIR': '${HOME}'}}, 'environment.HOME_DIR'),
         ({'instructions': 'MISSING.md'}, 'instructions'),
     ],
 )
@@ -220,6 +181,37 @@ def test_bad_bot_settings_stop_startup_naming_the_field(start: Start, tmp_path: 
     _deployed(monkeypatch, tmp_path, path)
 
     with pytest.raises(BotSettingsError, match=rf'^Bot settings {re.escape(str(path.resolve()))}: {re.escape(field)}: '):
+        start()
+
+
+GATEWAY = {'modelGateway': {**ENDPOINT_MODELS, 'url': 'https://models.example.com'}}
+UNPROFILED = {'key': 'sonnet-4.6', 'label': 'Sonnet', 'provider': 'anthropic'}
+
+
+def test_a_gateway_model_with_no_ceiling_and_no_langchain_profile_stops_startup(start: Start, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = _bot(tmp_path, models=[{'key': 'claude-sonnet-5-5', 'label': 'Sonnet', 'provider': 'anthropic'}, UNPROFILED])
+    _deployed(monkeypatch, tmp_path, path, integrations=GATEWAY)
+
+    with pytest.raises(BotSettingsError, match=re.escape(
+        'Bot settings /bot/bot.yaml: models.1.maxTokens: LangChain has no model profile for sonnet-4.6 to take its output ceiling from: set maxTokens'
+    )):
+        start()
+
+
+def test_a_gateway_model_without_a_langchain_profile_runs_under_the_ceiling_it_sets(start: Start, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = _bot(tmp_path, models=[{**UNPROFILED, 'maxTokens': 16000}])
+    _deployed(monkeypatch, tmp_path, path, integrations=GATEWAY)
+
+    start()
+
+    assert serving._require_bot().models['sonnet-4.6'].max_tokens == 16000
+
+
+def test_user_token_in_shell_stops_startup_naming_environment(start: Start, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = _bot(tmp_path, userTokenInShell=True)
+    _deployed(monkeypatch, tmp_path, path)
+
+    with pytest.raises(BotSettingsError, match=rf'^Bot settings {re.escape(str(path.resolve()))}: userTokenInShell: renamed to environment, '):
         start()
 
 
@@ -245,3 +237,40 @@ def test_the_example_bot_is_servable() -> None:
     bot = load_bot_settings(example / 'bot.yaml')
 
     assert (bot.agent_name, bot.models[0], bot.skills) == ('BotCube', 'echo', (example / 'skills' / 'computer',))
+
+
+@pytest.mark.parametrize(('provider', 'providers', 'served'), [
+    ('deepseek', None, 'anthropic and openai'),
+    ('openai', {'anthropic': {'url': 'https://models.example.com/anthropic'}}, 'anthropic'),
+])
+def test_the_harness_stops_on_a_bot_model_on_a_provider_the_gateway_does_not_serve_naming_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, provider: str, providers: dict[str, object] | None, served: str,
+) -> None:
+    from botcube_harness_deepagents import bot_settings
+    from deployment_fixture import ENDPOINT_MODELS
+
+    bot = _bot(tmp_path / 'bot', models=[{'key': 'claude-sonnet-5-5', 'label': 'Sonnet', 'provider': 'anthropic'}, {'key': 'other', 'label': 'Other', 'provider': provider}])
+    monkeypatch.setattr(bot_settings, 'load_bot_settings', lambda path: load_bot_settings(bot))
+    gateway = {**ENDPOINT_MODELS, 'url': 'https://models.example.com', 'turnSummaryModel': 'anthropic:claude-haiku-4-5', **({'providers': providers} if providers else {})}
+    path = deploy(monkeypatch, tmp_path, integrations={'modelGateway': gateway})
+
+    with pytest.raises(BotSettingsError, match=(
+        f"^BotCube Config {re.escape(str(path))}: the bot settings' model other is on provider {provider}, "
+        f'but integrations.modelGateway reaches the providers {served}$'
+    )):
+        bot_settings.bot_from_env()
+
+
+def test_the_harness_stops_on_an_anthropic_model_on_a_gateway_url_ending_in_v1_naming_the_fix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from botcube_harness_deepagents import bot_settings
+    from deployment_fixture import ENDPOINT_MODELS
+
+    bot = _bot(tmp_path / 'bot', models=[{'key': 'claude-sonnet-5-5', 'label': 'Sonnet', 'provider': 'anthropic'}])
+    monkeypatch.setattr(bot_settings, 'load_bot_settings', lambda path: load_bot_settings(bot))
+    path = deploy(monkeypatch, tmp_path, integrations={'modelGateway': ENDPOINT_MODELS})
+
+    with pytest.raises(BotSettingsError, match=(
+        f"^BotCube Config {re.escape(str(path))}: the bot settings' model claude-sonnet-5-5 is on provider anthropic, "
+        "but integrations.modelGateway.url ends in /v1, which Anthropic's API adds itself: set integrations.modelGateway.providers.anthropic.url without /v1$"
+    )):
+        bot_settings.bot_from_env()

@@ -1,5 +1,5 @@
 import { propagation, type Context } from '@opentelemetry/api';
-import { Agent, EnvHttpProxyAgent, type Dispatcher } from 'undici';
+import { Agent, type Dispatcher } from 'undici';
 import { awsFetch } from './aws.js';
 import { dispatcherFetch } from './dispatcher-fetch.js';
 import type { HarnessBearer } from './harness-auth.js';
@@ -17,11 +17,8 @@ interface UpstreamOptions {
   bearer?: HarnessBearer | undefined;
 }
 
-// Under the BotCube Config's proxy (NODE_USE_ENV_PROXY), through HTTP(S)_PROXY except NO_PROXY's hosts.
 const turnDispatcher = ({ connectTimeoutMs = CONNECT_TIMEOUT_MS }: UpstreamOptions): Dispatcher =>
-  process.env.NODE_USE_ENV_PROXY === '1'
-    ? new EnvHttpProxyAgent({ connect: { timeout: connectTimeoutMs } })
-    : new Agent({ connect: { timeout: connectTimeoutMs } });
+  new Agent({ connect: { timeout: connectTimeoutMs } });
 
 /** Where a Turn's invocation goes: the AgentCore Runtime, or a local Harness. */
 export interface Upstream {

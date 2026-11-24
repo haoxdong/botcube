@@ -45,8 +45,14 @@
             "description": { "type": "string", "minLength": 1 },
             "provider": {
               "type": "string",
-              "minLength": 1,
-              "description": "Whose model it is: a Session's Turns all run on its first Turn's provider."
+              "enum": ["anthropic", "openai", "deepseek", "echo"],
+              "description": "A Session's Turns all run on its first Turn's provider."
+            },
+            "maxTokens": {
+              "description": "The most output tokens one call to the model may write, as LiteLLM's max_tokens; absent, LangChain's default; required on a model gateway for a model LangChain has no profile for.",
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
             }
           },
           "required": ["key", "label", "provider"],
@@ -61,8 +67,14 @@
           "description": { "type": "string", "minLength": 1 },
           "provider": {
             "type": "string",
-            "minLength": 1,
-            "description": "Whose model it is: a Session's Turns all run on its first Turn's provider."
+            "enum": ["anthropic", "openai", "deepseek", "echo"],
+            "description": "A Session's Turns all run on its first Turn's provider."
+          },
+          "maxTokens": {
+            "description": "The most output tokens one call to the model may write, as LiteLLM's max_tokens; absent, LangChain's default; required on a model gateway for a model LangChain has no profile for.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
           }
         },
         "required": ["key", "label", "provider"],
@@ -76,9 +88,17 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },
-    "userTokenInShell": {
-      "description": "Whether the agent's shell holds the Turn's signed user token as BOTCUBE_USER_TOKEN, for the bot's CLIs to call its own service as the User; absent, it does not. Only for a bot with its own service.",
-      "type": "boolean"
+    "environment": {
+      "description": "Variables the agent's shell holds, as Docker Compose's `environment`: each value is literal, with ${BOTCUBE_RELAY_URL}, the agent's loopback origin, interpolated. A request to `${BOTCUBE_RELAY_URL}/<provider>/…` reaches that Credential Service Relay provider with the Turn's credential; the loopback forwards only the providers these values name, such as `SITE_URL: ${BOTCUBE_RELAY_URL}/site`.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^(?:[^$]|\\$\\$|\\$\\{BOTCUBE_RELAY_URL\\})*$"
+      }
     },
     "theme": {
       "description": "The agent's four colours, for its illustrations; absent, BotCube's own. The avatar is the Agent Identity's.",
@@ -148,5 +168,8 @@
     }
   },
   "required": ["agentIdentity", "accountKey", "models"],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "x-renamed-keys": {
+    "userTokenInShell": "environment, where a CLI reaches its Relay provider at ${BOTCUBE_RELAY_URL}/<provider> with no credential in the shell"
+  }
 }

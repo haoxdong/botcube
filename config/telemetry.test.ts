@@ -12,3 +12,12 @@ describe('TLS on the OTLP Endpoint', () => {
     expect(deployed).toEqual({ ...without, harness: { ...without.harness, OTEL_PYTHON_EXPORTER_OTLP_HTTP_TRACES_CREDENTIAL_PROVIDER: 'botcube' } });
   });
 });
+
+describe('the OTLP Endpoint through the proxy', () => {
+  it("loads the Harness's provider, which sends each export through the proxy, and sets nothing else", () => {
+    const without = telemetryEnvironment({ kind: 'otlp', url: 'https://collector.example.com/v1/traces' });
+    const deployed = telemetryEnvironment({ kind: 'otlp', url: 'https://collector.example.com/v1/traces', proxy: 'integrations.proxy' });
+
+    expect(deployed).toEqual({ ...without, harness: { ...without.harness, OTEL_PYTHON_EXPORTER_OTLP_HTTP_TRACES_CREDENTIAL_PROVIDER: 'botcube' } });
+  });
+});

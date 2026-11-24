@@ -1,6 +1,5 @@
 import { TurnQuota, TurnQuotaExceeded } from './turn-quota.js';
 import { startChatTracing } from './tracing.js';
-import { startProxyRelayForConfig } from './proxy-relay.js';
 import { chatTable } from './config.js';
 import { loadBotSettings } from 'botcube-config/load';
 import { assumeRoleAwsAccess } from './turn-credentials.js';
@@ -84,7 +83,7 @@ function configFromEnv(env: NodeJS.ProcessEnv, adapters: ConfigAdapters): ChatSe
         : null,
     warmupTimeoutMs: 60_000,
     ...(env.BOTCUBE_WAKE_URL ? { wakeUrl: env.BOTCUBE_WAKE_URL } : {}),
-    turnSummaryModel: turnSummaryModel(adapters.models, env, region),
+    turnSummaryModel: turnSummaryModel(adapters.models, env, region, adapters.proxy),
     ...(turnIdentity ? { turnIdentity } : {}),
     awsAccess: adapters.awsAccess,
   };
@@ -94,7 +93,7 @@ function configFromEnv(env: NodeJS.ProcessEnv, adapters: ConfigAdapters): ChatSe
 const pathSegment = (value: string) =>
   encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 
-/** The environment the stock Chat reads its BotCube Config and External Services from, and the options it is built with. */
+/** The environment the stock Chat reads its BotCube Config from, and its build options. */
 export type ChatDeployment = { env: NodeJS.ProcessEnv } & StockOptions;
 
 export interface ChatService {
@@ -276,8 +275,7 @@ export function createChatService(
     });
   });
 
-  // Take-over: the user drives the browser and the agent's automation stream is
-  // shut off until the user hands it back (the take-control toggle, ADR 0077).
+  // Take-over (ADR 0077): the agent's automation stream is off until the user hands the browser back.
   const browserControl = (streamStatus: 'DISABLED' | 'ENABLED') => async (c: Context) => {
     const sessionId = c.req.query('session_id') ?? '';
     if (!sessionId.trim()) throw new HttpError(422, 'session_id must not be blank');
@@ -306,12 +304,6 @@ function parkHistory(parameter: string, productName: string | undefined): ParkHi
 /** Serve the Chat Service, configured from the environment and the BotCube Config it names, on $PORT. */
 export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: StockOptions = {}): ServerType {
   const adapters = configAdapters(env);
-  // Listening first: every client, and the collector sidecar beside this container, sends through it.
-  const proxyRelay = startProxyRelayForConfig(adapters.proxy, env);
-  proxyRelay?.catch((error: unknown) => {
-    console.error('The proxy relay could not start', error);
-    process.exit(1);
-  });
   const config = configFromEnv(env, adapters);
   if (config.agentCore === null && config.localHarnessUrl === null) {
     console.warn('AGENTCORE_RUNTIME_ARN is not set; agent runs (POST /) return 503 and warmup is skipped until it is configured.');
@@ -341,7 +333,7 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: 
   const port = Number(env.PORT || 8123);
   // ws types `noServer` as `boolean | undefined`, which exactOptionalPropertyTypes keeps from matching.
   const websocket = { server: new WebSocketServer({ noServer: true }) as unknown as WebSocketServerLike };
-  const tracing = startChatTracing(adapters.telemetry, env);
+  const tracing = startChatTracing(adapters.telemetry, env, adapters.proxy);
   const startupCredentials = [
     ...(config.turnSummaryModel.kind === 'openai-compatible' ? [config.turnSummaryModel.endpoint.credential] : []),
     ...(tracing?.credential ? [tracing.credential] : []),
@@ -375,7 +367,6 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: 
   });
   process.on('exit', reportUnsavedTurnSummaries);
   server.once('close', () => {
-    void proxyRelay?.then((relay) => relay.close(), () => undefined);
     stopScheduledRuns?.();
     void stopTracing().catch((error: unknown) => { console.error('Chat tracing shutdown failed', error); });
     unregisterTaskStop?.();

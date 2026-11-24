@@ -1,7 +1,7 @@
 import { connect, createServer, type Server, type Socket } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { credentialSource, type CredentialSource } from './credential-source.js';
-import { startProxyRelay, startProxyRelayForConfig, type ProxyRelay } from './proxy-relay.js';
+import { proxyUrl, startProxyRelay, type ProxyRelay } from './proxy-relay.js';
 
 /** An authenticating forward proxy: records each request head, then answers a CONNECT and echoes the tunnel. */
 class FakeUpstreamProxy {
@@ -83,8 +83,7 @@ async function relayTo(options: Omit<Parameters<typeof startProxyRelay>[0], 'ups
 
 describe('the proxy relay', () => {
   it("opens each tunnel through the operator's proxy with the credential's current value and the Endpoint's headers", async () => {
-    // The relay reads the credential once as it starts.
-    const { upstream, relay } = await relayTo({ credential: values('startup', 'first', 'rotated'), headers: { 'x-tenant': 'botcube-example' } });
+    const { upstream, relay } = await relayTo({ credential: values('first', 'rotated'), headers: { 'x-tenant': 'botcube-example' } });
 
     const answer = await exchange(relay, 'CONNECT models.example.com:443 HTTP/1.1\r\nHost: models.example.com:443\r\nProxy-Authorization: Basic stale\r\n\r\n', 'hello');
     await exchange(relay, 'CONNECT models.example.com:443 HTTP/1.1\r\nHost: models.example.com:443\r\n\r\n', 'again');
@@ -114,48 +113,38 @@ describe('the proxy relay', () => {
     expect([header(upstream.heads[0] ?? '', 'proxy-authorization'), header(upstream.heads[0] ?? '', 'x-route')]).toEqual([[], ['egress-a']]);
   });
 
-  it('answers 502 naming the credential, and opens nothing upstream, when the credential fails after it started', async () => {
-    let started = false;
-    const failing: CredentialSource = { get: async () => {
-      if (started) throw new Error('proxy.credential credential (file /run/secrets/proxy): ENOENT');
-      started = true;
-      return { value: 'startup', expiresAt: undefined };
-    } };
-    const { upstream, relay } = await relayTo({ credential: failing, headers: {} });
+  it('listens without reading the credential, and answers 502 naming it, opening nothing upstream, when it cannot be read', async () => {
+    const path = `/nonexistent/proxy-token-${Math.random().toString(36).slice(2)}`;
+    const { upstream, relay } = await relayTo({ credential: credentialSource('proxy', { kind: 'file', path }), headers: {} });
 
     const answer = await exchange(relay, 'CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n');
 
     expect(answer.split('\r\n')[0]).toBe('HTTP/1.1 502 Bad Gateway');
-    expect(answer).toContain('proxy.credential credential (file /run/secrets/proxy): ENOENT');
+    expect(answer).toContain(`proxy credential (file ${path}): ENOENT`);
     expect(upstream.heads).toEqual([]);
   });
 });
 
-describe('the proxy relay at startup', () => {
-  it('does not listen on a credential it cannot read, naming the seam and the source', async () => {
-    const path = `/nonexistent/proxy-token-${Math.random().toString(36).slice(2)}`;
-    const relay = startProxyRelay({
-      upstream: new URL('http://127.0.0.1:9'), listen: { host: '127.0.0.1', port: 0 },
-      credential: credentialSource('proxy', { kind: 'file', path }), headers: {},
-    });
-    await expect(relay).rejects.toThrow(`proxy credential (file ${path}): ENOENT`);
+describe("the BotCube Config's proxy in a process", () => {
+  it('is none without a proxy', () => {
+    expect(proxyUrl({ kind: 'none' })).toBeUndefined();
   });
 
-  it("relays the BotCube Config's proxy where HTTPS_PROXY points, with its credential and headers", async () => {
-    const path = `/nonexistent/proxy-token-${Math.random().toString(36).slice(2)}`;
-    const relay = startProxyRelayForConfig(
-      { kind: 'forward', url: 'http://127.0.0.1:9', credential: { kind: 'file', path }, headers: { 'x-tenant': 'a' } },
-      { HTTPS_PROXY: 'http://127.0.0.1:0' },
-    );
-    await expect(relay).rejects.toThrow(`proxy credential (file ${path}): ENOENT`);
+  it('is the proxy itself when it takes no credential, headers or TLS', async () => {
+    expect(await proxyUrl({ kind: 'forward', url: 'http://proxy.example.com:3128' })?.()).toBe('http://proxy.example.com:3128');
   });
 
-  it.each([{ kind: 'none' } as const, { kind: 'forward', url: 'http://proxy.example.com:3128' } as const])('needs no relay for %j', (proxy) => {
-    expect(startProxyRelayForConfig(proxy, { HTTPS_PROXY: 'http://proxy.example.com:3128' })).toBeUndefined();
-  });
+  it('is one loopback relay, started when first asked for, with the credential and headers', async () => {
+    const upstream = new FakeUpstreamProxy();
+    opened.push(upstream);
+    const proxy = { kind: 'forward', url: (await upstream.listen()).href, headers: { 'x-tenant': 'a' }, credential: { kind: 'file', path: `/nonexistent/${Math.random()}` } } as const;
+    const url = proxyUrl(proxy);
 
-  it('needs HTTPS_PROXY pointed at the relay beside a proxy credential or headers', () => {
-    expect(() => startProxyRelayForConfig({ kind: 'forward', url: 'http://proxy.example.com:3128', headers: { 'x-tenant': 'a' } }, {}))
-      .toThrow("HTTPS_PROXY is unset beside the BotCube Config's proxy credential, headers or TLS");
+    const relay = await url?.();
+    expect(relay).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(await url?.()).toBe(relay);
+    expect(await proxyUrl(proxy)?.()).toBe(relay);
+    const answer = await exchange({ url: relay ?? '', close: async () => undefined }, 'CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n');
+    expect(answer).toContain(`proxy credential (file ${proxy.credential.path}): ENOENT`);
   });
 });

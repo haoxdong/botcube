@@ -1,12 +1,14 @@
-"""The proxy Endpoint's credential and headers (ADR 0091) for the Credential Service, the twin of the Harness's `proxy_relay`.
+"""The proxy Endpoint's credential, headers and TLS (ADR 0091) for the Credential Service, the twin of the Harness's `proxy_relay`.
 
-The OpenAI relay and the sign-in socket read HTTP(S)_PROXY, so the deploy points them at this loopback relay
-(`proxyEnvironment` in botcube/config), which opens each request to the proxy the BotCube Config names
-with the credential file's current value: a rotated token reaches the next request.
+An HTTP client takes its proxy once, so the models relay, when its Endpoint names the proxy, is pointed at this
+loopback relay, which opens each request to the proxy the BotCube Config names with the credential file's current
+value and the client certificate as read now: a rotated token or certificate reaches the next request. Neither is
+read before the first request.
 """
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import socket
@@ -14,7 +16,7 @@ import socketserver
 import ssl
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from threading import Thread
+from threading import Lock, Thread
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -50,17 +52,37 @@ def _file_credential(source: Mapping[str, str]) -> Callable[[], str]:
     return read
 
 
-def start_proxy_relay_from_config(config: Mapping[str, Any], env: Mapping[str, str] = os.environ) -> str | None:
-    """The relay for the BotCube Config's proxy, listening where HTTPS_PROXY points; None unless it has a credential, headers or TLS."""
+_relays: dict[str, str] = {}
+_relays_lock = Lock()
+
+
+def proxy_url_from_config(config: Mapping[str, Any], env: Mapping[str, str] = os.environ) -> Callable[[], str] | None:
+    """
+    Where this process's clients reach the BotCube Config's proxy, or None without one: the proxy's own URL, or, for a
+    proxy taking a credential, headers or TLS, one loopback relay per process, started when first asked for.
+    """
     proxy = config['integrations']['proxy']
-    if proxy['kind'] == 'none' or not {'credential', 'headers', 'tls'} & proxy.keys():
+    if proxy['kind'] == 'none':
         return None
-    listen = urlsplit(env.get('HTTPS_PROXY') or '')
-    if not listen.hostname or listen.port is None:
-        raise RuntimeError("HTTPS_PROXY is unset beside the BotCube Config's proxy credential, headers or TLS; the deploy points it at the proxy relay")
+    if not {'credential', 'headers', 'tls'} & proxy.keys():
+        return lambda: proxy['url']
+    key = json.dumps(proxy, sort_keys=True)
     credential = _file_credential(proxy['credential']) if 'credential' in proxy else None
     tls = endpoint_tls('proxy', proxy['tls'], env=env) if 'tls' in proxy else None
-    return start_proxy_relay(upstream=proxy['url'], listen=(listen.hostname, listen.port), credential=credential, headers=proxy.get('headers', {}), tls=tls)
+
+    def relay() -> str:
+        with _relays_lock:
+            if key not in _relays:
+                _relays[key] = start_proxy_relay(upstream=proxy['url'], listen=('127.0.0.1', 0), credential=credential, headers=proxy.get('headers', {}), tls=tls)
+            return _relays[key]
+
+    return relay
+
+
+def relay_provider_proxy(config: Mapping[str, Any], provider: str, env: Mapping[str, str] = os.environ) -> Callable[[], str] | None:
+    """Where the Relay provider `provider` reaches its upstream through the proxy, as `proxy_url_from_config`, or None for direct."""
+    named = (config['integrations'].get('relayProviders') or {}).get(provider, {})
+    return proxy_url_from_config(config, env) if named.get('proxy') else None
 
 
 def start_proxy_relay(
@@ -70,8 +92,6 @@ def start_proxy_relay(
     target = urlsplit(upstream)
     secure = target.scheme == 'https'
     address = (target.hostname or '', target.port or (443 if secure else 80))
-    if tls is not None:
-        tls.context()
 
     class Relay(socketserver.BaseRequestHandler):
         def handle(self) -> None:

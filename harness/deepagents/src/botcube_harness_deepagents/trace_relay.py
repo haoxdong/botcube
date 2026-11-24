@@ -22,7 +22,12 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
 )
 from opentelemetry.proto.trace.v1.trace_pb2 import Status
 
-from .telemetry_credential import telemetry_credential, telemetry_session, telemetry_tls
+from .telemetry_credential import (
+    telemetry_credential,
+    telemetry_proxy,
+    telemetry_session,
+    telemetry_tls,
+)
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +99,7 @@ _Send = Callable[[AWSRequest], tuple[int, bytes]]
 def _upstream() -> tuple[str, _Send]:
     """Where exports go and how: to the telemetry Endpoint with its credential and TLS when the deploy set either, otherwise SigV4-signed."""
     endpoint = os.environ.get('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT')
-    if telemetry_credential() is not None or telemetry_tls() is not None:
+    if telemetry_credential() is not None or telemetry_tls() is not None or telemetry_proxy() is not None:
         if not endpoint:
             raise RuntimeError('The trace relay sends the telemetry credential only to OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, which is unset')
         return endpoint, _endpoint_send(telemetry_session())

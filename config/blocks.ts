@@ -10,7 +10,7 @@ export const kmsKeyArn = z.string().regex(/^arn:aws[a-z-]*:kms:[a-z0-9-]+:\d{12}
 /** The seconds a command credential may run before it is stopped, as Google's executable sources default to. */
 export const COMMAND_TIMEOUT_SECONDS = 30;
 
-const absolutePath = z.string().startsWith('/', 'Expected an absolute path');
+export const absolutePath = z.string().startsWith('/', 'Expected an absolute path');
 const command = {
   command: z.tuple([z.string().min(1)], z.string()).describe('The program and its arguments, run without a shell.'),
   timeoutSeconds: z.number().int().positive().default(COMMAND_TIMEOUT_SECONDS).describe('How long the command may run before it is stopped.'),
@@ -80,7 +80,7 @@ export const endpointHeaders = headersBeside('Authorization', 'every request');
 
 /**
  * An Endpoint's TLS (ADR 0091): the client certificate it presents, read again for each new connection, and the server
- * identity it expects. Trust roots stay the system's, with NODE_EXTRA_CA_CERTS for the Node consumers and SSL_CERT_FILE for the Python ones.
+ * identity it expects. Its chain is checked against the BotCube Config's `caBundle`.
  */
 export const endpointTls = z.strictObject({
   clientCertificate: z.union([
@@ -98,21 +98,92 @@ export const endpointTls = z.strictObject({
 }).refine((tls) => tls.clientCertificate !== undefined || tls.serverIdentity !== undefined, 'Expected a clientCertificate, a serverIdentity or both');
 export type EndpointTls = z.output<typeof endpointTls>;
 
-/** An outbound External Service (ADR 0091): its URL, the credential sent as its bearer token, headers sent on every request, and its TLS. */
+/** The proxy an Endpoint is reached through, by its key in the BotCube Config; absent, the Endpoint is reached direct. */
+export const proxyReference = z.literal('integrations.proxy')
+  .describe('Reached through the forward proxy at integrations.proxy; absent, direct.');
+
+/** An outbound External Service (ADR 0091): its URL, the credential sent as its bearer token, headers sent on every request, its TLS and its proxy. */
 export const endpoint = z.strictObject({
   url: z.url({ protocol: /^https$/ }),
   credential: credentialSource.describe('Sent as `Authorization: Bearer <value>`.'),
   headers: endpointHeaders,
   tls: endpointTls.optional(),
+  proxy: proxyReference.optional(),
 });
 export type Endpoint = z.output<typeof endpoint>;
-export const cacheMarkers = z.literal('claude')
-  .describe("Set to `claude` behind a gateway in front of Claude, so the Harness marks the system prompt and the latest messages with `cache_control` and repeated input is billed at the cached rate. Unset, no request carries a marker.");
 
-/** The OpenAI API a models Endpoint is called over (ADR 0091): Chat Completions, or Responses for a Responses-only gateway. */
-export const modelsWire = z.enum(['chat-completions', 'responses'])
-  .describe('The OpenAI API every call to the endpoint uses: `chat-completions` (`/chat/completions`), or `responses` (`/responses`) for a gateway that serves only the Responses API.');
-export type ModelsWire = z.output<typeof modelsWire>;
+/** The operator's forward proxy, or none. */
+export const forwardProxy = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('forward'),
+    url: z.url({ protocol: /^https?$/ }).describe('The forward proxy, as an HTTP client takes it.'),
+    credential: credentialSource
+      .refine((source) => source.kind === 'file', 'A proxy credential is read from a file; any other source would reach out through the proxy it authenticates')
+      .optional()
+      .describe("A file, sent as `Proxy-Authorization: Bearer <value>` on each tunnel and request, read again as it rotates; absent, the proxy takes none."),
+    headers: headersBeside('Proxy-Authorization', 'each tunnel and request the proxy carries'),
+    tls: endpointTls.optional(),
+  }).refine(({ url, tls }) => tls === undefined || url.startsWith('https:'), { path: ['tls'], message: 'TLS needs the proxy at an https URL' }).describe(
+    "The operator's forward proxy, an Endpoint: each Endpoint, and network.openEgress, that names it is reached through it; everything else goes direct.",
+  ),
+  z.strictObject({ kind: z.literal('none') }).describe('Outbound traffic goes direct.'),
+]);
+
+/** Whose model it is, by LangChain's provider name: `anthropic` and `openai` on their own APIs or on Bedrock, `deepseek` on Bedrock, and `echo`, BotCube's own. */
+export const modelProvider = z.enum(['anthropic', 'openai', 'deepseek', 'echo']);
+export type ModelProvider = z.output<typeof modelProvider>;
+
+/** The providers whose own API a model gateway serves. */
+export const GATEWAY_PROVIDERS = ['anthropic', 'openai'] as const satisfies readonly ModelProvider[];
+export type GatewayProvider = typeof GATEWAY_PROVIDERS[number];
+export const isGatewayProvider = (provider: ModelProvider): provider is GatewayProvider => GATEWAY_PROVIDERS.some((name) => name === provider);
+
+const gatewayUrl = z.url().refine(httpsOrLoopback, 'A models endpoint is an https URL; only a stand-in on this machine may use http');
+const providerRoute = z.strictObject({
+  url: gatewayUrl.optional().describe("The base URL of the provider's own API on the gateway, as LiteLLM's api_base, such as https://models.example.com/anthropic; absent, the gateway's."),
+  credential: credentialSource.optional().describe("Sent as `Authorization: Bearer <value>` in place of the gateway's credential."),
+  headers: endpointHeaders.describe("Headers sent on every request to this provider, in place of the gateway's."),
+});
+
+/** Every model on a gateway, by its key in the bot settings, called on its provider's own API (ADR 0091). */
+export const gatewayModels = endpoint.extend({
+  kind: z.literal('openai-compatible'),
+  url: gatewayUrl.describe("The gateway's base URL, such as https://models.example.com/v1, for each provider `providers` gives no URL."),
+  providers: z.strictObject({
+    anthropic: providerRoute.optional(),
+    openai: providerRoute.extend({
+      useResponsesApi: z.boolean().default(false).describe("Call OpenAI's Responses API, as LangChain's use_responses_api; false, its Chat Completions API."),
+    }).optional(),
+  }).optional()
+    .describe("Every provider the gateway serves, by LangChain's provider name, and where; absent, it serves each at its URL."),
+  turnSummaryModel: z.string().refine((name) => providerModel(name) !== undefined, 'Expected provider:model, such as anthropic:claude-haiku-4-5, its provider one a bot model may name')
+    .describe("The model on the gateway that summarizes each finished Turn for the Activity, as `provider:model`, such as `anthropic:claude-haiku-4-5`, called on its provider's own API."),
+}).superRefine((gateway, context) => {
+  const summary = providerModel(gateway.turnSummaryModel);
+  const unreached = summary && unreachedProvider(gateway, summary.provider);
+  if (unreached) context.addIssue({ code: 'custom', path: ['turnSummaryModel'], message: `On provider ${summary.provider}, but ${unreached}` });
+}).describe("Every model on a gateway, by its key in the bot settings, called on its provider's own API; Plan Usage models still run through the Credential Service.");
+export type GatewayModels = z.output<typeof gatewayModels>;
+
+/** Why `gateway` cannot call a model on `provider`, or undefined when it can; Bedrock runs every model it serves, and `echo` is never called. */
+export function unreachedProvider(gateway: GatewayModels | { kind: 'bedrock' }, provider: ModelProvider): string | undefined {
+  if (gateway.kind === 'bedrock') return undefined;
+  const served: readonly ModelProvider[] = gateway.providers ? GATEWAY_PROVIDERS.filter((name) => gateway.providers?.[name]) : GATEWAY_PROVIDERS;
+  if (provider === 'echo') return undefined;
+  if (!served.includes(provider)) return `integrations.modelGateway reaches the providers ${served.join(' and ')}`;
+  if (provider === 'anthropic' && !gateway.providers?.anthropic?.url && /\/v1\/?$/.test(new URL(gateway.url).pathname)) {
+    return "integrations.modelGateway.url ends in /v1, which Anthropic's API adds itself: set integrations.modelGateway.providers.anthropic.url without /v1";
+  }
+  return undefined;
+}
+
+/** A model named `provider:model`, its provider read as a bot model's is; undefined unless it names both. */
+export function providerModel(name: string): { provider: ModelProvider; model: string } | undefined {
+  const at = name.indexOf(':');
+  const provider = modelProvider.safeParse(name.slice(0, at));
+  const model = name.slice(at + 1);
+  return at > 0 && provider.success && model ? { provider: provider.data, model } : undefined;
+}
 
 export const oidcIssuer = z.url().refine(httpsOrLoopback, 'An OIDC issuer is an https URL; only a stand-in on this machine may use http');
 
@@ -127,3 +198,12 @@ export const trust = <Issuer extends z.ZodType<string>, Client extends z.ZodType
 
 /** The variable the operator sets to `1` in the deploy environment, beside `allowCommandCredentials`, for a command credential to run. */
 export const ALLOW_COMMAND_CREDENTIALS_ENV = 'BOTCUBE_ALLOW_COMMAND_CREDENTIALS';
+
+export const relayProviders = z.record(z.string().regex(/^[a-z][a-z0-9-]*$/, 'Expected a Relay provider name such as openai'), z.strictObject({ proxy: proxyReference.optional() }))
+  .superRefine((providers, context) => {
+    if ('models' in providers) {
+      context.addIssue({ code: 'custom', path: ['models'], message: 'The models Relay provider is integrations.modelGateway: name the proxy at integrations.modelGateway.proxy' });
+    }
+  })
+  .optional()
+  .describe("The Credential Service's Relay providers, by name, such as openai, Plan Usage's, and each one's upstream calls; a provider not listed reaches its upstream direct.");

@@ -46,13 +46,6 @@ function environment(name: string): Record<string, unknown> {
 }
 
 const PRIVATE_SUBNETS = ['subnet-fixtureprivatea', 'subnet-fixtureprivateb'];
-const PROXY = {
-  HTTP_PROXY: 'http://proxy.example.com:3128',
-  HTTPS_PROXY: 'http://proxy.example.com:3128',
-  NO_PROXY: 'localhost,127.0.0.1,::1,169.254.169.254,169.254.170.2,.amazonaws.com',
-  NODE_USE_ENV_PROXY: '1',
-};
-
 test('creates no network, KMS key, table or bucket', () => {
   const created = ['AWS::EC2::VPC', 'AWS::EC2::Subnet', 'AWS::KMS::Key', 'AWS::DynamoDB::Table', 'AWS::DynamoDB::GlobalTable', 'AWS::S3::Bucket'];
   expect(resources.filter(({ Type }) => created.includes(Type)).map(({ Type }) => Type)).toEqual([]);
@@ -185,11 +178,21 @@ test('creates no Files pool, file system or access point in pool mode either: it
 test("serves Files from the existing file system, leasing Users' access points from the BotCube Config", () => {
   const chat = environment('chat-service');
   expect(JSON.stringify(chat.BOTCUBE_FILES_EFS_ARN)).toContain(':elasticfilesystem:us-east-1:000000000000:file-system/fs-0fea7e5f11e5');
-  expect(Object.keys(chat).filter(name => ['BOTCUBE_FILES_POOL_MANIFEST', 'BOTCUBE_FILES_MOUNT_TARGET_IP'].includes(name))).toEqual([]);
+  expect(Object.keys(chat)).not.toContain('BOTCUBE_FILES_POOL_MANIFEST');
   const volumes = ofType('AWS::ECS::TaskDefinition').flatMap(({ Properties }) => (Properties.Volumes as { EFSVolumeConfiguration?: unknown }[] | undefined) ?? [])
     .map(volume => volume.EFSVolumeConfiguration);
   expect(volumes).toEqual([{ FilesystemId: 'fs-0fea7e5f11e5', TransitEncryption: 'ENABLED', AuthorizationConfig: { AccessPointId: 'fsap-0acc0047', IAM: 'ENABLED' } }]);
   expect(ofType('AWS::Lambda::Function').filter(({ Properties }) => Properties.FileSystemConfigs)).toEqual([]);
+});
+
+test("mounts the existing Files by the address of the file system's mount target, read from the file system at deploy", () => {
+  const address = environment('chat-service').BOTCUBE_FILES_MOUNT_TARGET_IP;
+  const [read] = references(address);
+  expect(address).toEqual({ 'Fn::GetAtt': [read, 'MountTargets.0.IpAddress'] });
+  const call = templates.flatMap(template => Object.entries(template.Resources)).find(([logicalId]) => logicalId === read)?.[1].Properties.Create;
+  expect(JSON.parse(String(call))).toMatchObject({
+    service: 'EFS', action: 'describeMountTargets', parameters: { FileSystemId: 'fs-0fea7e5f11e5' }, outputPaths: ['MountTargets.0.IpAddress'],
+  });
 });
 
 test('uses the existing tables and their stream', () => {
@@ -303,12 +306,11 @@ test("exports the Chat Service's and the Harness's traces straight to the collec
   expect(JSON.stringify(chatPolicies)).not.toContain('xray:');
 });
 
-test("sends the Chat Service, the Credential Service and the Runtime through their own relay, which reads the proxy from the BotCube Config", () => {
-  const relayed = { ...PROXY, HTTP_PROXY: 'http://127.0.0.1:3128', HTTPS_PROXY: 'http://127.0.0.1:3128' };
-  expect(environment('chat-service')).toMatchObject(relayed);
-  expect(environment('credential-service')).toMatchObject(relayed);
+test("sets no proxy variable on any process: each reaches the proxy only for the endpoints that name it, from the BotCube Config", () => {
   const [runtime] = ofType('AWS::BedrockAgentCore::Runtime');
-  expect(runtime.Properties.EnvironmentVariables).toMatchObject(relayed);
+  for (const variables of [environment('chat-service'), environment('credential-service'), runtime.Properties.EnvironmentVariables]) {
+    expect(Object.keys(variables ?? {}).filter(name => /PROXY/.test(name))).toEqual([]);
+  }
 });
 
 test('hands each process the BotCube Config by its locator, never the values projected from it', () => {
