@@ -27,6 +27,7 @@ beforeAll(async () => {
       credentialProps: ['agentComputerCdpUrl'],
       // A scheduled run acts for its owner with no request: say so in the payload.
       scheduledRequester: async (owner) => ({ owner, scheduled: true }),
+      summarizePlanTurn: async () => ({ title: 'Completed plan task', summary: 'Ran the scheduled brief' }),
       accountModels: async ({ owner }) => planCatalogs.get(owner) ?? [plan],
       invocationPayload: async (input, requester, model?: AgentModel) => ({
         ...input, credentialServiceInvocationToken,

@@ -203,6 +203,7 @@ describe('a scheduled run', () => {
     expect(await posted(main)).toEqual([{ content: 'Scheduled task "Morning brief": Done.', userId: filed(account) }]);
     expect(stack.agentcore.invocationFor(defined(await sideChatOf(account, id), 'the run Side Chat')).payload.forwardedProps)
       .toMatchObject({ model: 'openai-plan:gpt-6-sol' });
+    expect(await activity(account, 0)).toEqual([{ title: 'Completed plan task', summary: 'Ran the scheduled brief' }]);
     expect(stack.bedrock.summarizedTurns().map(({ request }) => request)).not.toContain(prompt);
   });
 

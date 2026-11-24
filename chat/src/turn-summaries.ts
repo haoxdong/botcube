@@ -1,4 +1,6 @@
-import { isPlanModelKey } from './models.js';
+import { createParser } from 'eventsource-parser';
+import type { AgentModel } from './models.js';
+import type { Requester } from './requester.js';
 import { createHash } from 'node:crypto';
 import type { BotCubeConfig } from 'botcube-config';
 import type { ModelsWire } from 'botcube-config/blocks';
@@ -14,6 +16,11 @@ export interface FinishedTurn {
 }
 
 export type TurnSummarizer = (turn: FinishedTurn) => Promise<TurnSummary>;
+
+export type CompletedTurnSummarizer = (
+  turn: FinishedTurn,
+  context: { requester: Requester; sessionId: string; model: AgentModel },
+) => Promise<TurnSummary>;
 
 /** Where the summary model is called on Bedrock: its Converse URL, signed for this region. */
 export interface BedrockSummaryModel {
@@ -127,6 +134,47 @@ export function openAICompatibleTurnSummarizer({ endpoint, model, wire }: OpenAI
     const args = call.arguments(await response.json());
     return summaryInput(args === undefined ? undefined : parsedArguments(args));
   };
+}
+
+export async function summarizePlanTurn(
+  model: string,
+  turn: FinishedTurn,
+  relay: (body: string) => Promise<Response>,
+): Promise<TurnSummary> {
+  const response = await relay(JSON.stringify({
+    model,
+    instructions: SYSTEM_PROMPT,
+    input: [{ role: 'user', content: JSON.stringify(turn) }],
+    tools: [{ type: 'function', name: SUMMARY_TOOL, description: SUMMARY_TOOL_DESCRIPTION, parameters: SUMMARY_PARAMETERS }],
+    tool_choice: 'auto',
+    stream: true,
+    store: false,
+  }));
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => undefined);
+    throw planSummaryError(body, `HTTP ${response.status}`);
+  }
+  let completed: unknown;
+  const output: unknown[] = [];
+  const parser = createParser({ onEvent({ data }) {
+    if (data === '[DONE]') return;
+    const event = fields(parsedArguments(data));
+    if (event.type === 'error') throw planSummaryError(event, 'a response stream error');
+    if (event.type === 'response.output_item.done') output.push(event.item);
+    if (event.type === 'response.completed') completed = event.response;
+  } });
+  parser.feed(await response.text());
+  if (completed === undefined) throw new Error('The plan summary response stream ended before completion');
+  const args = SUMMARY_CALL.responses.arguments({ output }) ?? SUMMARY_CALL.responses.arguments(completed);
+  return summaryInput(args === undefined ? undefined : parsedArguments(args));
+}
+
+function planSummaryError(body: unknown, fallback: string): Error {
+  const error = fields(fields(body).error);
+  if (error.type === 'plan_usage' && typeof error.message === 'string' && error.message.trim()) {
+    return new Error(error.message);
+  }
+  return new Error(`The plan summary model answered ${fallback}`);
 }
 
 function parsedArguments(text: string): unknown {
@@ -257,7 +305,6 @@ export async function recordTurnSummary(
   save: (finished: TurnActivity) => Promise<void>,
   sessionId: string,
   turn: FinishedTurn,
-  model = '',
 ): Promise<void> {
   const finished = turnActivity(turn.request);
   const saving = { sessionId };
@@ -271,11 +318,11 @@ export async function recordTurnSummary(
   };
   unsaved.add(saving);
   try {
-    const summary = isPlanModelKey(model) ? undefined : await summarize(turn).catch(async (error: unknown) => {
+    const summary = await summarize(turn).catch(async (error: unknown) => {
       await saveActivity({ ...finished, failed: firstLine(`The Turn summary could not be made: ${message(error)}`) });
       throw error;
     });
-    await saveActivity(summary === undefined ? finished : { ...finished, summary });
+    await saveActivity({ ...finished, summary });
   } catch (error) {
     console.error(`${TURN_SUMMARY_FAILED} session_id=${sessionId}`, error);
     throw new Error(`The Turn summary could not be saved: ${message(error)}`, { cause: error });

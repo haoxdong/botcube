@@ -19,7 +19,7 @@ import { forwardUserToken, type UserTokenSigner } from './user-token.js';
 import { TurnTiming } from './turn-timing.js';
 import type { TurnQuota } from './turn-quota.js';
 import { turnErrorDetails, credentialValues, relayTurn, stopTurn, type HeldIds } from './turn-stream.js';
-import { recordTurnSummary, turnActivity, type TurnSummarizer } from './turn-summaries.js';
+import { recordTurnSummary, turnActivity, type CompletedTurnSummarizer } from './turn-summaries.js';
 import { readTurnEvents } from './turn-events.js';
 import { steeringRoutes } from './steering-routes.js';
 import { isRecord, omitOptionalNulls } from './payload.js';
@@ -75,7 +75,7 @@ interface TurnRoutesOptions {
   stores: { sessionMetadata: SessionMetadata; agentDocuments: AgentDocuments };
   harness: { upstream: ReturnType<typeof sessionLifecycle> | null; warmupTimeoutMs: number };
   turns: {
-    summarizeTurn: TurnSummarizer;
+    summarizeTurn: CompletedTurnSummarizer;
     turnQuota: TurnQuota | null;
     awsAccess: TurnIdentitySource | null;
     userTokens: UserTokenSigner | null;
@@ -192,7 +192,12 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
           finished: async (answer) => {
             if (request === undefined) return;
             try {
-              await recordTurnSummary(summarizeTurn, async (finished) => saveTurn(finished), input.threadId, { request: userText(request), answer }, model.key);
+              await recordTurnSummary(
+                (turn) => summarizeTurn(turn, { requester, sessionId: input.threadId, model }),
+                async (finished) => saveTurn(finished),
+                input.threadId,
+                { request: userText(request), answer },
+              );
             } catch (error) {
               const failure = { code: 'TURN_SUMMARY_FAILED', message: (error as Error).message };
               await sessionMetadata.turnSummaryFailed(requester.owner, input.threadId, running, failure).catch((recordError: unknown) => {

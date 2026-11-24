@@ -28,7 +28,8 @@ import { configAdapters, type ConfigAdapters, type AwsAccessAdapter } from './co
 import { ssmParkHistory, type ParkHistory } from './park-history.js';
 import { isUserRequest, ProductionActivity } from './production-activity.js';
 import { ecsTaskDraining, pollScheduledRuns, runScheduledTask, type RunQueue } from './scheduled-runs.js';
-import { reportUnsavedTurnSummaries, turnSummarizer, turnSummaryModel, type TurnSummaryModel } from './turn-summaries.js';
+import { accountModelList, isPlanModelKey } from './models.js';
+import { type CompletedTurnSummarizer, reportUnsavedTurnSummaries, turnSummarizer, turnSummaryModel, type TurnSummaryModel } from './turn-summaries.js';
 import { harnessBearer, type ChatHarnessAuth } from './harness-auth.js';
 import { agentCoreEndpointFromEnv, agentCoreUpstream, localAgentUpstream, type AgentCoreRuntime } from './upstream.js';
 import { turnRoutes } from './turn-routes.js';
@@ -168,7 +169,13 @@ export function createChatService(
   const bot = stockChatService(deployment.env, deployment)(history);
   const initialRecovery = recoverPurges();
   void initialRecovery.then(() => sweepEvery(120_000, draining, recoverPurges));
-  const summarizeTurn = turnSummarizer(config.turnSummaryModel);
+  const summarizeOffPlan = turnSummarizer(config.turnSummaryModel);
+  const summarizeTurn: CompletedTurnSummarizer = async (turn, { requester, sessionId, model }) => {
+    if (!isPlanModelKey(model.key)) return summarizeOffPlan(turn);
+    const planDefault = (await accountModelList(bot, requester)).find(({ key }) => isPlanModelKey(key));
+    if (planDefault === undefined) throw new Error("The account's OpenAI plan has no available summary model");
+    return bot.summarizePlanTurn(requester.owner, sessionId, planDefault, turn);
+  };
   const awsAccess = config.awsAccess?.kind === 'assume-role' ? assumeRoleAwsAccess(config.awsAccess) : turnIdentity;
   const app = new Hono();
   let scheduledRunsUnavailable = false;

@@ -3,6 +3,7 @@ import { isPlanModelKey, PLAN_MODEL_PREFIX, type AgentModel } from './models.js'
 import { HttpError } from './http-error.js';
 import { signCredentialServiceInvocation } from './credential-service-token.js';
 import { isRecord } from './payload.js';
+import { summarizePlanTurn, type FinishedTurn } from './turn-summaries.js';
 import { planUsageRoutes, type OperatorInvocation, type PlanUsageSink } from './plan-usage.js';
 
 // The Session a catalog fetch is signed for: it belongs to the plan, not to any one chat.
@@ -62,6 +63,10 @@ export function planModels(config: PlanModelsConfig) {
       ownerAccountId: config.ownerAccountId,
       accountNotFoundMessage: `${config.store().naming.product} account not found`,
     }),
+    async summarizeTurn(owner: string, sessionId: string, model: AgentModel, turn: FinishedTurn) {
+      if (provider === null) return unbound();
+      return provider.summarize(config.invocationSecret, owner, sessionId, model, await planAccountOf(owner), turn);
+    },
     accountModels: (owner: string, { refresh = false } = {}) => catalog(refresh, owner),
     /** The account whose plan a Turn on `model` runs on; none for a model off the plan. */
     planAccountId: async (owner: string, model: AgentModel) => (isPlanModelKey(model.key) ? planAccountOf(owner) : undefined),
@@ -72,8 +77,8 @@ export function planModels(config: PlanModelsConfig) {
 function openaiProvider(url: string) {
   const root = `${new URL(url).origin}/openai`;
 
-  async function call(step: string, path: string, { token, accountId, sessionId }: OperatorInvocation, init: RequestInit = {}) {
-    const response = await fetch(`${root}${path}`, {
+  function request(path: string, { token, accountId, sessionId }: OperatorInvocation, init: RequestInit = {}) {
+    return fetch(`${root}${path}`, {
       ...init,
       headers: {
         authorization: `Bearer ${token}`,
@@ -85,6 +90,10 @@ function openaiProvider(url: string) {
     }).catch((error: unknown) => {
       throw new HttpError(503, `Credential Service request failed: ${String(error)}`);
     });
+  }
+
+  async function call(step: string, path: string, operator: OperatorInvocation, init?: RequestInit) {
+    const response = await request(path, operator, init);
     const body: unknown = await response.json().catch(() => {
       throw new HttpError(503, `Credential Service ${step} returned HTTP ${response.status} with a non-JSON body`);
     });
@@ -107,6 +116,13 @@ function openaiProvider(url: string) {
 
   return {
     sink,
+    summarize(secret: string, accountId: string, sessionId: string, model: AgentModel, planAccountId: string, turn: FinishedTurn) {
+      const slug = model.key.slice(PLAN_MODEL_PREFIX.length);
+      const token = signCredentialServiceInvocation(secret, accountId, sessionId, {
+        model: { provider: model.provider, id: slug }, planAccountId,
+      });
+      return summarizePlanTurn(slug, turn, (body) => request('/v1/responses', { token, accountId, sessionId }, { method: 'POST', body }));
+    },
     async catalog(secret: string, accountId: string): Promise<AgentModel[]> {
       const token = signCredentialServiceInvocation(secret, accountId, PLAN_CATALOG_SESSION);
       const { ok, status, body } = await call('plan catalog', '/v1/models', { token, accountId, sessionId: PLAN_CATALOG_SESSION });

@@ -13,6 +13,9 @@ import { HttpError } from './http-error.js';
 import type { Requester } from './requester.js';
 import type { CredentialSource } from './credential-source.js';
 import type { TaskStopSleep } from './task-stop.js';
+import type { TurnSummary } from './session-metadata.js';
+import type { AgentModel } from './models.js';
+import type { FinishedTurn } from './turn-summaries.js';
 import type { TurnRouteSource } from './turn-preparation.js';
 import type { ScheduledRunSource } from './scheduled-runs.js';
 import { computerFilesRoutes } from './computer-files-routes.js';
@@ -95,6 +98,7 @@ export function stockAccountStore(env: NodeJS.ProcessEnv, documents?: Pick<Dynam
 export interface StockChat extends TurnRouteSource, ScheduledRunSource {
   /** The bot's own routes (auth and account), mounted at the root. */
   readonly routes: Hono;
+  summarizePlanTurn(owner: string, sessionId: string, model: AgentModel, turn: FinishedTurn): Promise<TurnSummary>;
   /**
    * Throw an HttpError unless the request may watch or take over this browser Session;
    * answers the AgentCore browser it runs in when that is not AGENTCORE_BROWSER_ID.
@@ -206,6 +210,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
       },
       startupCredentials: identity?.credentials ?? [],
       accountModels: ({ owner }, options) => plan.accountModels(owner, options),
+      summarizePlanTurn: plan.summarizeTurn,
       routes: new Hono()
         .route('/', config.liveView.kind === 'none' ? refusingLiveView() : new Hono())
         .route('/', computer.routes)

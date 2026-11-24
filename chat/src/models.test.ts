@@ -1,4 +1,6 @@
 import type { RunAgentInput } from '@ag-ui/client';
+import { verifyCredentialServiceInvocation } from './credential-service-token.js';
+import { eventually } from '../test/eventually.js';
 import { HttpFake, sendJson } from '../test/fakes/http-fake.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { frameData, sseFrames } from '../test/parity/browser.js';
@@ -34,10 +36,30 @@ const postTurn = (body: string) =>
 
 describe('stock Plan Usage', () => {
   it('lists only plan models and continues an Anthropic Session on the plan until sign-out', async () => {
-    const credential = await new HttpFake((_request, response) => sendJson(response, 200, {
-      models: [{ slug: 'gpt-6-sol', display_name: 'GPT-6-Sol', visibility: 'list' }],
-    })).listen();
     const owner = 'acct_plan_owner_0000000000';
+    const limit = "Your ChatGPT plan's usage limit is reached.";
+    const credential = await new HttpFake((request, response) => {
+      if (request.method === 'GET' && request.path === '/openai/v1/models') {
+        return sendJson(response, 200, { models: [
+          { slug: 'gpt-6-astra', display_name: 'GPT-6-Astra', visibility: 'list' },
+          { slug: 'gpt-6-sol', display_name: 'GPT-6-Sol', visibility: 'list' },
+        ] });
+      }
+      if (request.method !== 'POST' || request.path !== '/openai/v1/responses') {
+        return sendJson(response, 404, {});
+      }
+      const events = request.body.includes('Look up plan-limit')
+        ? [{ type: 'error', error: { type: 'plan_usage', code: 'PLAN_USAGE_LIMIT_REACHED', message: limit } }]
+        : [
+          { type: 'response.output_item.done', item: {
+            type: 'function_call', name: 'turn_summary',
+            arguments: JSON.stringify({ title: 'Plan lookup', summary: 'Found the requested result' }),
+          } },
+          { type: 'response.completed', response: { output: [] } },
+        ];
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''));
+    }).listen();
     const signedIn = await startInProcess({
       botcube: { planUsage: { ownerAccountId: owner } },
       env: { BOTCUBE_CREDENTIAL_SERVICE_URL: credential.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'test-secret' },
@@ -79,14 +101,36 @@ describe('stock Plan Usage', () => {
       await run('before-sign-in', 'anthropic', 'quick', 'quick');
 
       await signedIn.accounts.recordOpenAISignIn(owner, 'openai-owner');
-      expect(await list()).toEqual({ models: [{ key: 'openai-plan:gpt-6-sol', label: 'GPT-6-Sol', provider: 'openai' }] });
-      await run('on-plan', 'openai', 'openai-plan:gpt-6-sol');
-      await run('stale-picker', 'openai', 'openai-plan:gpt-6-sol', 'thorough');
-      expect(signedIn.bedrock.summarizedTurns()).toHaveLength(1);
+      expect(await list()).toEqual({ models: [
+        { key: 'openai-plan:gpt-6-astra', label: 'GPT-6-Astra', provider: 'openai' },
+        { key: 'openai-plan:gpt-6-sol', label: 'GPT-6-Sol', provider: 'openai' },
+      ] });
+      const activity = async () => (await signedIn.app.request('/activity', { headers })).json();
+      await run('on-plan', 'openai', 'openai-plan:gpt-6-sol', 'openai-plan:gpt-6-sol');
+      await eventually(async () => expect(await activity()).toMatchObject({
+        tasks: expect.arrayContaining([{ completedAt: expect.any(String), title: 'Plan lookup', summary: 'Found the requested result' }]),
+      }));
+      await run('plan-limit', 'openai', 'openai-plan:gpt-6-astra');
+      await eventually(async () => expect(await activity()).toMatchObject({
+        tasks: expect.arrayContaining([{
+          completedAt: expect.any(String), summary: 'Look up plan-limit',
+          failed: `The Turn summary could not be made: ${limit}`,
+        }]),
+      }));
+      expect(signedIn.bedrock.summarizedTurns().map(({ request }) => request)).toEqual(['Look up before-sign-in']);
+      const summaries = credential.requests.filter(({ method, path }) => method === 'POST' && path === '/openai/v1/responses');
+      expect(summaries.map(({ body }) => JSON.parse(body))).toEqual(['on-plan', 'plan-limit'].map((leg) => expect.objectContaining({
+        model: 'gpt-6-astra', stream: true, store: false,
+        input: [{ role: 'user', content: JSON.stringify({ request: `Look up ${leg}`, answer: `Found ${leg}` }) }],
+      })));
+      expect(summaries.map(({ headers }) => verifyCredentialServiceInvocation('test-secret', String(headers.authorization).replace(/^Bearer /, ''))))
+        .toEqual(Array.from({ length: 2 }, () => expect.objectContaining({ accountId: owner, sessionId: threadId, modelProvider: 'openai', modelId: 'gpt-6-astra' })));
 
       await signedIn.accounts.removeOpenAISignIn(owner);
       expect(await list()).toMatchObject({ models: [{ key: 'quick' }, { key: 'thorough' }] });
       await run('after-sign-out', 'anthropic', 'quick');
+      await eventually(() => expect(signedIn.bedrock.summarizedTurns().map(({ request }) => request))
+        .toEqual(['Look up before-sign-in', 'Look up after-sign-out']));
     } finally {
       await Promise.all([signedIn.stop(), credential.close()]);
     }

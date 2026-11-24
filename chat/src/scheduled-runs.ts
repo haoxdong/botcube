@@ -14,7 +14,7 @@ import { fired, type ScheduledRunMessage, type ScheduledTask, type ScheduledTask
 import type { ScheduledRunCard } from './session-api.js';
 import { SessionBusyError, SessionDeletedError, type SessionMetadata } from './session-metadata.js';
 import { credentialValues } from './turn-stream.js';
-import { recordTurnSummary, turnActivity, type TurnSummarizer } from './turn-summaries.js';
+import { recordTurnSummary, turnActivity, type CompletedTurnSummarizer } from './turn-summaries.js';
 import { forwardSnapshotEpoch } from './session-lifecycle.js';
 import { assertReservedMainIdentity, postScheduledResult, type ScheduledDeliveryDeps } from './scheduled-run-delivery.js';
 import type { ScheduledDelivery, ScheduledRunStore } from './scheduled-run-store.js';
@@ -42,7 +42,7 @@ export interface ScheduledRunDeps extends ScheduledDeliveryDeps {
   bot: ScheduledRunSource;
   agentDocuments: AgentDocuments;
   scheduledTasks: Pick<ScheduledTasks, 'get' | 'recordRun' | 'retire' | 'issueSideChat'>;
-  summarizeTurn: TurnSummarizer;
+  summarizeTurn: CompletedTurnSummarizer;
   parkHistory?: ParkHistory | undefined;
   stopScheduledRuntime?: ((sessionId: string) => Promise<void | 'absent'>) | undefined;
 }
@@ -274,11 +274,10 @@ async function runInSideChat(
   const turn = { sessionId: sideChat, filingUserId: sessionUserId, messageId };
   if (signIn === null && output.error === null) {
     await recordTurnSummary(
-      deps.summarizeTurn,
+      (finished) => deps.summarizeTurn(finished, { requester, sessionId: sideChat, model }),
       (finished) => sessionMetadata.saveTurnSummary(owner, turn, finished),
       sideChat,
       { request: task.prompt, answer: answer ?? '' },
-      model.key,
     );
   } else {
     // The Activity lists a run that could not finish by its request, failed on a run error.
