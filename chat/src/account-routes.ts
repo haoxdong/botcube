@@ -116,7 +116,7 @@ export function accountRoutes(
 
   app.get('/agent/memory', async (c) => {
     const { owner } = await bot.requester(c);
-    const { lines } = await invokeSessionApi({ operation: 'memory', userId: bot.filingUserId(owner) });
+    const { lines } = await invokeSessionApi('memory', { userId: bot.filingUserId(owner) });
     return c.json({ lines });
   });
 
@@ -124,7 +124,7 @@ export function accountRoutes(
     const { owner, anonymous } = await bot.requester(c);
     if (anonymous) throw new HttpError(403, 'Your work lives in this browser until you save it. Sign in to save it, then save Memory.');
     const text = memoryLine(await c.req.json().catch(() => undefined));
-    const { line } = await invokeSessionApi({ operation: 'memory-add', userId: bot.filingUserId(owner), text });
+    const { line } = await invokeSessionApi('memory-add', { userId: bot.filingUserId(owner), text });
     return c.json({ line }, 201);
   });
 
@@ -132,14 +132,14 @@ export function accountRoutes(
     const { owner } = await bot.requester(c);
     const text = memoryLine(await c.req.json().catch(() => undefined));
     const recordId = c.req.param('id');
-    await invokeSessionApi({ operation: 'memory-edit', userId: bot.filingUserId(owner), recordId, text });
+    await invokeSessionApi('memory-edit', { userId: bot.filingUserId(owner), recordId, text });
     return c.body(null, 204);
   });
 
   app.delete('/agent/memory/:id', async (c) => {
     const { owner } = await bot.requester(c);
     const recordId = c.req.param('id');
-    await invokeSessionApi({ operation: 'memory-delete', userId: bot.filingUserId(owner), recordId });
+    await invokeSessionApi('memory-delete', { userId: bot.filingUserId(owner), recordId });
     return c.body(null, 204);
   });
 

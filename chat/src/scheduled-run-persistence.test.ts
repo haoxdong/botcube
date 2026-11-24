@@ -11,7 +11,7 @@ import { DynamoDBAgentDocuments } from './agent-documents.js';
 import type { ScheduledRunSource } from './scheduled-runs.js';
 import { runScheduledTask, sqsRunQueue } from './scheduled-runs.js';
 import { ScheduledTasks, type ScheduledRunMessage } from './scheduled-tasks.js';
-import { sessionApi, type SessionApi } from './session-api.js';
+import { sessionApi, type SessionApiFor } from './session-api.js';
 import { sessionLifecycle } from './session-lifecycle.js';
 import { DynamoDBSessionMetadata, SessionBusyError, SessionDeletedError, type SessionMetadata } from './session-metadata.js';
 import { agentCoreUpstream } from './upstream.js';
@@ -360,7 +360,7 @@ describe('scheduled persistence dispatch admission', () => {
       credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
-    const post = vi.fn<SessionApi>(async () => ({}));
+    const post = vi.fn<SessionApiFor<'post'>>(async () => ({}));
     const deps = {
       turnIdentity: null,
       bot, sessionMetadata: stack.sessionMetadata,
@@ -375,7 +375,7 @@ describe('scheduled persistence dispatch admission', () => {
     const message = { owner: account, taskId: task.id, deliveryId: 'busy-main-occurrence' };
     await runScheduledTask(deps, message);
     expect(post).toHaveBeenCalledOnce();
-    expect(post.mock.calls[0]?.[0]).toMatchObject({ scheduledRun: { status: 'done', text: 'Saved answer' } });
+    expect(post.mock.calls[0]?.[1]).toMatchObject({ scheduledRun: { status: 'done', text: 'Saved answer' } });
     expect(deps.scheduledTasks.recordRun).toHaveBeenCalledWith(account, task.id, { at: expect.any(String), status: 'done' });
     const next = await stack.sessionMetadata.beginDispatch(account, main);
     await next();
@@ -392,7 +392,7 @@ describe('scheduled persistence dispatch admission', () => {
       credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
-    const post = vi.fn<SessionApi>(async () => ({}));
+    const post = vi.fn<SessionApiFor<'post'>>(async () => ({}));
     const stop = vi.fn<() => Promise<void>>().mockRejectedValue(new Error('Temporary stop failure'));
     const deps = {
       turnIdentity: null,
@@ -440,7 +440,7 @@ describe('scheduled persistence dispatch admission', () => {
       credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
-    const post = vi.fn<SessionApi>(async () => ({}));
+    const post = vi.fn<SessionApiFor<'post'>>(async () => ({}));
     const deps = {
       turnIdentity: null,
       bot, sessionMetadata: stack.sessionMetadata,
@@ -480,7 +480,7 @@ describe('scheduled persistence dispatch admission', () => {
       await run;
       expect(invoke).toHaveBeenCalledOnce();
       expect(post).toHaveBeenCalledOnce();
-      expect(post.mock.calls[0]?.[0]).toMatchObject({ userId: filed(account), scheduledRun: { text: 'Saved answer' } });
+      expect(post.mock.calls[0]?.[1]).toMatchObject({ userId: filed(account), scheduledRun: { text: 'Saved answer' } });
       expect(deps.scheduledTasks.recordRun).toHaveBeenCalledWith(claim ? destination : account, task.id, { at: expect.any(String), status: 'done' });
       expect(await store.get(account, message.deliveryId, task.id)).toMatchObject({ phase: 'completed' });
     } finally {
@@ -745,14 +745,12 @@ describe('scheduled persistence dispatch admission', () => {
       bot, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task, recordRun: async () => undefined, retire: async () => undefined, issueSideChat: async () => task.id },
       upstream: sessionLifecycle({ label: 'AgentCore', invoke: async () => new Response('data: {"type":"RUN_FINISHED"}\n\n') }, async () => undefined),
-      invokeSessionApi: async (event) => {
-        if (event.operation === 'post') {
-          posting = event.sessionId;
-          await new Promise<void>((resolve) => {
-            finish = resolve;
-            defined(enteredPost, 'post entry')();
-          });
-        }
+      invokeSessionApi: async (_operation, event) => {
+        posting = event.sessionId;
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+          defined(enteredPost, 'post entry')();
+        });
         return {};
       },
     }, { owner: account, taskId: task.id, deliveryId: 'pending-post-occurrence' });

@@ -306,7 +306,10 @@ test('stages the session API source without the Sandbox tools virtualenv', () =>
   try {
     const source = resolve(fixture, 'source');
     mkdirSync(resolve(source, 'tools/.venv/lib'), { recursive: true });
-    mkdirSync(resolve(source, 'src'), { recursive: true });
+    mkdirSync(resolve(source, 'src/botcube_harness_deepagents'), { recursive: true });
+    const contractPath = 'src/botcube_harness_deepagents/session-api.json';
+    const contract = JSON.stringify({ deadlines: { invocation: 840 } });
+    writeFileSync(resolve(source, contractPath), contract);
     mkdirSync(resolve(source, 'artifact-check/node_modules'), { recursive: true });
     writeFileSync(resolve(source, 'artifact-check/node_modules/installed.js'), 'installed dependency');
     writeFileSync(resolve(source, 'session-api.Dockerfile'), 'FROM scratch\nCOPY src/ /src/\n');
@@ -324,6 +327,8 @@ test('stages the session API source without the Sandbox tools virtualenv', () =>
     const assets = readdirSync(app.outdir).filter(name => name.startsWith('asset.'));
     const sessionAsset = assets.find(name => existsSync(resolve(app.outdir, name, 'src/session_api.py')));
     if (sessionAsset === undefined) throw new Error('Session API asset missing');
+    Template.fromStack(onlyStack(app)).hasResourceProperties('AWS::Lambda::Function', { Timeout: 840 });
+    expect(readFileSync(resolve(app.outdir, sessionAsset, contractPath), 'utf8')).toBe(contract);
     expect(readFileSync(resolve(app.outdir, sessionAsset, 'src/session_api.py'), 'utf8')).toBe('source fixture');
     for (const file of ['pyproject.toml', 'uv.lock']) {
       expect(readFileSync(resolve(app.outdir, sessionAsset, file), 'utf8')).toBe(file);

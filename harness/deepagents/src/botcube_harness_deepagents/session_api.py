@@ -1,37 +1,4 @@
-"""Session API: reads and deletes a Session in its one record without waking a Sandbox (ADR 0067 §5).
-
-`handle` is the transport-neutral entrypoint: it takes one operation event and
-returns its JSON result. In AWS it runs as its own function beside the Agent
-Service container, invoked only by the Chat Service's role; locally
-`POST /invocations` serves the same event over plain HTTP, mirroring the Agent
-Service's local mode.
-
-Operations:
-- ``{"operation": "get", "sessionId", "userId", "before"?}`` -> ``{"messages": [...], "nextBefore"?}``,
-  the Session's conversation in AG-UI message shape, read from its latest
-  checkpoint through LangGraph's state API. Each agent, reasoning and tool
-  message the Harness timed carries ``metadata`` ``{"started_at", "ended_at"}``,
-  in epoch milliseconds (message_times.py). Pages are newest first, with up to 80 messages and
-  an exclusive message ID cursor. A Session with no record is
-  ``SESSION_NOT_FOUND`` (HTTP 404).
-- ``{"operation": "post", "sessionId", "userId", "content", "messageId"?, "scheduledRun"?}`` -> ``{}``,
-  after adding ``content`` to the Session as the agent's message, under
-  ``messageId`` when given, without running the agent: a scheduled run's summary
-  reaches the Main Chat this way, with the run card it shows as, which history
-  replays as the message's ``metadata``.
-- A ``get`` or ``post`` on a Session in the legacy checkpoint format is
-  ``SESSION_FORMAT_LEGACY`` (HTTP 410), read without walking its checkpoints; one
-  that runs past ``SESSION_READ_SECONDS`` is ``SESSION_READ_TIMEOUT`` (HTTP 504).
-- ``{"operation": "purge", "sessionId", "userId"}`` -> ``{}``, after deleting
-  every event of the Session and of its checkpoints' writes sessions.
-  Idempotent: purging a purged Session succeeds.
-- ``{"operation": "memory", "userId"}`` -> ``{"lines": [{"id", "text"}]}``, the
-  user's Memory document: one line per memory record the agent opens a conversation with.
-- ``{"operation": "memory-edit", "userId", "recordId", "text"}`` -> ``{}``, after
-  rewriting that line's record; ``{"operation": "memory-delete", "userId", "recordId"}``
-  -> ``{}``, after deleting it. A record that is no line of the user's Memory is
-  ``MEMORY_LINE_NOT_FOUND`` (HTTP 404).
-"""
+"""The private Session API over Lambda Invoke or local HTTP (ADR 0067 §5)."""
 
 from __future__ import annotations
 
@@ -40,9 +7,11 @@ import json
 import logging
 import os
 import uuid
-from collections.abc import Awaitable, Generator, Mapping
+from collections.abc import Awaitable, Callable, Generator, Mapping
 from contextlib import contextmanager
+from functools import partial
 from itertools import dropwhile, islice
+from pathlib import Path
 from time import perf_counter
 from typing import Any
 
@@ -75,44 +44,17 @@ log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
 
+CONTRACT = json.loads(Path(__file__).with_name('session-api.json').read_text(encoding='utf-8'))
+OPERATIONS = CONTRACT['operations']
+ERRORS = CONTRACT['errors']
+
+
 class SessionApiError(Exception):
-    status_code = 400
-    code = 'INVALID_REQUEST'
-
-
-class SessionNotFoundError(SessionApiError):
-    status_code = 404
-    code = 'SESSION_NOT_FOUND'
-
-
-class MemoryLineNotFound(SessionApiError):
-    status_code = 404
-    code = 'MEMORY_LINE_NOT_FOUND'
-
-
-class MemorySaveFailed(SessionApiError):
-    status_code = 503
-    code = 'MEMORY_SAVE_FAILED'
-
-
-class MemoryNotConfiguredError(SessionApiError):
-    status_code = 503
-    code = 'MEMORY_NOT_CONFIGURED'
-
-
-class SessionFormatLegacy(SessionApiError):
-    status_code = 410
-    code = 'SESSION_FORMAT_LEGACY'
-
-
-class SessionReadTimeout(SessionApiError):
-    status_code = 504
-    code = 'SESSION_READ_TIMEOUT'
-
-
-# A get or post ends before the Chat Service stops waiting for it (60 s, botcube/chat's session-api.ts);
-# the function's own timeout stays long enough for a purge.
-SESSION_READ_SECONDS = 50.0
+    def __init__(self, detail: str, code: str = 'INVALID_REQUEST', *, details: str | None = None) -> None:
+        super().__init__(detail)
+        self.code = code
+        self.details = details
+        self.status_code = ERRORS[code]['status']
 
 
 _GRAPH: Any | None = None
@@ -147,22 +89,24 @@ def _graph() -> Any:
     return _GRAPH
 
 
-def _required(event: Mapping[str, Any], name: str) -> str:
-    value = event.get(name)
-    if not isinstance(value, str) or not value.strip():
-        raise SessionApiError(f'{name} is required')
+def _arguments(event: Mapping[str, Any], spec: Mapping[str, Any]) -> dict[str, Any]:
+    arguments = {}
+    for key, shape in spec['required'].items():
+        arguments[key] = _argument(key, event.get(key), shape)
+    for key, shape in spec['optional'].items():
+        value = event.get(key)
+        if value is not None:
+            arguments[key] = _argument(key, value, shape)
+    return arguments
+
+
+def _argument(key: str, value: Any, shape: Any) -> Any:
+    if isinstance(shape, dict):
+        if not isinstance(value, dict):
+            raise SessionApiError(f'{key} must be an object')
+    elif not isinstance(value, str) or not value.strip():
+        raise SessionApiError(f'{key} is required')
     return value
-
-
-def _optional(event: Mapping[str, Any], name: str) -> str | None:
-    return None if event.get(name) is None else _required(event, name)
-
-
-def _scheduled_run(event: Mapping[str, Any]) -> dict[str, Any] | None:
-    card = event.get('scheduledRun')
-    if card is not None and not isinstance(card, dict):
-        raise SessionApiError('scheduledRun must be an object')
-    return card
 
 
 @contextmanager
@@ -186,17 +130,12 @@ async def _session_messages(user_id: str, session_id: str, phases: dict[str, flo
         # The official state read includes its checkpoint read; keep the phase durations disjoint.
         phases['state'] -= phases.get('checkpoint', 0)
     if not messages:
-        raise SessionNotFoundError(f'Session {session_id} has no record')
+        raise SessionApiError(f'Session {session_id} has no record', 'SESSION_NOT_FOUND')
     return messages
 
 
 REPLAY_PAGE_MESSAGES = 80
 INLINE_MESSAGE_BYTES = 64_000  # 80 × 64 KB leaves room for the Lambda response envelope.
-
-
-class StaleReplayCursor(SessionApiError):
-    status_code = 409
-    code = 'STALE_REPLAY_CURSOR'
 
 
 def _replay_message(message: dict[str, Any]) -> dict[str, Any]:
@@ -220,7 +159,7 @@ async def _read_replay(
         if before is not None:
             replay = dropwhile(lambda row: row['id'] != before, replay)
             if next(replay, None) is None:
-                raise StaleReplayCursor('The replay changed. Reopen the chat to read its history.')
+                raise SessionApiError('The replay changed. Reopen the chat to read its history.', 'STALE_REPLAY_CURSOR')
         page = [_replay_message(row) for row in islice(replay, REPLAY_PAGE_MESSAGES)]
         cursor = {'nextBefore': page[-1]['id']} if next(replay, None) is not None else {}
         return {'messages': page[::-1], **cursor}
@@ -266,22 +205,6 @@ async def post_message(
     await graph.aupdate_state(config, {'messages': [message]}, as_node='model')
 
 
-async def _read(session_id: str, work: Awaitable[Any]) -> Any:
-    """A get or post, within SESSION_READ_SECONDS, with the Session's format failure classified."""
-    deadline = asyncio.timeout(SESSION_READ_SECONDS)
-    try:
-        async with deadline:
-            return await work
-    except TimeoutError as exc:
-        if not deadline.expired():
-            raise
-        raise SessionReadTimeout(
-            f'The session API gave up reading Session {session_id} after {SESSION_READ_SECONDS:g} s'
-        ) from exc
-    except SessionFormatLegacyError as exc:
-        raise SessionFormatLegacy(str(exc)) from exc
-
-
 async def purge(user_id: str, session_id: str) -> None:
     checkpointer = _graph().checkpointer
     if AGENTCORE_MEMORY_ID:
@@ -290,42 +213,80 @@ async def purge(user_id: str, session_id: str) -> None:
         await checkpointer.adelete_session(user_id, session_id)
 
 
-MEMORY_OPERATIONS = ('memory', 'memory-add', 'memory-edit', 'memory-delete')
-
-
-def _memory_operation(operation: str, event: Mapping[str, Any]) -> dict[str, Any]:
-    """Read or edit the user's Memory document, whose lines are AgentCore Memory records."""
-    user_id = _required(event, 'userId')
+def _memory_client(user_id: str) -> tuple[Any, dict[str, str]]:
     if not AGENTCORE_MEMORY_ID:
-        raise MemoryNotConfiguredError('Memory needs AgentCore Memory: set AGENTCORE_MEMORY_ID')
-    client = boto3.client('bedrock-agentcore', region_name=AWS_REGION)
-    if operation == 'memory':
-        return {'lines': memory_lines(client, memory_id=AGENTCORE_MEMORY_ID, actor_id=user_id)}
-    if operation == 'memory-add':
-        text = _required(event, 'text')
-        try:
-            return {'line': record_pending_memory(client, memory_id=AGENTCORE_MEMORY_ID, actor_id=user_id, text=text)}
-        except (BotoCoreError, ClientError) as exc:
-            raise MemorySaveFailed('Saving Memory failed') from exc
-    record_id = _required(event, 'recordId')
+        raise SessionApiError('Memory needs AgentCore Memory: set AGENTCORE_MEMORY_ID', 'MEMORY_NOT_CONFIGURED')
+    return boto3.client('bedrock-agentcore', region_name=AWS_REGION), {
+        'memory_id': AGENTCORE_MEMORY_ID,
+        'actor_id': user_id,
+    }
+
+
+def _list_memory(args: dict[str, Any]) -> dict[str, Any]:
+    client, identity = _memory_client(args['userId'])
+    return {'lines': memory_lines(client, **identity)}
+
+
+def _add_memory(args: dict[str, Any]) -> dict[str, Any]:
+    client, identity = _memory_client(args['userId'])
     try:
-        if operation == 'memory-edit':
-            text = _required(event, 'text')
-            edit_memory_line(client, memory_id=AGENTCORE_MEMORY_ID, actor_id=user_id, record_id=record_id, text=text)
-        else:
-            delete_memory_line(client, memory_id=AGENTCORE_MEMORY_ID, actor_id=user_id, record_id=record_id)
+        return {'line': record_pending_memory(client, **identity, text=args['text'])}
+    except (BotoCoreError, ClientError) as exc:
+        raise SessionApiError('Saving Memory failed', 'MEMORY_SAVE_FAILED') from exc
+
+
+def _change_memory(change: Any, args: dict[str, Any]) -> dict[str, Any]:
+    client, identity = _memory_client(args['userId'])
+    text = {'text': args['text']} if 'text' in args else {}
+    try:
+        change(client, **identity, record_id=args['recordId'], **text)
     except MemoryLineNotFoundError as exc:
-        raise MemoryLineNotFound(str(exc)) from exc
+        raise SessionApiError(str(exc), 'MEMORY_LINE_NOT_FOUND') from exc
     return {}
+
+
+async def _replay(args: dict[str, Any], phases: dict[str, float]) -> dict[str, Any]:
+    return await _read_replay(args['userId'], args['sessionId'], args.get('before'), phases)
+
+
+async def _post(args: dict[str, Any], _phases: dict[str, float]) -> dict[str, Any]:
+    await post_message(args['userId'], args['sessionId'], args['content'], args.get('messageId'), args.get('scheduledRun'))
+    return {}
+
+
+async def _purge(args: dict[str, Any], _phases: dict[str, float]) -> dict[str, Any]:
+    await purge(args['userId'], args['sessionId'])
+    return {}
+
+
+def _memory_handler(
+    work: Callable[[dict[str, Any]], dict[str, Any]],
+) -> Callable[[dict[str, Any], dict[str, float]], Awaitable[dict[str, Any]]]:
+    async def run(args: dict[str, Any], _phases: dict[str, float]) -> dict[str, Any]:
+        return await asyncio.to_thread(work, args)
+
+    return run
+
+
+HANDLERS = {
+    'get': _replay,
+    'post': _post,
+    'purge': _purge,
+    'memory': _memory_handler(_list_memory),
+    'memory-add': _memory_handler(_add_memory),
+    'memory-edit': _memory_handler(partial(_change_memory, edit_memory_line)),
+    'memory-delete': _memory_handler(partial(_change_memory, delete_memory_line)),
+}
 
 
 async def handle(event: Mapping[str, Any]) -> dict[str, Any]:
     start = perf_counter()
     phases: dict[str, float] = {}
     operation = event.get('operation')
+    spec = OPERATIONS.get(operation) if isinstance(operation, str) else None
     record: dict[str, Any] = {
         'event': 'session_api_timing',
-        'operation': operation if operation in ('get', 'post', 'purge', *MEMORY_OPERATIONS) else 'invalid',
+        'operation': operation if spec is not None else 'invalid',
         'statusCode': 500,
         'errorCode': 'INTERNAL_ERROR',
         'phasesMs': phases,
@@ -333,7 +294,9 @@ async def handle(event: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(event.get('sessionId'), str):
         record['sessionId'] = event['sessionId']
     try:
-        result = await _handle(event, phases)
+        if not isinstance(operation, str) or spec is None:
+            raise SessionApiError(f'Unknown session API operation: {operation!r}')
+        result = await _dispatch(operation, spec, _arguments(event, spec), phases)
         record['responseBytes'] = len(json.dumps(result, ensure_ascii=False, separators=(',', ':')).encode())
         record['statusCode'] = 200
         del record['errorCode']
@@ -341,6 +304,8 @@ async def handle(event: Mapping[str, Any]) -> dict[str, Any]:
             record['messageCount'] = len(result['messages'])
         return result
     except SessionApiError as exc:
+        if exc.code != 'INVALID_REQUEST' and (spec is None or exc.code not in spec['errors']):
+            raise RuntimeError(f'{operation!r} returned undeclared Session API error {exc.code}') from exc
         record.update(statusCode=exc.status_code, errorCode=exc.code, responseBytes=len(
             json.dumps(_err(exc)['body'], ensure_ascii=False, separators=(',', ':')).encode()
         ))
@@ -350,23 +315,23 @@ async def handle(event: Mapping[str, Any]) -> dict[str, Any]:
         log.info(json.dumps(record, separators=(',', ':')))
 
 
-async def _handle(event: Mapping[str, Any], phases: dict[str, float]) -> dict[str, Any]:
-    operation = event.get('operation')
-    if operation == 'get':
-        user_id, session_id = _required(event, 'userId'), _required(event, 'sessionId')
-        before = _optional(event, 'before')
-        return await _read(session_id, _read_replay(user_id, session_id, before, phases))
-    if operation == 'post':
-        user_id, session_id = _required(event, 'userId'), _required(event, 'sessionId')
-        content, message_id = _required(event, 'content'), _optional(event, 'messageId')
-        await _read(session_id, post_message(user_id, session_id, content, message_id, _scheduled_run(event)))
-        return {}
-    if operation in MEMORY_OPERATIONS:
-        return _memory_operation(operation, event)
-    if operation == 'purge':
-        await purge(_required(event, 'userId'), _required(event, 'sessionId'))
-        return {}
-    raise SessionApiError(f'Unknown session API operation: {operation!r}')
+async def _dispatch(
+    operation: str, spec: Mapping[str, Any], args: dict[str, Any], phases: dict[str, float]
+) -> dict[str, Any]:
+    seconds = CONTRACT['deadlines'][spec['deadline']]
+    deadline = asyncio.timeout(seconds)
+    try:
+        async with deadline:
+            return await HANDLERS[operation](args, phases)
+    except TimeoutError as exc:
+        if not deadline.expired() or 'SESSION_READ_TIMEOUT' not in spec['errors']:
+            raise
+        target = f"Session {args['sessionId']}" if 'sessionId' in args else 'Memory'
+        raise SessionApiError(
+            f'The session API gave up reading {target} after {seconds:g} s', 'SESSION_READ_TIMEOUT'
+        ) from exc
+    except SessionFormatLegacyError as exc:
+        raise SessionApiError(str(exc), 'SESSION_FORMAT_LEGACY') from exc
 
 
 # One loop for the life of the function's execution environment, made on its
@@ -375,7 +340,10 @@ _LOOP: asyncio.AbstractEventLoop | None = None
 
 
 def _err(exc: SessionApiError) -> dict[str, Any]:
-    return {'statusCode': exc.status_code, 'body': {'error': str(exc), 'code': exc.code}}
+    body = {'error': str(exc), 'code': exc.code}
+    if exc.details is not None:
+        body['details'] = exc.details
+    return {'statusCode': exc.status_code, 'body': body}
 
 
 def lambda_handler(event: Mapping[str, Any], _context: Any) -> dict[str, Any]:
@@ -401,15 +369,15 @@ async def invocations(request: Request) -> JSONResponse:
     try:
         event = await request.json()
     except ValueError as exc:
-        return JSONResponse({'error': 'Invalid JSON', 'code': 'INVALID_REQUEST', 'details': str(exc)}, status_code=400)
+        raise SessionApiError('Invalid JSON', details=str(exc)) from exc
     if not isinstance(event, dict):
-        return JSONResponse({'error': 'Expected a JSON object', 'code': 'INVALID_REQUEST'}, status_code=400)
+        raise SessionApiError('Expected a JSON object')
     return JSONResponse(await handle(event))
 
 
 @app.exception_handler(SessionApiError)
 async def session_api_error(_request: Request, exc: SessionApiError) -> JSONResponse:
-    return JSONResponse({'error': str(exc), 'code': exc.code}, status_code=exc.status_code)
+    return JSONResponse(_err(exc)['body'], status_code=exc.status_code)
 
 
 @app.get('/ping')

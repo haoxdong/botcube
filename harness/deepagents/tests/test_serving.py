@@ -3479,8 +3479,9 @@ def test_invocation_eof_waits_for_real_record_settlement_before_purge(
         assert events[-1]['type'] == 'RUN_FINISHED'
         assert _replay('user-1', 'thread-1')[-1] == ('assistant', 'Echo: next question')
     assert _memory_operation('purge', user='user-1', sessionId='thread-1') == {}
-    with pytest.raises(session_api.SessionNotFoundError, match='has no record'):
+    with pytest.raises(session_api.SessionApiError, match='has no record') as missing:
         _replay('user-1', 'thread-1')
+    assert missing.value.code == 'SESSION_NOT_FOUND'
     assert not any(memory.events.values())
 
 

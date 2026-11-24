@@ -40,6 +40,18 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClie
         yield client
 
 
+def test_contract_covers_dispatch_errors_and_deadlines() -> None:
+    contract = session_api.CONTRACT
+    operations = contract['operations']
+    assert operations.keys() == session_api.HANDLERS.keys()
+    assert {code for operation in operations.values() for code in operation['errors']} == contract['errors'].keys()
+    assert contract['clientGraceSeconds'] > 0
+    assert all(
+        0 < contract['deadlines'][operation['deadline']] <= contract['deadlines']['invocation']
+        for operation in operations.values()
+    )
+
+
 def test_get_of_a_session_without_a_record_is_not_found(client: TestClient) -> None:
     response = client.post(
         '/invocations', json={'operation': 'get', 'sessionId': 'missing', 'userId': 'user-1'}
@@ -460,7 +472,7 @@ def test_a_session_read_that_outlives_the_chat_services_wait_times_out(
         await asyncio.sleep(5)
 
     graph = session_api._graph()
-    monkeypatch.setattr(session_api, 'SESSION_READ_SECONDS', 0.05)
+    monkeypatch.setitem(session_api.CONTRACT['deadlines'], 'request', 0.05)
     monkeypatch.setattr(graph.checkpointer, 'aget_tuple', stalled)
     events = [{'operation': 'get'}, {'operation': 'post', 'content': 'Copper closed up 2%'}]
 
@@ -538,7 +550,9 @@ def test_session_api_timing_attributes_other_operations(
     if operation == 'purge':
         session_api.lambda_handler({**GET, 'operation': 'post', 'content': 'private answer'}, None)
         caplog.clear()
-    result = session_api.lambda_handler({**GET, 'operation': operation, 'content': 'private answer'}, None)
+    result = session_api.lambda_handler({
+        **GET, 'operation': operation, 'content': 'private answer', 'text': 'private memory', 'recordId': 'line-1',
+    }, None)
 
     assert result['statusCode'] == status
     records = [json.loads(record.message) for record in caplog.records if 'session_api_timing' in record.message]

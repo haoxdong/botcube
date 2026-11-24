@@ -13,6 +13,7 @@ COPY ${BOTCUBE_ROOT}/examples/enterprise/botcube.yaml examples/enterprise/botcub
 COPY ${BOTCUBE_ROOT}/examples/public/botcube.yaml examples/public/botcube.yaml
 COPY ${BOTCUBE_ROOT}/harness/deepagents/artifact-check/package.json harness/deepagents/artifact-check/
 COPY ${BOTCUBE_ROOT}/harness/deepagents/artifact-check/src/ harness/deepagents/artifact-check/src/
+COPY ${BOTCUBE_ROOT}/harness/deepagents/src/botcube_harness_deepagents/session-api.json harness/deepagents/src/botcube_harness_deepagents/session-api.json
 RUN --mount=type=secret,id=build_ca \
   if [ -f /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
   npm install --global pnpm@12.10.1 && \

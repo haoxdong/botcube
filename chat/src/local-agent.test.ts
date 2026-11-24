@@ -12,7 +12,7 @@ import type { AccountHistory } from './account-history.js';
 import { createChatService, type ChatServiceConfig } from './server.js';
 import type { StockOverrides } from './stock.js';
 import { testBotCubeConfig } from '../test/stock-bot.js';
-import type { SessionApi } from './session-api.js';
+import { sessionApi, type SessionApiFor } from './session-api.js';
 import { DynamoDBSessionMetadata, SessionDispatchPendingError, type SessionMetadata } from './session-metadata.js';
 import { buildDirectAgent } from '../../ui/web/src/app/conversations.js';
 import { defined } from '../test/defined.js';
@@ -29,17 +29,18 @@ interface Received {
 }
 
 
+const sessionApiClosers: (() => Promise<void>)[] = [];
 const closers: (() => Promise<void>)[] = [];
 afterEach(async () => {
-  await Promise.all(closers.splice(0).map((close) => close()));
+  await Promise.all([...closers.splice(0), ...sessionApiClosers.splice(0)].map((close) => close()));
 });
 
-async function listening(server: Server | ServerType): Promise<string> {
+async function listening(server: Server | ServerType, track = true): Promise<string> {
   await new Promise<void>((resolve) => {
     if (server.listening) resolve();
     else server.once('listening', resolve);
   });
-  closers.push(
+  (track ? closers : sessionApiClosers).push(
     () =>
       new Promise((resolve) => {
         (server as Server).closeAllConnections();
@@ -136,13 +137,25 @@ const config: ChatServiceConfig = {
 
 async function chatService(localHarnessUrl: string, options: {
   metadata?: SessionMetadata;
-  invoke?: SessionApi;
+  invoke?: SessionApiFor<'purge'>;
   history?: (history: AccountHistory) => void;
   overrides?: StockOverrides;
   config?: Partial<ChatServiceConfig>;
 } = {}): Promise<string> {
+  const purge = options.invoke;
+  const sessionApiUrl = purge === undefined ? undefined : await listening(createServer(async (request, response) => {
+    let body = '';
+    for await (const chunk of request) body += String(chunk);
+    const { operation, ...args } = JSON.parse(body);
+    try {
+      if (operation !== 'purge') throw new Error('expected a purge');
+      response.end(JSON.stringify(await purge('purge', args)));
+    } catch (error) {
+      response.writeHead(500).end(JSON.stringify({ error: String(error) }));
+    }
+  }).listen(0, '127.0.0.1'), false);
   const { app, history } = createChatService({ env, overrides: { ...bot, ...options.overrides } },
-    { ...config, localHarnessUrl, ...options.config }, options.metadata ?? sessionMetadata, agentDocuments, options.invoke);
+    { ...config, localHarnessUrl, ...options.config }, options.metadata ?? sessionMetadata, agentDocuments, sessionApiUrl === undefined ? undefined : sessionApi({ localUrl: sessionApiUrl }));
   options.history?.(history);
   return listening(serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' }));
 }
@@ -187,8 +200,7 @@ describe('a Turn against a local Harness', () => {
         fence: async () => job(TURN.threadId),
         completePurge: async ({ session_id }) => { completed.push(session_id); },
       },
-      invoke: async (event) => {
-        if (event.operation !== 'purge') throw new Error('expected a purge');
+      invoke: async (_operation, event) => {
         if (event.sessionId === 'recovery-first') { started(); await first; }
         if (event.sessionId === 'recovery-rest') await rest;
         return {};
@@ -243,7 +255,7 @@ describe('a Turn against a local Harness', () => {
       await documents.send(new PutCommand({ TableName: table, Item: { pk: `WRITERS#${JSON.stringify([filing, id])}`, sk: 'CONTROL', runtime_writers: 1 } }));
     }
     const metadata = new DynamoDBSessionMetadata(table, client);
-    const invoke = vi.fn<SessionApi>(async () => ({}));
+    const invoke = vi.fn<SessionApiFor<'purge'>>(async () => ({}));
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.spyOn(console, 'info').mockImplementation(() => undefined);
     const rows = async (pk: string) => ((await documents.send(new ScanCommand({ TableName: table, ConsistentRead: true }))).Items ?? []).filter((item) => item.pk === pk);
@@ -254,7 +266,7 @@ describe('a Turn against a local Harness', () => {
       for (const { id } of [chats.unproved, chats.pending]) {
         // eslint-disable-next-line no-await-in-loop -- each expired chat finishes its purge
         await expect.poll(async () => (await job(id))?.completed_at, { timeout: 20_000 }).toEqual(expect.any(String));
-        expect(invoke).toHaveBeenCalledWith({ operation: 'purge', sessionId: id, userId: filing }, 900);
+        expect(invoke).toHaveBeenCalledWith('purge', { sessionId: id, userId: filing });
         // eslint-disable-next-line no-await-in-loop -- its registration is archived, not lost
         expect(await rows(`DISPATCH#${JSON.stringify([filing, id])}`)).toEqual([]);
         // eslint-disable-next-line no-await-in-loop -- the archive keeps the registration
@@ -262,7 +274,7 @@ describe('a Turn against a local Harness', () => {
       }
       expect(await job(chats.young.id)).not.toHaveProperty('completed_at');
       expect(await rows(`DISPATCH#${JSON.stringify([filing, chats.young.id])}`)).toHaveLength(1);
-      expect(invoke).not.toHaveBeenCalledWith(expect.objectContaining({ sessionId: chats.young.id }), 900);
+      expect(invoke).not.toHaveBeenCalledWith('purge', expect.objectContaining({ sessionId: chats.young.id }));
     } finally { errors.mockRestore(); }
   }, 30_000);
 
@@ -275,7 +287,7 @@ describe('a Turn against a local Harness', () => {
     await createChatTable(motoEndpoint(), table);
     const client = new DynamoDBClient(motoAws());
     const metadata = new DynamoDBSessionMetadata(table, client);
-    const invoke = vi.fn<SessionApi>(async () => ({}));
+    const invoke = vi.fn<SessionApiFor<'purge'>>(async () => ({}));
     const runtime = { localHarnessUrl: null, agentCore: { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: agent.url } };
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
@@ -289,7 +301,7 @@ describe('a Turn against a local Harness', () => {
       await expect.poll(() => replacement.pendingPurges()).toEqual([]);
       expect(agent.received.filter((request) => request.path.includes('/stopruntimesession'))).toHaveLength(1);
       expect(agent.received.at(-1)?.headers['x-amzn-bedrock-agentcore-runtime-session-id']).toBe(admitted.session_id);
-      expect(invoke).toHaveBeenCalledWith({ operation: 'purge', sessionId: TURN.threadId, userId: 'filed-acct_owner' }, 900);
+      expect(invoke).toHaveBeenCalledWith('purge', { sessionId: TURN.threadId, userId: 'filed-acct_owner' });
     } finally { errors.mockRestore(); }
   });
 
@@ -314,7 +326,7 @@ describe('a Turn against a local Harness', () => {
       return next(args);
     }, { step: 'initialize', name: 'failExactHeaderAcknowledgement' });
     const metadata = new DynamoDBSessionMetadata(table, client);
-    const invoke = vi.fn<SessionApi>(async () => ({}));
+    const invoke = vi.fn<SessionApiFor<'purge'>>(async () => ({}));
     const runtime = { localHarnessUrl: null, agentCore: { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: agent.url } };
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
@@ -348,7 +360,7 @@ describe('a Turn against a local Harness', () => {
       await expect.poll(() => replacement.pendingPurges()).toEqual([]);
       expect(agent.received.filter((request) => request.path.includes('/stopruntimesession'))).toHaveLength(1);
       expect(agent.received.at(-1)?.headers['x-amzn-bedrock-agentcore-runtime-session-id']).toBe(admitted.session_id);
-      expect(invoke).toHaveBeenCalledWith({ operation: 'purge', sessionId: TURN.threadId, userId: 'filed-acct_owner' }, 900);
+      expect(invoke).toHaveBeenCalledWith('purge', { sessionId: TURN.threadId, userId: 'filed-acct_owner' });
     } finally { errors.mockRestore(); }
   });
 
@@ -371,7 +383,7 @@ describe('a Turn against a local Harness', () => {
       return next(args);
     }, { step: 'initialize', name: 'failExactWriterAcknowledgement' });
     const metadata = new DynamoDBSessionMetadata(table, client);
-    const invoke = vi.fn<SessionApi>(async () => ({}));
+    const invoke = vi.fn<SessionApiFor<'purge'>>(async () => ({}));
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       await metadata.recordTurn('acct_owner', TURN.threadId, { filingUserId: 'filed-acct_owner', title: '', warmup: true, allocation: true });
@@ -406,7 +418,7 @@ describe('a Turn against a local Harness', () => {
       await expect.poll(() => replacement.pendingPurges()).toEqual([]);
       expect(agent.received.filter((request) => request.path.includes('/stopruntimesession'))).toHaveLength(1);
       expect(agent.received.at(-1)?.headers['x-amzn-bedrock-agentcore-runtime-session-id']).toBe(admitted.session_id);
-      expect(invoke).toHaveBeenCalledWith({ operation: 'purge', sessionId: TURN.threadId, userId: 'filed-acct_owner' }, 900);
+      expect(invoke).toHaveBeenCalledWith('purge', { sessionId: TURN.threadId, userId: 'filed-acct_owner' });
     } finally { errors.mockRestore(); }
   });
 
@@ -420,7 +432,7 @@ describe('a Turn against a local Harness', () => {
     const table = `lost-headers-${Math.random().toString(36).slice(2)}`;
     await createChatTable(motoEndpoint(), table);
     const metadata = new DynamoDBSessionMetadata(table, new DynamoDBClient(motoAws()));
-    const invoke = vi.fn<SessionApi>(async () => ({}));
+    const invoke = vi.fn<SessionApiFor<'purge'>>(async () => ({}));
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const queue = purges.purgeQueue;
     const queues = vi.spyOn(purges, 'purgeQueue').mockImplementation((api, ownerActorId, stop, _backoff, complete) => queue(api, ownerActorId, stop, [100], complete));
@@ -454,7 +466,7 @@ describe('a Turn against a local Harness', () => {
       expect(invoke).not.toHaveBeenCalled();
       await writer();
       await settled;
-      expect(invoke.mock.calls).toContainEqual([{ operation: 'purge', sessionId: TURN.threadId, userId: 'filed-acct_owner' }, 900]);
+      expect(invoke.mock.calls).toContainEqual(['purge', { sessionId: TURN.threadId, userId: 'filed-acct_owner' }]);
       expect(agent.received.filter((request) => request.path.includes('/stopruntimesession'))).toHaveLength(1);
       expect(agent.received.at(-1)?.headers['x-amzn-bedrock-agentcore-runtime-session-id']).toBe(admitted.session_id);
       expect(await metadata.pendingPurges()).toEqual([]);
@@ -673,8 +685,8 @@ describe('a Turn against a local Harness', () => {
     const url = await chatService(agent.url, {
       metadata: { ...sessionMetadata, fence: async () => summary, fenceOwner: async () => [summary] },
       history: (value) => { history = value; },
-      invoke: async (event) => {
-        if (event.operation === 'purge') { purged.push(checkpoint); checkpoint = ''; }
+      invoke: async () => {
+        purged.push(checkpoint); checkpoint = '';
         return {};
       },
     });
@@ -785,12 +797,12 @@ describe('a Turn against a local Harness', () => {
     await metadata.recordTurn('acct_owner', TURN.threadId, { filingUserId: 'filed-acct_owner', title: 'hello' });
     await metadata.fence('acct_owner', TURN.threadId);
     const finishes: (() => void)[] = [];
-    const purge = vi.fn<SessionApi>(() => new Promise((resolve) => { finishes.push(() => resolve({})); }));
+    const purge = vi.fn<SessionApiFor<'purge'>>(() => new Promise((resolve) => { finishes.push(() => resolve({})); }));
     const first = await chatService(agent.url, { metadata: new DynamoDBSessionMetadata(table, client()), invoke: purge });
     await chatService(agent.url, { metadata: new DynamoDBSessionMetadata(table, client()), invoke: purge });
     await expect.poll(() => purge.mock.calls.length).toBe(2);
     expect(await metadata.pendingPurges()).toMatchObject([{ session_id: TURN.threadId, filing_user_id: 'filed-acct_owner' }]);
-    expect(purge.mock.calls).toEqual(Array(2).fill([{ operation: 'purge', sessionId: TURN.threadId, userId: 'filed-acct_owner' }, 900]));
+    expect(purge.mock.calls).toEqual(Array(2).fill(['purge', { sessionId: TURN.threadId, userId: 'filed-acct_owner' }]));
     for (const finish of finishes) finish();
     await expect.poll(() => metadata.pendingPurges()).toEqual([]);
     expect((await sendTurn(first)).status).toBe(410);
@@ -838,7 +850,7 @@ describe('a Turn against a local Harness', () => {
     const timers = vi.spyOn(globalThis, 'setTimeout');
     const purged: string[] = [];
     try {
-      await chatService(agent.url, { metadata, invoke: async (event) => { if (event.operation === 'purge') purged.push(event.sessionId); return {}; } });
+      await chatService(agent.url, { metadata, invoke: async (_operation, event) => { purged.push(event.sessionId); return {}; } });
       await expect.poll(() => discovery.mock.calls.length).toBe(1);
       await (defined(discovery.mock.results[0], 'initial recovery').value as Promise<unknown>);
       const other = new DynamoDBSessionMetadata(table, client());
@@ -869,7 +881,7 @@ describe('a Turn against a local Harness', () => {
     const purged: string[] = [];
     const url = await chatService(agent.url, {
       metadata, overrides: { requester: async (c) => ({ owner: c.req.header('x-test-owner') ?? 'owner-a' }) },
-      invoke: async (event) => { if (event.operation === 'purge') purged.push(event.userId); return {}; },
+      invoke: async (_operation, event) => { purged.push(event.userId); return {}; },
     });
     const threads: Record<string, string> = { 'owner-a': TURN.threadId, 'owner-b': `${TURN.threadId}-b` };
     const turn = (owner: string) => fetch(`${url}/`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-test-owner': owner }, body: JSON.stringify({ ...TURN, threadId: threads[owner] }) });
@@ -932,12 +944,12 @@ describe('a Turn against a local Harness', () => {
       created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', deleted_at: '2026-01-02T00:00:00Z',
     } }));
     const metadata = new DynamoDBSessionMetadata(table, client);
-    const invoke = vi.fn<SessionApi>(async () => ({}));
+    const invoke = vi.fn<SessionApiFor<'purge'>>(async () => ({}));
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       await chatService(agent.url, { config: { localHarnessUrl: null, agentCore: { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: agent.url } }, metadata, invoke });
       await expect.poll(() => metadata.pendingPurges()).toEqual([]);
-      expect(invoke).toHaveBeenCalledWith({ operation: 'purge', sessionId: TURN.threadId, userId: 'filed-acct_owner' }, 900);
+      expect(invoke).toHaveBeenCalledWith('purge', { sessionId: TURN.threadId, userId: 'filed-acct_owner' });
       expect(agent.received.filter((request) => request.path.includes('/stopruntimesession'))).toHaveLength(1);
       expect(agent.received.at(-1)?.headers['x-amzn-bedrock-agentcore-runtime-session-id']).toBe(TURN.threadId);
     } finally { errors.mockRestore(); }

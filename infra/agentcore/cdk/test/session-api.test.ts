@@ -4,7 +4,7 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import { setSessionProjectRoot } from '@aws/agentcore-cdk';
 import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
-import { AgentCoreStack, SESSION_API_TIMEOUT_SECONDS } from '../lib/cdk-stack';
+import { AgentCoreStack } from '../lib/cdk-stack';
 import { agentCoreProjectRoot, readDeployIdentity, readProjectSpec } from '../lib/deploy-config';
 
 const DEPLOY_ROOT = resolve(__dirname, '../../../../examples/public/deploy');
@@ -66,7 +66,7 @@ test('the session API is its own function beside the runtime, reading the Sessio
     FunctionName: IDENTITY.aws.agentCore.sessionApiFunction,
     PackageType: 'Image',
     Architectures: ['arm64'],
-    Timeout: SESSION_API_TIMEOUT_SECONDS,
+    Timeout: 900,
     Environment: {
       // Lambda sets AWS_REGION itself and reserves the name.
       Variables: Match.exact({ AGENTCORE_MEMORY_ID: { 'Fn::GetAtt': [memoryId(synthesized), 'MemoryId'] } }),
@@ -127,11 +127,6 @@ test('the Session API decoder is deployed before a runtime can write its snapsho
   synthesized.hasResource('AWS::BedrockAgentCore::Runtime', {
     DependsOn: Match.arrayWith([aliasId]),
   });
-});
-
-test('a purge fits in one invocation at the per-Session delete rate', () => {
-  // 5 deletes a second; the Chat Service waits up to 900 s for a purge.
-  expect(SESSION_API_TIMEOUT_SECONDS).toBe(900);
 });
 
 test('checkpoint fragmentation needs no rollout parameter or writer environment setting', () => {

@@ -1,12 +1,12 @@
 import { HttpError } from './http-error.js';
 import { SessionBusyError, SessionDeletedError, type SessionMetadata } from './session-metadata.js';
 import type { ScheduledDelivery, ScheduledRunStore } from './scheduled-run-store.js';
-import type { ScheduledRunCard, SessionApi } from './session-api.js';
+import type { ScheduledRunCard, SessionApiFor } from './session-api.js';
 import type { sessionLifecycle } from './session-lifecycle.js';
 
 export interface ScheduledDeliveryDeps {
   sessionMetadata: SessionMetadata;
-  invokeSessionApi: SessionApi;
+  invokeSessionApi: SessionApiFor<'post'>;
   upstream: ReturnType<typeof sessionLifecycle> | null;
 }
 
@@ -20,7 +20,7 @@ export async function postScheduledResult(deps: ScheduledDeliveryDeps, store: Sc
   const userId = complete.session.filing_user_id;
   if (complete.markSucceeded === undefined || complete.postLeaseExpiresAt === undefined) throw new HttpError(503, 'Scheduled post registration is unavailable');
   const posting = await store.posting(delivery, complete, options.failed === true, scheduledRun.status === 'skipped' ? undefined : scheduledRun.status);
-  await invokeSessionApi({ operation: 'post', sessionId: mainChat, userId, content: runSummary(scheduledRun), messageId, scheduledRun }, undefined, complete.postLeaseExpiresAt);
+  await invokeSessionApi('post', { sessionId: mainChat, userId, content: runSummary(scheduledRun), messageId, scheduledRun }, complete.postLeaseExpiresAt);
   await complete.markSucceeded('session-post', store.postedTransaction(posting));
   await sessionMetadata.markPosted(owner, mainChat, posting.postMessageId);
   await complete();

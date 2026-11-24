@@ -5,7 +5,6 @@ import { startInProcess } from '../test/in-process.js';
 import { filed } from '../test/stock-bot.js';
 
 it.each(['thread', 'account'])('reports offline %s deletion as unavailable while retaining durable cleanup', async (deletion) => {
-  const events = ['old checkpoint', 'messages snapshot'];
   const routes = new Hono().delete('/account', async (c) => {
     await deleteAccount();
     return c.body(null, 204);
@@ -13,10 +12,6 @@ it.each(['thread', 'account'])('reports offline %s deletion as unavailable while
   const stack = await startInProcess({
     config: { agentCore: null, localHarnessUrl: null },
     overrides: { routes },
-    invokeSessionApi: async (request) => {
-      if (request.operation === 'purge') events.splice(0);
-      return {};
-    },
   });
   const deleteAccount = () => stack.history.delete('acct_account-1');
   const server = serve({ fetch: stack.app.fetch, port: 0 });
@@ -31,7 +26,7 @@ it.each(['thread', 'account'])('reports offline %s deletion as unavailable while
     expect(response.status).toBe(503);
     expect((await fetch(`${url}${path}`, { method: 'DELETE' })).status).toBe(503);
     expect(await response.json()).toEqual({ detail: 'The Session Runtime is not configured' });
-    expect(events).toEqual(['old checkpoint', 'messages snapshot']);
+    expect(stack.sessionApi.events()).toEqual([]);
     expect(await stack.sessionMetadata.get('acct_account-1', 'previous-runtime')).toBeNull();
     expect(await stack.sessionMetadata.pendingPurges()).toMatchObject([{ session_id: 'previous-runtime', filing_user_id: filed('acct_account-1') }]);
   } finally {

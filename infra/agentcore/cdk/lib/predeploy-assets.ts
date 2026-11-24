@@ -1,6 +1,13 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { IgnoreMode } from 'aws-cdk-lib';
 import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
 import { DockerImageCode } from 'aws-cdk-lib/aws-lambda';
+
+export function sessionApiTimeout(codeLocation: string): number {
+  const path = join(codeLocation, 'src/botcube_harness_deepagents/session-api.json');
+  return JSON.parse(readFileSync(path, 'utf8')).deadlines.invocation;
+}
 
 export function sessionApiCode(codeLocation: string, buildArgs: Record<string, string>) {
   return DockerImageCode.fromImageAsset(codeLocation, {

@@ -9,7 +9,7 @@ import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
-import { sessionApiCode } from './predeploy-assets';
+import { sessionApiCode, sessionApiTimeout } from './predeploy-assets';
 import { applyRuntimeNetwork, type RuntimeNetwork } from './runtime-network';
 import { applyRuntimePlatform, type RuntimePlatformVersion } from './runtime-platform';
 import { scaleSessionApi } from './session-api-scaling';
@@ -27,12 +27,6 @@ export const RUNTIME_MAX_LIFETIME_SECONDS = 3600;
 /** Idle timeout (seconds) after which an idle runtime microVM is reaped. */
 export const RUNTIME_IDLE_TIMEOUT_SECONDS = 300;
 const RUNTIME_IDLE_TIMEOUT_CAP_SECONDS = 900;
-/**
- * The session API function's timeout (seconds), Lambda's maximum. A purge deletes
- * events at 5 a second (DeleteEvent's per-Session limit), so this bounds a purge
- * to about 4,500 events; the Chat Service waits as long.
- */
-export const SESSION_API_TIMEOUT_SECONDS = 900;
 const RUNTIME_SESSION_STORAGE = '/mnt/workspace';
 /** Every actor's long-term records: the trailing slashes refuse `/actors/` and an actor ID without its slash (ADR 0033). */
 const MEMORY_ACTOR_NAMESPACES = { StringLike: { 'bedrock-agentcore:namespace': '/actors/*/' } };
@@ -118,7 +112,6 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
   rollbackVersion?: string;
   /** The session-storage mount; the shell works in its files child. */
   workspace?: string;
-  sessionApiTimeoutSeconds?: number;
   sessionApiMemoryMiB?: number;
   sessionApiLogRetention?: logs.RetentionDays;
   sessionApiLogGroupName?: string;
@@ -364,7 +357,7 @@ export class AgentCoreStack extends Stack {
       code: sessionApiCode(codeLocation, registryArgs(props)),
       architecture: lambda.Architecture.ARM_64,
       memorySize: props.sessionApiMemoryMiB ?? 1024,
-      timeout: Duration.seconds(props.sessionApiTimeoutSeconds ?? SESSION_API_TIMEOUT_SECONDS),
+      timeout: Duration.seconds(sessionApiTimeout(codeLocation)),
       role,
       logGroup,
       // Lambda sets AWS_REGION, the function's region, and reserves the name.

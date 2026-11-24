@@ -447,7 +447,7 @@ describe('a scheduled run', () => {
       picture: async () => null, savePicture: async () => undefined,
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Rates update."}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
-    const post = vi.fn<import('./session-api.js').SessionApi>(async () => ({}));
+    const post = vi.fn<import('./session-api.js').SessionApiFor<'post'>>(async () => ({}));
     const deps = {
       turnIdentity: null,
       bot, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
@@ -466,7 +466,7 @@ describe('a scheduled run', () => {
       if (state === 'retired') await tasks.delete(account, id);
       release();
       await stale;
-      expect(post.mock.calls.map(([event]) => event)).toEqual([
+      expect(post.mock.calls.map(([, event]) => event)).toEqual([
         expect.objectContaining({ content: 'Scheduled task "US rates": Rates update.' }),
         expect.objectContaining({ content: state === 'elapsed' ? 'Scheduled task "US rates": Rates update.' : state === 'expired'
           ? 'Scheduled task "US rates" skipped: the task was outside its active time window'

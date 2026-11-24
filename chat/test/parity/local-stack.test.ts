@@ -53,6 +53,10 @@ describe('against the local Harness', () => {
     expect(replayed).toMatchObject({ id, title: 'first turn' });
     expect(contents(replayed.messages)).toEqual(['first turn', 'Echo: first turn']);
 
+    const stale = await browser.get(`/threads/${id}?before=missing-message`);
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ code: 'STALE_REPLAY_CURSOR' });
+
     const second = await browser.post(
       '/',
       {

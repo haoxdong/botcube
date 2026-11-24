@@ -48,12 +48,12 @@ describe('Session deletion dispatch barrier', () => {
       const unrelated = { ...SESSION, session_id: 'unrelated' };
       purge([unrelated]);
       await vi.advanceTimersByTimeAsync(0);
-      expect(erase).toHaveBeenCalledExactlyOnceWith({ operation: 'purge', sessionId: 'unrelated', userId: 'filing-user' }, 900);
+      expect(erase).toHaveBeenCalledExactlyOnceWith('purge', { sessionId: 'unrelated', userId: 'filing-user' });
       expect(purged).toHaveBeenCalledExactlyOnceWith(unrelated);
 
       stop.mockResolvedValueOnce(undefined);
       await purge.wait([SESSION]);
-      expect(erase).toHaveBeenLastCalledWith({ operation: 'purge', sessionId: 'session', userId: 'filing-user' }, 900);
+      expect(erase).toHaveBeenLastCalledWith('purge', { sessionId: 'session', userId: 'filing-user' });
       expect(purged).toHaveBeenLastCalledWith(SESSION);
       expect(lifecycle.failedDispatchTokens(SESSION)).toEqual([]);
     } finally {

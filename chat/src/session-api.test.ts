@@ -4,17 +4,18 @@ import { Agent, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
 import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 import { FakeSessionApi } from '../test/fakes/fake-backends.js';
 import { dispatcherFetch } from './dispatcher-fetch.js';
-import { HttpError } from './http-error.js';
-import { sessionApi, type SessionApi } from './session-api.js';
+import { sessionApi, SessionApiError, type SessionApiFor } from './session-api.js';
 
 vi.mock('./dispatcher-fetch.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./dispatcher-fetch.js')>();
   return { dispatcherFetch: vi.fn(actual.dispatcherFetch) };
 });
 
-const EVENT: Parameters<SessionApi>[0] = { operation: 'get', sessionId: 'session-1', userId: 'filed-account-1' };
+const GET: Parameters<SessionApiFor<'get'>>[1] = { sessionId: 'session-1', userId: 'filed-account-1' };
 
-const httpError = (status: number, detail: string) => expect.objectContaining({ constructor: HttpError, status, detail });
+const EVENT = { ...GET, operation: 'get' };
+
+const httpError = (status: number, detail: string) => expect.objectContaining({ constructor: SessionApiError, status, detail });
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -39,7 +40,7 @@ async function pastDefaultHeadersTimeout(answer: string, test: (url: string) => 
 }
 
 it('answers 503 when the session API is not configured', async () => {
-  await expect(sessionApi(null)(EVENT)).rejects.toEqual(httpError(503, 'The session API is not configured'));
+  await expect(sessionApi(null)('get', GET)).rejects.toEqual(httpError(503, 'The session API is not configured'));
 });
 
 describe('local mode', () => {
@@ -74,7 +75,7 @@ describe('local mode', () => {
     await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-    expect(await sessionApi({ localUrl: url })(EVENT)).toEqual({ messages: [{ id: 'm1' }] });
+    expect(await sessionApi({ localUrl: url })('get', GET)).toEqual({ messages: [{ id: 'm1' }] });
     expect(received).toEqual([
       { method: 'POST', url: '/invocations', contentType: 'application/json', body: JSON.stringify(EVENT) },
     ]);
@@ -83,9 +84,9 @@ describe('local mode', () => {
   it('keeps a post off the wire when its lease cannot cover an invocation', async () => {
     fake = await new FakeSessionApi().listen();
     const invoke = sessionApi({ localUrl: fake.url });
-    await expect(invoke({
-      operation: 'post', sessionId: 'session-1', userId: 'filed-account-1', content: 'Brief', messageId: 'post-1',
-    }, undefined, Date.now() + 60_000)).rejects.toThrow('Scheduled post lease expires before Session API can finish');
+    await expect(invoke('post', {
+      sessionId: 'session-1', userId: 'filed-account-1', content: 'Brief', messageId: 'post-1',
+    }, Date.now() + 60_000)).rejects.toThrow('Scheduled post lease expires before Session API can finish');
     expect(fake.events()).toEqual([]);
   });
 
@@ -93,14 +94,14 @@ describe('local mode', () => {
     fake = await new FakeSessionApi().listen();
     fake.reply('session-1', 404, { error: 'Session not found' });
 
-    await expect(sessionApi({ localUrl: fake.url })(EVENT)).rejects.toEqual(httpError(404, 'Session not found'));
+    await expect(sessionApi({ localUrl: fake.url })('get', GET)).rejects.toEqual(httpError(404, 'Session not found'));
   });
 
   it('classifies defined missing Session records without changing the public 404 detail', async () => {
     fake = await new FakeSessionApi().listen();
     fake.reply('session-1', 404, { error: 'Session session-1 has no record', code: 'SESSION_NOT_FOUND' });
-    await expect(sessionApi({ localUrl: fake.url })(EVENT)).rejects.toMatchObject({
-      constructor: expect.objectContaining({ name: 'SessionNotFoundError' }), status: 404, detail: 'Session session-1 has no record',
+    await expect(sessionApi({ localUrl: fake.url })('get', GET)).rejects.toMatchObject({
+      sessionCode: 'SESSION_NOT_FOUND', status: 404, detail: 'Session session-1 has no record',
     });
     expect(fake.events()).toEqual([EVENT]);
   });
@@ -110,8 +111,8 @@ describe('local mode', () => {
     const error = 'Session session-1 is in the legacy checkpoint format: its latest checkpoint stores no messages';
     fake.reply('session-1', 410, { error, code: 'SESSION_FORMAT_LEGACY' });
 
-    await expect(sessionApi({ localUrl: fake.url })(EVENT)).rejects.toEqual(
-      expect.objectContaining({ constructor: HttpError, status: 410, detail: error, code: 'SESSION_FORMAT_LEGACY' }),
+    await expect(sessionApi({ localUrl: fake.url })('get', GET)).rejects.toEqual(
+      expect.objectContaining({ constructor: SessionApiError, status: 410, detail: error, code: 'SESSION_FORMAT_LEGACY' }),
     );
   });
 
@@ -119,7 +120,7 @@ describe('local mode', () => {
     fake = await new FakeSessionApi().listen();
     fake.reply('session-1', 500, { error: '/private/sentinel.py', stackTrace: ['secret-stack'] });
 
-    await expect(sessionApi({ localUrl: fake.url })(EVENT)).rejects.toEqual(
+    await expect(sessionApi({ localUrl: fake.url })('get', GET)).rejects.toEqual(
       httpError(503, 'Session API returned HTTP 500'),
     );
   });
@@ -127,7 +128,7 @@ describe('local mode', () => {
   it('answers 503 for a non-JSON body', async () => {
     const url = await localServer((response) => response.writeHead(200).end('not json'));
 
-    await expect(sessionApi({ localUrl: url })(EVENT)).rejects.toEqual(
+    await expect(sessionApi({ localUrl: url })('get', GET)).rejects.toEqual(
       httpError(503, 'Session API returned HTTP 200 with a non-JSON body'),
     );
   });
@@ -137,7 +138,7 @@ describe('local mode', () => {
     server?.close();
     server = undefined;
 
-    await expect(sessionApi({ localUrl: url })(EVENT)).rejects.toEqual(
+    await expect(sessionApi({ localUrl: url })('get', GET)).rejects.toEqual(
       httpError(503, 'Session API request failed'),
     );
   });
@@ -145,21 +146,24 @@ describe('local mode', () => {
   it('waits for a slow answer within the timeout', async () => {
     const url = await localServer((response) => setTimeout(() => response.writeHead(200).end('{"messages":[]}'), 50));
 
-    expect(await sessionApi({ localUrl: url })(EVENT, 5)).toEqual({ messages: [] });
+    expect(await sessionApi({ localUrl: url })('get', GET)).toEqual({ messages: [] });
   });
 
   it("waits past undici's default headers timeout for an answer within the call's timeout", async () => {
     await pastDefaultHeadersTimeout('{"messages":[]}', async (url) => {
-      expect(await sessionApi({ localUrl: url })(EVENT, 5)).toEqual({ messages: [] });
+      expect(await sessionApi({ localUrl: url })('get', GET)).toEqual({ messages: [] });
     });
   });
 
   it('answers 503 when the answer outlasts the timeout', async () => {
     const url = await localServer(() => undefined);
-
-    await expect(sessionApi({ localUrl: url })(EVENT, 0.05)).rejects.toEqual(
-      httpError(503, 'Session API request failed'),
-    );
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(AbortSignal.abort());
+    try {
+      await expect(sessionApi({ localUrl: url })('get', GET)).rejects.toEqual(httpError(503, 'Session API request failed'));
+      expect(timeout).toHaveBeenCalledWith(60_000);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 });
 
@@ -189,7 +193,7 @@ describe('AWS mode', () => {
   it("invokes the function with the event, signed for Lambda in the function's region", async () => {
     const requests = lambda(async () => result(200, { messages: [] }));
 
-    expect(await invoke(EVENT)).toEqual({ messages: [] });
+    expect(await invoke('get', GET)).toEqual({ messages: [] });
     expect(requests).toHaveLength(1);
     const [request] = requests;
     assert.isDefined(request);
@@ -206,7 +210,7 @@ describe('AWS mode', () => {
   it("uses the configured Lambda endpoint and keeps regional signing", async () => {
     const requests = lambda(async () => result(200, { messages: [] }));
     const configured = sessionApi({ functionArn: FUNCTION_ARN, region: 'eu-west-1', endpoint: 'https://lambda.corporate.example/' });
-    expect(await configured(EVENT)).toEqual({ messages: [] });
+    expect(await configured('get', GET)).toEqual({ messages: [] });
     expect(requests[0]?.url).toBe(INVOKE_URL.replace('https://lambda.eu-west-1.amazonaws.com', 'https://lambda.corporate.example'));
     expect((requests[0]?.init.headers as Record<string, string>).authorization).toContain('/eu-west-1/lambda/aws4_request');
   });
@@ -214,26 +218,26 @@ describe('AWS mode', () => {
   it("waits past undici's default headers timeout for an answer within the call's timeout", async () => {
     await pastDefaultHeadersTimeout(JSON.stringify({ statusCode: 200, body: { messages: [] } }), async (url) => {
       const configured = sessionApi({ functionArn: FUNCTION_ARN, region: 'eu-west-1', endpoint: url });
-      expect(await configured(EVENT, 5)).toEqual({ messages: [] });
+      expect(await configured('get', GET)).toEqual({ messages: [] });
     });
   });
 
   it("answers 404 with the function's error", async () => {
     lambda(async () => result(404, { error: 'Session not found' }));
 
-    await expect(invoke(EVENT)).rejects.toEqual(httpError(404, 'Session not found'));
+    await expect(invoke('get', GET)).rejects.toEqual(httpError(404, 'Session not found'));
   });
 
   it("answers 503 naming the function's other status", async () => {
     lambda(async () => result(500, { error: '/private/sentinel.py', stackTrace: ['secret-stack'] }));
 
-    await expect(invoke(EVENT)).rejects.toEqual(httpError(503, 'Session API returned HTTP 500'));
+    await expect(invoke('get', GET)).rejects.toEqual(httpError(503, 'Session API returned HTTP 500'));
   });
 
   it.each([300, 403, 500])('answers 503 when Lambda Invoke returns HTTP %i', async (status) => {
     lambda(async () => new Response(JSON.stringify({ error: '/private/sentinel.py', stackTrace: ['secret-stack'] }), { status }));
 
-    await expect(invoke(EVENT)).rejects.toEqual(
+    await expect(invoke('get', GET)).rejects.toEqual(
       httpError(503, `Session API request failed: Lambda Invoke returned HTTP ${status}`),
     );
   });
@@ -241,7 +245,7 @@ describe('AWS mode', () => {
   it('answers 503 when the function fails', async () => {
     lambda(async () => result(200, {}, { 'x-amz-function-error': 'Unhandled' }));
 
-    await expect(invoke(EVENT)).rejects.toEqual(
+    await expect(invoke('get', GET)).rejects.toEqual(
       httpError(503, 'Session API function failed'),
     );
   });
@@ -253,14 +257,14 @@ describe('AWS mode', () => {
       stackTrace: [['/var/task/botcube_harness_deepagents/memory_document.py', 104, 'edit_memory_line', 'client.batch_update_memory_records(...)']],
     }), { status: 200, headers: { 'x-amz-function-error': 'Unhandled' } }));
 
-    await expect(invoke({ operation: 'memory-edit', userId: 'user-1', recordId: 'mem-deleted', text: 'Trades silver' }))
+    await expect(invoke('memory-edit', { userId: 'user-1', recordId: 'mem-deleted', text: 'Trades silver' }))
       .rejects.toEqual(httpError(503, 'Session API function failed'));
   });
 
   it('answers 503 when the function returns a non-JSON result', async () => {
     lambda(async () => new Response('not json', { status: 200 }));
 
-    await expect(invoke(EVENT)).rejects.toEqual(
+    await expect(invoke('get', GET)).rejects.toEqual(
       httpError(503, 'Session API function returned a result with a non-JSON body'),
     );
   });
@@ -273,7 +277,7 @@ describe('AWS mode', () => {
       throw failure;
     });
 
-    await expect(invoke(EVENT)).rejects.toEqual(httpError(503, 'Session API request failed'));
+    await expect(invoke('get', GET)).rejects.toEqual(httpError(503, 'Session API request failed'));
   });
 
   /** Lambda Invoke answering after `ms`, unless the request is aborted first. */
@@ -292,14 +296,18 @@ describe('AWS mode', () => {
   it('waits for a slow answer within the timeout', async () => {
     slowLambda(50);
 
-    expect(await invoke(EVENT, 5)).toEqual({ messages: [] });
+    expect(await invoke('get', GET)).toEqual({ messages: [] });
   });
 
   it('answers 503 when the answer outlasts the timeout', async () => {
     slowLambda(5_000);
-
-    await expect(invoke(EVENT, 0.05)).rejects.toEqual(
-      httpError(503, 'Session API request failed'),
-    );
+    const signal = AbortSignal.timeout(50);
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(signal);
+    try {
+      await expect(invoke('purge', GET)).rejects.toEqual(httpError(503, 'Session API request failed'));
+      expect(timeout).toHaveBeenCalledWith(910_000);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 });

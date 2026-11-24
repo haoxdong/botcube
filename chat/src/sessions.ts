@@ -4,7 +4,7 @@ import { assertContinuable, oneIdSession, SessionReadOnlyError } from './session
 import type { AgentDocuments } from './agent-documents.js';
 import { HttpError } from './http-error.js';
 import type { ScheduledTasks } from './scheduled-tasks.js';
-import { SessionNotFoundError, type SessionApi } from './session-api.js';
+import { SessionApiError, type SessionApi } from './session-api.js';
 import type { SessionMetadata, SessionPurge, SessionSummary } from './session-metadata.js';
 
 const threadSummary = ({ session_id, title, created_at, updated_at, scheduled_task_id, read_at, turn_completed_at }: SessionSummary) => ({
@@ -43,14 +43,14 @@ export function sessionOperations(
     }
   };
   const replayState = async (owner: string, sessionId: string, metadata: SessionSummary, before: string | undefined) => {
-    let absence: SessionNotFoundError;
+    let absence: SessionApiError;
     try {
-      const { messages, nextBefore } = await invokeSessionApi({
-        operation: 'get', sessionId, userId: metadata.filing_user_id, ...(before === undefined ? {} : { before }),
+      const { messages, nextBefore } = await invokeSessionApi('get', {
+        sessionId, userId: metadata.filing_user_id, ...(before === undefined ? {} : { before }),
       });
       return { messages, nextBefore, failure: metadata.turn_failure?.code === 'SESSION_OPENING_ALREADY_STARTED' ? undefined : metadata.turn_failure };
     } catch (error) {
-      if (before !== undefined || !(error instanceof SessionNotFoundError)) throw error;
+      if (before !== undefined || !(error instanceof SessionApiError) || error.sessionCode !== 'SESSION_NOT_FOUND') throw error;
       absence = error;
     }
     const running = runningTurn(metadata).running;

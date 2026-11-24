@@ -1167,7 +1167,7 @@ describe('durable Session dispatch admission', () => {
       expect(purge).not.toHaveBeenCalled();
       await complete();
       await expect.poll(() => purge.mock.calls.length, { timeout: 1_000 }).toBe(1);
-      expect(purge.mock.calls).toMatchObject([[{ operation: 'purge', sessionId: 'session', userId: 'filed-owner' }, 900]]);
+      expect(purge.mock.calls).toMatchObject([['purge', { sessionId: 'session', userId: 'filed-owner' }]]);
     } finally {
       logged.mockRestore();
       warnings.mockRestore();
@@ -1310,8 +1310,8 @@ describe('purge recovery across task replacement', () => {
     ]);
     await queue.wait(recovered);
     expect(purge.mock.calls).toEqual([
-      [{ operation: 'purge', sessionId: 'session', userId: 'filed-source' }, 900],
-      [{ operation: 'purge', sessionId: 'session', userId: 'filed-destination' }, 900],
+      ['purge', { sessionId: 'session', userId: 'filed-source' }],
+      ['purge', { sessionId: 'session', userId: 'filed-destination' }],
     ]);
     expect((await items()).find((item) => item.pk === 'PURGES')).toHaveProperty('completed_at');
     expect(await replacement.pendingPurges()).toEqual([]);

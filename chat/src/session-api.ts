@@ -3,35 +3,31 @@ import { Agent, type Dispatcher } from 'undici';
 import { awsFetch } from './aws.js';
 import { dispatcherFetch } from './dispatcher-fetch.js';
 import { HttpError } from './http-error.js';
+import { isRecord } from './payload.js';
+import contract from '../../harness/deepagents/src/botcube_harness_deepagents/session-api.json' with { type: 'json' };
 
-/**
- * A request to the session API (ADR 0067 §5), which reads and purges a Session's record,
- * and reads and edits a user's Memory document, whose lines are AgentCore Memory records.
- */
-type SessionApiEvent =
-  /** Read a page of history from the Session's latest checkpoint. */
-  | { operation: 'get'; sessionId: string; userId: string; before?: string }
-  | { operation: 'purge'; sessionId: string; userId: string }
-  /** Add `content` to the Session as the agent's message, under `messageId`, with the run card a scheduled run shows as. */
-  | { operation: 'post'; sessionId: string; userId: string; content: string; messageId: string; scheduledRun?: ScheduledRunCard }
-  | { operation: 'memory'; userId: string }
-  | { operation: 'memory-add'; userId: string; text: string }
-  | { operation: 'memory-edit'; userId: string; recordId: string; text: string }
-  | { operation: 'memory-delete'; userId: string; recordId: string };
+type Operations = typeof contract.operations;
+type Operation = keyof Operations;
+type ErrorCode = keyof typeof contract.errors;
 
-/**
- * A scheduled run as its Main Chat message shows it: the task's title, when the run started, how it ended, and its
- * answer or why not. Open goes to the task's Side Chat at the run's request, `messageId`; a run that never reached its
- * Side Chat (skipped, or failed before it) has neither, and no Open.
- */
-export interface ScheduledRunCard {
-  sideChat?: string;
-  messageId?: string;
-  title: string;
-  ranAt: string;
+/** Contract arrays use an exemplar item, or an empty array for opaque items. A trailing ? marks an optional object field. */
+type Shape<T> =
+  T extends readonly (infer Item)[] ? ([Item] extends [never] ? unknown : Shape<Item>)[] :
+  T extends object ? {
+    [K in keyof T as K extends `${string}?` ? never : K]: Shape<T[K]>;
+  } & {
+    [K in keyof T as K extends `${infer Optional}?` ? Optional : never]?: Shape<T[K]>;
+  } : T;
+
+type Args<O extends Operation> = Shape<Operations[O]['required']> & Partial<Shape<Operations[O]['optional']>>;
+type Result<O extends Operation> = Shape<Operations[O]['result']> & Partial<Shape<Operations[O]['optionalResult']>>;
+export type ScheduledRunCard = NonNullable<Args<'post'>['scheduledRun']> & {
   status: 'done' | 'failed' | 'sign-in' | 'skipped';
-  text: string;
-}
+};
+
+export type SessionApiFor<O extends Operation> =
+  (operation: O, args: Args<NoInfer<O>>, leaseExpiresAt?: O extends 'post' ? number : never) => Promise<Result<O>>;
+export type SessionApi = <O extends Operation>(...call: Parameters<SessionApiFor<O>>) => Promise<Result<O>>;
 
 /** Where the session API runs: the deployed function, invoked with SigV4, or its local plain-HTTP mode. */
 export type SessionApiConfig =
@@ -39,129 +35,116 @@ export type SessionApiConfig =
   | { localUrl: string }
   | null;
 
-export class SessionNotFoundError extends HttpError {
-  constructor(detail: string) { super(404, detail); }
+export class SessionApiError extends HttpError {
+  constructor(status: number, detail: string, readonly sessionCode?: ErrorCode, options?: ErrorOptions) {
+    super(status, detail, sessionCode !== undefined && contract.errors[sessionCode].publicCode ? sessionCode : undefined);
+    if (options !== undefined) this.cause = options.cause;
+  }
 }
 
-/**
- * Invokes the session API; a failure is an HttpError the client sees, a 503 when the session API
- * failed. Not a 502: Cloudflare, in front of the Chat Service, replaces an origin's 502 and 504 with
- * its own error page, which has no CORS headers, so the browser would see only "Failed to fetch".
- */
-export type SessionApi = (event: SessionApiEvent, timeoutSeconds?: number, postLeaseExpiresAt?: number) => Promise<Record<string, unknown>>;
-
-/**
- * Session API calls one Chat Service process runs at once, queueing the rest. It matches the most
- * environments the session API alias scales to (SESSION_API_PROVISIONED_CONCURRENCY.max in the
- * AgentCore stack), so a page load's calls run side by side rather than in turn. The alias keeps
- * fewer initialized while they are idle: a burst above the current count spills over to on-demand
- * environments, each a cold start, until the alias scales out about a minute later. An environment
- * that just finished a call is briefly unavailable, so a queued call sent within ~150 ms can still
- * spill over to one cold on-demand environment (2 of 298 calls on Dev).
- */
+// Match the maximum provisioned concurrency of the Session API alias.
 const SESSION_API_CALLS_AT_ONCE = 5;
-const LAMBDA_MAX_INVOCATION_MS = 900_000;
 
-/**
- * The session API's connections, with no headers or body timeout: a call's own timeout is its only deadline.
- * Undici's defaults, 300 s each, would cut short a purge the function runs for up to 900 s.
- */
-function sessionApiDispatcher(): Dispatcher {
-  return new Agent({ headersTimeout: 0, bodyTimeout: 0 });
+function timeoutSeconds(operation: Operation): number {
+  const deadline = contract.operations[operation].deadline;
+  if (!Object.hasOwn(contract.deadlines, deadline)) throw new Error(`Unknown Session API deadline: ${deadline}`);
+  return contract.deadlines[deadline as keyof typeof contract.deadlines] + contract.clientGraceSeconds;
 }
 
-/** The process's session API: one per Chat Service, so its calls share SESSION_API_CALLS_AT_ONCE. */
 export function sessionApi(config: SessionApiConfig): SessionApi {
   const limit = pLimit(SESSION_API_CALLS_AT_ONCE);
-  const dispatcher = sessionApiDispatcher();
-  return (event, timeoutSeconds = 60, postLeaseExpiresAt) =>
+  // Undici defaults to 300 s for headers and body, shorter than a purge.
+  const dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
+  return (operation, args, postLeaseExpiresAt) =>
     limit(async () => {
-      if (config === null) throw new HttpError(503, 'The session API is not configured');
-      if (postLeaseExpiresAt !== undefined && Date.now() + timeoutSeconds * 1000 + LAMBDA_MAX_INVOCATION_MS >= postLeaseExpiresAt) {
-        throw new HttpError(503, 'Scheduled post lease expires before Session API can finish');
+      if (config === null) throw new SessionApiError(503, 'The session API is not configured');
+      const timeout = timeoutSeconds(operation);
+      if (postLeaseExpiresAt !== undefined && Date.now() + (timeout + contract.deadlines.invocation) * 1000 >= postLeaseExpiresAt) {
+        throw new SessionApiError(503, 'Scheduled post lease expires before Session API can finish');
       }
-      const { status, body } =
-        'functionArn' in config
-          ? await invokeFunction(config, event, timeoutSeconds, dispatcher)
-          : await invokeLocal(config.localUrl, event, timeoutSeconds, dispatcher);
-      return sessionApiResult(event.operation, status, body);
+      const { status, body } = await invoke(config, { ...args, operation }, timeout, dispatcher);
+      return sessionApiResult(operation, status, body);
     });
 }
 
-function sessionApiResult(operation: SessionApiEvent['operation'], status: number, body: unknown): Record<string, unknown> {
-  if (status === 404) {
-    const { error, code } = body as { error: unknown; code?: unknown };
-    throw operation !== 'post' && code === 'SESSION_NOT_FOUND' ? new SessionNotFoundError(String(error)) : new HttpError(404, String(error));
+function matchesShape(shape: unknown, value: unknown): boolean {
+  if (Array.isArray(shape)) {
+    return Array.isArray(value) && (shape.length === 0 || value.every((item) => matchesShape(shape[0], item)));
   }
-  if (status === 410 || (operation === 'get' && [400, 409].includes(status))) {
-    const { error, code } = body as { error: unknown; code: unknown };
-    throw new HttpError(status, String(error), String(code));
+  if (isRecord(shape)) {
+    return isRecord(value) && Object.entries(shape).every(([key, field]) => matchesShape(field, value[key]));
   }
-  if (status !== 200) {
-    throw Object.assign(new HttpError(503, `Session API returned HTTP ${status}`), { cause: body });
-  }
-  if (operation === 'get' &&
-      (typeof body !== 'object' || body === null || !('messages' in body) || !Array.isArray(body.messages))) {
-    throw new HttpError(503, 'Session API returned an invalid replay result');
-  }
-  return body as Record<string, unknown>;
+  return typeof value === typeof shape;
 }
 
-/** Invoke the deployed session API through Lambda Invoke, signed with SigV4. */
-async function invokeFunction(
-  { functionArn, region, endpoint }: { functionArn: string; region: string; endpoint?: string },
-  event: SessionApiEvent,
-  timeoutSeconds: number,
-  dispatcher: Dispatcher,
-): Promise<{ status: number; body: unknown }> {
-  const baseUrl = (endpoint || `https://lambda.${region}.amazonaws.com`).replace(/\/+$/, '');
-  const url = `${baseUrl}/2015-03-31/functions/${encodeURIComponent(functionArn)}/invocations`;
-  let response: Response;
-  let payload: string;
-  try {
-    response = await awsFetch('lambda', region, url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(event),
-      signal: AbortSignal.timeout(timeoutSeconds * 1000),
-      dispatcher,
-    });
-    payload = await response.text();
-  } catch (error) {
-    throw Object.assign(new HttpError(503, 'Session API request failed'), { cause: error });
+function sessionApiResult<O extends Operation>(operation: O, status: number, body: unknown): Result<O> {
+  const spec = contract.operations[operation];
+  if (status !== 200) throw sessionApiFailure(spec.errors, status, body);
+  if (!isRecord(body) || !matchesShape(spec.result, body) ||
+      !Object.entries(spec.optionalResult).every(([key, shape]) => !Object.hasOwn(body, key) || matchesShape(shape, body[key]))) {
+    throw new SessionApiError(503, operation === 'get' ? 'Session API returned an invalid replay result' : 'Session API returned an invalid result');
   }
-  if (!response.ok) {
-    throw Object.assign(new HttpError(503, `Session API request failed: Lambda Invoke returned HTTP ${response.status}`), { cause: payload });
-  }
-  if (response.headers.has('x-amz-function-error')) {
-    throw Object.assign(new HttpError(503, 'Session API function failed'), { cause: payload });
-  }
-  const result = jsonBody(payload, 'Session API function returned a result') as { statusCode: number; body: unknown };
-  return { status: result.statusCode, body: result.body };
+  return body as Result<O>;
 }
 
-/** Invoke the session API's local plain-HTTP mode. */
-async function invokeLocal(
-  baseUrl: string,
-  event: SessionApiEvent,
-  timeoutSeconds: number,
+function sessionApiFailure(allowed: readonly string[], status: number, body: unknown): SessionApiError {
+  const payload = isRecord(body) ? body : {};
+  const code = payload.code;
+  if (typeof code === 'string' && allowed.includes(code) && Object.hasOwn(contract.errors, code)) {
+    const sessionCode = code as ErrorCode;
+    const error = contract.errors[sessionCode];
+    if (error.status === status) {
+      return error.publicCode || status === 404
+        ? new SessionApiError(status, String(payload.error), sessionCode)
+        : new SessionApiError(503, `Session API returned HTTP ${status}`, sessionCode, { cause: body });
+    }
+  }
+  if (status === 404) return new SessionApiError(404, String(payload.error));
+  return new SessionApiError(503, `Session API returned HTTP ${status}`, undefined, { cause: body });
+}
+
+async function invoke(
+  config: NonNullable<SessionApiConfig>,
+  event: { operation: Operation },
+  seconds: number,
   dispatcher: Dispatcher,
 ): Promise<{ status: number; body: unknown }> {
+  const init = {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(event),
+    signal: AbortSignal.timeout(seconds * 1000),
+    dispatcher,
+  };
   let response: Response;
   let text: string;
   try {
-    response = await dispatcherFetch(`${baseUrl}/invocations`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(event),
-      signal: AbortSignal.timeout(timeoutSeconds * 1000),
-      dispatcher,
-    });
+    response = 'functionArn' in config
+      ? await awsFetch('lambda', config.region, lambdaInvokeUrl(config), init)
+      : await dispatcherFetch(`${config.localUrl}/invocations`, init);
     text = await response.text();
   } catch (error) {
-    throw Object.assign(new HttpError(503, 'Session API request failed'), { cause: error });
+    throw new SessionApiError(503, 'Session API request failed', undefined, { cause: error });
   }
-  return { status: response.status, body: jsonBody(text, `Session API returned HTTP ${response.status}`) };
+  return 'functionArn' in config
+    ? lambdaResult(response, text)
+    : { status: response.status, body: jsonBody(text, `Session API returned HTTP ${response.status}`) };
+}
+
+function lambdaInvokeUrl({ functionArn, region, endpoint }: Extract<SessionApiConfig, { functionArn: string }>): string {
+  const baseUrl = (endpoint || `https://lambda.${region}.amazonaws.com`).replace(/\/+$/, '');
+  return `${baseUrl}/2015-03-31/functions/${encodeURIComponent(functionArn)}/invocations`;
+}
+
+function lambdaResult(response: Response, text: string): { status: number; body: unknown } {
+  if (!response.ok) {
+    throw new SessionApiError(503, `Session API request failed: Lambda Invoke returned HTTP ${response.status}`, undefined, { cause: text });
+  }
+  if (response.headers.has('x-amz-function-error')) {
+    throw new SessionApiError(503, 'Session API function failed', undefined, { cause: text });
+  }
+  const result = jsonBody(text, 'Session API function returned a result') as { statusCode: number; body: unknown };
+  return { status: result.statusCode, body: result.body };
 }
 
 /** A session API answer's JSON; anything else is a 503 naming what answered. */
@@ -169,6 +152,6 @@ function jsonBody(text: string, answered: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    throw new HttpError(503, `${answered} with a non-JSON body`);
+    throw new SessionApiError(503, `${answered} with a non-JSON body`);
   }
 }

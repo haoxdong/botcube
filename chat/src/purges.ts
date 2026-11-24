@@ -1,6 +1,6 @@
 import { chatAlarmEvents } from 'botcube-config/alarm-events';
 import { stillServing } from './task-drain.js';
-import type { SessionApi } from './session-api.js';
+import type { SessionApiFor } from './session-api.js';
 import { RuntimeAdmissionUnprovedError } from './session-lifecycle.js';
 import { SessionDispatchPendingError, type SessionPurge } from './session-metadata.js';
 
@@ -48,7 +48,7 @@ const REGROW_AFTER_MS = 60_000;
  * permit another deletion request to retry.
  */
 export function purgeQueue(
-  invoke: SessionApi,
+  invoke: SessionApiFor<'purge'>,
   ownerActorId: (owner: string) => string,
   stop: (session: SessionPurge) => Promise<void | 'absent'>,
   backoffMs: readonly number[] = RETRY_BACKOFF_MS,
@@ -83,7 +83,7 @@ export function purgeQueue(
     const actorIds = new Set([session.filing_user_id, ...(session.owner === undefined ? [] : [ownerActorId(session.owner)])]);
     for (const userId of actorIds) {
       // eslint-disable-next-line no-await-in-loop -- one actor's purge at a time keeps within AgentCore's delete rate
-      await invoke({ operation: 'purge', sessionId: session.session_id, userId }, 900);
+      await invoke('purge', { sessionId: session.session_id, userId });
     }
     await complete(session);
   }

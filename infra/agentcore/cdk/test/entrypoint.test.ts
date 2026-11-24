@@ -66,7 +66,11 @@ function repository(): string {
   const repo = tempDir();
   const deployRoot = path.join(repo, 'bot/deploy');
   fs.mkdirSync(deployRoot, { recursive: true });
-  fs.mkdirSync(path.join(repo, 'harness'));
+  fs.mkdirSync(path.join(repo, 'harness/src/botcube_harness_deepagents'), { recursive: true });
+  fs.writeFileSync(
+    path.join(repo, 'harness/src/botcube_harness_deepagents/session-api.json'),
+    JSON.stringify({ deadlines: { invocation: 900 } })
+  );
   mockHarness.codeLocation = path.join(repo, 'harness');
   fs.copyFileSync(path.join(PUBLIC_EXAMPLE, 'botcube.yaml'), path.join(repo, 'bot/botcube.yaml'));
   fs.writeFileSync(path.join(repo, 'harness/session-api.Dockerfile'), 'FROM scratch\n');
