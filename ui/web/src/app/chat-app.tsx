@@ -294,18 +294,19 @@ export default function App({
           />
         </div>
       </aside>
-      <Presence>{swipe.visible && (
-        <motionElement.button {...presenceMotion} className="sidebar-strip-close" onClick={swipe.close} aria-label="Close sidebar">
+      {/* It comes and goes with the drawer, whose slide is the one motion. */}
+      {swipe.visible && (
+        <button type="button" className="sidebar-strip-close" onClick={swipe.close} aria-label="Close sidebar">
           <span className={`${buttonVariants({ variant: "outline", size: "icon-lg" })} sidebar-strip-close-menu rounded-full`}>{menuIcon}</span>
-        </motionElement.button>
-      )}</Presence>
+        </button>
+      )}
 
       <div className="app-stage">
-      <Presence>{screenOpen && (
-        <motionElement.main {...presenceMotion} className="app-shell app-plugins">
+      {screenOpen && (
+        <main className="app-shell app-plugins">
           <Suspense fallback={<LoadingSkeleton label={screenContent.label} />}>{screenContent.content}</Suspense>
-        </motionElement.main>
-      )}</Presence>
+        </main>
+      )}
       <main className="app-shell" style={{ visibility: screenOpen ? "hidden" : undefined }} aria-hidden={screenOpen} inert={screenOpen || profileSwipe.open || (isPhone && sidebarExpanded)}>
         {!headerInPane && chatHeader}
         {activeId === null && !artifactWorkspace ? <>{paneHeader}{noChat}</> : (

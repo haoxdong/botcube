@@ -2,11 +2,10 @@
 
 import { contentToText, type AbstractAgent } from "@ag-ui/client";
 import { useRenderTool } from "@copilotkit/react-core/v2";
-import { AnimatePresence, domAnimation, LazyMotion, m as motionElement, useIsPresent } from "motion/react";
 import { ChevronDownIcon, Maximize2Icon, Minimize2Icon, PanelLeftIcon, PanelRightIcon, XIcon } from "lucide-react";
 import {
-  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type Dispatch,
-  type ComponentProps, type ReactNode, type SetStateAction,
+  createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch,
+  type ReactNode, type SetStateAction,
 } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { z } from "zod";
@@ -94,6 +93,14 @@ function shownOf(opened: Opened | null, newest: Published | undefined): Shown | 
 /** An Artifact's newest version in Files. */
 const newestOf = (known: Published) => newestInFiles(known, typeOf(known.type).stored, readFile);
 
+/** Whether the pane is still gliding to `isOpen`; it ends when the glide does. Motion off, it never starts. */
+function useSettling(isOpen: boolean) {
+  const [settling, setSettling] = useState({ on: false, isOpen });
+  if (settling.isOpen !== isOpen) setSettling({ on: motionTokens().move.visualDuration > 0, isOpen });
+  const end = useCallback(() => setSettling((current) => ({ ...current, on: false })), []);
+  return useMemo(() => ({ on: settling.on, end }), [settling.on, end]);
+}
+
 function useKept(shown: Shown | null) {
   const [kept, keep] = useState(shown);
   if (shown !== null && shown !== kept) keep(shown);
@@ -178,27 +185,49 @@ function ArtifactSplit({ shown, close, children, accountId, phone }: { phone: bo
   };
   const side = usePanelRef();
   const isOpen = shown !== null;
-  const { quick } = motionTokens();
+  const settling = useSettling(isOpen);
+  const group = useRef<HTMLDivElement>(null);
+  const kept = useKept(shown);
+  // Shut from full screen, the Artifact goes at once: it covers the pane that glides.
+  const inPane = shown ?? (settling.on && !kept?.full ? kept : null);
+  useLayoutEffect(() => {
+    const layout = group.current;
+    if (!settling.on || layout === null) return;
+    // Dragged shut, the pane is already gone: nothing glides.
+    if (!isOpen && side.current?.isCollapsed()) {
+      settling.end();
+      return;
+    }
+    const width = (part: Element | null) => part?.getBoundingClientRect().width ?? 0;
+    // The chat settles at the start to the width it ends at; shutting, the pane keeps the width it glides out from.
+    const share = isOpen ? 1 - Number.parseFloat(OPEN_SIZE) / 100 : 1;
+    layout.style.setProperty("--chat-settled", `${(width(layout) - width(layout.querySelector(".resizable-handle"))) * share}px`);
+    if (!isOpen) layout.style.setProperty("--side-settled", `${width(layout.querySelector(".artifact-side-panel"))}px`);
+  }, [settling, isOpen, side]);
   useEffect(() => {
     const panel = side.current;
     if (panel === null) throw new Error("The Artifact panel mounted without its imperative handle");
     if (!isOpen) panel.collapse();
     else if (panel.isCollapsed()) panel.resize(OPEN_SIZE);
   }, [isOpen, side]);
-  // Motion's `layout` measures on every render; the chat column glides only for the Artifact panel.
+  // Motion's `layout` measures on every render; the chat column glides only for the Artifact panel. While the pane
+  // glides open or shut, the chat lays out once at its settled width and the pane keeps its Artifact.
   return (
-    <ResizablePanelGroup orientation="horizontal" className="artifact-layout" data-side={position} dir={position === "left" ? "rtl" : "ltr"}>
+    <ResizablePanelGroup orientation="horizontal" className="artifact-layout" elementRef={group} data-side={position} data-settling={settling.on ? (isOpen ? "open" : "shut") : undefined} dir={position === "left" ? "rtl" : "ltr"}>
       <ResizablePanel id="chat" className="artifact-chat-panel" minSize="30%" style={{ overflow: "visible" }}><Layout className="artifact-chat-motion" layout={phone ? false : "position"} layoutDependency={`${isOpen} ${position}`} style={{ direction: "ltr" }}>{children}</Layout></ResizablePanel>
       <ResizableHandle className="resizable-handle" disabled={!isOpen} data-closed={!isOpen || undefined} />
       <ResizablePanel id="artifact" className="artifact-side-panel" style={{ overflow: "visible" }} panelRef={side} collapsible collapsedSize="0%" defaultSize="0%" minSize="25%"
         onResize={(size, _id, previous) => {
           if (isOpen && size.asPercentage === 0 && previous?.asPercentage) close();
+        }}
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && event.propertyName === "flex-grow") settling.end();
         }}>
-        <LazyMotion features={domAnimation} strict><AnimatePresence mode="popLayout" initial={false}>{shown && (
-          <ArtifactSide key={pathOf(shown)} className="artifact-side" initial={quick.visualDuration === 0 ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ opacity: quick }}>
-            <Layout className="artifact-view-motion" layout={shown.full ? false : "position"} {...(shown.full ? { transformTemplate: () => "none" } : {})} style={{ direction: "ltr" }}><ArtifactView shown={shown} heading={<DesktopHeading shown={shown} />} controls={<DesktopControls shown={shown} position={position} switchSide={switchSide} />} /></Layout>
-          </ArtifactSide>
-        )}</AnimatePresence></LazyMotion>
+        {inPane && (
+          <div key={pathOf(inPane)} className="artifact-side" inert={!isOpen}>
+            <Layout className="artifact-view-motion" layout={inPane.full ? false : "position"} {...(inPane.full ? { transformTemplate: () => "none" } : {})} style={{ direction: "ltr" }}><ArtifactView shown={inPane} heading={<DesktopHeading shown={inPane} />} controls={<DesktopControls shown={inPane} position={position} switchSide={switchSide} />} /></Layout>
+          </div>
+        )}
       </ResizablePanel>
     </ResizablePanelGroup>
   );
@@ -208,11 +237,6 @@ function ArtifactSplit({ shown, close, children, accountId, phone }: { phone: bo
 function SheetView({ shown }: { shown: Shown | null }) {
   if (shown === null) return null;
   return <ArtifactView key={pathOf(shown)} shown={shown} heading={<History shown={shown} />} />;
-}
-
-function ArtifactSide(props: ComponentProps<typeof motionElement.div>) {
-  const present = useIsPresent();
-  return <motionElement.div {...props} inert={!present} data-closing={present ? undefined : ""} />;
 }
 
 function ArtifactResult({ result }: { result: string }) {

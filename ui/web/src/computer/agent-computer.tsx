@@ -11,9 +11,11 @@ import { BrowserLiveFrame, type LiveViewConnection, type BrowserLiveFrameProps }
 import { failureDetail } from './failure-detail';
 import { FOLDER_ICON } from './files-app';
 import { motionTokens } from '../app/motion-tokens';
+import { useAfterMove } from '../app/motion';
 import { Terminal, type ShellCommand } from './terminal';
 
 const MotionButton = motionElement.create(Button);
+
 
 /**
  * The chat's Agent Computer: its browser and who drives it while awake, and its last screenshot either way. An awake
@@ -200,6 +202,9 @@ export function AgentComputer({
   const settled = live !== null && live.sessionId === browserSessionId;
   const connection = settled ? live.connection : null;
   const covered = app === 'Chrome' && !settled;
+  const waited = useAfterMove(covered);
+  const { move } = motionTokens();
+  const ride = { layout: true, transition: { layout: move } } as const;
   const title = `${agentName}'s computer`;
   const host = chatId.replaceAll('-', '').slice(0, 12);
   const handBack = (sessionId: string) => {
@@ -229,8 +234,8 @@ export function AgentComputer({
           <span className="agent-computer-sheet-title"><Laptop aria-hidden="true" />{title}</span>
         </motionElement.div>
       )}</Presence>
-      {/* The desktop springs between its place and the full-screen sheet; only a zoom moves it, not each render. */}
-      <LazyMotion features={domMax} strict><motionElement.div layout layoutDependency={sheet} transition={{ layout: motionTokens().move }} className="agent-computer-desktop">
+      {/* Only a zoom springs the desktop between its place and the full-screen sheet. */}
+      <LazyMotion features={domMax} strict><motionElement.div layout layoutDependency={sheet} transition={{ layout: move }} className="agent-computer-desktop">
         <div className="agent-computer-window">
           {/* Every app draws on the agent's 16:9 screen. The live view stays connected under Terminal and Files, so
               going back to Chrome shows the browser at once. Until it shows the browser, its last screen stands in,
@@ -261,27 +266,27 @@ export function AgentComputer({
                 }}
               /></motionElement.div>
             )}</Presence>
-            <Presence>{covered && (
-              <motionElement.div {...zoomMotion} className="agent-computer-cover">
+            {covered && (
+              <motionElement.div {...ride} className="agent-computer-cover">
                 <Presence>{computer.screenshot !== null && (
                   <motionElement.img {...presenceMotion} className="agent-computer-screenshot" src={computer.screenshot} alt="The last screen" />
                 )}</Presence>
-                <Presence>{!liveViewExhausted && !off && (starting || browserSessionId !== null) && <motionElement.p {...presenceMotion} className="agent-computer-starting" role="status">{computer.state === 'awake' ? 'Connecting…' : 'Starting…'}</motionElement.p>}</Presence>
+                {waited && !liveViewExhausted && !off && (starting || browserSessionId !== null) && <p className="agent-computer-starting" role="status">{computer.state === 'awake' ? 'Connecting…' : 'Starting…'}</p>}
                 <Presence>{coverNotice && <motionElement.p {...presenceMotion} className="agent-computer-notice" role="status">{coverNotice}</motionElement.p>}</Presence>
               </motionElement.div>
-            )}</Presence>
-            {/* Terminal and Files fill the window Chrome's live view fills; the dock switches between them, closing none. */}
-            <Presence>{app === 'Terminal' && (
-              <motionElement.section {...zoomMotion} className="agent-computer-app" aria-label="Terminal">
+            )}
+            {/* Terminal and Files fill Chrome's window; the dock switches apps. */}
+            {app === 'Terminal' && (
+              <motionElement.section {...ride} className="agent-computer-app" aria-label="Terminal">
                 <div className="agent-computer-terminal-bar">
                   <Folder aria-hidden="true" />
                   <span>workspace — zsh</span>
                 </div>
                 <Terminal commands={commands} error={terminalError} prompt={`agent@${host} workspace %`} />
               </motionElement.section>
-            )}</Presence>
-            <Presence>{app === 'Files' && <motionElement.section {...zoomMotion} className="agent-computer-app" aria-label="Files">{files}</motionElement.section>}</Presence>
-            <Presence>{!sheet && app === 'Chrome' && <MotionButton {...presenceMotion} variant="link" className="agent-computer-screen-open" aria-label="View computer" disabled={!active} onClick={() => zoom(true)} />}</Presence>
+            )}
+            {app === 'Files' && <motionElement.section {...ride} className="agent-computer-app" aria-label="Files">{files}</motionElement.section>}
+            {!sheet && app === 'Chrome' && <Button variant="link" className="agent-computer-screen-open" aria-label="View computer" disabled={!active} onClick={() => zoom(true)} />}
           </div>
         </div>
         <nav className="agent-computer-dock" aria-label="Dock">

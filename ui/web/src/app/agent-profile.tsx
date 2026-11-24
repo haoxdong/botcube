@@ -1,7 +1,7 @@
 "use client";
 
 import { m as motionElement } from "motion/react";
-import { Presence, presenceMotion, Swap } from "./collapse";
+import { Presence, presenceMotion } from "./collapse";
 
 import { Check, ChevronLeft, Clock, Fingerprint, Heart, IdCard, MessageSquare, Monitor, Pencil, ShieldCheck, X, Zap, type LucideIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type Ref } from "react";
@@ -475,14 +475,10 @@ function LoadedFile<T>({
   onBack: () => void;
   children: (value: T) => ReactNode;
 }) {
-  return (
-    <Swap state={state.status}>
-      {state.status === "loaded" ? children(state.value) : (
-        <FileDocument file={file} saved={false} onBack={onBack} mode={{ kind: "read-only" }}>
-          <Swap state={state.status}>{state.status === "loading" ? <LoadingSkeleton label={file} /> : <LoadFailed error={state.error} onRetry={retry} />}</Swap>
-        </FileDocument>
-      )}
-    </Swap>
+  return state.status === "loaded" ? children(state.value) : (
+    <FileDocument file={file} saved={false} onBack={onBack} mode={{ kind: "read-only" }}>
+      {state.status === "loading" ? <LoadingSkeleton label={file} /> : <LoadFailed error={state.error} onRetry={retry} />}
+    </FileDocument>
   );
 }
 
@@ -621,10 +617,10 @@ function PersonalizationPanel({ chatServiceUrl, revision, onSaved, memory }: { c
   return (
     <div className="agent-files">
       {alert}
-      <Presence>{open ? (
+      {open ? (
         openFile(open)
       ) : (
-        <motionElement.div {...presenceMotion} className="agent-file-cards">
+        <div className="agent-file-cards">
           {(memory ? (["Soul", "Memory"] as const) : (["Soul"] as const)).map((file) => {
             const { tint, Icon } = FILE_LOOK[file];
             return (
@@ -636,8 +632,8 @@ function PersonalizationPanel({ chatServiceUrl, revision, onSaved, memory }: { c
               </button>
             );
           })}
-        </motionElement.div>
-      )}</Presence>
+        </div>
+      )}
     </div>
   );
 }
@@ -758,8 +754,8 @@ export function AgentProfile({
       <div className="agent-profile-panel" role="tabpanel" aria-label="Computer" hidden={!keptComputer}>
         {computer?.(open && keptComputer)}
       </div>
-      <Presence>{open && editor && (
-        <motionElement.div {...presenceMotion} className="agent-profile-panel">
+      {open && editor && (
+        <div className="agent-profile-panel">
           <IdentityEditor
             chatServiceUrl={chatServiceUrl}
             identityFile={identityFile}
@@ -768,14 +764,14 @@ export function AgentProfile({
             isAccountCurrent={isAccountCurrent}
             onClose={() => setEditing(false)}
           />
-        </motionElement.div>
-      )}</Presence>
+        </div>
+      )}
       {/* The other tabs load afresh each time they show. */}
-      <Presence>{open && !editor && !keptComputer && (
-        <motionElement.div {...presenceMotion} className="agent-profile-panel" role="tabpanel" aria-label={tab}>
+      {open && !editor && !keptComputer && (
+        <div className="agent-profile-panel" role="tabpanel" aria-label={tab}>
           {panel(tab)}
-        </motionElement.div>
-      )}</Presence>
+        </div>
+      )}
     </div>
   );
 }

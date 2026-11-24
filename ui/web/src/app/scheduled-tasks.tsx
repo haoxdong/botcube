@@ -1,6 +1,6 @@
 "use client";
 
-import { Swap, Collapse, Presence, presenceMotion, CollapseItem, CollapseList } from "./collapse";
+import { Swap, Presence, presenceMotion, CollapseItem, CollapseList } from "./collapse";
 
 
 import { m as motionElement } from "motion/react";
@@ -13,6 +13,7 @@ import { Sheet } from "../components/ui/sheet";
 import { Badge } from "../components/ui/badge";
 import { fetchAgentModels, ModelCatalogError, type AgentModel } from "./conversations";
 import { LoadingSkeleton } from "./load-state";
+import { Arrives } from "./motion";
 import { fromExpression, listing, runs, stopInstant, summary, toExpression, unitOf, type Cadence, type Ending } from "./schedule";
 import { listTasks, sendTask, type ScheduledTask, type TaskChanges } from "./scheduled-task";
 import { afterRuns } from "./scheduled-task-draft";
@@ -253,10 +254,9 @@ export function ScheduledPanel({
   return (
     <div className="scheduled" ref={panelRef}>
       {!sheet?.open && notices}
-      <Collapse open={tasks === null && error === null} appear={false}><LoadingSkeleton label="Scheduled tasks" /></Collapse>
-      <Presence>{tasks?.length === 0 && <motionElement.p {...presenceMotion} className="agent-profile-empty">No scheduled tasks yet.</motionElement.p>}</Presence>
-      <Presence>{tasks !== null && (
-        <motionElement.div {...presenceMotion} className="scheduled-tasks">
+      <Arrives state={tasks === null ? "loading" : "loaded"} waiting={tasks === null}>{tasks === null ? error === null && <LoadingSkeleton label="Scheduled tasks" /> : (
+        <div className="scheduled-tasks">
+          {tasks.length === 0 && <p className="agent-profile-empty">No scheduled tasks yet.</p>}
           <CollapseList>
             {groups.map(({ label, tasks: grouped }) => (
               <CollapseItem key={label}>
@@ -280,8 +280,8 @@ export function ScheduledPanel({
               </CollapseItem>
             ))}
           </CollapseList>
-        </motionElement.div>
-      )}</Presence>
+        </div>
+      )}</Arrives>
       {/* Mounted closed, so that opening is a change it rises for, as it slides away on closing. */}
       <Sheet
         open={sheet?.open ?? false}

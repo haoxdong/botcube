@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { failureDetail } from '../computer/failure-detail';
-import { Collapse, Fade, Swap } from './collapse';
+import { Collapse, Swap } from './collapse';
 import { LoadingSkeleton } from './load-state';
+import { Arrives, Shows } from './motion';
 import { Button } from '../components/pill-button';
 import { Badge } from '../components/ui/badge';
 import type { SignIn, SignInsControl } from '../plugin/types';
@@ -37,7 +38,7 @@ interface SignInsListProps {
 export function SignInsList({ signIns, error, busy, ...actions }: SignInsListProps) {
   return (
     <div className="sign-ins">
-      <Swap state={signIns === null ? 'loading' : 'loaded'}>
+      <Arrives state={signIns === null ? 'loading' : 'loaded'} waiting={signIns === null}>
       {signIns === null ? (
         <LoadingSkeleton label="Sign-ins" />
       ) : (
@@ -45,7 +46,7 @@ export function SignInsList({ signIns, error, busy, ...actions }: SignInsListPro
           {signIns.map((signIn) => (
             <li key={signIn.site} className="sign-in">
               <span className="sign-in-name">{signIn.name}</span>
-              <Fade open={signIn.username != null} className="sign-in-username">{signIn.username}</Fade>
+              <Shows when={signIn.username != null} className="sign-in-username">{signIn.username}</Shows>
               <Badge variant={STATUS_VARIANTS[signIn.status]} className="sign-in-status">{STATUS_LABELS[signIn.status]}</Badge>
               <Swap state={signIn.status} className="sign-in-actions">
                 {signIn.status === 'not_linked' ? (
@@ -63,7 +64,7 @@ export function SignInsList({ signIns, error, busy, ...actions }: SignInsListPro
           ))}
         </ul>
       )}
-      </Swap>
+      </Arrives>
       <Collapse open={error !== null}>{error !== null && <p className="sign-in-error" role="alert">{error}</p>}</Collapse>
     </div>
   );

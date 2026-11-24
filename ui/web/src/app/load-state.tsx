@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "../components/pill-button";
-import { Swap } from "./collapse";
+import { Arrives } from "./motion";
 
 /** A load from the Chat Service: in flight, answered, or failed with why. */
 export type LoadState<T> = { status: "loading" } | { status: "loaded"; value: T } | { status: "failed"; error: string };
@@ -65,7 +65,7 @@ export function LoadFailed({ error, onRetry, action = "Retry" }: { error: string
   );
 }
 
-/** The loaded value through `children`; until then the skeleton, or why it failed with a Retry. */
+/** The loaded value through `children`; until then the skeleton, or why it failed with a Retry. One fade, in place. */
 export function Loaded<T>({
   state,
   label,
@@ -78,9 +78,9 @@ export function Loaded<T>({
   children: (value: T) => ReactNode;
 }) {
   return (
-    <Swap state={state.status} className="load-state">
+    <Arrives state={state.status} waiting={state.status === "loading"} className="load-state">
       {state.status === "loading" ? <LoadingSkeleton label={label} /> : state.status === "failed" ? <LoadFailed error={state.error} onRetry={onRetry} /> : children(state.value)}
-    </Swap>
+    </Arrives>
   );
 }
 

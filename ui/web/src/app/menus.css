@@ -233,6 +233,8 @@
     top: calc(var(--app-safe-top) + 2px);
     left: 24px;
     opacity: 0.5;
+    /* It moves only as it rides the drawer: settled, nothing replays. */
+    transition: none;
   }
 }
 

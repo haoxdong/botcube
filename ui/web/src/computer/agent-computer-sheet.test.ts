@@ -407,3 +407,43 @@ describe("the Agent Computer's Terminal", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('The commands could not load');
   });
 });
+
+// The label waits out a full --motion-move (300ms with no stylesheet), then shows at once.
+describe("the Agent Computer cover's Starting…", () => {
+  beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+  afterEach(() => vi.useRealTimers());
+
+  const asleep = { state: 'asleep', screenshot: null } as const;
+  const label = () => container.querySelector('.agent-computer-starting')?.textContent ?? null;
+  const wait = (ms: number) => act(() => void vi.advanceTimersByTime(ms));
+
+  it('says the computer is starting only once its wake has kept the cover a full --motion-move', () => {
+    renderComputer('agent', { computer: asleep, starting: true });
+    expect(label()).toBeNull();
+    wait(299);
+    expect(label()).toBeNull();
+    wait(1);
+    expect(label()).toBe('Starting…');
+    expect(container.querySelector('.agent-computer-starting')?.getAttribute('role')).toBe('status');
+  });
+
+  it('says an awake browser is connecting even if the wake flag is still set, and a computer asleep with no wake nothing', () => {
+    renderComputer('agent', { starting: true });
+    wait(300);
+    expect(label()).toBe('Connecting…');
+
+    renderComputer('agent', { computer: asleep });
+    expect(label()).toBeNull();
+  });
+
+  it('shows nothing for a short wait: a cover gone before a --motion-move waits it out again', () => {
+    renderComputer('agent', { computer: asleep, starting: true });
+    wait(200);
+    renderComputer('agent', { computer: asleep, starting: true, app: 'Terminal' });
+    renderComputer('agent', { computer: asleep, starting: true });
+    wait(200);
+    expect(label()).toBeNull();
+    wait(100);
+    expect(label()).toBe('Starting…');
+  });
+});

@@ -61,7 +61,13 @@ function Follow({ stick }: { stick: StickToBottomContext }) {
       const room = roomBelowRows();
       seen = room === null || rows === null ? null : { top, written, real, below: room, rows };
     };
-    const observer = new ResizeObserver(() => {
+    let height: number | null = null;
+    const observer = new ResizeObserver((entries) => {
+      // The library locks to the end on any shrink that leaves the scroll within 70 px of it, and the write below then
+      // jumps a reader who had scrolled up, as a folding Worklog nears its end: one the shrink leaves short of it stays.
+      const resized = entries.find(({ target }) => target === content)?.contentRect.height;
+      if (resized !== undefined && height !== null && resized < height && state.isAtBottom && state.scrollDifference > 1) stopScroll();
+      height = resized ?? height;
       // WebKit can clamp this write to the page's previous height and report it later, as a scroll up from it: the
       // reader is judged from where the scroll was before the write, a clamp from the write.
       const before = state.scrollTop;

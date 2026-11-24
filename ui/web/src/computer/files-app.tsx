@@ -1,6 +1,7 @@
 "use client";
 
-import { Collapse, Presence, presenceMotion } from "../app/collapse";
+import { Presence, presenceMotion } from "../app/collapse";
+import { Arrives } from "../app/motion";
 
 import { m as motionElement } from "motion/react";
 
@@ -278,12 +279,10 @@ export function FilesWindow({
         </AlertDialog>
         <Presence>{error && <motionElement.p {...presenceMotion} className="agent-computer-error" role="alert">{error}</motionElement.p>}</Presence>
         {brokenPictures.map((message, index) => <p key={index} className="agent-computer-error" role="alert">{message}</p>)}
-        <Collapse open={files === null && error === null} appear={false}><LoadingSkeleton label="Files" /></Collapse>
-        <Presence>{files !== null && files.length === 0 && (
-          <motionElement.p {...presenceMotion} className="agent-computer-files-empty">No files yet. Files the agent downloads appear here within a minute or two.</motionElement.p>
-        )}</Presence>
+        <Arrives state={files === null ? 'loading' : 'loaded'} waiting={files === null} className="agent-computer-files-body">{files === null ? error === null && <LoadingSkeleton label="Files" /> : <>
+        {files.length === 0 && <p className="agent-computer-files-empty">No files yet. Files the agent downloads appear here within a minute or two.</p>}
         <FilesChart file={viewing} fileUrl={thumbnailUrl} onDownload={onDownload} onClose={() => setViewing(null)} />
-        <Presence>{files !== null && viewing === null && (
+        <Presence>{viewing === null && (
           <motionElement.div {...presenceMotion} className="agent-computer-files-grid" role="listbox" aria-label={place === null ? 'Recents' : 'Folder contents'}>
             {items.map((item) => <FileMenu key={item.path} row={item} actions={menuItems} onOpen={() => setSelected(item.path)}><Presence>{item.path === renaming?.path ? (
               <motionElement.div {...presenceMotion} key={item.path} role="option" aria-selected={item.path === selected} className="agent-computer-file" data-file-path={item.path} data-kind={kindOf(item)}>
@@ -324,7 +323,8 @@ export function FilesWindow({
             )}</Presence></FileMenu>)}
           </motionElement.div>
         )}</Presence>
-        <Presence>{files !== null && files.length > 0 && <motionElement.p {...presenceMotion} className="agent-computer-files-status" role="status">{status}</motionElement.p>}</Presence>
+        {files.length > 0 && <p className="agent-computer-files-status" role="status">{status}</p>}
+        </>}</Arrives>
       </div>
 
     </div>

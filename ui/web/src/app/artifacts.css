@@ -452,13 +452,21 @@
   overflow: hidden;
 }
 
-.artifact-side[data-closing] > .artifact-view-motion {
-  overflow: visible;
+/* While the pane glides, the chat keeps the width it settles at, on its far side from the pane: it lays out once. */
+.artifact-layout[data-settling] .artifact-chat-column > * {
+  width: var(--chat-settled);
 }
 
-.artifact-layout:has(.artifact-side[data-closing]) > .artifact-chat-panel {
-  position: relative;
-  z-index: 1;
+/* A left pane's chat ends flush with the layout's right edge, opening or shutting. Shutting, the chat is wider than
+   its column, and an auto margin collapses to zero when it overflows; flex-end still anchors it right. */
+.artifact-layout[data-settling][data-side="left"] .artifact-chat-column > * {
+  align-self: flex-end;
+}
+
+/* Shutting, the Artifact keeps its open width pinned to the pane's chat-side edge (the inline start, the group's `dir`
+   mirrors it) and slides out unchanged; the group's own `overflow: hidden` clips the far side. */
+.artifact-layout[data-settling="shut"] .artifact-side {
+  width: var(--side-settled);
 }
 
 @media (max-width: 640px) {

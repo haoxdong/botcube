@@ -55,7 +55,7 @@ it('discards an old account’s in-flight library after switching accounts', asy
   fetch.mockImplementationOnce(() => new Promise<Response>((done) => { release = done; }));
   vi.stubGlobal('fetch', fetch);
   const view = render(<ArtifactLibrary accountId="first" onSelect={vi.fn()} />);
-  expect(screen.getByRole('status')).toHaveTextContent('Loading Artifacts');
+  expect(screen.getByRole('status', { name: 'Loading Artifacts' })).toBeInTheDocument();
   view.rerender(<ArtifactLibrary accountId="second" onSelect={vi.fn()} />);
   expect(await screen.findByText('No Artifacts yet. Artifacts you make in chat appear here.')).toBeVisible();
   await act(async () => { release(Response.json({ files })); });

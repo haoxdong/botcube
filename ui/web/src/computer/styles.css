@@ -290,6 +290,7 @@
 .agent-computer-files-sidebar [aria-current='true'] svg { color: var(--color-blue); }
 
 .agent-computer-files-main { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.agent-computer-files-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .agent-computer-files-empty { margin: 0; padding: var(--space-12); color: var(--color-text-muted); }
 
 /* A white bar across the pane: Back and Forward, then the location field filling the rest. */
@@ -367,18 +368,6 @@
   align-content: start;
   gap: 0 var(--space-4);
   padding: var(--space-4) 6px;
-}
-.agent-computer-files-grid,
-.agent-computer-files-empty,
-.agent-computer-files-status {
-  transition: opacity var(--motion-quick) var(--ease);
-}
-@starting-style {
-  .agent-computer-files-grid,
-  .agent-computer-files-empty,
-  .agent-computer-files-status {
-    opacity: 0;
-  }
 }
 .agent-computer-file {
   position: relative;

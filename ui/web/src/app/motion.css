@@ -62,19 +62,6 @@
   }
 }
 
-/* The dock's apps fade in over the Agent Computer's window. */
-.agent-computer-app,
-.agent-computer-cover {
-  transition: opacity var(--motion-quick) var(--ease);
-}
-
-@starting-style {
-  .agent-computer-app,
-  .agent-computer-cover {
-    opacity: 0;
-  }
-}
-
 /* Until Agent Identity's character line comes, the status keeps its place under the name, so nothing drops as it
    lands: the line's height and the header's gap. */
 .agent-profile-name + .agent-profile-status {

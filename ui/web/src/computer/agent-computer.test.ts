@@ -235,31 +235,14 @@ describe('AgentComputer', () => {
     expect(html).toContain('<div class="agent-computer-screen agent-computer-screen-covered"><div class="agent-computer-cover"></div>');
   });
 
-  it('says the computer is starting while its wake is in flight', () => {
-    expect(render({ computer: { state: 'asleep', screenshot: null }, starting: true })).toContain(
-      '<p class="agent-computer-starting" role="status">Starting…</p>',
-    );
-    expect(render({ computer: { state: 'asleep', screenshot: null } })).not.toContain('Starting…');
-  });
-
-  it('covers the live view with the last screen, dimmed, and says it is connecting, until the live view connects', () => {
+  // Its Starting… waits out a --motion-move first (agent-computer-sheet.test.ts).
+  it('covers the live view with the last screen, dimmed, until the live view connects', () => {
     const html = render({ computer: { state: 'awake', browserSessionId: 'browser-1', control: 'agent', screenshot: 'data:image/jpeg;base64,c2hvdA==' } });
 
     expect(html).toContain(
       '<div class="agent-computer-screen agent-computer-screen-covered"><div class="agent-computer-live"><div data-live-view="browser-1"></div></div>' +
-        '<div class="agent-computer-cover"><img class="agent-computer-screenshot" src="data:image/jpeg;base64,c2hvdA==" alt="The last screen"/>' +
-        '<p class="agent-computer-starting" role="status">Connecting…</p></div>',
+        '<div class="agent-computer-cover"><img class="agent-computer-screenshot" src="data:image/jpeg;base64,c2hvdA==" alt="The last screen"/></div>',
     );
-  });
-
-  it('says an awake browser is connecting even if the wake flag is still set', () => {
-    const html = render({
-      computer: { state: 'awake', browserSessionId: 'browser-1', control: 'agent', screenshot: null },
-      starting: true,
-    });
-
-    expect(html).toContain('<p class="agent-computer-starting" role="status">Connecting…</p>');
-    expect(html).not.toContain('Starting…');
   });
 
   it('disables the control buttons while a change is in flight', () => {

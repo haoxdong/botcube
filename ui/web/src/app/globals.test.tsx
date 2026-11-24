@@ -724,11 +724,9 @@ it('opens a file full screen on a phone, keeping a profile refresh error in view
   );
 
   try {
-    // They fold away to no height, hidden once folded.
-    expect(styleOf(container, '.agent-profile-header').gridTemplateRows).toBe('0fr');
-    expect(styleOf(container, '.agent-profile-identity').visibility).toBe('hidden');
-    expect(styleOf(container, '.agent-profile-tabs').height).toBe('0px');
-    expect(styleOf(container, '.agent-profile-tabs').visibility).toBe('hidden');
+    // They go at once, with no fold.
+    expect(styleOf(container, '.agent-profile-identity').display).toBe('none');
+    expect(styleOf(container, '.agent-profile-tabs').display).toBe('none');
     // A hidden parent would hide the error whatever its own display, so the header must stay shown too.
     expect(styleOf(container, '.agent-profile-header').display).not.toBe('none');
     expect(styleOf(container, '.agent-profile-error').display).not.toBe('none');
@@ -839,10 +837,9 @@ it("keeps the profile's status where it lands as the agent's character line come
   expect(sheet).toMatch(/\n\.agent-profile-character \{[^}]*font-size: var\(--font-small\);/);
 });
 
-it("fades the Agent Computer's dock apps in, leaving the next tap to the dock", () => {
-  // The dock's apps fade in CSS, leaving every tap to the dock; only the sheet's zoom moves the desktop.
-  expect(motion).toMatch(/\.agent-computer-app,\s*\.agent-computer-cover \{\s*transition: opacity var\(--motion-quick\) var\(--ease\);/);
-  expect(motion).toMatch(/@starting-style \{\s*\.agent-computer-app,\s*\.agent-computer-cover \{\s*opacity: 0;/);
+it("switches the Agent Computer's dock apps at once, so showing its panel again replays no fade", () => {
+  // A dock switch is instant, and a `hidden` panel shown again would replay a `@starting-style` fade.
+  expect(motion).not.toMatch(/agent-computer/);
   expect(readFileSync(path.join(here, '../computer/agent-computer.tsx'), 'utf8')).toMatch(/onClick=\{\(\) => onOpenApp\(dockApp\)\}/);
 });
 
@@ -929,6 +926,11 @@ it("sets Personalization's file cards side by side, as Muse's (Fig 16)", () => {
   const { container } = render(<div className="agent-file-cards" />);
 
   expect(styleOf(container, '.agent-file-cards').gridTemplateColumns).toBe('1fr 1fr');
+});
+
+it("deepens a hovered file card's shadow on --motion-quick, with no lift", () => {
+  expect(sheet).toMatch(/\n\.agent-file-card \{[^}]*transition: box-shadow var\(--motion-quick\) var\(--ease\);/);
+  expect(sheet).toMatch(/\.agent-file-card:hover \{\s*box-shadow: var\(--shadow-float\);\s*\}/);
 });
 
 // The template ships Marq's Soul and Memory colours, so a bot brings none.

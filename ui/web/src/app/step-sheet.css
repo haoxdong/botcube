@@ -50,20 +50,13 @@
   outline: 0;
   translate: none;
   transform: translate(-50%, -50%);
-  transition:
-    opacity var(--motion-quick) var(--ease),
-    transform var(--motion-move) var(--ease);
+  transition: opacity var(--motion-quick) var(--ease);
 }
 
-[data-slot="dialog-overlay"]:has(~ .step-popup)[data-starting-style],
-[data-slot="dialog-overlay"]:has(~ .step-popup)[data-ending-style] {
+/* The popup fades in and out with its scrim, as the menus do. */
+[data-slot="dialog-overlay"]:has(~ .step-popup):is([data-starting-style], [data-ending-style]),
+.step-popup:is([data-starting-style], [data-ending-style]) {
   opacity: 0;
-}
-
-.step-popup[data-starting-style],
-.step-popup[data-ending-style] {
-  opacity: 0;
-  transform: translate(-50%, -50%) scale(0.96);
 }
 
 .step-popup .sheet-title {

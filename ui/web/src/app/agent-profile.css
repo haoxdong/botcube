@@ -382,9 +382,7 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition:
-    transform var(--motion-move) var(--ease),
-    box-shadow var(--motion-move) var(--ease);
+  transition: box-shadow var(--motion-quick) var(--ease);
 }
 
 /* A fine film grain over the mesh, as Muse's cards have. */
@@ -401,7 +399,6 @@
 
 @media (hover: hover) {
     .agent-file-card:hover {
-      transform: translateY(-2px);
       box-shadow: var(--shadow-float);
     }
 }
