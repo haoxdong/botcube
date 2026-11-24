@@ -97,8 +97,7 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
   allow(['events:DescribeRule'], [stack.formatArn({ service: 'events', resource: 'rule', resourceName: '*' })]);
   allow(['ecs:DescribeServices', 'ecs:DescribeTasks', 'ecs:ListTasks', 'ecs:RunTask', 'ecs:StopTask'], ['*']);
   allow(['iam:PassRole'], [stack.formatArn({ service: 'iam', region: '', resource: 'role', resourceName: `${ecs.previewOriginStackName}-ChatServiceReaperTask*` })]);
-  allow(['logs:FilterLogEvents'], [stack.formatArn({ service: 'logs', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'log-group', resourceName: `/${ecs.cluster}/*` }),
-    stack.formatArn({ service: 'logs', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'log-group', resourceName: `/aws/bedrock-agentcore/runtimes/${agentCore.runtime}-*` })]);
+  allow(['logs:FilterLogEvents'], [stack.formatArn({ service: 'logs', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'log-group', resourceName: `/aws/bedrock-agentcore/runtimes/${agentCore.runtime}-*` })]);
   allow(['lambda:GetProvisionedConcurrencyConfig', 'lambda:PutProvisionedConcurrencyConfig', 'lambda:DeleteProvisionedConcurrencyConfig', 'lambda:ListProvisionedConcurrencyConfigs', 'lambda:GetAlias', 'lambda:UpdateAlias'],
     [stack.formatArn({ service: 'lambda', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'function', resourceName: agentCore.sessionApiFunction }),
       stack.formatArn({ service: 'lambda', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'function', resourceName: `${agentCore.sessionApiFunction}:*` })]);
@@ -108,6 +107,16 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
   allow(['iam:PassRole'], [stack.formatArn({ service: 'iam', region: '', resource: 'role', resourceName: identity.aws.iam.runtimeRole })]);
   const advance = new tasks.LambdaInvoke(stack, 'Advance', { lambdaFunction: worker, payloadResponseOnly: true, retryOnServiceExceptions: false });
   advance.addRetry({ errors: ['TransientServiceError', 'Lambda.ServiceException', 'Lambda.AWSLambdaException', 'Lambda.SdkClientException', 'Lambda.TooManyRequestsException'], interval: Duration.seconds(2), backoffRate: 2, maxAttempts: 3 });
+  const alerts = sns.Topic.fromTopicArn(stack, 'TransitionAlerts', stack.formatArn({ service: 'sns', resource: ecs.alertsTopicName }));
+  const failed = new sfn.Fail(stack, 'TransitionFailed', { errorPath: '$.failure.Error', causePath: '$.failure.Cause' });
+  const report = new tasks.SnsPublish(stack, 'ReportLiveTransitionFailure', {
+    topic: alerts, subject: 'Production live transition failed', resultPath: sfn.JsonPath.DISCARD,
+    message: sfn.TaskInput.fromObject({ executionArn: sfn.JsonPath.stringAt('$$.Execution.Id'),
+      failure: sfn.JsonPath.objectAt('$.failure') }),
+  }).next(failed);
+  advance.addCatch(new sfn.Choice(stack, 'WasLiveTransition')
+    .when(sfn.Condition.stringEquals('$.mode', 'live'), report)
+    .otherwise(failed), { resultPath: '$.failure' });
   const wait = new sfn.Wait(stack, 'WaitForStack', { time: sfn.WaitTime.duration(Duration.seconds(5)) });
   const done = new sfn.Succeed(stack, 'Verified');
   advance.next(new sfn.Choice(stack, 'Finished')
@@ -128,7 +137,6 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
       time: sfn.WaitTime.duration(Duration.hours(1)),
     }).next(expire)), timeout: Duration.hours(4),
   });
-  const alerts = sns.Topic.fromTopicArn(stack, 'TransitionAlerts', stack.formatArn({ service: 'sns', resource: ecs.alertsTopicName }));
   const observe = new tasks.LambdaInvoke(stack, 'EstablishMonitoring', {
     lambdaFunction: worker, payloadResponseOnly: true, retryOnServiceExceptions: false,
     taskTimeout: sfn.Timeout.duration(Duration.minutes(11)),

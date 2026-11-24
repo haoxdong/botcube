@@ -65,6 +65,27 @@ def load():
     return module
 
 
+@pytest.mark.parametrize(('status', 'stored', 'expected'), [
+    ('RUNNING', 'live', {'state': 'waking', 'since': '2026-11-23T00:00:00+00:00'}),
+    ('FAILED', 'live', {'state': 'failed', 'stoppedAt': 1795392000000}),
+    ('SUCCEEDED', 'parked', {'state': 'parked'}),
+    ('SUCCEEDED', 'live', {'state': 'live'}),
+])
+def test_wake_status_uses_latest_execution_before_stored_mode(monkeypatch, status, stored, expected):
+    monkeypatch.setenv('TRANSITION_STATE_MACHINE', 'transition-machine')
+    stamp = datetime(2026, 11, 23, tzinfo=UTC)
+
+    class Executions:
+        def list_executions(self, **_request):
+            return {'executions': [{'status': status, 'startDate': stamp, 'stopDate': stamp}]}
+
+    class SSM:
+        def get_parameter(self, **_request):
+            return {'Parameter': {'Value': stored}}
+
+    assert load().handler({'op': 'wake-state'}, None, executions=Executions(), ssm=SSM()) == expected
+
+
 def test_prepared_origin_is_not_reported_as_parked():
     cloudformation = CloudFormation()
     original = cloudformation.describe_stacks
@@ -76,7 +97,7 @@ def test_prepared_origin_is_not_reported_as_parked():
         return response
 
     cloudformation.describe_stacks = describe
-    assert load().production_state(cloudformation, 'parked') == {'state': 'transition incomplete'}
+    assert load().handler({'op': 'state', 'stored': 'parked'}, None, cloudformation=cloudformation) == {'state': 'transition incomplete'}
 
 
 def test_park_clears_origin_preparation_even_when_mode_is_already_parked():
@@ -427,7 +448,7 @@ def test_four_mode_sequence_preserves_resources_and_never_refreshes_production_f
     for mode in ('egress', 'credential', 'live', 'parked'):
         world.complete(module, mode)
         assert world.stored == mode
-        assert module.production_state(world, mode) == {'state': mode}
+        assert module.handler({'op': 'state', 'stored': mode}, None, cloudformation=world) == {'state': mode}
     assert world.effects.count('refresh') == 1
     assert world.effects.count('spares') == 1
 
@@ -491,10 +512,10 @@ def test_legacy_live_stacks_remain_parkable_after_partial_template_deploy(mixed)
     for index, stack in enumerate(world.stacks.values()):
         if not mixed or index != 0:
             stack['Parameters'] = [{'ParameterKey': 'parked', 'ParameterValue': 'false'}]
-    assert module.production_state(world, 'live') == {'state': 'live'}
+    assert module.handler({'op': 'state', 'stored': 'live'}, None, cloudformation=world) == {'state': 'live'}
     world.complete(module, 'parked')
     assert world.stored == 'parked'
-    assert module.production_state(world, 'parked') == {'state': 'parked'}
+    assert module.handler({'op': 'state', 'stored': 'parked'}, None, cloudformation=world) == {'state': 'parked'}
     assert all(module.mode_parameter(stack)[1] == 'parked' for stack in world.stacks.values())
 
 
@@ -591,10 +612,10 @@ def test_parked_to_egress_verifies_equivalent_api_health_without_an_update():
     assert world.stacks['bot-cube-api-health']['Parameters'] == [
         {'ParameterKey': 'productionMode', 'ParameterValue': 'parked'}]
     assert world.effects[-2:] == ['verify egress', 'store egress']
-    assert module.production_state(world, 'egress') == {'state': 'egress'}
+    assert module.handler({'op': 'state', 'stored': 'egress'}, None, cloudformation=world) == {'state': 'egress'}
     world.stacks['bot-cube-api-health']['Parameters'] = [
         {'ParameterKey': 'productionMode', 'ParameterValue': 'live'}]
-    assert module.production_state(world, 'egress') == {'state': 'transition incomplete'}
+    assert module.handler({'op': 'state', 'stored': 'egress'}, None, cloudformation=world) == {'state': 'transition incomplete'}
 
 
 def test_equivalent_stack_parameters_do_not_skip_effective_resource_verification():
@@ -651,7 +672,7 @@ def test_a_deployment_without_owned_egress_parks_and_unparks_without_a_nat(monke
     world, module = OwnNetwork(parked), load_without_owned_egress(monkeypatch, tmp_path)
     assert world.complete(module, action)['done'] is True
     assert world.effects == effects
-    assert module.production_state(world, world.stored) == {'state': world.stored}
+    assert module.handler({'op': 'state', 'stored': world.stored}, None, cloudformation=world) == {'state': world.stored}
 
 
 def test_partial_modes_without_owned_egress_change_only_the_origin_and_health(monkeypatch, tmp_path):
@@ -797,7 +818,7 @@ def test_live_finishes_before_monitoring_observation_and_binds_the_wake(monkeypa
     assert calls == [('verify-alarms', payload['outputs'])]
     assert world.stored == 'live'
     assert world.effects[-2:] == ['store live', 'monitor live']
-    assert module.production_state(world, 'live') == {'state': 'live'}
+    assert module.handler({'op': 'state', 'stored': 'live'}, None, cloudformation=world) == {'state': 'live'}
 
 
 def test_monitoring_launch_failure_is_loud_after_live_publication():

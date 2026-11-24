@@ -224,16 +224,14 @@ function defineStacks(app: App, options: ProductionOptions) {
     ...withoutBotCubeConfig(options.chat),
   });
   addBotCubeConfig(chat.container, options.chat?.botcubeConfig);
-  if (input.filesWorkspace) chat.container.addEnvironment('BOTCUBE_WORKSPACE', input.filesWorkspace);
   addSmokePolicy(origin, identity, storage, options.chat?.runtimeArn ?? input.runtimeArn);
   const agentNetwork = new ec2.SecurityGroup(origin, 'AgentNetwork', { vpc: chat.cluster.vpc, ...optionalPhysicalName('securityGroupName', options.originConfig?.agentNetworkSecurityGroupName) });
   new ssm.StringParameter(origin, 'AgentSecurityGroupParameter', {
     parameterName: identity.aws.agentCore.runtimeNetworkParameter, stringValue: agentNetwork.securityGroupId,
   });
   new CfnOutput(origin, 'AgentSecurityGroupId', { value: agentNetwork.securityGroupId });
+  configureChatDeployment(chat, origin, identity.ssm.parkState, parking.wakeUrl, input.filesWorkspace);
   // The per-Turn JWT's issuer is the origin the AgentCore app registers as the Memory role's OIDC provider.
-  chat.container.addEnvironment('BOTCUBE_PARK_STATE_PARAMETER', identity.ssm.parkState);
-  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameterHistory'], resources: [origin.formatArn({ service: 'ssm', resource: `parameter${identity.ssm.parkState}` })] }));
   const publicOrigin = `https://${new URL(identity.domains.chatService).hostname}`;
   chat.container.addEnvironment('BOTCUBE_PUBLIC_ORIGIN', publicOrigin);
   const turnIdentityKeys = SecretsManagerSecret.fromSecretNameV2(origin, 'TurnIdentityKeys', identity.aws.ecs.chatService.turnIdentityKeysSecretName);
@@ -307,6 +305,13 @@ function defineStacks(app: App, options: ProductionOptions) {
     ],
   }));
   addTurnSummaryModel(origin, chat, options);
+}
+
+function configureChatDeployment(chat: PreviewChatService, origin: PreviewOriginStack, parkState: string, wakeUrl: string, filesWorkspace?: string) {
+  if (filesWorkspace) chat.container.addEnvironment('BOTCUBE_WORKSPACE', filesWorkspace);
+  chat.container.addEnvironment('BOTCUBE_WAKE_URL', wakeUrl);
+  chat.container.addEnvironment('BOTCUBE_PARK_STATE_PARAMETER', parkState);
+  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameterHistory'], resources: [origin.formatArn({ service: 'ssm', resource: `parameter${parkState}` })] }));
 }
 
 /** Where Turn summaries run: the BotCube Config's OpenAI-compatible Endpoint, or Bedrock. */

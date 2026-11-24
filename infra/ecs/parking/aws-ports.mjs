@@ -12,7 +12,14 @@ const env = (/** @type {string} */ name) => {
 
 /** @typedef {import('./parking.mjs').Claim} Claim */
 
-export function wakePorts({ dynamodb = new DynamoDBClient({}), fetch = globalThis.fetch } = {}) {
+async function invokeTransition(/** @type {LambdaClient} */ lambda, /** @type {object} */ event) {
+  const response = await lambda.send(new InvokeCommand({ FunctionName: env('TRANSITION_FUNCTION'), InvocationType: 'RequestResponse', Payload: Buffer.from(JSON.stringify(event)) }));
+  const payload = Buffer.from(response.Payload ?? []).toString();
+  if (response.FunctionError) throw new Error(`Production transition refused: ${payload}`);
+  return JSON.parse(payload);
+}
+
+export function wakePorts({ dynamodb = new DynamoDBClient({}), lambda = new LambdaClient({}) } = {}) {
   const TableName = env('BOTCUBE_CHAT_TABLE');
   const claimKey = (/** @type {string} */ kind, /** @type {string} */ day) => ({ pk: { S: PARTITION }, sk: { S: `${kind.toUpperCase()}#${day}` } });
   const lastClaim = async (/** @type {string} */ kind, /** @type {string} */ day) => {
@@ -21,10 +28,7 @@ export function wakePorts({ dynamodb = new DynamoDBClient({}), fetch = globalThi
   };
   return {
     now: () => Date.now(),
-    async paused() {
-      const answer = await fetch(env('HEALTH_URL'), { headers: { 'User-Agent': 'collective-automation parking' } });
-      return answer.status === 503 && (await answer.text()) === '{"status":"parked"}';
-    },
+    transition: () => invokeTransition(lambda, { op: 'wake-state' }),
     async claim(/** @type {Claim} */ { kind, day, at }, /** @type {number} */ cap, /** @type {number} */ debounceMs) {
       const capped = Number.isFinite(cap);
       try {
@@ -60,24 +64,18 @@ export function wakePorts({ dynamodb = new DynamoDBClient({}), fetch = globalThi
   };
 }
 
-export function dispatcherPorts({ dynamodb = new DynamoDBClient({}), ssm = new SSMClient({}), s3 = new S3Client({}), lambda = new LambdaClient({}), fetch = globalThis.fetch } = {}) {
+export function dispatcherPorts({ dynamodb = new DynamoDBClient({}), ssm = new SSMClient({}), s3 = new S3Client({}), lambda = new LambdaClient({}) } = {}) {
   const TableName = env('BOTCUBE_CHAT_TABLE');
-  const invoke = async (/** @type {object} */ event) => {
-    const response = await lambda.send(new InvokeCommand({ FunctionName: env('TRANSITION_FUNCTION'), InvocationType: 'RequestResponse', Payload: Buffer.from(JSON.stringify(event)) }));
-    const payload = Buffer.from(response.Payload ?? []).toString();
-    if (response.FunctionError) throw new Error(`Production transition refused: ${payload}`);
-    return JSON.parse(payload);
-  };
   return {
-    ...wakePorts({ dynamodb, fetch }),
+    ...wakePorts({ dynamodb, lambda }),
     async state() {
       const { Parameter } = await ssm.send(new GetParameterCommand({ Name: env('PARK_STATE_PARAMETER') }));
       if (!['parked', 'egress', 'credential', 'live'].includes(Parameter?.Value ?? '')) throw new Error(`Park state is ${JSON.stringify(Parameter?.Value)}, not a production mode`);
-      return (await invoke({ op: 'state', stored: Parameter.Value })).state;
+      return (await invokeTransition(lambda, { op: 'state', stored: Parameter.Value })).state;
     },
     async mode(/** @type {string | undefined} */ mode) {
       if (!['parked', 'egress', 'credential', 'live'].includes(mode ?? '')) throw new Error('Invalid production mode');
-      return invoke({ mode, op: 'start' });
+      return invokeTransition(lambda, { mode, op: 'start' });
     },
     async originClaimed() {
       try {
@@ -109,7 +107,7 @@ export function dispatcherPorts({ dynamodb = new DynamoDBClient({}), ssm = new S
       await dynamodb.send(new DeleteItemCommand({ TableName, Key: { pk: { S: PARTITION }, sk: { S: `${DISPATCH}${at}` } } }));
     },
     async dispatch(/** @type {'park' | 'unpark'} */ action) {
-      return invoke({ action, op: 'start' });
+      return invokeTransition(lambda, { action, op: 'start' });
     },
   };
 }

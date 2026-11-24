@@ -11,9 +11,10 @@ export const DISPATCH = 'DISPATCH#';
  * @typedef {'park' | 'unpark'} Action
  * @typedef {{ kind: 'park' | 'wake', day: string, at: number }} Claim
  * @typedef {{ instance: string, at: number, lastUserRequestAt: number, runningTurns: number, runningTurnIds: string[], accountErases: number }} Heartbeat
+ * @typedef {{state: 'live' | 'parked'} | {state: 'waking', since: string} | {state: 'failed', stoppedAt: number}} WakeTransition
  * @typedef {{
  *   now(): number,
- *   paused(): Promise<boolean>,
+ *   transition(): Promise<WakeTransition>,
  *   claim(claim: Claim, cap: number, debounceMs: number): Promise<'claimed' | 'debounced' | 'capped'>,
  *   release(claim: Claim): Promise<void>,
  *   lastClaim(kind: Claim['kind'], day: string): Promise<number | null>,
@@ -32,15 +33,17 @@ const day = (/** @type {number} */ at) => new Date(at).toISOString().slice(0, 10
 
 export function wakeService(/** @type {WakePorts} */ ports) {
   const status = async () => {
-    if (!await ports.paused()) return { state: 'live' };
+    const transition = await ports.transition();
+    if (transition.state === 'live' || transition.state === 'waking') return transition;
     const now = ports.now();
     const last = await ports.lastClaim('wake', day(now));
-    return last !== null && now - last < WAKE_DEBOUNCE_MS ? { state: 'waking', since: new Date(last).toISOString() } : { state: 'parked' };
+    return last !== null && now - last < WAKE_DEBOUNCE_MS && (transition.state !== 'failed' || last > transition.stoppedAt) ? { state: 'waking', since: new Date(last).toISOString() } : { state: 'parked' };
   };
   return {
     status,
     async wake() {
-      if (!await ports.paused()) return { state: 'live' };
+      const transition = await ports.transition();
+      if (transition.state === 'live' || transition.state === 'waking') return transition;
       const now = ports.now();
       /** @type {Claim} */
       const claim = { kind: 'wake', day: day(now), at: now };

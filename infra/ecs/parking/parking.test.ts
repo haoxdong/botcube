@@ -20,7 +20,7 @@ function production({ state = 'live', paused = state === 'parked', heartbeats = 
   };
   const wakePorts = {
     now: () => world.now,
-    paused: async () => world.paused,
+    transition: async () => ({ state: world.paused ? 'parked' : 'live' }),
     claim: async ({ kind, day, at }: Claim, cap: number, debounceMs: number) => {
       const item = world.claims.get(`${kind}#${day}`) ?? { claims: 0 };
       if (item.lastAt !== undefined && item.lastAt >= at - debounceMs) return 'debounced';

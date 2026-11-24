@@ -22,7 +22,6 @@ export interface ProductionParkingProps extends StackProps {
   /** The operator existing the chat table with its grants: the functions are granted nothing on it or its stream. */
   chatTableExisting: boolean;
   parkStateParameter: string;
-  hostname: string;
   parking: { slotBucket: string; originSlotKey: string };
   functionName: string;
   autoPark: boolean;
@@ -44,19 +43,20 @@ export class ProductionParkingStack extends Stack {
       code: lambda.Code.fromAsset(props.parkingPath, { exclude: ['*.test.ts'] }),
       timeout: Duration.seconds(30),
       memorySize: 256,
-      environment: { BOTCUBE_CHAT_TABLE: chatTable.tableName, HEALTH_URL: `https://${props.hostname}/health`, ...environment },
+      environment: { BOTCUBE_CHAT_TABLE: chatTable.tableName, ...environment },
       logGroup: new logs.LogGroup(this, `${handler}Logs`, { logGroupName: `/aws/lambda/${name}`, retention: logs.RetentionDays.ONE_MONTH }),
     });
     const grantItems = (fn: lambda.Function, actions: string[]) => props.chatTableExisting || fn.addToRolePolicy(new iam.PolicyStatement({
       actions, resources: [chatTable.tableArn], conditions: { 'ForAllValues:StringEquals': { 'dynamodb:LeadingKeys': [PARTITION] } },
     }));
 
-    const wake = fn(`${props.functionName}-wake`, 'wake', {});
+    const transition = parkingTransition(this, join(props.parkingPath, '../..'), props.identity, props.config, props.imageRegistry);
+    const wake = fn(`${props.functionName}-wake`, 'wake', { TRANSITION_FUNCTION: transition.functionName });
+    transition.grantInvoke(wake);
     (wake.node.defaultChild as lambda.CfnFunction).reservedConcurrentExecutions = 5;
     grantItems(wake, ['dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:PutItem']);
     const url = wake.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });
 
-    const transition = parkingTransition(this, join(props.parkingPath, '../..'), props.identity, props.config, props.imageRegistry);
     const dispatcher = fn(props.functionName, 'dispatcher', {
       PARK_STATE_PARAMETER: props.parkStateParameter,
       SLOT_BUCKET: props.parking.slotBucket,
@@ -100,7 +100,7 @@ export function createProductionParking(scope: Construct, cubeRoot: string, chat
   const { functionName, autoPark, slotBucket, originSlotKey } = identity.aws.ecs.parking;
   return new ProductionParkingStack(scope, 'ProductionParking', {
     env: { account: identity.aws.account, region: identity.aws.region },
-    parkingPath: join(cubeRoot, 'infra/ecs/parking'), hostname: new URL(identity.domains.chatService).hostname,
+    parkingPath: join(cubeRoot, 'infra/ecs/parking'),
     chatTable, chatTableExisting, parkStateParameter: identity.ssm.parkState, parking: { slotBucket, originSlotKey }, functionName, autoPark, identity, config, imageRegistry,
   });
 }

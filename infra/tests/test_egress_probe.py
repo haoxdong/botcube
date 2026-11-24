@@ -24,6 +24,7 @@ class ECS:
     def describe_tasks(self, **_request):
         task = next(iter(self.tasks.values()))
         return {'tasks': [{**task, 'desiredStatus': self.desired, 'lastStatus': 'STOPPED' if self.stopped else 'RUNNING',
+                           'stoppedAt': datetime(2026, 11, 18, 0, 0, 1, tzinfo=UTC) if self.stopped else None,
                            **({'containers': self.containers if self.stopped else []} if self.containers is not None else {})}]}
 
 
@@ -38,22 +39,17 @@ class EC2:
         return {'RouteTables': [{'Routes': [{'DestinationCidrBlock': '0.0.0.0/0', 'NatGatewayId': 'nat-fixture', 'State': 'active'}]}]}
 
 
-class Logs:
-    def filter_log_events(self, **_request):
-        return {'events': [{'message': 'egress-ip 192.0.2.1', 'timestamp': 1794960001000}]}
-
-
 def fixture():
     module = load_deploy_script('egress_probe', 'egress_probe.py')
     outputs = {
         module.NAMES['previewOriginStackName']: {
             'ReaperTaskDefinitionArn': 'arn:aws:ecs:us-east-1:123456789012:task-definition/reaper:1',
-            'ReaperSecurityGroupId': 'sg-fixture', 'ReaperLogGroupName': '/fixture/reaper',
+            'ReaperSecurityGroupId': 'sg-fixture',
         },
         module.EGRESS['stackName']: {'PrivateNatGatewayId': 'nat-fixture', 'PrivateNatAllocationId': 'eipalloc-fixture'},
     }
     ecs, ec2 = ECS(), EC2()
-    return module, module.EgressProbe(ecs=ecs, ec2=ec2, logs=Logs(), clock=lambda: 1794960002), ecs, ec2, outputs
+    return module, module.EgressProbe(ecs=ecs, ec2=ec2, clock=lambda: 1794960002), ecs, ec2, outputs
 
 
 def test_probe_is_nonblocking_and_replay_admits_only_one_task():
@@ -67,6 +63,19 @@ def test_probe_is_nonblocking_and_replay_admits_only_one_task():
     result = probe.observe(first)
     assert result['observedIp'] == '192.0.2.1'
     assert probe.verify(result, outputs, 'wake-fixture', 1794960000) == '192.0.2.1'
+
+
+def test_pending_probe_at_deadline_is_stopped_and_fails_the_transition():
+    module, probe, ecs, _ec2, outputs = fixture()
+    transition = load_deploy_script('parking_transition', 'parking_transition.py')
+    running = probe.start('wake-fixture', outputs, 1794960000)
+    probe.clock = lambda: running['launchedAt'] + 300
+    stopped = []
+    ecs.stop_task = lambda **request: stopped.append(request['task'])
+    with pytest.raises(RuntimeError, match='exceeded 300 seconds in RUNNING'):
+        transition.live_dependencies({'probe': running}, 'verify', None, probe)
+    assert stopped == [running['taskArn']]
+    assert module.EGRESS is not None
 
 
 def test_probe_never_starts_before_nat_is_available():
@@ -151,8 +160,7 @@ def test_transition_proof_handoff_through_verify_park_main(tmp_path, monkeypatch
         def describe_rule(self, **_request):
             return {'State': 'ENABLED'}
 
-    clients = {'cloudformation': CloudFormation(), 'ec2': ec2, 'ecs': ecs, 'logs': Logs(),
-               'secretsmanager': Secrets(), 'events': Events(), 'elbv2': object(),
+    clients = {'cloudformation': CloudFormation(), 'ec2': ec2, 'ecs': ecs, 'secretsmanager': Secrets(), 'events': Events(), 'elbv2': object(),
                'route53': object(), 'cloudwatch': object()}
     monkeypatch.setattr(boto3, 'client', lambda name: clients[name])
     monkeypatch.setenv('RUNNER_TEMP', str(tmp_path))

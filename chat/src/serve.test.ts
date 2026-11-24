@@ -7,7 +7,7 @@ import * as scheduledRuns from './scheduled-runs.js';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { FakeAgentCore } from '../test/fakes/fake-agentcore.js';
 import { FakeBedrock, FakeSessionApi } from '../test/fakes/fake-backends.js';
-import { HttpFake } from '../test/fakes/http-fake.js';
+import { HttpFake, sendJson } from '../test/fakes/http-fake.js';
 import { RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
 import { dispatcherFetch } from './dispatcher-fetch.js';
 import { serveChatService } from './server.js';
@@ -199,6 +199,18 @@ describe('the Chat Service served from the environment', () => {
     expect(responses.map((response) => response.status)).toEqual([200, 200]);
     expect(responses.map((response) => response.headers.get('Cache-Control'))).toEqual(['no-store', 'no-store']);
     expect(await Promise.all(responses.map((response) => response.json()))).toEqual([{ state: 'live' }, { state: 'live' }]);
+  });
+
+  it('serves the transition status through the live origin even when health is ok', async () => {
+    let status: { state: string; since?: string } = { state: 'waking', since: '2026-11-23T22:28:12Z' };
+    const wake = await fake(new HttpFake((_request, response) => sendJson(response, 200, status)));
+    const url = await serve({ PORT: '0', BOTCUBE_CHAT_TABLE: await newTable(), BOTCUBE_WAKE_URL: wake.url });
+
+    expect(await (await fetch(`${url}/health`)).json()).toEqual({ status: 'ok' });
+    expect(await (await fetch(`${url}/production/wake`)).json()).toEqual(status);
+    status = { state: 'parked' };
+    expect(await (await fetch(`${url}/production/wake`, { method: 'POST' })).json()).toEqual(status);
+    expect(wake.requests.map(({ method }) => method)).toEqual(['GET', 'POST']);
   });
 
   it('refuses to report Live while Session Metadata is unavailable', async () => {

@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     from types_boto3_ec2 import EC2Client
     from types_boto3_ecs import ECSClient
     from types_boto3_elbv2 import ElasticLoadBalancingv2Client
-    from types_boto3_logs import CloudWatchLogsClient
     from types_boto3_route53 import Route53Client
 
 
@@ -263,28 +262,26 @@ def health_facts(ecs: ECSClient, elb: ElasticLoadBalancingv2Client, outputs: Map
             'credential-service': [task.get('healthStatus', 'UNKNOWN') for task in tasks]}
 
 
-def egress_ip(ecs: ECSClient, logs: CloudWatchLogsClient, ec2: EC2Client, outputs: Mapping[str, Mapping[str, str]]):
-    probe = EgressProbe(ecs=ecs, logs=logs, ec2=ec2)
+def egress_ip(ecs: ECSClient, ec2: EC2Client, outputs: Mapping[str, Mapping[str, str]]):
+    probe = EgressProbe(ecs=ecs, ec2=ec2)
     running = probe.start(uuid.uuid4().hex, outputs, time.time())
     ecs.get_waiter('tasks_stopped').wait(cluster=NAMES['clusterName'], tasks=[running['taskArn']], WaiterConfig={'Delay': 6, 'MaxAttempts': 50})
-    for _ in range(10):
-        result = probe.observe(running)
-        if result is not None:
-            return result['observedIp']
-        time.sleep(3)
-    raise RuntimeError('Egress probe printed no IP')
+    result = probe.observe(running)
+    if result is None:
+        raise RuntimeError('Egress probe task was not stopped after the waiter returned')
+    return result['observedIp']
 
 
 def owned_egress_facts(facts: dict[str, Any], state: str, outputs: Mapping[str, Mapping[str, str]], cfn: CloudFormationClient,
-                       ec2: EC2Client, ecs: ECSClient, logs: CloudWatchLogsClient, proof: WakeEgressProof | None = None) -> dict[str, str | None]:
+                       ec2: EC2Client, ecs: ECSClient, proof: WakeEgressProof | None = None) -> dict[str, str | None]:
     assert EGRESS is not None
     egress = outputs[EGRESS['stackName']]
     facts['stacks']['egress'], egress_types = stack_facts(cfn, EGRESS['stackName'])
     facts['defaultRoutes'], facts['natGateways'] = network_facts(ec2)
     facts.update({'natResources': sorted(NAT_TYPES & set(egress_types)), 'address': address_facts(ec2)})
     if state == 'live':
-        facts['egressIp'] = (EgressProbe(ecs=ecs, ec2=ec2, logs=logs).verify(proof['probe'], outputs, proof['attemptId'], proof['startedAt'])
-                             if proof else egress_ip(ecs, logs, ec2, outputs))
+        facts['egressIp'] = (EgressProbe(ecs=ecs, ec2=ec2).verify(proof['probe'], outputs, proof['attemptId'], proof['startedAt'])
+                             if proof else egress_ip(ecs, ec2, outputs))
     return {'publicIp': EGRESS['publicIp'], 'allocationId': egress['PrivateNatAllocationId'],
             'natGatewayId': egress.get('PrivateNatGatewayId')}
 
@@ -301,7 +298,7 @@ def main(argv: list[str]):
     outputs = json.loads(Path(args.outputs).read_text())
     origin = outputs[NAMES['previewOriginStackName']]
     cfn, ec2, ecs, elb = boto3.client('cloudformation'), boto3.client('ec2'), boto3.client('ecs'), boto3.client('elbv2')
-    events, logs, route53, cloudwatch = boto3.client('events'), boto3.client('logs'), boto3.client('route53'), boto3.client('cloudwatch')
+    events, route53, cloudwatch = boto3.client('events'), boto3.client('route53'), boto3.client('cloudwatch')
     origin_status, origin_types = stack_facts(cfn, NAMES['previewOriginStackName'])
     health_check_disabled, alarm_actions = monitoring_facts(route53, cloudwatch, outputs[NAMES['apiHealthStackName']])
     facts = {
@@ -311,7 +308,7 @@ def main(argv: list[str]):
         'healthCheckDisabled': health_check_disabled, 'alarmActions': alarm_actions,
         'responses': response_facts(args.state != 'live'),
     }
-    expected = owned_egress_facts(facts, args.state, outputs, cfn, ec2, ecs, logs, proof) if EGRESS else None
+    expected = owned_egress_facts(facts, args.state, outputs, cfn, ec2, ecs, proof) if EGRESS else None
     if args.state != 'live':
         facts['dns'] = dns_facts()
         failures = parked_failures(facts, expected) if args.state == 'parked' else partial_failures(facts, expected, args.state)

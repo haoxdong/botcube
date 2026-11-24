@@ -93,3 +93,16 @@ test('rechecks a transition stack every 5 seconds, so a finished update starts t
     .filter(definition => definition.includes('WaitForStack'));
   expect(machine).toMatch(/\\"WaitForStack\\":\{\\"Type\\":\\"Wait\\",\\"Seconds\\":5,/);
 });
+
+test('reports a failed live advance to SNS before the execution fails', () => {
+  const stack = new Stack(new App(), 'Failure', { env: { account: identity.aws.account, region: identity.aws.region } });
+  parkingTransition(stack, path.resolve(__dirname, '../../..'), identity, CONFIG);
+  const [machine] = Object.values(Template.fromStack(stack).findResources('AWS::StepFunctions::StateMachine'))
+    .map(resource => JSON.stringify(stack.resolve((resource as { Properties: unknown }).Properties)))
+    .filter(definition => definition.includes('WaitForStack'));
+  const definition = machine?.replaceAll('\\"', '"');
+  expect(definition).toContain('"ErrorEquals":["States.ALL"],"ResultPath":"$.failure","Next":"WasLiveTransition"');
+  expect(definition).toContain('"Variable":"$.mode","StringEquals":"live","Next":"ReportLiveTransitionFailure"');
+  expect(definition).toContain('"Next":"TransitionFailed"');
+  expect(definition).toContain('"Subject":"Production live transition failed"');
+});

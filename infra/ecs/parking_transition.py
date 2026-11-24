@@ -14,6 +14,12 @@ from botocore.exceptions import ClientError
 from deploy_guard import SETTLED, require_no_deploy
 from deploy_identity import deployment_names, load_deployment, owned_egress
 from egress_probe import RunningProbe
+from parking_state import (
+    mode_parameter,
+    preparation_requested,
+    production_state,
+    wake_state,
+)
 
 
 class RuntimeSnapshot(TypedDict):
@@ -63,9 +69,12 @@ class TransientServiceError(RuntimeError):
     pass
 
 
-def handler(event, context, **ports):
+def handler(event, context, *, executions=None, ssm=None, **ports):
     try:
-        return operate(event, context, **ports)
+        if event.get('op') == 'wake-state':
+            import boto3
+            return wake_state(executions or boto3.client('stepfunctions'), ssm or boto3.client('ssm'), PARK_STATE, STEPS)
+        return operate(event, context, executions=executions, ssm=ssm, **ports)
     except ClientError as error:
         code = error.response['Error']['Code']
         if code in ('Throttling', 'ThrottlingException', 'TooManyRequestsException', 'RequestLimitExceeded',
@@ -89,40 +98,13 @@ def operate(event, context, *, cloudformation=None, ssm=None, verify=None, capac
         return backstop(event, ssm or boto3.client('ssm'), executions or boto3.client('stepfunctions'), cloudformation, leases or boto3.client('s3'))
     if event.get('op') == 'state':
         stored = event.get('stored') or (ssm or boto3.client('ssm')).get_parameter(Name=PARK_STATE)['Parameter']['Value']
-        return production_state(cloudformation, stored)
+        return production_state(cloudformation, stored, EFFECTIVE_MODES)
     action = event.get('mode') or {'park': 'parked', 'unpark': 'live'}.get(event.get('action'))
     if action not in STEPS or event.get('op') not in ('start', 'advance'):
         raise ValueError(f'Unknown transition {event}')
     if event['op'] == 'start':
         return start(action, cloudformation, executions or boto3.client('stepfunctions'), ssm or boto3.client('ssm'))
     return advance(event, cloudformation, ssm, verify, capacity, refresh, spares, action, probe, executions, leases)
-
-
-def production_state(cloudformation, stored):
-    if stored not in STEPS:
-        raise ValueError(f'Invalid park state {stored}')
-    target = stored
-    for name in STACKS.values():
-        stack = cloudformation.describe_stacks(StackName=name)['Stacks'][0]
-        if preparation_requested(stack):
-            return {'state': 'transition incomplete'}
-        _, value = mode_parameter(stack)
-        if EFFECTIVE_MODES[name][value] != EFFECTIVE_MODES[name][target] or stack['StackStatus'] not in SETTLED:
-            return {'state': 'transition incomplete'}
-    return {'state': stored}
-
-
-def preparation_requested(stack):
-    return any(item['ParameterKey'] == 'prepareOrigin' and item['ParameterValue'] == 'true' for item in stack['Parameters'])
-
-
-def mode_parameter(stack):
-    parameters = {item['ParameterKey']: item['ParameterValue'] for item in stack['Parameters']}
-    if 'productionMode' in parameters:
-        return 'productionMode', parameters['productionMode']
-    if parameters.get('parked') in ('true', 'false'):
-        return 'parked', 'parked' if parameters['parked'] == 'true' else 'live'
-    raise RuntimeError('Stack has neither productionMode nor a valid legacy parked parameter')
 
 
 def advance(event: TransitionState, cloudformation, ssm, verify, capacity, refresh, spares, action: str, probe, executions=None, leases=None) -> TransitionState:

@@ -59,6 +59,7 @@ export interface ChatServiceConfig {
   sessionApi: SessionApiConfig;
   /** How long a warmup waits for the Runtime to answer. */
   warmupTimeoutMs: number;
+  wakeUrl?: string;
   /** The model that summarizes each finished Turn for the Activity. */
   turnSummaryModel: TurnSummaryModel;
 }
@@ -81,6 +82,7 @@ function configFromEnv(env: NodeJS.ProcessEnv, adapters: ConfigAdapters): ChatSe
         ? { localUrl: localSessionApiUrl }
         : null,
     warmupTimeoutMs: 60_000,
+    ...(env.BOTCUBE_WAKE_URL ? { wakeUrl: env.BOTCUBE_WAKE_URL } : {}),
     turnSummaryModel: turnSummaryModel(adapters.models, env, region),
     ...(turnIdentity ? { turnIdentity } : {}),
     awsAccess: adapters.awsAccess,
@@ -231,6 +233,14 @@ export function createChatService(
   });
   app.on(['GET', 'POST'], '/production/wake', async (c) => {
     c.header('Cache-Control', 'no-store');
+    if (config.wakeUrl) {
+      const answer = await fetch(config.wakeUrl, { method: c.req.method, signal: AbortSignal.timeout(10_000) });
+      if (!answer.ok) throw new HttpError(503, 'Production wake status is unavailable');
+      const body = await answer.text();
+      const { state } = JSON.parse(body) as { state: string };
+      if (state === 'live') await checkReadiness();
+      return c.body(body, 200, { 'Content-Type': 'application/json' });
+    }
     await checkReadiness();
     return c.json({ state: 'live' });
   });

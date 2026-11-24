@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, TypedDict
@@ -12,7 +13,6 @@ from deploy_identity import deployment_names, load_deployment, owned_egress, req
 if TYPE_CHECKING:
     from types_boto3_ec2 import EC2Client
     from types_boto3_ecs import ECSClient
-    from types_boto3_logs import CloudWatchLogsClient
 
 IDENTITY = load_deployment()
 NAMES = deployment_names(IDENTITY)
@@ -29,7 +29,7 @@ class RunningProbe(TypedDict):
     taskDefinitionArn: str
     natGatewayId: str
     allocationId: str
-    logGroup: str
+    expectedIp: str
 
 
 class EgressProof(RunningProbe):
@@ -49,8 +49,8 @@ def owner(attempt_id: str) -> str:
 
 class EgressProbe:
     def __init__(self, *, ecs: ECSClient | None = None, ec2: EC2Client | None = None,
-                 logs: CloudWatchLogsClient | None = None, clock: Callable[[], float] = time.time):
-        self.ecs, self.ec2, self.logs = ecs or boto3.client('ecs'), ec2 or boto3.client('ec2'), logs or boto3.client('logs')
+                 clock: Callable[[], float] = time.time):
+        self.ecs, self.ec2 = ecs or boto3.client('ecs'), ec2 or boto3.client('ec2')
         self.clock = clock
 
     def network(self, outputs: Mapping[str, Mapping[str, str]]) -> tuple[str, str]:
@@ -68,6 +68,9 @@ class EgressProbe:
         return nat_id, allocation
 
     def start(self, attempt_id: str, outputs: Mapping[str, Mapping[str, str]], started_at: float) -> RunningProbe:
+        if EGRESS is None:
+            raise RuntimeError('Egress proof requires an owned NAT')
+        expected_ip = EGRESS['publicIp']
         nat_id, allocation = self.network(outputs)
         origin = outputs[NAMES['previewOriginStackName']]
         response = self.ecs.run_task(
@@ -80,7 +83,8 @@ class EgressProbe:
                 'node', '--input-type=module', '-e',
                 "const response = await fetch('https://checkip.amazonaws.com', { signal: AbortSignal.timeout(20000) });"
                 " if (!response.ok) throw new Error(`HTTP ${response.status}`);"
-                " console.log('egress-ip', (await response.text()).trim());"]}]},
+                " const actual = (await response.text()).trim();"
+                f" if (actual !== {json.dumps(expected_ip)}) throw new Error(`Unexpected egress IP: ${{actual}}`);"]}]},
         )
         if response.get('failures') or len(response['tasks']) != 1:
             raise RuntimeError('Egress probe task did not start')
@@ -89,7 +93,7 @@ class EgressProbe:
                 'launchedAt': required(task.get('createdAt'), 'egress task createdAt').timestamp(),
                 'taskArn': required(task.get('taskArn'), 'egress task taskArn'),
                 'taskDefinitionArn': origin['ReaperTaskDefinitionArn'], 'natGatewayId': nat_id,
-                'allocationId': allocation, 'logGroup': origin['ReaperLogGroupName']}
+                'allocationId': allocation, 'expectedIp': expected_ip}
 
     def observe(self, probe: RunningProbe) -> EgressProof | None:
         response = self.ecs.describe_tasks(cluster=NAMES['clusterName'], tasks=[probe['taskArn']])
@@ -99,18 +103,16 @@ class EgressProbe:
         if task.get('startedBy') != owner(probe['attemptId']) or task.get('taskDefinitionArn') != probe['taskDefinitionArn']:
             raise RuntimeError('Egress task differs from its wake attempt')
         if task['lastStatus'] == 'STOPPED':
-            containers = required(task.get('containers'), 'egress probe task containers')
-            if len(containers) != 1 or containers[0].get('exitCode') != 0:
-                raise RuntimeError('Egress probe task failed: ' + task.get('stoppedReason', 'no reason'))
-            stream = 'reaper/reaper/' + probe['taskArn'].rsplit('/', 1)[1]
-            events = self.logs.filter_log_events(logGroupName=probe['logGroup'], logStreamNames=[stream],
-                                                filterPattern='"egress-ip"')['events']
-            if events:
-                event = events[-1]
-                return {**probe, 'observedIp': required(event.get('message'), 'egress log message').split()[-1],
-                        'observedAt': required(event.get('timestamp'), 'egress log timestamp') / 1000}
-        if self.clock() - probe['launchedAt'] > 300:
-            raise RuntimeError('Egress probe did not complete and print its IP within 300 seconds')
+            stopped_at = required(task.get('stoppedAt'), 'egress probe task stoppedAt').timestamp()
+            if stopped_at - probe['launchedAt'] <= 300:
+                containers = required(task.get('containers'), 'egress probe task containers')
+                if len(containers) != 1 or containers[0].get('exitCode') != 0:
+                    raise RuntimeError('Egress probe task failed: ' + task.get('stoppedReason', 'no reason'))
+                return {**probe, 'observedIp': probe['expectedIp'], 'observedAt': stopped_at}
+            raise RuntimeError('Egress probe task exceeded 300 seconds')
+        if self.clock() - probe['launchedAt'] >= 300:
+            self.ecs.stop_task(cluster=NAMES['clusterName'], task=probe['taskArn'], reason='Egress probe deadline exceeded')
+            raise RuntimeError(f"Egress probe task exceeded 300 seconds in {task['lastStatus']}")
         return None
 
     def verify(self, proof: EgressProof, outputs: Mapping[str, Mapping[str, str]], attempt_id: str, started_at: float) -> str:
