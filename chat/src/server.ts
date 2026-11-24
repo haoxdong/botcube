@@ -117,18 +117,7 @@ export function createChatService(
   const upstream = config.localHarnessUrl ? sessionLifecycle(localAgentUpstream(config.localHarnessUrl, { bearer })) : runtime && sessionLifecycle(runtime, runtime.stop);
   const purge = purgeQueue(invokeSessionApi, (owner) => bot.filingUserId(owner), async (session) => {
     if (upstream === null) throw new HttpError(503, 'The Session Runtime is not configured');
-    await sessionMetadata.settleExpiredDispatches(session);
-    if (config.localHarnessUrl) {
-      await upstream.stop(session);
-      await sessionMetadata.assertNoDispatch(session);
-      return undefined;
-    }
-    upstream.restoreFailedDispatch(session, await sessionMetadata.rejectedDispatches(session, upstream.runtimeTarget));
-    await sessionMetadata.assertNoDispatch(session, upstream.failedDispatchTokens(session));
-    const settled = await upstream.settleFailedDispatch(session);
-    await sessionMetadata.assertNoDispatch(session);
-    if (settled) return undefined;
-    return upstream.stop(session);
+    return sessionMetadata.stopAfterWriters(session, upstream, Boolean(config.localHarnessUrl));
   }, undefined, (session) => sessionMetadata.completePurge(session), (session) => sessionMetadata.retainUnprovedPurge(session), draining);
   const fenceSessions = (sessions: SessionPurge[]) => {
     if (sessions.length > 0 && upstream === null) throw new HttpError(503, 'The Session Runtime is not configured');

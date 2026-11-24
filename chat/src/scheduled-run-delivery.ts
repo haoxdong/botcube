@@ -12,18 +12,13 @@ export interface ScheduledDeliveryDeps {
 
 export async function postScheduledResult(deps: ScheduledDeliveryDeps, store: ScheduledRunStore, delivery: ScheduledDelivery, scheduledRun: ScheduledRunCard, options: { failed?: boolean } = {}): Promise<ScheduledDelivery> {
   const { sessionMetadata, invokeSessionApi } = deps;
-  const mainChat = delivery.mainChat;
-  const owner = delivery.owner;
-  const messageId = delivery.postMessageId;
-  const complete = await beginScheduledPost(deps, store, delivery);
-  if (complete.session === undefined) throw new HttpError(503, 'Scheduled post filing identity is unavailable');
-  const userId = complete.session.filing_user_id;
-  if (complete.markSucceeded === undefined || complete.postLeaseExpiresAt === undefined) throw new HttpError(503, 'Scheduled post registration is unavailable');
-  const posting = await store.posting(delivery, complete, options.failed === true, scheduledRun.status === 'skipped' ? undefined : scheduledRun.status);
-  await invokeSessionApi('post', { sessionId: mainChat, userId, content: runSummary(scheduledRun), messageId, scheduledRun }, complete.postLeaseExpiresAt);
-  await complete.markSucceeded('session-post', store.postedTransaction(posting));
-  await sessionMetadata.markPosted(owner, mainChat, posting.postMessageId);
-  await complete();
+  const posting = await sessionMetadata.runPost(() => beginScheduledPost(deps, store, delivery), { timeoutMs: Infinity }, store, delivery, {
+    failed: options.failed === true, status: scheduledRun.status === 'skipped' ? undefined : scheduledRun.status,
+  }, (session, expiresAt) => invokeSessionApi('post', {
+    sessionId: delivery.mainChat, userId: session.filing_user_id,
+    content: runSummary(scheduledRun), messageId: delivery.postMessageId, scheduledRun,
+  }, expiresAt));
+  await sessionMetadata.markPosted(delivery.owner, delivery.mainChat, posting.postMessageId);
   await store.complete(posting);
   return posting;
 }
@@ -38,25 +33,17 @@ async function beginScheduledPost(deps: ScheduledDeliveryDeps, store: ScheduledR
   const upstream = deps.upstream;
   const recovery = upstream?.runtimeTarget === undefined ? undefined : {
     runtimeTarget: upstream.runtimeTarget,
-    settle: upstream.recoverRejectedWriters,
+    stopRejectedWriter: upstream.stopRejectedWriter,
   };
-  const attempt = async () => {
-    const owner = await store.executionOwner(delivery);
-    await assertReservedMainIdentity(metadata, delivery.owner, owner, delivery.mainChat, delivery.mainFilingUserId);
-    try {
-      return await metadata.beginDispatch(owner, delivery.mainChat, undefined, { messageId: delivery.postMessageId }, 'session-post', recovery);
-    } catch (error) {
-      if (error instanceof SessionDeletedError && await store.executionOwner(delivery) !== owner) return null;
-      if (error instanceof SessionBusyError) return null;
-      throw error;
+  const owner = await store.executionOwner(delivery);
+  await assertReservedMainIdentity(metadata, delivery.owner, owner, delivery.mainChat, delivery.mainFilingUserId);
+  try {
+    return await metadata.beginDispatch(owner, delivery.mainChat, undefined, { messageId: delivery.postMessageId }, 'session-post', recovery);
+  } catch (error) {
+    if (error instanceof SessionDeletedError && await store.executionOwner(delivery) !== owner) {
+      throw new SessionBusyError('Scheduled delivery moved during Account Claim');
     }
-  };
-  for (;;) {
-    // eslint-disable-next-line no-await-in-loop -- retain the completed outcome until the current owner's Main writer settles
-    const complete = await attempt();
-    if (complete !== null) return complete;
-    // eslint-disable-next-line no-await-in-loop -- contention and a proved Claim handoff wait without fencing newer Runtime admissions
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    throw error;
   }
 }
 

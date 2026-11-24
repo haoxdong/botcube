@@ -1,3 +1,4 @@
+import { runRuntimeWriter } from './session-writer-runtime.js';
 import { assertIdleContinuable } from './sessions.js';
 import type { Hono } from 'hono';
 import { z } from 'zod';
@@ -32,13 +33,12 @@ export function steeringRoutes(
     if (metadata === null) throw new HttpError(404, 'Session not found');
     if (metadata.turn_preparing === true) return c.json(missed(sessionId, parsed.data.id));
     assertIdleContinuable(metadata);
-    const complete = await sessionMetadata.beginDispatch(owner, sessionId);
-    const response = await upstream.invokeRegistered(JSON.stringify({
+    const response = await runRuntimeWriter(() => sessionMetadata.beginDispatch(owner, sessionId), { timeoutMs: 0 }, upstream, metadata, ({ invoke, session }) => invoke(JSON.stringify({
       threadId: sessionId, runId: parsed.data.id,
       messages: [{ ...parsed.data, role: 'user' }],
       tools: [], context: [], state: {},
-      forwardedProps: { steering: true, sessionUserId: metadata.filing_user_id },
-    }), complete.session ?? metadata, complete);
+      forwardedProps: { steering: true, sessionUserId: session.filing_user_id },
+    }), sessionId));
     const text = await response.text();
     if (!response.ok) throw new HttpError(502, `Steering failed: HTTP ${response.status}`);
     const events = await readTurnEvents(text, []);
@@ -56,12 +56,11 @@ export function steeringRoutes(
     if (metadata === null) throw new HttpError(404, 'Session not found');
     if (metadata.turn_preparing === true) return c.json({ withdrawn: true });
     assertIdleContinuable(metadata);
-    const complete = await sessionMetadata.beginDispatch(owner, sessionId);
-    const response = await upstream.invokeRegistered(JSON.stringify({
+    const response = await runRuntimeWriter(() => sessionMetadata.beginDispatch(owner, sessionId), { timeoutMs: 0 }, upstream, metadata, ({ invoke, session }) => invoke(JSON.stringify({
       threadId: sessionId, runId: messageId,
       messages: [], tools: [], context: [], state: {},
-      forwardedProps: { withdrawSteering: messageId, sessionUserId: metadata.filing_user_id },
-    }), complete.session ?? metadata, complete);
+      forwardedProps: { withdrawSteering: messageId, sessionUserId: session.filing_user_id },
+    }), sessionId));
     const text = await response.text();
     if (!response.ok) throw new HttpError(502, `Withdrawing steering failed: HTTP ${response.status}`);
     const events = await readTurnEvents(text, []);

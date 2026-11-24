@@ -24,11 +24,9 @@ describe('a scheduled run', () => {
   it.each([
     { status: 503, code: 'POST_REFUSED' },
     { status: 504, code: 'SESSION_READ_TIMEOUT' },
-  ])('keeps the Main Chat post lease after Session API returns $code', async ({ status, code }) => {
+  ])('admits a Main Chat Turn after Session API returns $code', async ({ status, code }) => {
     const isolated = await startInProcess({ scheduled: true });
     const failed = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const client = new AbortController();
-    const waiting = vi.spyOn(console, 'warn').mockImplementation(() => client.abort());
     try {
       const { id: main } = (await (await isolated.app.request('/main-chat')).json()) as { id: string };
       isolated.sessionApi.reply(main, status, { error: code, code }, 'post');
@@ -43,16 +41,15 @@ describe('a scheduled run', () => {
         message: `Session API returned HTTP ${status}`,
       })));
       const response = await isolated.app.request('/', {
-        method: 'POST', headers: { 'content-type': 'application/json' }, signal: client.signal,
+        method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ threadId: main, runId: 'after-refusal', state: {}, tools: [], context: [], forwardedProps: {},
           messages: [{ id: 'question', role: 'user', content: 'Next question' }] }),
       });
       const body = await response.text();
-      expect(response.status, body).toBe(409);
-      expect(body).toContain('SESSION_BUSY');
+      expect(response.status, body).toBe(200);
+      expect(body).toContain('RUN_FINISHED');
     } finally {
       failed.mockRestore();
-      waiting.mockRestore();
       await isolated.stop();
     }
   });

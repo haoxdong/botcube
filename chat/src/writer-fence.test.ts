@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest';
 import { sessionLifecycle } from './session-lifecycle.js';
 import { defined } from '../test/defined.js';
 import { startInProcess } from '../test/in-process.js';
-import { SessionBusyError } from './session-metadata.js';
+import { SessionBusyError, SessionDispatchPendingError } from './session-metadata.js';
 
 it('waits for Main writers without fencing superseding user Turns, then fences only the external post', async () => {
   const stack = await startInProcess();
@@ -190,7 +190,7 @@ it('removes idle writer control only after durable Session purge completion', as
     await expect(stack.sessionMetadata.beginDispatch('acct_account-1', 'main')).rejects.toThrow('main');
     expect(await stack.sessionMetadata.pendingPurges()).toEqual([]);
     await documents.send(new PutCommand({ TableName: stack.table.name, Item: { pk: 'WRITERS#["original","main"]', sk: 'CONTROL', external_token: 'unknown-writer' } }));
-    await expect(stack.sessionMetadata.completePurge(session)).rejects.toMatchObject({ name: 'TransactionCanceledException' });
+    await expect(stack.sessionMetadata.completePurge(session)).rejects.toBeInstanceOf(SessionDispatchPendingError);
   } finally { await stack.stop(); }
 });
 
@@ -206,7 +206,7 @@ it.each(['absent', 'failed'] as const)('retains rejected writers and releases th
       return 'absent' as const;
     });
     const lifecycle = sessionLifecycle({ label: 'AgentCore', invoke: async () => new Response(null) }, stop);
-    const recovery = { runtimeTarget: 'runtime-target', settle: lifecycle.recoverRejectedWriters };
+    const recovery = { runtimeTarget: 'runtime-target', stopRejectedWriter: lifecycle.stopRejectedWriter };
     await expect(stack.sessionMetadata.beginDispatch('acct_account-1', 'main', undefined, undefined, 'session-post', recovery)).rejects.toThrow();
     expect(stop).toHaveBeenCalledWith(rejected.session.session_id);
     expect(await stack.sessionMetadata.rejectedDispatches(rejected.session, 'runtime-target')).toHaveLength(1);
@@ -224,7 +224,7 @@ it('does not stop a rejected Main runtime while a newer writer is active', async
     await defined(rejected.markRejected, 'rejection')('runtime-target');
     const active = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main');
     const settle = vi.fn(async () => undefined);
-    await expect(stack.sessionMetadata.beginDispatch('acct_account-1', 'main', undefined, undefined, 'session-post', { runtimeTarget: 'runtime-target', settle })).rejects.toThrow(SessionBusyError);
+    await expect(stack.sessionMetadata.beginDispatch('acct_account-1', 'main', undefined, undefined, 'session-post', { runtimeTarget: 'runtime-target', stopRejectedWriter: settle })).rejects.toThrow(SessionBusyError);
     expect(settle).not.toHaveBeenCalled();
     await active();
   } finally { await stack.stop(); }

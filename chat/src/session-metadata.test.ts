@@ -1,3 +1,4 @@
+import { runRuntimeWriter } from './session-writer-runtime.js';
 import { defined } from '../test/defined.js';
 import {
   CreateTableCommand,
@@ -8,7 +9,7 @@ import {
 import { DeleteCommand, DynamoDBDocumentClient, PutCommand, ScanCommand, TransactWriteCommand, UpdateCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../test/fakes/stack.js';
-import { DynamoDBSessionMetadata, SessionBusyError, SessionConcurrencyError, SessionDeletedError, SessionClaimError, SessionOpeningError } from './session-metadata.js';
+import { DynamoDBSessionMetadata, SessionBusyError, SessionConcurrencyError, SessionDeletedError, SessionClaimError, SessionDispatchPendingError, SessionOpeningError } from './session-metadata.js';
 import { SessionReadOnlyError } from './session-identity.js';
 import { purgeQueue } from './purges.js';
 import { RuntimeAdmissionUnprovedError, runtimeSessionId, sessionLifecycle } from './session-lifecycle.js';
@@ -999,6 +1000,23 @@ describe('durable fenced Session cleanup', () => {
     expect(await replacement.get('owner', 'session')).toBeNull();
   });
 
+  it('keeps the purge pending when its writer control row still holds a post lease', async () => {
+    await turn('owner', 'session', T1);
+    const session = defined(await metadata.fence('owner', 'session'), 'fenced Session');
+    const documents = DynamoDBDocumentClient.from(client());
+    await documents.send(new PutCommand({ TableName: table, Item: {
+      pk: 'WRITERS#["filed-owner","session"]', sk: 'CONTROL',
+      external_token: 'post', lease_expires_at: Date.now() + 60_000,
+    } }));
+
+    await expect(metadata.completePurge(session)).rejects.toBeInstanceOf(SessionDispatchPendingError);
+    expect(await metadata.pendingPurges()).toContainEqual(expect.objectContaining({ session_id: 'session' }));
+
+    vi.setSystemTime(Date.now() + 60_001);
+    await metadata.completePurge(session);
+    expect(await metadata.pendingPurges()).toEqual([]);
+  });
+
   it('records a claimed Session\'s owner beside its filing ID, so recovery purges both actors', async () => {
     await turn('source', 'session', T1);
     await metadata.transferOwner('source', 'destination');
@@ -1084,18 +1102,17 @@ describe('durable Session dispatch admission', () => {
     const session = defined(admission.session, 'bound admission');
     const stop = vi.fn(async () => undefined);
     const old = sessionLifecycle({ label: 'AgentCore', runtimeTarget: REJECTED_TARGET, invoke: async () => { throw new Error('headers lost'); } }, stop);
-    await expect(old.invokeRegistered('{}', session, admission)).rejects.toThrow('headers lost');
+    await expect(runRuntimeWriter(async () => admission, { timeoutMs: 0 }, old, session, ({ invoke }) => invoke('{}', session.session_id))).rejects.toThrow('headers lost');
     await metadata.fence('account-1', 'session-1');
     failCompletion = true;
-    await expect(old.stop(session)).rejects.toThrow('registration delete unavailable');
+    await expect(failing.stopAfterWriters(session, old, false)).rejects.toThrow('registration delete unavailable');
     expect(stop).toHaveBeenCalledWith(session.session_id);
     const recovered = await new DynamoDBSessionMetadata(table, client()).rejectedDispatches(session, REJECTED_TARGET);
     expect(recovered).toHaveLength(1);
     expect(recovered[0]?.stopConfirmed).toBe(true);
     const replacementStop = vi.fn(async () => 'absent' as const);
-    const replacement = sessionLifecycle({ label: 'AgentCore', invoke: async () => new Response() }, replacementStop);
-    replacement.restoreFailedDispatch(session, recovered);
-    await replacement.settleFailedDispatch(session);
+    const replacement = sessionLifecycle({ label: 'AgentCore', runtimeTarget: REJECTED_TARGET, invoke: async () => new Response() }, replacementStop);
+    await metadata.stopAfterWriters(session, replacement, false);
     expect(replacementStop).not.toHaveBeenCalled();
     await expect(metadata.assertNoDispatch(session)).resolves.toBeUndefined();
   });
@@ -2007,7 +2024,7 @@ it.each([false, true])('reports contention when a rejected writer changes after 
   const settle = vi.fn(async () => undefined);
 
   await expect(racing.beginDispatch('source', 'session-1', undefined, proof, 'session-post', {
-    runtimeTarget: REJECTED_TARGET, settle,
+    runtimeTarget: REJECTED_TARGET, stopRejectedWriter: settle,
   })).rejects.toBeInstanceOf(SessionBusyError);
   expect(settle).not.toHaveBeenCalled();
 });

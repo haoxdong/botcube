@@ -53,10 +53,10 @@ async function seedSettledFailedDelivery(metadata: SessionMetadata, account: str
   const delivery = await store.claim(account, taskId, deliveryId, filed(account), main, taskId);
   await store.admit(delivery);
   await metadata.recordTurn(account, main, { filingUserId: filed(account), title: 'Brief', messageId: delivery.postMessageId, postAcceptance: true });
-  const complete = await metadata.beginDispatch(account, main, undefined, { messageId: delivery.postMessageId });
-  const posting = await store.posting(delivery, complete, true);
-  await defined(complete.markSucceeded, 'registered post success proof')('session-post', store.postedTransaction(posting));
-  await complete();
+  const posting = await metadata.runPost(
+    () => metadata.beginDispatch(account, main, undefined, { messageId: delivery.postMessageId }, 'session-post'),
+    { timeoutMs: 0 }, store, delivery, { failed: true, status: undefined }, async () => undefined,
+  );
   await store.complete(posting);
   await store.retryFailed(posting);
 }
@@ -633,6 +633,7 @@ describe('scheduled persistence dispatch admission', () => {
     const address = defined(await stack.sessionMetadata.get(account, main), 'accepted Main result');
     if (failure === 'success proof failure' || failure === 'uncertain post') {
       await expect(stack.sessionMetadata.assertNoDispatch(address)).rejects.toThrow('Session dispatch is still registered');
+      await (await stack.sessionMetadata.beginDispatch(account, main))();
     } else await expect(stack.sessionMetadata.assertNoDispatch(address)).resolves.toBeUndefined();
     const replacement = new DynamoDBSessionMetadata(stack.table.name, stack.table.client);
     const retry = () => runScheduledTask({ ...deps, sessionMetadata: replacement,

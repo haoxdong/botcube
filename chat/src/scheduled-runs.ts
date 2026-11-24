@@ -1,3 +1,4 @@
+import { NO_WRITER_WAIT, runRuntimeWriter } from './session-writer-runtime.js';
 import type { ScheduledExecution } from './scheduled-execution.js';
 import { readScheduledRun, type ScheduledRunOutput } from './scheduled-run-output.js';
 import { forwardTurnIdentity, type TurnIdentitySource } from './turn-identity.js';
@@ -223,7 +224,7 @@ async function runInSideChat(
   reached.sideChat = true;
   let output: ScheduledRunOutput | undefined;
   let execution: ScheduledExecution | undefined;
-  let phase: 'preparing' | 'submitted' | 'received' = 'preparing';
+  const invocation = { pending: false };
   let failure: unknown;
   try {
     execution = await deps.sessionMetadata.scheduledRuns?.execution(owner, sideChat);
@@ -245,11 +246,13 @@ async function runInSideChat(
     if (current === null) return { status: 'skipped', text: 'the task was no longer available' };
     const boundsChanged = current.startDate !== task.startDate || current.endDate !== task.endDate;
     if (!fired(current) && (current.paused || (boundsChanged && outsideBounds(current)))) return { status: 'skipped', text: 'the task was outside its active time window' };
-    const complete = await prepared.dispatch();
-    forwardSnapshotEpoch(payload.forwardedProps, complete);
-    phase = 'submitted';
-    const response = await deps.upstream.invokeRegistered(JSON.stringify(payload), complete.session, complete, { credentialServiceInvocationToken: token });
-    phase = 'received';
+    const response = await runRuntimeWriter(prepared.dispatch, NO_WRITER_WAIT, deps.upstream, prepared.session, (writer) => {
+      forwardSnapshotEpoch(payload.forwardedProps, writer);
+      const body = JSON.stringify(payload);
+      invocation.pending = true;
+      return writer.invoke(body, sideChat, { credentialServiceInvocationToken: token });
+    });
+    invocation.pending = false;
     output = await readScheduledRun(
       response,
       deps.upstream.label,
@@ -261,9 +264,8 @@ async function runInSideChat(
     throw error;
   } finally {
     try {
-      await execution?.finish(stops, phase !== 'submitted', failure);
+      await execution?.finish(stops, !invocation.pending, failure);
     } finally {
-      // Scheduled runs buffer the stream, so record RUN_STARTED with completion in one write.
       await sessionMetadata.turnEnded(owner, sideChat, running, undefined, output?.started ? model.provider : undefined);
     }
   }

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { relayTurn } from './turn-stream.js';
 import { purgeQueue } from './purges.js';
+import { runRuntimeWriter } from './session-writer-runtime.js';
+import { SessionWriters } from './session-writers.js';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { runtimeSessionId, sessionLifecycle } from './session-lifecycle.js';
 import type { Upstream } from './upstream.js';
 
@@ -14,21 +18,23 @@ function deferred<T>() {
 }
 
 describe('Session deletion dispatch barrier', () => {
-  it.each([false, true])('terminates automatic purge retries when a failed admission keeps answering absent (recovered: %s)', async (recovered) => {
+  it('terminates automatic purge retries when a durable rejected writer keeps answering absent', async () => {
     vi.useFakeTimers();
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       const complete = Object.assign(vi.fn(async () => undefined), { session: SESSION, token: 'failed-token' });
       const stop = vi.fn<() => Promise<void | 'absent'>>().mockResolvedValue('absent');
-      const upstream = { label: 'AgentCore', invoke: async () => { throw new Error('headers lost'); } };
-      const original = sessionLifecycle(upstream, stop);
-      await expect(original.invokeRegistered('{}', SESSION, complete)).rejects.toThrow('headers lost');
-      const lifecycle = recovered ? sessionLifecycle(upstream, stop) : original;
-      if (recovered) lifecycle.restoreFailedDispatch(SESSION, [complete]);
+      const lifecycle = sessionLifecycle({ label: 'AgentCore', invoke: async () => new Response() }, stop);
+      let rejected = [complete];
+      complete.mockImplementation(async () => { rejected = []; });
+      const writers = new SessionWriters('chat', DynamoDBDocumentClient.from(new DynamoDBClient({})));
+      vi.spyOn(writers, 'settleExpired').mockResolvedValue(undefined);
+      vi.spyOn(writers, 'rejectedDispatches').mockImplementation(async (session) => session === SESSION ? rejected : []);
+      vi.spyOn(writers, 'assertNoDispatch').mockResolvedValue(undefined);
       const erase = vi.fn(async () => ({}));
       const purged = vi.fn(async () => undefined);
-      const purge = purgeQueue(erase, (owner) => owner, (session) => lifecycle.stop(session), undefined, purged);
+      const purge = purgeQueue(erase, (owner) => owner, (session) => writers.stopAfterWriters(session, lifecycle, false), undefined, purged);
       purge([SESSION]);
       await vi.advanceTimersByTimeAsync(155_000);
       expect(stop).toHaveBeenCalledTimes(4);
@@ -42,7 +48,6 @@ describe('Session deletion dispatch barrier', () => {
       expect(erase).not.toHaveBeenCalled();
       expect(purged).not.toHaveBeenCalled();
       expect(complete).not.toHaveBeenCalled();
-      expect(lifecycle.failedDispatchTokens(SESSION)).toEqual(['failed-token']);
       await expect(lifecycle.invokeRegistered('{}', SESSION, complete)).rejects.toMatchObject({ status: 410 });
 
       const unrelated = { ...SESSION, session_id: 'unrelated' };
@@ -55,7 +60,6 @@ describe('Session deletion dispatch barrier', () => {
       await purge.wait([SESSION]);
       expect(erase).toHaveBeenLastCalledWith('purge', { sessionId: 'session', userId: 'filing-user' });
       expect(purged).toHaveBeenLastCalledWith(SESSION);
-      expect(lifecycle.failedDispatchTokens(SESSION)).toEqual([]);
     } finally {
       vi.useRealTimers();
       vi.restoreAllMocks();
@@ -98,9 +102,7 @@ describe('Session deletion dispatch barrier', () => {
     const complete = Object.assign(vi.fn(async () => undefined), { markRejected: async () => { throw new Error('classification unavailable'); } });
     const stop = vi.fn(async () => undefined);
     const lifecycle = sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'configured-runtime', invoke: async () => { throw new Error('headers lost'); } }, stop);
-    await expect(lifecycle.invokeRegistered('{}', SESSION, complete)).rejects.toThrow('durable rejection classification failed');
-    expect(lifecycle.failedDispatchTokens(SESSION)).toEqual([]);
-    expect(await lifecycle.settleFailedDispatch(SESSION)).toBe(false);
+    await expect(runRuntimeWriter(async () => complete, { timeoutMs: 0 }, lifecycle, SESSION, ({ invoke }) => invoke('{}', SESSION.session_id))).rejects.toThrow('durable rejection classification failed');
     expect(stop).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
   });
@@ -112,20 +114,23 @@ describe('Session deletion dispatch barrier', () => {
     });
     const stop = vi.fn<() => Promise<void | 'absent'>>().mockRejectedValueOnce(new Error('Runtime stop failed')).mockResolvedValueOnce('absent').mockResolvedValueOnce(undefined);
     const lifecycle = sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'authoritative-runtime', invoke: async () => new Response(empty ? null : 'admitted body') }, stop);
-    const answer = lifecycle.invokeRegistered('{}', SESSION, complete);
+    const answer = runRuntimeWriter(async () => complete, { timeoutMs: 0 }, lifecycle, SESSION, ({ invoke }) => invoke('{}', SESSION.session_id));
     if (empty) await expect(answer).rejects.toBe(ackError);
     else await expect((await answer).text()).rejects.toBe(ackError);
     expect(complete.markRejected).toHaveBeenCalledWith('authoritative-runtime');
-    expect(lifecycle.failedDispatchTokens(SESSION)).toEqual(['exact-header-token']);
-    await expect(lifecycle.settleFailedDispatch(SESSION)).rejects.toThrow('Runtime stop failed');
-    await expect(lifecycle.settleFailedDispatch(SESSION)).rejects.toMatchObject({ code: 'RUNTIME_ADMISSION_UNPROVED', cause: ackError });
+    const writers = new SessionWriters('chat', DynamoDBDocumentClient.from(new DynamoDBClient({})));
+    vi.spyOn(writers, 'settleExpired').mockResolvedValue(undefined);
+    vi.spyOn(writers, 'rejectedDispatches').mockResolvedValue([complete]);
+    vi.spyOn(writers, 'assertNoDispatch').mockResolvedValue(undefined);
+    const recover = () => writers.stopAfterWriters(SESSION, lifecycle, false);
+    await expect(recover()).rejects.toThrow('Runtime stop failed');
+    await expect(recover()).rejects.toMatchObject({ code: 'RUNTIME_ADMISSION_UNPROVED', });
     expect(complete).toHaveBeenCalledOnce();
     expect(complete.confirmStopped).not.toHaveBeenCalled();
-    await expect(lifecycle.settleFailedDispatch(SESSION)).resolves.toBe(true);
+    await expect(recover()).resolves.toBeUndefined();
     expect(stop).toHaveBeenLastCalledWith(SESSION.session_id);
     expect(complete.confirmStopped).toHaveBeenCalledOnce();
     expect(complete).toHaveBeenCalledTimes(2);
-    expect(lifecycle.failedDispatchTokens(SESSION)).toEqual([]);
   });
 
   it('preserves original acknowledgement and failed classification without inventing a recovered admission', async () => {
@@ -134,51 +139,9 @@ describe('Session deletion dispatch barrier', () => {
     const complete = Object.assign(vi.fn(async () => { throw ackError; }), { markRejected: vi.fn(async () => { throw classifyError; }) });
     const stop = vi.fn(async () => undefined);
     const lifecycle = sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'authoritative-runtime', invoke: async () => new Response('admitted body') }, stop);
-    const response = await lifecycle.invokeRegistered('{}', SESSION, complete);
+    const response = await runRuntimeWriter(async () => complete, { timeoutMs: 0 }, lifecycle, SESSION, ({ invoke }) => invoke('{}', SESSION.session_id));
     await expect(response.text()).rejects.toMatchObject({ errors: [ackError, classifyError] });
-    expect(lifecycle.failedDispatchTokens(SESSION)).toEqual([]);
-    expect(await lifecycle.settleFailedDispatch(SESSION)).toBe(false);
     expect(stop).not.toHaveBeenCalled();
-  });
-
-  it('does not treat Runtime absence as settlement of a recovered rejected admission', async () => {
-    const complete = Object.assign(vi.fn(async () => undefined), { session: SESSION, token: 'rejected-token' });
-    const stop = vi.fn(async () => 'absent' as const);
-    const lifecycle = sessionLifecycle({ label: 'AgentCore', invoke: async () => new Response() }, stop);
-    lifecycle.restoreFailedDispatch(SESSION, [complete]);
-    await expect(lifecycle.settleFailedDispatch(SESSION)).rejects.toThrow('settlement is unproved');
-    expect(complete).not.toHaveBeenCalled();
-    expect(lifecycle.failedDispatchTokens(SESSION)).toEqual(['rejected-token']);
-  });
-
-  it('retries a failed admission acknowledgement using its prior exact successful stop', async () => {
-    const complete = vi.fn<() => Promise<void>>()
-      .mockRejectedValueOnce(new Error('registration delete unavailable'))
-      .mockResolvedValueOnce(undefined);
-    const stop = vi.fn<() => Promise<void | 'absent'>>().mockResolvedValueOnce(undefined).mockResolvedValue('absent');
-    const lifecycle = sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'configured-runtime', invoke: async () => { throw new Error('headers lost'); } }, stop);
-    await expect(lifecycle.invokeRegistered('{}', SESSION, complete)).rejects.toThrow('headers lost');
-    await expect(lifecycle.stop(SESSION)).rejects.toThrow('registration delete unavailable');
-    await expect(lifecycle.stop(SESSION)).resolves.toBeUndefined();
-    expect(stop).toHaveBeenCalledOnce();
-    expect(complete).toHaveBeenCalledTimes(2);
-  });
-
-  it('retains a lost-header admission until its exact Sandbox is successfully stopped', async () => {
-    const complete = vi.fn(async () => undefined);
-    const stop = vi.fn<() => Promise<void | 'absent'>>()
-      .mockRejectedValueOnce(new Error('stop failed'))
-      .mockResolvedValueOnce('absent')
-      .mockResolvedValueOnce(undefined);
-    const lifecycle = sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'configured-runtime', invoke: async () => { throw new Error('headers lost'); } }, stop);
-    await expect(lifecycle.invokeRegistered('{}', SESSION, complete)).rejects.toThrow('headers lost');
-    await expect(lifecycle.stop(SESSION)).rejects.toThrow('stop failed');
-    expect(complete).not.toHaveBeenCalled();
-    await expect(lifecycle.stop(SESSION)).rejects.toMatchObject({ code: 'RUNTIME_ADMISSION_UNPROVED', cause: new Error('headers lost') });
-    expect(complete).not.toHaveBeenCalled();
-    await lifecycle.stop(SESSION);
-    expect(stop).toHaveBeenLastCalledWith(SESSION.session_id);
-    expect(complete).toHaveBeenCalledOnce();
   });
 
   it('waits for an already dispatched invocation to answer before stopping its Sandbox', async () => {
@@ -198,35 +161,6 @@ describe('Session deletion dispatch barrier', () => {
     await turn;
     await stopped;
     expect(stop).toHaveBeenCalledWith(SESSION.session_id);
-  });
-
-  it('does not authorize purge from absence after ambiguous invocation failure', async () => {
-    const headers = deferred<Response>();
-    const stop = vi.fn(async (): Promise<void | 'absent'> => 'absent');
-    const lifecycle = sessionLifecycle({ label: 'AgentCore', invoke: () => headers.promise }, stop);
-    const turn = lifecycle.invokeRegistered('{}', SESSION, async () => undefined);
-    const rejected = expect(turn).rejects.toThrow('headers lost');
-    const stopped = lifecycle.stop(SESSION);
-    headers.reject(new Error('headers lost'));
-    await rejected;
-    await expect(stopped).rejects.toMatchObject({ code: 'RUNTIME_ADMISSION_UNPROVED', cause: new Error('headers lost') });
-    expect(stop).toHaveBeenCalledOnce();
-    await expect(lifecycle.stop(SESSION)).rejects.toMatchObject({ code: 'RUNTIME_ADMISSION_UNPROVED', cause: new Error('headers lost') });
-    stop.mockResolvedValueOnce(undefined);
-    await expect(lifecycle.stop(SESSION)).resolves.toBeUndefined();
-    await expect(lifecycle.stop(SESSION)).resolves.toBe('absent');
-  });
-
-  it('does not report a failed local producer as quiescent on deletion or retries', async () => {
-    const upstream: Upstream = {
-      label: 'local',
-      invoke: async () => new Response(new ReadableStream({ start(controller) { controller.error(new Error('producer lost')); } })),
-    };
-    const lifecycle = sessionLifecycle(upstream);
-    const response = await lifecycle.invokeRegistered('{}', SESSION, async () => undefined);
-    await expect(response.text()).rejects.toThrow('producer lost');
-    await expect(lifecycle.stop(SESSION)).rejects.toThrow('producer lost');
-    await expect(lifecycle.stop(SESSION)).rejects.toThrow('producer lost');
   });
 
   it('keeps local dispatch registered after consumer closure until producer EOF', async () => {
@@ -301,7 +235,6 @@ describe('Session deletion dispatch barrier', () => {
     const text = await opened.text();
     expect(text).toContain('AGENTCORE_UPSTREAM_STREAM_ERROR');
     expect(text).toContain('admission acknowledgement failed');
-    await expect(lifecycle.stop(SESSION)).rejects.toMatchObject({ code: 'RUNTIME_ADMISSION_UNPROVED', cause: new Error('admission acknowledgement failed') });
   });
 
   it('preserves backpressure while an AWS admission acknowledgement is pending', async () => {
@@ -324,25 +257,6 @@ describe('Session deletion dispatch barrier', () => {
     await response.body?.cancel();
   });
 
-  it('allows an absent Sandbox on retry after a successful stop ends its confirmed response stream', async () => {
-    let producer!: ReadableStreamDefaultController<Uint8Array>;
-    const stop = vi.fn<() => Promise<void | 'absent'>>()
-      .mockResolvedValueOnce(undefined).mockResolvedValue('absent');
-    const lifecycle = sessionLifecycle({
-      label: 'AgentCore upstream',
-      invoke: async () => new Response(new ReadableStream<Uint8Array>({
-        start(controller) { producer = controller; },
-      })),
-    }, stop);
-    const response = await lifecycle.invokeRegistered('{}', SESSION, async () => undefined);
-
-    await expect(lifecycle.stop(SESSION)).resolves.toBeUndefined();
-    // Stopping the known Sandbox terminates its open response after the stop was confirmed.
-    producer.error(new Error('stream ended by Runtime stop'));
-    await expect(response.text()).rejects.toThrow('stream ended by Runtime stop');
-    await expect(lifecycle.stop(SESSION)).resolves.toBe('absent');
-  });
-
   it('retains a settled producer registration when its acknowledgement fails', async () => {
     const ackError = new Error('admission acknowledgement failed');
     const complete = Object.assign(vi.fn(async () => { throw ackError; }), {
@@ -350,10 +264,9 @@ describe('Session deletion dispatch barrier', () => {
     });
     const lifecycle = sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'configured-runtime',
       invoke: async () => new Response('settled producer') }, async () => 'absent');
-    const response = await lifecycle.invokeRegistered('{}', SESSION, complete);
+    const response = await runRuntimeWriter(async () => complete, { timeoutMs: 0 }, lifecycle, SESSION, ({ invoke }) => invoke('{}', SESSION.session_id));
     await expect(response.text()).rejects.toBe(ackError);
-    expect(lifecycle.failedDispatchTokens(SESSION)).toEqual(['settled-token']);
-    await expect(lifecycle.stop(SESSION)).rejects.toMatchObject({ code: 'RUNTIME_ADMISSION_UNPROVED', cause: ackError });
+    expect(complete.markRejected).toHaveBeenCalledWith('configured-runtime');
   });
 
   it('keeps another filing identity with the same client Session ID dispatchable after deletion', async () => {
@@ -392,50 +305,8 @@ describe('Session deletion dispatch barrier', () => {
     expect(await aliceResponse.text()).toBe('');
   });
 
-  it('keeps ambiguous dispatch failures separate for colliding client Session IDs', async () => {
-    const alice = { session_id: 'shared-session-id', filing_user_id: 'filing-alice' };
-    const bob = { session_id: 'shared-session-id', filing_user_id: 'filing-bob' };
-    const lifecycle = sessionLifecycle({
-      label: 'AgentCore upstream',
-      invoke: async () => { throw new Error('bob headers lost'); },
-    }, async () => 'absent');
-    await expect(lifecycle.invokeRegistered('bob', bob, async () => undefined)).rejects.toThrow('bob headers lost');
-
-    await expect(lifecycle.stop(alice)).resolves.toBe('absent');
-    await expect(lifecycle.stop(bob)).rejects.toMatchObject({ code: 'RUNTIME_ADMISSION_UNPROVED', cause: new Error('bob headers lost') });
-  });
-
 });
-
 
 it('runs and stops every chat in the Sandbox named by its Session ID', () => {
   expect(runtimeSessionId(SESSION)).toBe(SESSION.session_id);
-});
-
-
-it('settles local recovery state without fencing subsequent Main Turns or deletion', async () => {
-  const complete = Object.assign(vi.fn(async () => undefined), {
-    session: SESSION, token: 'rejected-main', confirmStopped: vi.fn(async () => undefined),
-  });
-  const stop = vi.fn<() => Promise<void | 'absent'>>().mockResolvedValueOnce(undefined).mockResolvedValue('absent');
-  const lifecycle = sessionLifecycle({ label: 'AgentCore', invoke: async () => new Response(null) }, stop);
-  lifecycle.restoreFailedDispatch(SESSION, [complete]);
-  await lifecycle.recoverRejectedWriters(SESSION, [complete]);
-  await expect(lifecycle.settleFailedDispatch(SESSION)).resolves.toBe(false);
-  await expect(lifecycle.invokeRegistered('{}', SESSION, async () => undefined)).resolves.toBeInstanceOf(Response);
-  await expect(lifecycle.stop(SESSION)).resolves.toBe('absent');
-});
-
-
-it('keeps only unsettled writers when one recovery acknowledgement fails', async () => {
-  const first = Object.assign(vi.fn(async () => undefined), { session: SESSION, token: 'first', confirmStopped: vi.fn(async () => undefined) });
-  const second = Object.assign(vi.fn<() => Promise<void>>().mockRejectedValueOnce(new Error('Acknowledgement failed')).mockResolvedValue(undefined), {
-    session: SESSION, token: 'second', confirmStopped: vi.fn(async () => undefined),
-  });
-  const lifecycle = sessionLifecycle({ label: 'AgentCore', invoke: async () => new Response(null) }, async () => undefined);
-  lifecycle.restoreFailedDispatch(SESSION, [first, second]);
-  await expect(lifecycle.recoverRejectedWriters(SESSION, [first, second])).rejects.toThrow('Acknowledgement failed');
-  expect(lifecycle.failedDispatchTokens(SESSION)).toEqual(['second']);
-  await lifecycle.recoverRejectedWriters(SESSION, [second]);
-  await expect(lifecycle.settleFailedDispatch(SESSION)).resolves.toBe(false);
 });

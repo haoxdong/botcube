@@ -1,7 +1,9 @@
+import { namedTransaction, type FailedWrites, type TransactionWrite } from './named-transaction.js';
+import { SessionBusyError, type WriterLease } from './session-writer-runtime.js';
 import { randomUUID } from 'node:crypto';
 import { ScheduledRunStore } from './scheduled-run-store.js';
 import { assertContinuable, oneIdSession, type SessionIdentity, type SessionPurge } from './session-identity.js';
-import { POST_LEASE_AVAILABLE, REGISTRATION_EXPIRY_MS, SessionWriters, writerControlKey, type RegisteredDispatch, type RegisteredSessionDispatch, type SessionWriterHolder } from './session-writers.js';
+import { REGISTRATION_EXPIRY_MS, SessionWriters, type RejectedWriterRecovery } from './session-writers.js';
 
 import {
   ConditionalCheckFailedException,
@@ -17,15 +19,14 @@ import {
   GetCommand,
   PutCommand,
   TransactGetCommand,
-  TransactWriteCommand,
   UpdateCommand,
   paginateQuery,
   paginateScan,
-  type TransactWriteCommandInput,
 } from '@aws-sdk/lib-dynamodb';
 
 export type { SessionPurge } from './session-identity.js';
-export { SessionDispatchPendingError, type RegisteredDispatch } from './session-writers.js';
+export { SessionDispatchPendingError } from './session-writers.js';
+export { SessionBusyError } from './session-writer-runtime.js';
 
 
 /** Why a Turn failed, as the run error its client was sent last; AG-UI makes its code optional. */
@@ -70,10 +71,6 @@ export class SessionDeletedError extends Error {}
 
 export class SessionUnissuedError extends Error {}
 
-export class SessionBusyError extends Error {
-  constructor(message: string, readonly holder?: SessionWriterHolder) { super(message); }
-}
-
 function writerBusy({ Item }: CancellationReason): SessionBusyError {
   const token = Item?.external_token?.S;
   const expiry = Number(Item?.lease_expires_at?.N);
@@ -116,7 +113,7 @@ export type TurnAdmission = { filingUserId: string; title: string; provider?: st
 
 type AcceptedDispatch = RunningTurn | { messageId: string };
 
-export interface PreparedTurn { readonly session: Readonly<SessionPurge>; dispatch(): Promise<RegisteredSessionDispatch> }
+export interface PreparedTurn { readonly session: Readonly<SessionPurge>; dispatch(): Promise<WriterLease & { readonly session: SessionPurge }> }
 
 function scheduledWrite(scheduledTaskId?: string, postAcceptance?: true): { set: string; condition: string; values: Record<string, string> } {
   return {
@@ -139,11 +136,6 @@ function assertWarmupContinuable(existing: SessionItem | null, warmupFilingUserI
 
 const readOnlyMark = (row?: Record<string, unknown>): Pick<SessionIdentity, 'read_only'> => row?.read_only === true ? { read_only: true } : {};
 
-export interface RejectedWriterRecovery {
-  runtimeTarget: string;
-  settle(session: SessionPurge, registrations: readonly RegisteredDispatch[]): Promise<void>;
-}
-
 /**
  * Session Metadata (ADR 0067 §2): the only index of Sessions. The item shape is
  * live production data and must stay byte-compatible with the items already stored:
@@ -153,14 +145,11 @@ export interface RejectedWriterRecovery {
 export interface SessionMetadata {
   readonly scheduledRuns?: ScheduledRunStore;
   /** Register a persistence writer against the deletion fences; release only after confirmed dispatch/completion. */
-  beginDispatch(owner: string, sessionId: string, warmupFilingUserId?: string, acceptedTurn?: AcceptedDispatch, kind?: 'runtime' | 'session-post', recovery?: RejectedWriterRecovery): Promise<RegisteredDispatch>;
+  beginDispatch(owner: string, sessionId: string, warmupFilingUserId?: string, acceptedTurn?: AcceptedDispatch, kind?: 'runtime' | 'session-post', recovery?: RejectedWriterRecovery): Promise<WriterLease>;
+  runPost: SessionWriters['runPost'];
   /** Accept a Turn with immutable filing/Runtime identity; dispatch registers its writer against the latest deletion/Claim fences. */
   prepareTurn(owner: string, sessionId: string, turn: TurnAdmission): Promise<PreparedTurn>;
-  /** Refuse deletion while another process may still dispatch or finish a persistence writer. */
-  assertNoDispatch(session: SessionPurge, failedAdmissionTokens?: readonly string[]): Promise<void>;
-  rejectedDispatches(session: SessionPurge, runtimeTarget?: string): Promise<RegisteredDispatch[]>;
-  /** Archive and release the Session's registrations older than MaxLifetime + 2 h, which count as settled. */
-  settleExpiredDispatches(session: SessionPurge): Promise<void>;
+  stopAfterWriters: SessionWriters['stopAfterWriters'];
   acknowledgeSuccessfulDispatch?(session: SessionPurge, token: string, kind: 'session-post'): Promise<void>;
   /** Durable fenced cleanup work, including work left by a replaced Chat Service task. */
   pendingPurges(): Promise<SessionPurge[]>;
@@ -307,26 +296,6 @@ const purgeKey = ({ session_id, filing_user_id }: SessionPurge) => ({ pk: PURGES
 
 type DispatchIdentity = { dispatchOwner: string; session: SessionPurge; claimDestination: string | null; snapshotEpoch: string | undefined };
 
-type TransactionWrite = NonNullable<TransactWriteCommandInput['TransactItems']>[number];
-type FailedWrites<Name extends string> = Pick<ReadonlyMap<Name, CancellationReason>, 'get' | 'has'>;
-
-function namedTransaction<const Name extends string>(writes: ReadonlyArray<readonly [Name, TransactionWrite]>) {
-  return {
-    command: new TransactWriteCommand({ TransactItems: writes.map(([, write]) => write) }),
-    conditions(error: unknown) {
-      const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
-      const failed = new Map<Name, CancellationReason>();
-      const passed = new Set<Name>();
-      for (const [index, [name]] of writes.entries()) {
-        const reason = reasons?.[index];
-        if (reason?.Code === 'ConditionalCheckFailed') failed.set(name, reason);
-        if (reason?.Code === 'None') passed.add(name);
-      }
-      return { failed, passed };
-    },
-  };
-}
-
 export class DynamoDBSessionMetadata implements SessionMetadata {
   readonly scheduledRuns: ScheduledRunStore;
   private readonly client: DynamoDBClient;
@@ -409,19 +378,12 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
   async completePurge(session: SessionPurge): Promise<void> {
     await this.assertNoDispatch(session);
     await this.deleteTurnSummaries(session.filing_user_id, session.session_id);
-    await this.documents.send(namedTransaction([
-      ['purgeJob', { Update: {
-        TableName: this.tableName, Key: purgeKey(session),
-        UpdateExpression: 'SET completed_at = if_not_exists(completed_at, :now)',
-        ConditionExpression: 'session_id = :id AND filing_user_id = :filing',
-        ExpressionAttributeValues: { ':now': metadataTimestamp(), ':id': session.session_id, ':filing': session.filing_user_id },
-      } }],
-      ['writerControl', { Delete: {
-        TableName: this.tableName, Key: writerControlKey(session),
-        ConditionExpression: POST_LEASE_AVAILABLE + ' AND (attribute_not_exists(runtime_writers) OR runtime_writers = :zero)',
-        ExpressionAttributeValues: { ':zero': 0, ':now': Date.now() },
-      } }],
-    ]).command);
+    await this.writers.completePurge(session, { Update: {
+      TableName: this.tableName, Key: purgeKey(session),
+      UpdateExpression: 'SET completed_at = if_not_exists(completed_at, :now)',
+      ConditionExpression: 'session_id = :id AND filing_user_id = :filing',
+      ExpressionAttributeValues: { ':now': metadataTimestamp(), ':id': session.session_id, ':filing': session.filing_user_id },
+    } });
   }
 
   private async registerLegacyPurge(item: SessionItem): Promise<void> {
@@ -527,24 +489,18 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     } };
   }
 
-  private dispatchTransaction(owner: string, identity: DispatchIdentity, token: string, epoch: string, now: number, postLeaseExpiresAt: number | undefined, acceptedTurn?: AcceptedDispatch, rejected: readonly RegisteredDispatch[] = [], recovery?: RejectedWriterRecovery) {
+  private dispatchFences(owner: string, identity: DispatchIdentity, epoch: string, acceptedTurn?: AcceptedDispatch): Parameters<SessionWriters['dispatchTransaction']>[2] {
     const { dispatchOwner, session, claimDestination } = identity;
     const claimedTurn = claimDestination === null ? undefined : acceptedTurn;
     const claimCondition = claimedTurn === undefined ? 'attribute_not_exists(pk)' : 'attribute_not_exists(pk) OR attribute_exists(destination)';
-    const fencedOwner = claimDestination ?? dispatchOwner;
     const destination = dispatchOwner === owner ? claimDestination : null;
-    const [registration, control] = this.writers.registration(session, token, now, postLeaseExpiresAt, rejected.length);
-    return namedTransaction([
+    return [
       ['ownerFence', { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
       ['claimFence', { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(dispatchOwner),
         ...(destination === null ? { ConditionExpression: claimCondition } : { ConditionExpression: 'destination = :destination', ExpressionAttributeValues: { ':destination': destination } }),
       } }],
       ['session', this.dispatchSessionWrite(dispatchOwner, session, epoch, identity.snapshotEpoch, claimedTurn)],
-      ['registration', registration],
-      ...(fencedOwner === owner ? [] : [['destinationFence', { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(fencedOwner), ConditionExpression: 'attribute_not_exists(pk)' } }]] as const),
-      ['writerControl', control],
-      ...(recovery === undefined ? [] : this.writers.recoveryConditions(session, recovery.runtimeTarget, rejected).map((check) => ['recovery', check] as const)),
-    ]);
+    ];
   }
 
   private async retryDispatch(error: unknown, failed: FailedWrites<'claimFence' | 'session'>, owner: string, identity: DispatchIdentity, acceptedTurn?: AcceptedDispatch): Promise<boolean> {
@@ -558,7 +514,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     throw error;
   }
 
-  async beginDispatch(owner: string, sessionId: string, warmupFilingUserId?: string, acceptedTurn?: AcceptedDispatch, kind: 'runtime' | 'session-post' = 'runtime', recovery?: RejectedWriterRecovery, expectedSession?: Readonly<SessionPurge>): Promise<RegisteredSessionDispatch> {
+  async beginDispatch(owner: string, sessionId: string, warmupFilingUserId?: string, acceptedTurn?: AcceptedDispatch, kind: 'runtime' | 'session-post' = 'runtime', recovery?: RejectedWriterRecovery, expectedSession?: Readonly<SessionPurge>): ReturnType<SessionWriters['registered']> {
     const identity = await this.dispatchIdentity(owner, sessionId, warmupFilingUserId, acceptedTurn);
     const { session } = identity;
     if (expectedSession !== undefined && session.filing_user_id !== expectedSession.filing_user_id) throw new SessionDeletedError(sessionId);
@@ -568,7 +524,9 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     const rejected = kind === 'session-post' && recovery !== undefined ? await this.rejectedDispatches(session, recovery.runtimeTarget) : [];
     const now = Date.now();
     const postLeaseExpiresAt = kind === 'session-post' ? now + REGISTRATION_EXPIRY_MS : undefined;
-    const transaction = this.dispatchTransaction(owner, identity, token, epoch, now, postLeaseExpiresAt, acceptedTurn, rejected, recovery);
+    const destination = this.dispatchDestinationFence(owner, identity);
+    const transaction = this.writers.dispatchTransaction(session, token, this.dispatchFences(owner, identity, epoch, acceptedTurn), destination,
+      postLeaseExpiresAt === undefined ? undefined : { expiresAt: postLeaseExpiresAt, now, rejected, target: recovery?.runtimeTarget });
     try {
       await this.documents.send(transaction.command);
     } catch (error) {
@@ -577,14 +535,14 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
         return this.beginDispatch(owner, sessionId, warmupFilingUserId, acceptedTurn, kind, recovery, expectedSession);
       }
     }
-    const complete = this.writers.acknowledgement(session, token, false, false, undefined, kind, kind === 'runtime' ? epoch : undefined);
-    try {
-      if (rejected.length > 0) await recovery?.settle(session, rejected);
-    } catch (error) {
-      await this.writers.abandonPost(session, token);
-      throw error;
-    }
-    return postLeaseExpiresAt === undefined ? complete : Object.assign(complete, { postLeaseExpiresAt });
+    return this.writers.registered(session, token, epoch, postLeaseExpiresAt, rejected, recovery?.stopRejectedWriter);
+  }
+
+  private dispatchDestinationFence(owner: string, identity: DispatchIdentity) {
+    const fencedOwner = identity.claimDestination ?? identity.dispatchOwner;
+    return fencedOwner === owner ? undefined : { ConditionCheck: {
+      TableName: this.tableName, Key: ownerFenceKey(fencedOwner), ConditionExpression: 'attribute_not_exists(pk)',
+    } };
   }
 
   private async writerAdmissionChanged(failed: FailedWrites<'ownerFence' | 'destinationFence' | 'writerControl' | 'session' | 'claimFence' | 'recovery'>, identity: DispatchIdentity): Promise<boolean> {
@@ -601,7 +559,15 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     return false;
   }
 
-  rejectedDispatches(session: SessionPurge, runtimeTarget?: string): Promise<RegisteredDispatch[]> {
+  stopAfterWriters(...args: Parameters<SessionWriters['stopAfterWriters']>) {
+    return this.writers.stopAfterWriters(...args);
+  }
+
+  runPost(...args: Parameters<SessionWriters['runPost']>): ReturnType<SessionWriters['runPost']> {
+    return this.writers.runPost(...args);
+  }
+
+  rejectedDispatches(session: SessionPurge, runtimeTarget?: string) {
     return this.writers.rejectedDispatches(session, runtimeTarget);
   }
 
@@ -709,17 +675,14 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     return { creating: item === undefined, session: Object.freeze(session), snapshotEpoch: item?.snapshot_epoch };
   }
 
-  private async dispatchTurn(owner: string, session: Readonly<SessionPurge>, snapshotEpoch: string | undefined, acceptedTurn?: AcceptedDispatch): Promise<RegisteredSessionDispatch> {
+  private async dispatchTurn(owner: string, session: Readonly<SessionPurge>, snapshotEpoch: string | undefined, acceptedTurn?: AcceptedDispatch) {
     const token = randomUUID();
     const epoch = snapshotEpoch ?? randomUUID();
     const fallback = () => this.beginDispatch(owner, session.session_id, undefined, acceptedTurn, 'runtime', undefined, session);
-    const [registration, writerControl] = this.writers.registration(session, token);
-    const transaction = namedTransaction([
+    const transaction = this.writers.dispatchTransaction(session, token, [
       ['ownerFence', { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
       ['claimFence', { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
       ['session', this.dispatchSessionWrite(owner, session, epoch, snapshotEpoch)],
-      ['registration', registration],
-      ['writerControl', writerControl],
     ]);
     try {
       await this.documents.send(transaction.command);
@@ -729,7 +692,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     return this.writers.acknowledgement(session, token, false, false, undefined, 'runtime', epoch);
   }
 
-  private async refusedTurnDispatch(error: unknown, failed: FailedWrites<'ownerFence' | 'writerControl' | 'claimFence' | 'session'>, owner: string, session: Readonly<SessionPurge>, snapshotEpoch: string | undefined, accepted: boolean, fallback: () => Promise<RegisteredSessionDispatch>): Promise<RegisteredSessionDispatch> {
+  private async refusedTurnDispatch(error: unknown, failed: FailedWrites<'ownerFence' | 'writerControl' | 'claimFence' | 'session'>, owner: string, session: Readonly<SessionPurge>, snapshotEpoch: string | undefined, accepted: boolean, fallback: () => ReturnType<SessionWriters['registered']>) {
     if (failed.has('ownerFence')) throw new SessionDeletedError(session.session_id);
     const writerControl = failed.get('writerControl');
     if (writerControl !== undefined) throw writerBusy(writerControl);

@@ -32,14 +32,13 @@ const unused = async (): Promise<never> => {
   throw new Error('not used');
 };
 const sessionMetadata: SessionMetadata = {
+  runPost: async () => { throw new Error('Scheduled posts are unavailable'); },
   owns: async () => { throw new Error('not used'); },
   checkHealth: unused,
   recordTurn: unused,
   prepareTurn: unused,
   beginDispatch: unused,
-  assertNoDispatch: unused,
-  rejectedDispatches: unused,
-  settleExpiredDispatches: unused,
+  stopAfterWriters: unused,
   pendingPurges: async () => [],
   completePurge: unused,
   retainUnprovedPurge: unused,

@@ -88,11 +88,10 @@ const bot: StockOverrides = {
 };
 
 const sessionMetadata: SessionMetadata = {
+  runPost: async () => { throw new Error('Scheduled posts are unavailable'); },
   prepareTurn: async (_owner, sessionId, { filingUserId }) => ({ session: { session_id: sessionId, filing_user_id: filingUserId }, dispatch: async () => Object.assign(async () => undefined, { session: { session_id: sessionId, filing_user_id: filingUserId } }) }),
   beginDispatch: async (_owner, sessionId, filingUserId) => Object.assign(async () => undefined, { session: { session_id: sessionId, filing_user_id: filingUserId ?? 'filed-acct_owner' } }),
-  assertNoDispatch: async () => undefined,
-  rejectedDispatches: async () => [],
-  settleExpiredDispatches: async () => undefined,
+  stopAfterWriters: (session, upstream) => upstream.stop(session),
   pendingPurges: async () => [],
   completePurge: async () => undefined,
   retainUnprovedPurge: async () => undefined,
@@ -344,8 +343,8 @@ describe('a Turn against a local Harness', () => {
       const replacement = new DynamoDBSessionMetadata(table, client);
       let checked!: () => void;
       const checkAttempt = new Promise<void>((resolve) => { checked = resolve; });
-      const assert = replacement.assertNoDispatch.bind(replacement);
-      vi.spyOn(replacement, 'assertNoDispatch').mockImplementation(async (...args) => {
+      const assert = replacement.stopAfterWriters.bind(replacement);
+      vi.spyOn(replacement, 'stopAfterWriters').mockImplementation(async (...args) => {
         try { return await assert(...args); }
         finally { checked(); }
       });
@@ -402,8 +401,8 @@ describe('a Turn against a local Harness', () => {
       const replacement = new DynamoDBSessionMetadata(table, client);
       let checked!: () => void;
       const checkAttempt = new Promise<void>((resolve) => { checked = resolve; });
-      const assert = replacement.assertNoDispatch.bind(replacement);
-      vi.spyOn(replacement, 'assertNoDispatch').mockImplementation(async (...args) => {
+      const assert = replacement.stopAfterWriters.bind(replacement);
+      vi.spyOn(replacement, 'stopAfterWriters').mockImplementation(async (...args) => {
         try { return await assert(...args); }
         finally { checked(); }
       });
@@ -446,8 +445,8 @@ describe('a Turn against a local Harness', () => {
       const writer = await metadata.beginDispatch('acct_owner', TURN.threadId);
       let blocked: (() => void) | undefined;
       const pending = new Promise<void>((resolve) => { blocked = resolve; });
-      const check = metadata.assertNoDispatch.bind(metadata);
-      vi.spyOn(metadata, 'assertNoDispatch').mockImplementation(async (...args) => {
+      const check = metadata.stopAfterWriters.bind(metadata);
+      vi.spyOn(metadata, 'stopAfterWriters').mockImplementation(async (...args) => {
         try { return await check(...args); } catch (error) {
           if (error instanceof SessionDispatchPendingError && args[0].session_id === admitted.session_id && args[0].filing_user_id === admitted.filing_user_id) defined(blocked, 'owning purge pending observation')();
           throw error;

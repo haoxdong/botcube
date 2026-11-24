@@ -1,64 +1,87 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { hostname } from 'node:os';
+import { acquire, type WriterLease, type WriterWait } from './session-writer-runtime.js';
+import { createHash } from 'node:crypto';
+import { dispatchKey, dispatcherId, POST_LEASE_AVAILABLE, registerWriter, writerControlKey } from './session-writer-registration.js';
 import { ConditionalCheckFailedException, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, TransactWriteCommand, UpdateCommand, paginateQuery, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, TransactWriteCommand, UpdateCommand, paginateQuery } from '@aws-sdk/lib-dynamodb';
+import { HttpError } from './http-error.js';
+import { namedTransaction, type TransactionWrite as TransactItem } from './named-transaction.js';
+import type { ScheduledDelivery, ScheduledRunStore } from './scheduled-run-store.js';
+import type { ScheduledTaskRun } from './scheduled-tasks.js';
 import type { SessionPurge } from './session-identity.js';
 
-/** A registered writer has not acknowledged dispatch/completion yet; deletion must keep waiting. */
 export class SessionDispatchPendingError extends Error {}
 
-export type RegisteredDispatch = (() => Promise<void>) & {
-  readonly session?: SessionPurge;
-  readonly token?: string;
-  readonly snapshotEpoch?: string;
-  readonly postLeaseExpiresAt?: number;
+type RegisteredDispatch = WriterLease & {
   markRejected?: (runtimeTarget: string) => Promise<void>;
-  markSucceeded?: (kind: 'session-post', completion?: NonNullable<TransactWriteCommandInput['TransactItems']>[number]) => Promise<void>;
+  markSucceeded?: (kind: 'session-post', completion?: TransactItem) => Promise<void>;
   confirmStopped?: () => Promise<void>;
   stopConfirmed?: boolean;
 };
 
-export type RegisteredSessionDispatch = RegisteredDispatch & { readonly session: SessionPurge };
-export interface SessionWriterHolder {
-  token: string;
-  createdAt: string;
-  scheduled: boolean;
+type RegisteredSessionDispatch = RegisteredDispatch & { readonly session: SessionPurge };
+export interface RejectedWriterRecovery {
+  runtimeTarget: string;
+  stopRejectedWriter(session: SessionPurge): Promise<void>;
 }
-const dispatcherId = `${hostname()}:${process.pid}:${randomUUID()}`;
 
-/**
- * A registration this old is settled. AgentCore ends every Sandbox at MaxLifetime (3600 s, ADR 0029), and
- * 2 h more covers the one-hour task drain and the stop timeout, so nothing it admitted can still write
- * (the maintainer's decision, 2026-11-04). A younger registration still needs its exact stop.
- */
+// ADR 0029: one hour for the Sandbox, two more for task drain and stop.
 export const REGISTRATION_EXPIRY_MS = 3 * 3_600_000;
 const registrationExpired = (created: string, now: number) => Date.parse(created) + REGISTRATION_EXPIRY_MS < now;
-const dispatchKey = ({ session_id, filing_user_id }: SessionPurge, token: string) => ({ pk: `DISPATCH#${JSON.stringify([filing_user_id, session_id])}`, sk: token });
 
-export const writerControlKey = ({ session_id, filing_user_id }: SessionPurge) => ({ pk: `WRITERS#${JSON.stringify([filing_user_id, session_id])}`, sk: 'CONTROL' });
-export const POST_LEASE_AVAILABLE = '(attribute_not_exists(external_token) OR lease_expires_at < :now)';
-type TransactItem = NonNullable<TransactWriteCommandInput['TransactItems']>[number];
 type WriterItem = { pk: string; sk: string; dispatcher?: string } & Record<string, unknown>;
+
+interface WriterStop {
+  runtimeTarget?: string;
+  stopRejectedWriter: RejectedWriterRecovery['stopRejectedWriter'];
+  fence(sessions: readonly SessionPurge[]): void;
+  stop(session: SessionPurge): Promise<void | 'absent'>;
+}
 
 export class SessionWriters {
   constructor(private readonly tableName: string, private readonly documents: DynamoDBDocumentClient) {}
 
-  registration(session: SessionPurge, token: string, now = Date.now(), postLeaseExpiresAt?: number, rejectedCount = 0): [TransactItem, TransactItem] {
-    return [
-      { Put: { TableName: this.tableName, Item: { ...dispatchKey(session, token), ...session, writer_control: postLeaseExpiresAt === undefined ? 'runtime' : 'session-post', dispatcher: dispatcherId, created_at: new Date(now).toISOString().replace('Z', '000+00:00') } } },
-      { Update: {
-        TableName: this.tableName, Key: writerControlKey(session),
-        UpdateExpression: postLeaseExpiresAt === undefined
-          ? 'REMOVE external_token, lease_expires_at ADD runtime_writers :one'
-          : 'SET external_token = :token, lease_expires_at = :expiry',
-        ConditionExpression: POST_LEASE_AVAILABLE + (postLeaseExpiresAt === undefined ? '' : rejectedCount === 0 ? ' AND (attribute_not_exists(runtime_writers) OR runtime_writers = :zero)' : ' AND runtime_writers = :zero'),
-        ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
-        ExpressionAttributeValues: postLeaseExpiresAt === undefined ? { ':one': 1, ':now': now } : { ':token': token, ':zero': rejectedCount, ':now': now, ':expiry': postLeaseExpiresAt },
-      } },
-    ];
+  dispatchTransaction(session: SessionPurge, token: string, fences: ReadonlyArray<readonly ['ownerFence' | 'claimFence' | 'session', TransactItem]>, destination?: TransactItem, post?: {
+    expiresAt: number; now: number; rejected: readonly RegisteredDispatch[]; target: string | undefined;
+  }) {
+    const [registration, control] = registerWriter(this.tableName, session, token, post?.now, post?.expiresAt, post?.rejected.length);
+    const checks = post?.target === undefined ? [] : this.recoveryConditions(session, post.target, post.rejected);
+    return namedTransaction([
+      ...fences, ['registration', registration],
+      ...(destination === undefined ? [] : [['destinationFence', destination]] as const),
+      ['writerControl', control], ...checks.map((check) => ['recovery', check] as const),
+    ]);
   }
 
-  recoveryConditions(session: SessionPurge, target: string, registrations: readonly RegisteredDispatch[]): TransactItem[] {
+  async registered(session: SessionPurge, token: string, epoch: string, expiresAt: number | undefined,
+    rejected: readonly RegisteredDispatch[], stop?: RejectedWriterRecovery['stopRejectedWriter'],
+  ): Promise<RegisteredSessionDispatch> {
+    if (expiresAt === undefined) return this.acknowledgement(session, token, false, false, undefined, 'runtime', epoch);
+    try {
+      if (rejected.length > 0 && stop !== undefined) await recoverRejectedWriters(session, rejected, stop);
+    } catch (error) {
+      await this.abandonPost(session, token);
+      throw error;
+    }
+    return Object.assign(this.acknowledgement(session, token, false, false, undefined, 'session-post'), { postLeaseExpiresAt: expiresAt });
+  }
+
+  async completePurge(session: SessionPurge, completion: TransactItem): Promise<void> {
+    const transaction = namedTransaction([['purge', completion], ['writerControl', { Delete: {
+      TableName: this.tableName, Key: writerControlKey(session),
+      ConditionExpression: POST_LEASE_AVAILABLE + ' AND (attribute_not_exists(runtime_writers) OR runtime_writers = :zero)',
+      ExpressionAttributeValues: { ':zero': 0, ':now': Date.now() },
+    } }]]);
+    try {
+      await this.documents.send(transaction.command);
+    } catch (error) {
+      if (transaction.conditions(error).failed.has('writerControl')) {
+        throw new SessionDispatchPendingError('Session writer is still active', { cause: error });
+      }
+      throw error;
+    }
+  }
+
+  private recoveryConditions(session: SessionPurge, target: string, registrations: readonly RegisteredDispatch[]): TransactItem[] {
     return registrations.map(({ token }) => {
       if (token === undefined) throw new SessionDispatchPendingError('Rejected writer identity is unproved');
       return { ConditionCheck: {
@@ -71,7 +94,6 @@ export class SessionWriters {
 
   acknowledgement(session: SessionPurge, token: string, recovered = false, stopped = false, runtimeTarget?: string, writerKind?: 'runtime' | 'session-post', snapshotEpoch?: string): RegisteredSessionDispatch {
     const Key = dispatchKey(session, token);
-    // A rejected admission is recorded against the Sandbox it may have started, which is the Session ID.
     const binding = { ':binding': session.session_id };
     const complete: RegisteredSessionDispatch = Object.assign(async () => {
       const condition = recovered
@@ -188,9 +210,7 @@ export class SessionWriters {
   }
 
   private async acknowledgeSuccessfulWriters(session: SessionPurge, pk: string): Promise<void> {
-    const rows = await this.queryPartition(pk) as unknown as {
-      sk: string; session_id?: string; filing_user_id?: string; writer_succeeded?: string;
-    }[];
+    const rows = await this.queryPartition(pk);
     await Promise.all(rows.filter((row) =>
       row.writer_succeeded === 'session-post' &&
       row.session_id === session.session_id && row.filing_user_id === session.filing_user_id &&
@@ -198,14 +218,62 @@ export class SessionWriters {
     ).map((row) => this.acknowledgeSuccessfulDispatch(session, row.sk, 'session-post')));
   }
 
-  async abandonPost(session: SessionPurge, token: string): Promise<void> {
+  async stopAfterWriters(session: SessionPurge, upstream: WriterStop, local: boolean): Promise<void | 'absent'> {
+    upstream.fence([session]);
+    await this.settleExpired(session);
+    if (local) await upstream.stop(session);
+    const rejected = await this.rejectedDispatches(session, upstream.runtimeTarget);
+    await this.assertNoDispatch(session, rejected.flatMap(({ token }) => token === undefined ? [] : [token]));
+    if (rejected.length > 0) {
+      await recoverRejectedWriters(session, rejected, upstream.stopRejectedWriter);
+      await this.assertNoDispatch(session);
+    } else if (!local) return upstream.stop(session);
+  }
+
+  async runPost(
+    register: () => Promise<WriterLease>, wait: WriterWait, store: ScheduledRunStore, delivery: ScheduledDelivery,
+    outcome: { failed: boolean; status: ScheduledTaskRun['status'] | undefined },
+    post: (session: SessionPurge, expiresAt: number) => Promise<unknown>,
+  ): Promise<ScheduledDelivery> {
+    const lease: RegisteredDispatch = await acquire(register, wait);
+    const { session, token, postLeaseExpiresAt, markSucceeded } = lease;
+    if (session === undefined || token === undefined || postLeaseExpiresAt === undefined || markSucceeded === undefined) {
+      throw new HttpError(503, 'Scheduled post registration is unavailable');
+    }
+    let submitted = false;
+    let posting: ScheduledDelivery;
+    try {
+      posting = await store.posting(delivery, lease, outcome.failed, outcome.status);
+      submitted = true;
+      await post(session, postLeaseExpiresAt);
+      await markSucceeded('session-post', store.postedTransaction(posting));
+    } catch (error) {
+      // Retain the dispatch row because Lambda may still be writing.
+      await (submitted ? this.unlockPost(session, token) : this.abandonPost(session, token)).catch((releaseError: unknown) => {
+        throw new AggregateError([error, releaseError], 'Scheduled post failed and its lease could not be released');
+      });
+      throw error;
+    }
+    await lease();
+    return posting;
+  }
+
+  private async unlockPost(session: SessionPurge, token: string): Promise<void> {
+    try {
+      await this.documents.send(new UpdateCommand(this.releasePostLease(session, token).Update));
+    } catch (error) {
+      if (!(error instanceof ConditionalCheckFailedException)) throw error;
+    }
+  }
+
+  private async abandonPost(session: SessionPurge, token: string): Promise<void> {
     await this.documents.send(new TransactWriteCommand({ TransactItems: [
       this.releasePostLease(session, token),
       { Delete: { TableName: this.tableName, Key: dispatchKey(session, token) } },
     ] }));
   }
 
-  private releasePostLease(session: SessionPurge, token: string): TransactItem {
+  private releasePostLease(session: SessionPurge, token: string) {
     return { Update: {
       TableName: this.tableName, Key: writerControlKey(session), UpdateExpression: 'REMOVE external_token, lease_expires_at',
       ConditionExpression: 'external_token = :token', ExpressionAttributeValues: { ':token': token },
@@ -217,7 +285,7 @@ export class SessionWriters {
       .filter((item) => registrationExpired(String(item.created_at), now) && item.writer_succeeded !== 'session-post');
     for (const item of expired) {
       const kind = item.writer_control === 'runtime' || item.writer_control === 'session-post' ? item.writer_control : undefined;
-      // eslint-disable-next-line no-await-in-loop -- each expired registration is archived before the purge rechecks the rest
+      // eslint-disable-next-line no-await-in-loop -- archive each registration before rechecking
       await this.archiveExpired(session, item.sk, String(item.created_at), kind);
     }
   }
@@ -229,10 +297,9 @@ export class SessionWriters {
 
   async assertNoDispatch(session: SessionPurge, failedAdmissionTokens: readonly string[] = []): Promise<void> {
     await this.acknowledgeSuccessfulWriters(session, dispatchKey(session, '').pk);
-    // Older tasks registered only the public Session ID. Until those tasks are
-    // quiescent, absence of the new namespaced row cannot prove deletion is safe.
+    // Older tasks register under the public Session ID.
     for (const pk of [dispatchKey(session, '').pk, `DISPATCH#${session.session_id}`]) {
-      // eslint-disable-next-line no-await-in-loop -- check both registry generations before allowing purge
+      // eslint-disable-next-line no-await-in-loop -- check both registry generations
       const items: { sk: string; dispatcher?: string }[] = await this.queryPartition(pk);
       const pending = items.find((item) => pk !== dispatchKey(session, '').pk || !failedAdmissionTokens.includes(item.sk));
       if (pending !== undefined) throw new SessionDispatchPendingError(`Session dispatch is still registered; deletion is blocked. session_id=${session.session_id} filing_user_id=${session.filing_user_id} registration=${String(pending.sk)} dispatcher=${String(pending.dispatcher)}`);
@@ -250,4 +317,12 @@ export class SessionWriters {
     for await (const page of pages) items.push(...(page.Items as WriterItem[]));
     return items;
   }
+}
+
+async function recoverRejectedWriters(
+  session: SessionPurge, rejected: readonly RegisteredDispatch[], stop: (session: SessionPurge) => Promise<void>,
+): Promise<void> {
+  if (!rejected.every((writer) => writer.stopConfirmed === true)) await stop(session);
+  await Promise.all(rejected.map(async (writer) => { await writer.confirmStopped?.(); }));
+  await Promise.all(rejected.map((writer) => writer()));
 }

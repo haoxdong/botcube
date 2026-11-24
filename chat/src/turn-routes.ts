@@ -1,3 +1,4 @@
+import { runRuntimeWriter } from './session-writer-runtime.js';
 import type { Hono } from 'hono';
 import type { RunAgentInput } from '@ag-ui/client';
 import { RunAgentInputSchema, RunErrorEventSchema } from '@ag-ui/core/schemas';
@@ -23,7 +24,7 @@ import { turnActivity } from './turn-summaries.js';
 import { readTurnEvents } from './turn-events.js';
 import { steeringRoutes } from './steering-routes.js';
 import { isRecord, omitOptionalNulls } from './payload.js';
-import { dispatchAfterWriter, preparationFailure, turnAccessError } from './turn-preparation.js';
+import { turnWriterWait, preparationFailure, turnAccessError } from './turn-preparation.js';
 
 
 const WARMUP_SESSION_ID = '__warmup__000000000000000000000000';
@@ -175,32 +176,33 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
         } finally {
           timing.mark('warmupWaitEnd');
         }
-        const complete = await dispatchAfterWriter(prepared, input.threadId, input.runId, c.req.raw.signal);
-        forwardSnapshotEpoch(payload.forwardedProps, complete);
-        timing.mark('dispatch');
-        return await relayTurn({ label: upstream.label, invoke: (body, _sessionId, init) => upstream.invokeRegistered(body, complete.session, complete, { ...init, credentialServiceInvocationToken }) }, {
-          timing,
-          body: JSON.stringify(payload),
-          sessionId: input.threadId,
-          accept: c.req.header('accept'),
-          ...(browserLiveView ? { initialBrowserSessionId: browserLiveView.sessionId } : {}),
-          saveAgentDocumentEdit: (edit) => agentDocuments.save(requester.owner, agentDocumentEdit(edit)),
-          credentials,
-          initialMessages,
-          held,
-          finished: async () => {
-            if (request === undefined) return;
-            try {
-              await saveTurn(turnActivity(userText(request)));
-            } catch (error) {
-              if (!(error instanceof SessionDeletedError)) throw error;
-            }
-          },
-          failed: (message) => request === undefined ? undefined : saveTurn(turnActivity(userText(request), message)),
-          ended: end,
-          started: () => sessionMetadata.turnStarted(requester.owner, input.threadId, running, model.provider),
-          client: c.req.raw.signal,
-          active: () => sessionMetadata.turnActive?.(requester.owner, input.threadId, running),
+        return await runRuntimeWriter(prepared.dispatch, turnWriterWait(input.threadId, input.runId, c.req.raw.signal), upstream, prepared.session, async (writer) => {
+          forwardSnapshotEpoch(payload.forwardedProps, writer);
+          timing.mark('dispatch');
+          return relayTurn({ label: upstream.label, invoke: (body, id, init) => writer.invoke(body, id, { ...init, credentialServiceInvocationToken }) }, {
+            timing,
+            body: JSON.stringify(payload),
+            sessionId: input.threadId,
+            accept: c.req.header('accept'),
+            ...(browserLiveView ? { initialBrowserSessionId: browserLiveView.sessionId } : {}),
+            saveAgentDocumentEdit: (edit) => agentDocuments.save(requester.owner, agentDocumentEdit(edit)),
+            credentials,
+            initialMessages,
+            held,
+            finished: async () => {
+              if (request === undefined) return;
+              try {
+                await saveTurn(turnActivity(userText(request)));
+              } catch (error) {
+                if (!(error instanceof SessionDeletedError)) throw error;
+              }
+            },
+            failed: (message) => request === undefined ? undefined : saveTurn(turnActivity(userText(request), message)),
+            ended: end,
+            started: () => sessionMetadata.turnStarted(requester.owner, input.threadId, running, model.provider),
+            client: c.req.raw.signal,
+            active: () => sessionMetadata.turnActive?.(requester.owner, input.threadId, running),
+          });
         });
       } catch (error) {
         const mapped = await accessError(error);
@@ -240,8 +242,8 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
       forwardedProps: { stop: true, sessionUserId: metadata.filing_user_id },
     });
     try {
-      const complete = await sessionMetadata.beginDispatch(owner, sessionId);
-      await stopTurn({ label: upstream.label, invoke: (body, id, init) => upstream.invokeRegistered(body, complete.session ?? metadata, complete, init) }, stop, sessionId);
+      await runRuntimeWriter(() => sessionMetadata.beginDispatch(owner, sessionId), { timeoutMs: 0 }, upstream, metadata,
+        ({ invoke }) => stopTurn({ label: upstream.label, invoke }, stop, sessionId));
     } catch (error) {
       console.error(`The Turn could not be stopped session_id=${sessionId}`, error);
       throw new HttpError(502, `The Turn could not be stopped: ${error instanceof Error ? error.message : String(error)}`);
@@ -310,24 +312,18 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
     const warmAgent = async () => {
       try {
         const init = { signal: AbortSignal.timeout(warmupTimeoutMs), credentialServiceInvocationToken };
-        const complete = namedSession === undefined ? Object.assign(async () => undefined, { session: undefined, snapshotEpoch: undefined })
-          : await sessionMetadata.beginDispatch(namedSession.owner, namedSession.session.session_id, namedSession.session.filing_user_id);
         mark('dispatch');
-        if (complete.session !== undefined) input.forwardedProps.sessionUserId = complete.session.filing_user_id;
-        if (namedSession !== undefined) {
-          await forwardTurnIdentity(credentialSource, input.forwardedProps, {
-            actorId: namedSession.accountActorId, filingActorId: input.forwardedProps.sessionUserId as string,
-            sessionId: input.threadId, startedAt: new Date().toISOString(),
-          }).catch(async (error: unknown) => {
-            await complete();
-            throw error;
+        const response = namedSession === undefined ? await upstream.invoke(JSON.stringify(input), input.threadId, init)
+          : await runRuntimeWriter(() => sessionMetadata.beginDispatch(namedSession.owner, namedSession.session.session_id, namedSession.session.filing_user_id), { timeoutMs: 0 }, upstream, namedSession.session, async (writer) => {
+            input.forwardedProps.sessionUserId = writer.session.filing_user_id;
+            await forwardTurnIdentity(credentialSource, input.forwardedProps, {
+              actorId: namedSession.accountActorId, filingActorId: writer.session.filing_user_id,
+              sessionId: input.threadId, startedAt: new Date().toISOString(),
+            });
+            mark('identity');
+            forwardSnapshotEpoch(input.forwardedProps, writer);
+            return writer.invoke(JSON.stringify(input), input.threadId, init);
           });
-          mark('identity');
-        }
-        forwardSnapshotEpoch(input.forwardedProps, complete);
-        const response = await (namedSession === undefined
-          ? upstream.invoke(JSON.stringify(input), input.threadId, init)
-          : upstream.invokeRegistered(JSON.stringify(input), complete.session ?? namedSession.session, complete, init));
         mark('invoke');
         if (response.status >= 400) {
           await response.body?.cancel();
