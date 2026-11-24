@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import { footprint, formatFootprint, type FilesAccessPointMode, type FootprintOptions } from './footprint.js';
 import { loadBotCube, loadConfig } from './load.js';
+import { resolveConfig, resolvedJson } from './resolved.js';
 import { BotCubeConfigError } from './parse.js';
 
 export interface CliIo {
@@ -8,18 +9,27 @@ export interface CliIo {
   readonly stderr: (text: string) => void;
 }
 
-const USAGE = 'Usage: botcube footprint [--files-access-point-mode <runtime|pool>] [--bot <bot.yaml>] <botcube.yaml>\n';
+const RESOLVE_USAGE = 'botcube resolve <botcube.yaml>';
+const FOOTPRINT_USAGE = 'botcube footprint [--files-access-point-mode <runtime|pool>] [--bot <bot.yaml>] <botcube.yaml>';
 const MODES: readonly string[] = ['runtime', 'pool'] satisfies FilesAccessPointMode[];
 const isMode = (value: string | undefined): value is FilesAccessPointMode | undefined => value === undefined || MODES.includes(value);
 
-/** `botcube footprint`: prints what a BotCube Config needs from its AWS account, and returns the exit code. */
 export function main(argv: readonly string[], io: CliIo): number {
-  const parsed = parseFlags(argv);
-  if (!parsed) {
-    io.stderr(USAGE);
-    return 2;
-  }
   try {
+    if (argv[0] === 'resolve') {
+      const path = argv[1];
+      if (argv.length !== 2 || !path || path.startsWith('-')) {
+        io.stderr(`Usage: ${RESOLVE_USAGE}\n`);
+        return 2;
+      }
+      io.stdout(resolvedJson(resolveConfig(loadConfig(path))));
+      return 0;
+    }
+    const parsed = parseFlags(argv);
+    if (!parsed) {
+      io.stderr(`Usage: ${FOOTPRINT_USAGE}\n       ${RESOLVE_USAGE}\n`);
+      return 2;
+    }
     const { config, bot } = parsed.bot ? loadBotCube(parsed.path, parsed.bot) : { config: loadConfig(parsed.path), bot: undefined };
     io.stdout(formatFootprint(footprint(config, { ...parsed.options, ...(bot ? { bot } : {}) })));
     return 0;

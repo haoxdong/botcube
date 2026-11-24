@@ -1,0 +1,57 @@
+{
+  "formatVersion": 1,
+  "config": {
+    "allowCommandCredentials": false,
+    "integrations": {
+      "signIn": {
+        "kind": "botcube-accounts"
+      },
+      "modelGateway": {
+        "kind": "bedrock"
+      },
+      "harnessAuth": {
+        "kind": "sigv4"
+      },
+      "awsAccess": {
+        "kind": "web-identity"
+      },
+      "imageRegistry": {
+        "url": "https://public.ecr.aws"
+      },
+      "telemetry": {
+        "kind": "xray"
+      },
+      "proxy": {
+        "kind": "none"
+      }
+    },
+    "network": {},
+    "schedules": {
+      "kind": "eventbridge-scheduler"
+    },
+    "liveView": {
+      "kind": "agentcore-browser"
+    }
+  },
+  "physicalNames": {},
+  "webOrigins": [],
+  "credentialServiceHttpPath": "",
+  "modelGateway": {
+    "anthropic": {
+      "route": null,
+      "unreachableReason": null
+    },
+    "openai": {
+      "route": null,
+      "unreachableReason": null
+    },
+    "deepseek": {
+      "route": null,
+      "unreachableReason": null
+    },
+    "echo": {
+      "route": null,
+      "unreachableReason": null
+    }
+  }
+}

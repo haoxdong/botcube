@@ -157,12 +157,18 @@ export const gatewayModels = endpoint.extend({
 }).describe("Every model on a gateway, by its key in the bot settings, called on its provider's own API; Plan Usage models still run through the Credential Service.");
 export type GatewayModels = z.output<typeof gatewayModels>;
 
+export function gatewayServesProvider(gateway: GatewayModels, provider: ModelProvider): provider is (typeof GATEWAY_PROVIDERS)[number] {
+  return GATEWAY_PROVIDERS.some((name) => name === provider && (gateway.providers === undefined || gateway.providers[name] !== undefined));
+}
+
 /** Why `gateway` cannot call a model on `provider`, or undefined when it can; Bedrock runs every model it serves, and `echo` is never called. */
 export function unreachedProvider(gateway: GatewayModels | { kind: 'bedrock' }, provider: ModelProvider): string | undefined {
   if (gateway.kind === 'bedrock') return undefined;
-  const served: readonly ModelProvider[] = gateway.providers ? GATEWAY_PROVIDERS.filter((name) => gateway.providers?.[name]) : GATEWAY_PROVIDERS;
   if (provider === 'echo') return undefined;
-  if (!served.includes(provider)) return `integrations.modelGateway reaches the providers ${served.join(' and ')}`;
+  if (!gatewayServesProvider(gateway, provider)) {
+    const served = GATEWAY_PROVIDERS.filter((name) => gatewayServesProvider(gateway, name));
+    return `integrations.modelGateway reaches the providers ${served.join(' and ')}`;
+  }
   if (provider === 'anthropic' && !gateway.providers?.anthropic?.url && /\/v1\/?$/.test(new URL(gateway.url).pathname)) {
     return "integrations.modelGateway.url ends in /v1, which Anthropic's API adds itself: set integrations.modelGateway.providers.anthropic.url without /v1";
   }

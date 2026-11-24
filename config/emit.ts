@@ -21,3 +21,8 @@ await Promise.all(Object.entries(jsonSchemas()).map(async ([file, schema]) => {
   const text = await format(JSON.stringify(schema), { parser: 'json' });
   for (const path of [file, ...(jsonSchemaCopies[file] ?? [])]) writeFileSync(new URL(path, import.meta.url), text);
 }));
+
+const { resolvedArtifacts } = await import('./resolved-artifacts.mjs');
+for (const [path, contents] of Object.entries(resolvedArtifacts())) {
+  writeFileSync(new URL(path, import.meta.url), contents);
+}
