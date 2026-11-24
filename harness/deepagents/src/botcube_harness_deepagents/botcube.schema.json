@@ -266,7 +266,7 @@
       "type": "boolean"
     },
     "caBundle": {
-      "description": "A PEM file of the roots every process checks the proxy and endpoints against, as SSL_CERT_FILE, NODE_EXTRA_CA_CERTS and REQUESTS_CA_BUNDLE; loaded at startup. Absent, each image keeps its own.",
+      "description": "A PEM file of roots for verifying the proxy and endpoints, loaded at startup. It replaces the default roots for SSL_CERT_FILE and REQUESTS_CA_BUNDLE, so include the public roots alongside private roots. NODE_EXTRA_CA_CERTS adds it to Node.js defaults. If omitted, each image keeps its own roots.",
       "type": "string",
       "format": "starts_with",
       "pattern": "^\\/.*"
@@ -304,200 +304,8 @@
                       "properties": {
                         "clientId": { "type": "string", "minLength": 1 },
                         "clientSecret": {
-                          "oneOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "secret" },
-                                "secretId": {
-                                  "type": "string",
-                                  "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                                  "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                                }
-                              },
-                              "required": ["kind", "secretId"],
-                              "additionalProperties": false,
-                              "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "file" },
-                                "path": {
-                                  "type": "string",
-                                  "format": "starts_with",
-                                  "pattern": "^\\/.*",
-                                  "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                                }
-                              },
-                              "required": ["kind", "path"],
-                              "additionalProperties": false,
-                              "description": "A mounted file's contents, a trailing newline dropped."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "const": "command"
-                                },
-                                "command": {
-                                  "type": "array",
-                                  "prefixItems": [
-                                    { "type": "string", "minLength": 1 }
-                                  ],
-                                  "items": { "type": "string" },
-                                  "minItems": 1,
-                                  "description": "The program and its arguments, run without a shell."
-                                },
-                                "timeoutSeconds": {
-                                  "default": 30,
-                                  "description": "How long the command may run before it is stopped.",
-                                  "type": "integer",
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 9007199254740991
-                                }
-                              },
-                              "required": ["kind", "command"],
-                              "additionalProperties": false,
-                              "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "const": "oauth-client-credentials"
-                                },
-                                "tokenEndpoint": {
-                                  "type": "string",
-                                  "format": "uri",
-                                  "description": "The identity provider's token endpoint, as its OpenID configuration names token_endpoint."
-                                },
-                                "clientId": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "clientSecret": {
-                                  "oneOf": [
-                                    {
-                                      "type": "object",
-                                      "properties": {
-                                        "kind": {
-                                          "type": "string",
-                                          "const": "secret"
-                                        },
-                                        "secretId": {
-                                          "type": "string",
-                                          "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                                          "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                                        }
-                                      },
-                                      "required": ["kind", "secretId"],
-                                      "additionalProperties": false,
-                                      "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                                    },
-                                    {
-                                      "type": "object",
-                                      "properties": {
-                                        "kind": {
-                                          "type": "string",
-                                          "const": "file"
-                                        },
-                                        "path": {
-                                          "type": "string",
-                                          "format": "starts_with",
-                                          "pattern": "^\\/.*",
-                                          "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                                        }
-                                      },
-                                      "required": ["kind", "path"],
-                                      "additionalProperties": false,
-                                      "description": "A mounted file's contents, a trailing newline dropped."
-                                    },
-                                    {
-                                      "type": "object",
-                                      "properties": {
-                                        "kind": {
-                                          "type": "string",
-                                          "const": "command"
-                                        },
-                                        "command": {
-                                          "type": "array",
-                                          "prefixItems": [
-                                            { "type": "string", "minLength": 1 }
-                                          ],
-                                          "items": { "type": "string" },
-                                          "minItems": 1,
-                                          "description": "The program and its arguments, run without a shell."
-                                        },
-                                        "timeoutSeconds": {
-                                          "default": 30,
-                                          "description": "How long the command may run before it is stopped.",
-                                          "type": "integer",
-                                          "exclusiveMinimum": 0,
-                                          "maximum": 9007199254740991
-                                        }
-                                      },
-                                      "required": ["kind", "command"],
-                                      "additionalProperties": false,
-                                      "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                                    }
-                                  ],
-                                  "description": "Where the client's secret is read, sent as HTTP Basic each time a token is asked for."
-                                },
-                                "scopes": {
-                                  "description": "The scopes asked for; absent, the provider grants its default.",
-                                  "minItems": 1,
-                                  "type": "array",
-                                  "items": {
-                                    "type": "string",
-                                    "pattern": "^[\\x21\\x23-\\x5B\\x5D-\\x7E]+$"
-                                  }
-                                }
-                              },
-                              "required": [
-                                "kind",
-                                "tokenEndpoint",
-                                "clientId",
-                                "clientSecret"
-                              ],
-                              "additionalProperties": false,
-                              "description": "An access token from an identity provider's OAuth 2.0 client-credentials grant, asked for again a minute before its expires_in runs out."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "aws" },
-                                "audience": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "description": "The receiver, signed into the request as x-botcube-audience so it cannot be replayed to another."
-                                }
-                              },
-                              "required": ["kind", "audience"],
-                              "additionalProperties": false,
-                              "description": "The process's own AWS identity, as Google's external-account aws source gives it: a SigV4-signed sts:GetCallerIdentity request, URL-encoded JSON {url, method, headers}, which the receiver replays to STS. Signed again before its 15 minutes run out."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "const": "botcube"
-                                },
-                                "audience": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "description": "The token's `aud`; not one reserved for another kind of BotCube token."
-                                }
-                              },
-                              "required": ["kind", "audience"],
-                              "additionalProperties": false,
-                              "description": "A short-lived token the Chat Service signs with its Turn identity keys, as the issuer at its public origin: the Harness bearer `harnessAuth` sends, which no configured credential takes."
-                            }
-                          ],
-                          "description": "The client's secret, which redeems sign-in codes."
+                          "description": "The client's secret, which redeems sign-in codes.",
+                          "$ref": "#/$defs/credentialSource"
                         }
                       },
                       "required": ["clientId", "clientSecret"],
@@ -509,191 +317,8 @@
                     "properties": {
                       "clientId": { "type": "string", "minLength": 1 },
                       "clientSecret": {
-                        "oneOf": [
-                          {
-                            "type": "object",
-                            "properties": {
-                              "kind": { "type": "string", "const": "secret" },
-                              "secretId": {
-                                "type": "string",
-                                "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                                "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                              }
-                            },
-                            "required": ["kind", "secretId"],
-                            "additionalProperties": false,
-                            "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "kind": { "type": "string", "const": "file" },
-                              "path": {
-                                "type": "string",
-                                "format": "starts_with",
-                                "pattern": "^\\/.*",
-                                "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                              }
-                            },
-                            "required": ["kind", "path"],
-                            "additionalProperties": false,
-                            "description": "A mounted file's contents, a trailing newline dropped."
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "kind": { "type": "string", "const": "command" },
-                              "command": {
-                                "type": "array",
-                                "prefixItems": [
-                                  { "type": "string", "minLength": 1 }
-                                ],
-                                "items": { "type": "string" },
-                                "minItems": 1,
-                                "description": "The program and its arguments, run without a shell."
-                              },
-                              "timeoutSeconds": {
-                                "default": 30,
-                                "description": "How long the command may run before it is stopped.",
-                                "type": "integer",
-                                "exclusiveMinimum": 0,
-                                "maximum": 9007199254740991
-                              }
-                            },
-                            "required": ["kind", "command"],
-                            "additionalProperties": false,
-                            "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "kind": {
-                                "type": "string",
-                                "const": "oauth-client-credentials"
-                              },
-                              "tokenEndpoint": {
-                                "type": "string",
-                                "format": "uri",
-                                "description": "The identity provider's token endpoint, as its OpenID configuration names token_endpoint."
-                              },
-                              "clientId": { "type": "string", "minLength": 1 },
-                              "clientSecret": {
-                                "oneOf": [
-                                  {
-                                    "type": "object",
-                                    "properties": {
-                                      "kind": {
-                                        "type": "string",
-                                        "const": "secret"
-                                      },
-                                      "secretId": {
-                                        "type": "string",
-                                        "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                                        "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                                      }
-                                    },
-                                    "required": ["kind", "secretId"],
-                                    "additionalProperties": false,
-                                    "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                                  },
-                                  {
-                                    "type": "object",
-                                    "properties": {
-                                      "kind": {
-                                        "type": "string",
-                                        "const": "file"
-                                      },
-                                      "path": {
-                                        "type": "string",
-                                        "format": "starts_with",
-                                        "pattern": "^\\/.*",
-                                        "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                                      }
-                                    },
-                                    "required": ["kind", "path"],
-                                    "additionalProperties": false,
-                                    "description": "A mounted file's contents, a trailing newline dropped."
-                                  },
-                                  {
-                                    "type": "object",
-                                    "properties": {
-                                      "kind": {
-                                        "type": "string",
-                                        "const": "command"
-                                      },
-                                      "command": {
-                                        "type": "array",
-                                        "prefixItems": [
-                                          { "type": "string", "minLength": 1 }
-                                        ],
-                                        "items": { "type": "string" },
-                                        "minItems": 1,
-                                        "description": "The program and its arguments, run without a shell."
-                                      },
-                                      "timeoutSeconds": {
-                                        "default": 30,
-                                        "description": "How long the command may run before it is stopped.",
-                                        "type": "integer",
-                                        "exclusiveMinimum": 0,
-                                        "maximum": 9007199254740991
-                                      }
-                                    },
-                                    "required": ["kind", "command"],
-                                    "additionalProperties": false,
-                                    "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                                  }
-                                ],
-                                "description": "Where the client's secret is read, sent as HTTP Basic each time a token is asked for."
-                              },
-                              "scopes": {
-                                "description": "The scopes asked for; absent, the provider grants its default.",
-                                "minItems": 1,
-                                "type": "array",
-                                "items": {
-                                  "type": "string",
-                                  "pattern": "^[\\x21\\x23-\\x5B\\x5D-\\x7E]+$"
-                                }
-                              }
-                            },
-                            "required": [
-                              "kind",
-                              "tokenEndpoint",
-                              "clientId",
-                              "clientSecret"
-                            ],
-                            "additionalProperties": false,
-                            "description": "An access token from an identity provider's OAuth 2.0 client-credentials grant, asked for again a minute before its expires_in runs out."
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "kind": { "type": "string", "const": "aws" },
-                              "audience": {
-                                "type": "string",
-                                "minLength": 1,
-                                "description": "The receiver, signed into the request as x-botcube-audience so it cannot be replayed to another."
-                              }
-                            },
-                            "required": ["kind", "audience"],
-                            "additionalProperties": false,
-                            "description": "The process's own AWS identity, as Google's external-account aws source gives it: a SigV4-signed sts:GetCallerIdentity request, URL-encoded JSON {url, method, headers}, which the receiver replays to STS. Signed again before its 15 minutes run out."
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "kind": { "type": "string", "const": "botcube" },
-                              "audience": {
-                                "type": "string",
-                                "minLength": 1,
-                                "description": "The token's `aud`; not one reserved for another kind of BotCube token."
-                              }
-                            },
-                            "required": ["kind", "audience"],
-                            "additionalProperties": false,
-                            "description": "A short-lived token the Chat Service signs with its Turn identity keys, as the issuer at its public origin: the Harness bearer `harnessAuth` sends, which no configured credential takes."
-                          }
-                        ],
-                        "description": "The client's secret, which redeems sign-in codes."
+                        "description": "The client's secret, which redeems sign-in codes.",
+                        "$ref": "#/$defs/credentialSource"
                       }
                     },
                     "required": ["clientId", "clientSecret"],
@@ -866,183 +491,8 @@
                   "description": "The gateway's base URL, such as https://models.example.com/v1, for each provider `providers` gives no URL."
                 },
                 "credential": {
-                  "oneOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "secret" },
-                        "secretId": {
-                          "type": "string",
-                          "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                          "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                        }
-                      },
-                      "required": ["kind", "secretId"],
-                      "additionalProperties": false,
-                      "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "file" },
-                        "path": {
-                          "type": "string",
-                          "format": "starts_with",
-                          "pattern": "^\\/.*",
-                          "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                        }
-                      },
-                      "required": ["kind", "path"],
-                      "additionalProperties": false,
-                      "description": "A mounted file's contents, a trailing newline dropped."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "command" },
-                        "command": {
-                          "type": "array",
-                          "prefixItems": [{ "type": "string", "minLength": 1 }],
-                          "items": { "type": "string" },
-                          "minItems": 1,
-                          "description": "The program and its arguments, run without a shell."
-                        },
-                        "timeoutSeconds": {
-                          "default": 30,
-                          "description": "How long the command may run before it is stopped.",
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
-                        }
-                      },
-                      "required": ["kind", "command"],
-                      "additionalProperties": false,
-                      "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": {
-                          "type": "string",
-                          "const": "oauth-client-credentials"
-                        },
-                        "tokenEndpoint": {
-                          "type": "string",
-                          "format": "uri",
-                          "description": "The identity provider's token endpoint, as its OpenID configuration names token_endpoint."
-                        },
-                        "clientId": { "type": "string", "minLength": 1 },
-                        "clientSecret": {
-                          "oneOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "secret" },
-                                "secretId": {
-                                  "type": "string",
-                                  "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                                  "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                                }
-                              },
-                              "required": ["kind", "secretId"],
-                              "additionalProperties": false,
-                              "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "file" },
-                                "path": {
-                                  "type": "string",
-                                  "format": "starts_with",
-                                  "pattern": "^\\/.*",
-                                  "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                                }
-                              },
-                              "required": ["kind", "path"],
-                              "additionalProperties": false,
-                              "description": "A mounted file's contents, a trailing newline dropped."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "const": "command"
-                                },
-                                "command": {
-                                  "type": "array",
-                                  "prefixItems": [
-                                    { "type": "string", "minLength": 1 }
-                                  ],
-                                  "items": { "type": "string" },
-                                  "minItems": 1,
-                                  "description": "The program and its arguments, run without a shell."
-                                },
-                                "timeoutSeconds": {
-                                  "default": 30,
-                                  "description": "How long the command may run before it is stopped.",
-                                  "type": "integer",
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 9007199254740991
-                                }
-                              },
-                              "required": ["kind", "command"],
-                              "additionalProperties": false,
-                              "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                            }
-                          ],
-                          "description": "Where the client's secret is read, sent as HTTP Basic each time a token is asked for."
-                        },
-                        "scopes": {
-                          "description": "The scopes asked for; absent, the provider grants its default.",
-                          "minItems": 1,
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "pattern": "^[\\x21\\x23-\\x5B\\x5D-\\x7E]+$"
-                          }
-                        }
-                      },
-                      "required": [
-                        "kind",
-                        "tokenEndpoint",
-                        "clientId",
-                        "clientSecret"
-                      ],
-                      "additionalProperties": false,
-                      "description": "An access token from an identity provider's OAuth 2.0 client-credentials grant, asked for again a minute before its expires_in runs out."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "aws" },
-                        "audience": {
-                          "type": "string",
-                          "minLength": 1,
-                          "description": "The receiver, signed into the request as x-botcube-audience so it cannot be replayed to another."
-                        }
-                      },
-                      "required": ["kind", "audience"],
-                      "additionalProperties": false,
-                      "description": "The process's own AWS identity, as Google's external-account aws source gives it: a SigV4-signed sts:GetCallerIdentity request, URL-encoded JSON {url, method, headers}, which the receiver replays to STS. Signed again before its 15 minutes run out."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "botcube" },
-                        "audience": {
-                          "type": "string",
-                          "minLength": 1,
-                          "description": "The token's `aud`; not one reserved for another kind of BotCube token."
-                        }
-                      },
-                      "required": ["kind", "audience"],
-                      "additionalProperties": false,
-                      "description": "A short-lived token the Chat Service signs with its Turn identity keys, as the issuer at its public origin: the Harness bearer `harnessAuth` sends, which no configured credential takes."
-                    }
-                  ],
-                  "description": "Sent as `Authorization: Bearer <value>`."
+                  "description": "Sent as `Authorization: Bearer <value>`.",
+                  "$ref": "#/$defs/credentialSource"
                 },
                 "headers": {
                   "description": "Headers sent on every request, such as a tenant or routing header a gateway requires; never a secret.",
@@ -1133,199 +583,7 @@
                         },
                         "credential": {
                           "description": "Sent as `Authorization: Bearer <value>` in place of the gateway's credential.",
-                          "oneOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "secret" },
-                                "secretId": {
-                                  "type": "string",
-                                  "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                                  "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                                }
-                              },
-                              "required": ["kind", "secretId"],
-                              "additionalProperties": false,
-                              "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "file" },
-                                "path": {
-                                  "type": "string",
-                                  "format": "starts_with",
-                                  "pattern": "^\\/.*",
-                                  "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                                }
-                              },
-                              "required": ["kind", "path"],
-                              "additionalProperties": false,
-                              "description": "A mounted file's contents, a trailing newline dropped."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "const": "command"
-                                },
-                                "command": {
-                                  "type": "array",
-                                  "prefixItems": [
-                                    { "type": "string", "minLength": 1 }
-                                  ],
-                                  "items": { "type": "string" },
-                                  "minItems": 1,
-                                  "description": "The program and its arguments, run without a shell."
-                                },
-                                "timeoutSeconds": {
-                                  "default": 30,
-                                  "description": "How long the command may run before it is stopped.",
-                                  "type": "integer",
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 9007199254740991
-                                }
-                              },
-                              "required": ["kind", "command"],
-                              "additionalProperties": false,
-                              "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "const": "oauth-client-credentials"
-                                },
-                                "tokenEndpoint": {
-                                  "type": "string",
-                                  "format": "uri",
-                                  "description": "The identity provider's token endpoint, as its OpenID configuration names token_endpoint."
-                                },
-                                "clientId": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "clientSecret": {
-                                  "oneOf": [
-                                    {
-                                      "type": "object",
-                                      "properties": {
-                                        "kind": {
-                                          "type": "string",
-                                          "const": "secret"
-                                        },
-                                        "secretId": {
-                                          "type": "string",
-                                          "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                                          "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                                        }
-                                      },
-                                      "required": ["kind", "secretId"],
-                                      "additionalProperties": false,
-                                      "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                                    },
-                                    {
-                                      "type": "object",
-                                      "properties": {
-                                        "kind": {
-                                          "type": "string",
-                                          "const": "file"
-                                        },
-                                        "path": {
-                                          "type": "string",
-                                          "format": "starts_with",
-                                          "pattern": "^\\/.*",
-                                          "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                                        }
-                                      },
-                                      "required": ["kind", "path"],
-                                      "additionalProperties": false,
-                                      "description": "A mounted file's contents, a trailing newline dropped."
-                                    },
-                                    {
-                                      "type": "object",
-                                      "properties": {
-                                        "kind": {
-                                          "type": "string",
-                                          "const": "command"
-                                        },
-                                        "command": {
-                                          "type": "array",
-                                          "prefixItems": [
-                                            { "type": "string", "minLength": 1 }
-                                          ],
-                                          "items": { "type": "string" },
-                                          "minItems": 1,
-                                          "description": "The program and its arguments, run without a shell."
-                                        },
-                                        "timeoutSeconds": {
-                                          "default": 30,
-                                          "description": "How long the command may run before it is stopped.",
-                                          "type": "integer",
-                                          "exclusiveMinimum": 0,
-                                          "maximum": 9007199254740991
-                                        }
-                                      },
-                                      "required": ["kind", "command"],
-                                      "additionalProperties": false,
-                                      "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                                    }
-                                  ],
-                                  "description": "Where the client's secret is read, sent as HTTP Basic each time a token is asked for."
-                                },
-                                "scopes": {
-                                  "description": "The scopes asked for; absent, the provider grants its default.",
-                                  "minItems": 1,
-                                  "type": "array",
-                                  "items": {
-                                    "type": "string",
-                                    "pattern": "^[\\x21\\x23-\\x5B\\x5D-\\x7E]+$"
-                                  }
-                                }
-                              },
-                              "required": [
-                                "kind",
-                                "tokenEndpoint",
-                                "clientId",
-                                "clientSecret"
-                              ],
-                              "additionalProperties": false,
-                              "description": "An access token from an identity provider's OAuth 2.0 client-credentials grant, asked for again a minute before its expires_in runs out."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "aws" },
-                                "audience": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "description": "The receiver, signed into the request as x-botcube-audience so it cannot be replayed to another."
-                                }
-                              },
-                              "required": ["kind", "audience"],
-                              "additionalProperties": false,
-                              "description": "The process's own AWS identity, as Google's external-account aws source gives it: a SigV4-signed sts:GetCallerIdentity request, URL-encoded JSON {url, method, headers}, which the receiver replays to STS. Signed again before its 15 minutes run out."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "const": "botcube"
-                                },
-                                "audience": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "description": "The token's `aud`; not one reserved for another kind of BotCube token."
-                                }
-                              },
-                              "required": ["kind", "audience"],
-                              "additionalProperties": false,
-                              "description": "A short-lived token the Chat Service signs with its Turn identity keys, as the issuer at its public origin: the Harness bearer `harnessAuth` sends, which no configured credential takes."
-                            }
-                          ]
+                          "$ref": "#/$defs/credentialSource"
                         },
                         "headers": {
                           "description": "Headers sent on every request to this provider, in place of the gateway's.",
@@ -1349,199 +607,7 @@
                         },
                         "credential": {
                           "description": "Sent as `Authorization: Bearer <value>` in place of the gateway's credential.",
-                          "oneOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "secret" },
-                                "secretId": {
-                                  "type": "string",
-                                  "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                                  "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                                }
-                              },
-                              "required": ["kind", "secretId"],
-                              "additionalProperties": false,
-                              "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "file" },
-                                "path": {
-                                  "type": "string",
-                                  "format": "starts_with",
-                                  "pattern": "^\\/.*",
-                                  "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                                }
-                              },
-                              "required": ["kind", "path"],
-                              "additionalProperties": false,
-                              "description": "A mounted file's contents, a trailing newline dropped."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "const": "command"
-                                },
-                                "command": {
-                                  "type": "array",
-                                  "prefixItems": [
-                                    { "type": "string", "minLength": 1 }
-                                  ],
-                                  "items": { "type": "string" },
-                                  "minItems": 1,
-                                  "description": "The program and its arguments, run without a shell."
-                                },
-                                "timeoutSeconds": {
-                                  "default": 30,
-                                  "description": "How long the command may run before it is stopped.",
-                                  "type": "integer",
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 9007199254740991
-                                }
-                              },
-                              "required": ["kind", "command"],
-                              "additionalProperties": false,
-                              "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "const": "oauth-client-credentials"
-                                },
-                                "tokenEndpoint": {
-                                  "type": "string",
-                                  "format": "uri",
-                                  "description": "The identity provider's token endpoint, as its OpenID configuration names token_endpoint."
-                                },
-                                "clientId": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "clientSecret": {
-                                  "oneOf": [
-                                    {
-                                      "type": "object",
-                                      "properties": {
-                                        "kind": {
-                                          "type": "string",
-                                          "const": "secret"
-                                        },
-                                        "secretId": {
-                                          "type": "string",
-                                          "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                                          "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                                        }
-                                      },
-                                      "required": ["kind", "secretId"],
-                                      "additionalProperties": false,
-                                      "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                                    },
-                                    {
-                                      "type": "object",
-                                      "properties": {
-                                        "kind": {
-                                          "type": "string",
-                                          "const": "file"
-                                        },
-                                        "path": {
-                                          "type": "string",
-                                          "format": "starts_with",
-                                          "pattern": "^\\/.*",
-                                          "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                                        }
-                                      },
-                                      "required": ["kind", "path"],
-                                      "additionalProperties": false,
-                                      "description": "A mounted file's contents, a trailing newline dropped."
-                                    },
-                                    {
-                                      "type": "object",
-                                      "properties": {
-                                        "kind": {
-                                          "type": "string",
-                                          "const": "command"
-                                        },
-                                        "command": {
-                                          "type": "array",
-                                          "prefixItems": [
-                                            { "type": "string", "minLength": 1 }
-                                          ],
-                                          "items": { "type": "string" },
-                                          "minItems": 1,
-                                          "description": "The program and its arguments, run without a shell."
-                                        },
-                                        "timeoutSeconds": {
-                                          "default": 30,
-                                          "description": "How long the command may run before it is stopped.",
-                                          "type": "integer",
-                                          "exclusiveMinimum": 0,
-                                          "maximum": 9007199254740991
-                                        }
-                                      },
-                                      "required": ["kind", "command"],
-                                      "additionalProperties": false,
-                                      "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                                    }
-                                  ],
-                                  "description": "Where the client's secret is read, sent as HTTP Basic each time a token is asked for."
-                                },
-                                "scopes": {
-                                  "description": "The scopes asked for; absent, the provider grants its default.",
-                                  "minItems": 1,
-                                  "type": "array",
-                                  "items": {
-                                    "type": "string",
-                                    "pattern": "^[\\x21\\x23-\\x5B\\x5D-\\x7E]+$"
-                                  }
-                                }
-                              },
-                              "required": [
-                                "kind",
-                                "tokenEndpoint",
-                                "clientId",
-                                "clientSecret"
-                              ],
-                              "additionalProperties": false,
-                              "description": "An access token from an identity provider's OAuth 2.0 client-credentials grant, asked for again a minute before its expires_in runs out."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "aws" },
-                                "audience": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "description": "The receiver, signed into the request as x-botcube-audience so it cannot be replayed to another."
-                                }
-                              },
-                              "required": ["kind", "audience"],
-                              "additionalProperties": false,
-                              "description": "The process's own AWS identity, as Google's external-account aws source gives it: a SigV4-signed sts:GetCallerIdentity request, URL-encoded JSON {url, method, headers}, which the receiver replays to STS. Signed again before its 15 minutes run out."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "const": "botcube"
-                                },
-                                "audience": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "description": "The token's `aud`; not one reserved for another kind of BotCube token."
-                                }
-                              },
-                              "required": ["kind", "audience"],
-                              "additionalProperties": false,
-                              "description": "A short-lived token the Chat Service signs with its Turn identity keys, as the issuer at its public origin: the Harness bearer `harnessAuth` sends, which no configured credential takes."
-                            }
-                          ]
+                          "$ref": "#/$defs/credentialSource"
                         },
                         "headers": {
                           "description": "Headers sent on every request to this provider, in place of the gateway's.",
@@ -1628,182 +694,7 @@
                 },
                 "token": {
                   "description": "The bearer Chat sends under an outside issuer, read again before it expires; required for a discovery URL issuer.",
-                  "oneOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "secret" },
-                        "secretId": {
-                          "type": "string",
-                          "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                          "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                        }
-                      },
-                      "required": ["kind", "secretId"],
-                      "additionalProperties": false,
-                      "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "file" },
-                        "path": {
-                          "type": "string",
-                          "format": "starts_with",
-                          "pattern": "^\\/.*",
-                          "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                        }
-                      },
-                      "required": ["kind", "path"],
-                      "additionalProperties": false,
-                      "description": "A mounted file's contents, a trailing newline dropped."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "command" },
-                        "command": {
-                          "type": "array",
-                          "prefixItems": [{ "type": "string", "minLength": 1 }],
-                          "items": { "type": "string" },
-                          "minItems": 1,
-                          "description": "The program and its arguments, run without a shell."
-                        },
-                        "timeoutSeconds": {
-                          "default": 30,
-                          "description": "How long the command may run before it is stopped.",
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
-                        }
-                      },
-                      "required": ["kind", "command"],
-                      "additionalProperties": false,
-                      "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": {
-                          "type": "string",
-                          "const": "oauth-client-credentials"
-                        },
-                        "tokenEndpoint": {
-                          "type": "string",
-                          "format": "uri",
-                          "description": "The identity provider's token endpoint, as its OpenID configuration names token_endpoint."
-                        },
-                        "clientId": { "type": "string", "minLength": 1 },
-                        "clientSecret": {
-                          "oneOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "secret" },
-                                "secretId": {
-                                  "type": "string",
-                                  "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                                  "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                                }
-                              },
-                              "required": ["kind", "secretId"],
-                              "additionalProperties": false,
-                              "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "file" },
-                                "path": {
-                                  "type": "string",
-                                  "format": "starts_with",
-                                  "pattern": "^\\/.*",
-                                  "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                                }
-                              },
-                              "required": ["kind", "path"],
-                              "additionalProperties": false,
-                              "description": "A mounted file's contents, a trailing newline dropped."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "const": "command"
-                                },
-                                "command": {
-                                  "type": "array",
-                                  "prefixItems": [
-                                    { "type": "string", "minLength": 1 }
-                                  ],
-                                  "items": { "type": "string" },
-                                  "minItems": 1,
-                                  "description": "The program and its arguments, run without a shell."
-                                },
-                                "timeoutSeconds": {
-                                  "default": 30,
-                                  "description": "How long the command may run before it is stopped.",
-                                  "type": "integer",
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 9007199254740991
-                                }
-                              },
-                              "required": ["kind", "command"],
-                              "additionalProperties": false,
-                              "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                            }
-                          ],
-                          "description": "Where the client's secret is read, sent as HTTP Basic each time a token is asked for."
-                        },
-                        "scopes": {
-                          "description": "The scopes asked for; absent, the provider grants its default.",
-                          "minItems": 1,
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "pattern": "^[\\x21\\x23-\\x5B\\x5D-\\x7E]+$"
-                          }
-                        }
-                      },
-                      "required": [
-                        "kind",
-                        "tokenEndpoint",
-                        "clientId",
-                        "clientSecret"
-                      ],
-                      "additionalProperties": false,
-                      "description": "An access token from an identity provider's OAuth 2.0 client-credentials grant, asked for again a minute before its expires_in runs out."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "aws" },
-                        "audience": {
-                          "type": "string",
-                          "minLength": 1,
-                          "description": "The receiver, signed into the request as x-botcube-audience so it cannot be replayed to another."
-                        }
-                      },
-                      "required": ["kind", "audience"],
-                      "additionalProperties": false,
-                      "description": "The process's own AWS identity, as Google's external-account aws source gives it: a SigV4-signed sts:GetCallerIdentity request, URL-encoded JSON {url, method, headers}, which the receiver replays to STS. Signed again before its 15 minutes run out."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "botcube" },
-                        "audience": {
-                          "type": "string",
-                          "minLength": 1,
-                          "description": "The token's `aud`; not one reserved for another kind of BotCube token."
-                        }
-                      },
-                      "required": ["kind", "audience"],
-                      "additionalProperties": false,
-                      "description": "A short-lived token the Chat Service signs with its Turn identity keys, as the issuer at its public origin: the Harness bearer `harnessAuth` sends, which no configured credential takes."
-                    }
-                  ]
+                  "$ref": "#/$defs/credentialSource"
                 }
               },
               "required": ["kind", "clients"],
@@ -1868,182 +759,7 @@
                 },
                 "credential": {
                   "description": "Sent as `Authorization: Bearer <value>`; absent, exports are unauthenticated.",
-                  "oneOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "secret" },
-                        "secretId": {
-                          "type": "string",
-                          "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                          "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                        }
-                      },
-                      "required": ["kind", "secretId"],
-                      "additionalProperties": false,
-                      "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "file" },
-                        "path": {
-                          "type": "string",
-                          "format": "starts_with",
-                          "pattern": "^\\/.*",
-                          "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                        }
-                      },
-                      "required": ["kind", "path"],
-                      "additionalProperties": false,
-                      "description": "A mounted file's contents, a trailing newline dropped."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "command" },
-                        "command": {
-                          "type": "array",
-                          "prefixItems": [{ "type": "string", "minLength": 1 }],
-                          "items": { "type": "string" },
-                          "minItems": 1,
-                          "description": "The program and its arguments, run without a shell."
-                        },
-                        "timeoutSeconds": {
-                          "default": 30,
-                          "description": "How long the command may run before it is stopped.",
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
-                        }
-                      },
-                      "required": ["kind", "command"],
-                      "additionalProperties": false,
-                      "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": {
-                          "type": "string",
-                          "const": "oauth-client-credentials"
-                        },
-                        "tokenEndpoint": {
-                          "type": "string",
-                          "format": "uri",
-                          "description": "The identity provider's token endpoint, as its OpenID configuration names token_endpoint."
-                        },
-                        "clientId": { "type": "string", "minLength": 1 },
-                        "clientSecret": {
-                          "oneOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "secret" },
-                                "secretId": {
-                                  "type": "string",
-                                  "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                                  "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                                }
-                              },
-                              "required": ["kind", "secretId"],
-                              "additionalProperties": false,
-                              "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "file" },
-                                "path": {
-                                  "type": "string",
-                                  "format": "starts_with",
-                                  "pattern": "^\\/.*",
-                                  "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                                }
-                              },
-                              "required": ["kind", "path"],
-                              "additionalProperties": false,
-                              "description": "A mounted file's contents, a trailing newline dropped."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "const": "command"
-                                },
-                                "command": {
-                                  "type": "array",
-                                  "prefixItems": [
-                                    { "type": "string", "minLength": 1 }
-                                  ],
-                                  "items": { "type": "string" },
-                                  "minItems": 1,
-                                  "description": "The program and its arguments, run without a shell."
-                                },
-                                "timeoutSeconds": {
-                                  "default": 30,
-                                  "description": "How long the command may run before it is stopped.",
-                                  "type": "integer",
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 9007199254740991
-                                }
-                              },
-                              "required": ["kind", "command"],
-                              "additionalProperties": false,
-                              "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                            }
-                          ],
-                          "description": "Where the client's secret is read, sent as HTTP Basic each time a token is asked for."
-                        },
-                        "scopes": {
-                          "description": "The scopes asked for; absent, the provider grants its default.",
-                          "minItems": 1,
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "pattern": "^[\\x21\\x23-\\x5B\\x5D-\\x7E]+$"
-                          }
-                        }
-                      },
-                      "required": [
-                        "kind",
-                        "tokenEndpoint",
-                        "clientId",
-                        "clientSecret"
-                      ],
-                      "additionalProperties": false,
-                      "description": "An access token from an identity provider's OAuth 2.0 client-credentials grant, asked for again a minute before its expires_in runs out."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "aws" },
-                        "audience": {
-                          "type": "string",
-                          "minLength": 1,
-                          "description": "The receiver, signed into the request as x-botcube-audience so it cannot be replayed to another."
-                        }
-                      },
-                      "required": ["kind", "audience"],
-                      "additionalProperties": false,
-                      "description": "The process's own AWS identity, as Google's external-account aws source gives it: a SigV4-signed sts:GetCallerIdentity request, URL-encoded JSON {url, method, headers}, which the receiver replays to STS. Signed again before its 15 minutes run out."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "botcube" },
-                        "audience": {
-                          "type": "string",
-                          "minLength": 1,
-                          "description": "The token's `aud`; not one reserved for another kind of BotCube token."
-                        }
-                      },
-                      "required": ["kind", "audience"],
-                      "additionalProperties": false,
-                      "description": "A short-lived token the Chat Service signs with its Turn identity keys, as the issuer at its public origin: the Harness bearer `harnessAuth` sends, which no configured credential takes."
-                    }
-                  ]
+                  "$ref": "#/$defs/credentialSource"
                 },
                 "headers": {
                   "description": "Headers sent on every request, such as a tenant or routing header a gateway requires; never a secret.",
@@ -2163,182 +879,7 @@
                 },
                 "credential": {
                   "description": "A file, sent as `Proxy-Authorization: Bearer <value>` on each tunnel and request, read again as it rotates; absent, the proxy takes none.",
-                  "oneOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "secret" },
-                        "secretId": {
-                          "type": "string",
-                          "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                          "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                        }
-                      },
-                      "required": ["kind", "secretId"],
-                      "additionalProperties": false,
-                      "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "file" },
-                        "path": {
-                          "type": "string",
-                          "format": "starts_with",
-                          "pattern": "^\\/.*",
-                          "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                        }
-                      },
-                      "required": ["kind", "path"],
-                      "additionalProperties": false,
-                      "description": "A mounted file's contents, a trailing newline dropped."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "command" },
-                        "command": {
-                          "type": "array",
-                          "prefixItems": [{ "type": "string", "minLength": 1 }],
-                          "items": { "type": "string" },
-                          "minItems": 1,
-                          "description": "The program and its arguments, run without a shell."
-                        },
-                        "timeoutSeconds": {
-                          "default": 30,
-                          "description": "How long the command may run before it is stopped.",
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
-                        }
-                      },
-                      "required": ["kind", "command"],
-                      "additionalProperties": false,
-                      "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": {
-                          "type": "string",
-                          "const": "oauth-client-credentials"
-                        },
-                        "tokenEndpoint": {
-                          "type": "string",
-                          "format": "uri",
-                          "description": "The identity provider's token endpoint, as its OpenID configuration names token_endpoint."
-                        },
-                        "clientId": { "type": "string", "minLength": 1 },
-                        "clientSecret": {
-                          "oneOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "secret" },
-                                "secretId": {
-                                  "type": "string",
-                                  "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
-                                  "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
-                                }
-                              },
-                              "required": ["kind", "secretId"],
-                              "additionalProperties": false,
-                              "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": { "type": "string", "const": "file" },
-                                "path": {
-                                  "type": "string",
-                                  "format": "starts_with",
-                                  "pattern": "^\\/.*",
-                                  "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
-                                }
-                              },
-                              "required": ["kind", "path"],
-                              "additionalProperties": false,
-                              "description": "A mounted file's contents, a trailing newline dropped."
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "const": "command"
-                                },
-                                "command": {
-                                  "type": "array",
-                                  "prefixItems": [
-                                    { "type": "string", "minLength": 1 }
-                                  ],
-                                  "items": { "type": "string" },
-                                  "minItems": 1,
-                                  "description": "The program and its arguments, run without a shell."
-                                },
-                                "timeoutSeconds": {
-                                  "default": 30,
-                                  "description": "How long the command may run before it is stopped.",
-                                  "type": "integer",
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 9007199254740991
-                                }
-                              },
-                              "required": ["kind", "command"],
-                              "additionalProperties": false,
-                              "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
-                            }
-                          ],
-                          "description": "Where the client's secret is read, sent as HTTP Basic each time a token is asked for."
-                        },
-                        "scopes": {
-                          "description": "The scopes asked for; absent, the provider grants its default.",
-                          "minItems": 1,
-                          "type": "array",
-                          "items": {
-                            "type": "string",
-                            "pattern": "^[\\x21\\x23-\\x5B\\x5D-\\x7E]+$"
-                          }
-                        }
-                      },
-                      "required": [
-                        "kind",
-                        "tokenEndpoint",
-                        "clientId",
-                        "clientSecret"
-                      ],
-                      "additionalProperties": false,
-                      "description": "An access token from an identity provider's OAuth 2.0 client-credentials grant, asked for again a minute before its expires_in runs out."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "aws" },
-                        "audience": {
-                          "type": "string",
-                          "minLength": 1,
-                          "description": "The receiver, signed into the request as x-botcube-audience so it cannot be replayed to another."
-                        }
-                      },
-                      "required": ["kind", "audience"],
-                      "additionalProperties": false,
-                      "description": "The process's own AWS identity, as Google's external-account aws source gives it: a SigV4-signed sts:GetCallerIdentity request, URL-encoded JSON {url, method, headers}, which the receiver replays to STS. Signed again before its 15 minutes run out."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": { "type": "string", "const": "botcube" },
-                        "audience": {
-                          "type": "string",
-                          "minLength": 1,
-                          "description": "The token's `aud`; not one reserved for another kind of BotCube token."
-                        }
-                      },
-                      "required": ["kind", "audience"],
-                      "additionalProperties": false,
-                      "description": "A short-lived token the Chat Service signs with its Turn identity keys, as the issuer at its public origin: the Harness bearer `harnessAuth` sends, which no configured credential takes."
-                    }
-                  ]
+                  "$ref": "#/$defs/credentialSource"
                 },
                 "headers": {
                   "description": "Headers sent on each tunnel and request the proxy carries, such as a tenant or routing header a gateway requires; never a secret.",
@@ -2971,6 +1512,173 @@
   },
   "required": ["name", "env", "domains", "existing"],
   "additionalProperties": false,
+  "$defs": {
+    "credentialSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "const": "secret" },
+            "secretId": {
+              "type": "string",
+              "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+              "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
+            }
+          },
+          "required": ["kind", "secretId"],
+          "additionalProperties": false,
+          "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "const": "file" },
+            "path": {
+              "type": "string",
+              "format": "starts_with",
+              "pattern": "^\\/.*",
+              "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
+            }
+          },
+          "required": ["kind", "path"],
+          "additionalProperties": false,
+          "description": "A mounted file's contents, a trailing newline dropped."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "const": "command" },
+            "command": {
+              "type": "array",
+              "prefixItems": [{ "type": "string", "minLength": 1 }],
+              "items": { "type": "string" },
+              "minItems": 1,
+              "description": "The program and its arguments, run without a shell."
+            },
+            "timeoutSeconds": {
+              "default": 30,
+              "description": "How long the command may run before it is stopped.",
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": ["kind", "command"],
+          "additionalProperties": false,
+          "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "const": "oauth-client-credentials" },
+            "tokenEndpoint": {
+              "type": "string",
+              "format": "uri",
+              "description": "The identity provider's token endpoint, as its OpenID configuration names token_endpoint."
+            },
+            "clientId": { "type": "string", "minLength": 1 },
+            "clientSecret": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": { "type": "string", "const": "secret" },
+                    "secretId": {
+                      "type": "string",
+                      "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                      "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
+                    }
+                  },
+                  "required": ["kind", "secretId"],
+                  "additionalProperties": false,
+                  "description": "A Secrets Manager secret's string, read with the process's own AWS credentials."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": { "type": "string", "const": "file" },
+                    "path": {
+                      "type": "string",
+                      "format": "starts_with",
+                      "pattern": "^\\/.*",
+                      "description": "A file the platform mounts, such as a secret injector writes; read again as it rotates."
+                    }
+                  },
+                  "required": ["kind", "path"],
+                  "additionalProperties": false,
+                  "description": "A mounted file's contents, a trailing newline dropped."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": { "type": "string", "const": "command" },
+                    "command": {
+                      "type": "array",
+                      "prefixItems": [{ "type": "string", "minLength": 1 }],
+                      "items": { "type": "string" },
+                      "minItems": 1,
+                      "description": "The program and its arguments, run without a shell."
+                    },
+                    "timeoutSeconds": {
+                      "default": 30,
+                      "description": "How long the command may run before it is stopped.",
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["kind", "command"],
+                  "additionalProperties": false,
+                  "description": "A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials."
+                }
+              ],
+              "description": "Where the client's secret is read, sent as HTTP Basic each time a token is asked for."
+            },
+            "scopes": {
+              "description": "The scopes asked for; absent, the provider grants its default.",
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[\\x21\\x23-\\x5B\\x5D-\\x7E]+$"
+              }
+            }
+          },
+          "required": ["kind", "tokenEndpoint", "clientId", "clientSecret"],
+          "additionalProperties": false,
+          "description": "An access token from an identity provider's OAuth 2.0 client-credentials grant, asked for again a minute before its expires_in runs out."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "const": "aws" },
+            "audience": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The receiver, signed into the request as x-botcube-audience so it cannot be replayed to another."
+            }
+          },
+          "required": ["kind", "audience"],
+          "additionalProperties": false,
+          "description": "The process's own AWS identity, as Google's external-account aws source gives it: a SigV4-signed sts:GetCallerIdentity request, URL-encoded JSON {url, method, headers}, which the receiver replays to STS. Signed again before its 15 minutes run out."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "const": "botcube" },
+            "audience": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The token's `aud`; not one reserved for another kind of BotCube token."
+            }
+          },
+          "required": ["kind", "audience"],
+          "additionalProperties": false,
+          "description": "A short-lived token the Chat Service signs with its Turn identity keys, as the issuer at its public origin: the Harness bearer `harnessAuth` sends, which no configured credential takes."
+        }
+      ]
+    }
+  },
   "x-renamed-keys": {
     "bot": "/bot/bot.yaml in the Bot Image; remove bot",
     "identity": "integrations.signIn",

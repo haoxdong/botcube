@@ -36,50 +36,8 @@
     },
     "models": {
       "type": "array",
-      "prefixItems": [
-        {
-          "type": "object",
-          "properties": {
-            "key": { "type": "string", "minLength": 1 },
-            "label": { "type": "string", "minLength": 1 },
-            "description": { "type": "string", "minLength": 1 },
-            "provider": {
-              "type": "string",
-              "enum": ["anthropic", "openai", "deepseek", "echo"],
-              "description": "A Session's Turns all run on its first Turn's provider."
-            },
-            "maxTokens": {
-              "description": "The most output tokens one call to the model may write, as LiteLLM's max_tokens; absent, LangChain's default; required on a model gateway for a model LangChain has no profile for.",
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991
-            }
-          },
-          "required": ["key", "label", "provider"],
-          "additionalProperties": false
-        }
-      ],
-      "items": {
-        "type": "object",
-        "properties": {
-          "key": { "type": "string", "minLength": 1 },
-          "label": { "type": "string", "minLength": 1 },
-          "description": { "type": "string", "minLength": 1 },
-          "provider": {
-            "type": "string",
-            "enum": ["anthropic", "openai", "deepseek", "echo"],
-            "description": "A Session's Turns all run on its first Turn's provider."
-          },
-          "maxTokens": {
-            "description": "The most output tokens one call to the model may write, as LiteLLM's max_tokens; absent, LangChain's default; required on a model gateway for a model LangChain has no profile for.",
-            "type": "integer",
-            "exclusiveMinimum": 0,
-            "maximum": 9007199254740991
-          }
-        },
-        "required": ["key", "label", "provider"],
-        "additionalProperties": false
-      },
+      "prefixItems": [{ "$ref": "#/$defs/model" }],
+      "items": { "$ref": "#/$defs/model" },
       "minItems": 1,
       "description": "The models a User picks from; the first is the default."
     },
@@ -169,6 +127,29 @@
   },
   "required": ["agentIdentity", "accountKey", "models"],
   "additionalProperties": false,
+  "$defs": {
+    "model": {
+      "type": "object",
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "provider": {
+          "type": "string",
+          "enum": ["anthropic", "openai", "deepseek", "echo"],
+          "description": "A Session's Turns all run on its first Turn's provider."
+        },
+        "maxTokens": {
+          "description": "The most output tokens one call to the model may write, as LiteLLM's max_tokens; absent, LangChain's default; required on a model gateway for a model LangChain has no profile for.",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": ["key", "label", "provider"],
+      "additionalProperties": false
+    }
+  },
   "x-renamed-keys": {
     "userTokenInShell": "environment, where a CLI reaches its Relay provider at ${BOTCUBE_RELAY_URL}/<provider> with no credential in the shell"
   }

@@ -14,8 +14,10 @@ SCHEMA = Path(__file__).resolve().parents[2] / 'config' / 'botcube.schema.json'
 
 
 def _models_credential_kinds() -> list[str]:
-    [endpoint] = [each for each in json.loads(SCHEMA.read_text())['properties']['integrations']['properties']['modelGateway']['oneOf'] if 'credential' in each['properties']]
-    return [each['properties']['kind']['const'] for each in endpoint['properties']['credential']['oneOf']]
+    schema = json.loads(SCHEMA.read_text())
+    [endpoint] = [each for each in schema['properties']['integrations']['properties']['modelGateway']['oneOf'] if 'credential' in each['properties']]
+    definition = endpoint['properties']['credential']['$ref'].removeprefix('#/$defs/')
+    return [each['properties']['kind']['const'] for each in schema['$defs'][definition]['oneOf']]
 
 
 @pytest.mark.parametrize('kind', _models_credential_kinds())

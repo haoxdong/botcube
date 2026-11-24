@@ -18,7 +18,7 @@ const model = z.strictObject({
   description: z.string().min(1).optional(),
   provider: modelProvider.describe("A Session's Turns all run on its first Turn's provider."),
   maxTokens: z.number().int().positive().optional().describe("The most output tokens one call to the model may write, as LiteLLM's max_tokens; absent, LangChain's default; required on a model gateway for a model LangChain has no profile for."),
-});
+}).meta({ id: 'model' });
 
 const agentColour = z.string().regex(/^#[0-9a-f]{6}$/i, 'Expected a colour as #rrggbb');
 const webUiSettings = {
@@ -202,7 +202,7 @@ export const configSections = z.strictObject({
     .default(false)
     .describe('Whether a credential may come from a command, which then runs as the service; whoever can edit this file chooses that command.'),
   caBundle: absolutePath.optional().describe(
-    'A PEM file of the roots every process checks the proxy and endpoints against, as SSL_CERT_FILE, NODE_EXTRA_CA_CERTS and REQUESTS_CA_BUNDLE; loaded at startup. Absent, each image keeps its own.',
+    'A PEM file of roots for verifying the proxy and endpoints, loaded at startup. It replaces the default roots for SSL_CERT_FILE and REQUESTS_CA_BUNDLE, so include the public roots alongside private roots. NODE_EXTRA_CA_CERTS adds it to Node.js defaults. If omitted, each image keeps its own roots.',
   ),
   integrations: z.strictObject({
     signIn: identity.default({ kind: 'botcube-accounts' }).describe('How Users sign in.'),
@@ -288,14 +288,11 @@ export const sectionDefaults = () => configSections.partial({ name: true, env: t
 export type BotSettings = z.output<typeof botSettings>;
 export type BotCubeConfig = z.output<typeof botcubeConfig>;
 
-
-/** The JSON Schemas of the files integrators write, for editors and for processes outside TypeScript. */
 export const jsonSchemas = () => ({
   'bot.schema.json': { ...z.toJSONSchema(botSettings, { io: 'input' }), 'x-renamed-keys': renamedBotKeys },
   'botcube.schema.json': { ...z.toJSONSchema(botcubeConfig, { io: 'input' }), 'x-renamed-keys': renamedKeys, 'x-retired-files': RETIRED_FILES },
 });
 
-/** Where a schema is committed besides here, relative to this file: the Python packages check their files with it. */
 export const jsonSchemaCopies: Readonly<Partial<Record<string, readonly string[]>>> = {
   'bot.schema.json': ['../harness/deepagents/src/botcube_harness_deepagents/bot.schema.json'],
   'botcube.schema.json': [

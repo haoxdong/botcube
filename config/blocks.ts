@@ -60,7 +60,7 @@ export const credentialSource = z.discriminatedUnion('kind', [
     kind: z.literal('botcube'),
     audience: z.string().min(1).describe("The token's `aud`; not one reserved for another kind of BotCube token."),
   }).describe("A short-lived token the Chat Service signs with its Turn identity keys, as the issuer at its public origin: the Harness bearer `harnessAuth` sends, which no configured credential takes."),
-]);
+]).meta({ id: 'credentialSource' });
 export type CredentialSource = z.output<typeof credentialSource>;
 
 const headerName = z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, 'Expected an HTTP header name');
