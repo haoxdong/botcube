@@ -19,19 +19,18 @@ export function useSidebar(layoutRef: RefObject<HTMLDivElement | null>, isPhone:
     const layout = layoutRef.current;
     if (!layout || !swipe.visible || !isPhone) return;
     const set = (name: string, px: number) => layout.style.setProperty(`--drawer-${name}`, `${px}px`);
-    set('scroll', window.scrollY);
-    set('page-height', document.documentElement.scrollHeight);
     // Under the clock the page is the screen, so the card's corners show (Fig 21)
     const reach = parseFloat(getComputedStyle(layout).getPropertyValue('--shell-top')) > 0 ? 0 : DRAWER_REACH;
-    set('reach', reach);
-    const fitBottom = () => set('bottom', reach && Math.max(0, window.screen.height - window.innerHeight - reach));
-    fitBottom();
+    const bottom = () => reach && Math.max(0, window.screen.height - window.innerHeight - reach);
+    const vars = { scroll: window.scrollY, 'page-height': document.documentElement.scrollHeight, reach, bottom: bottom() };
+    for (const [name, px] of Object.entries(vars)) set(name, px);
+    const fitBottom = () => set('bottom', bottom());
     window.addEventListener('resize', fitBottom);
     layout.setAttribute('data-drawer-preview', '');
     return () => {
       window.removeEventListener('resize', fitBottom);
       layout.removeAttribute('data-drawer-preview');
-      for (const name of ['scroll', 'page-height', 'reach', 'bottom']) layout.style.removeProperty(`--drawer-${name}`);
+      for (const name of Object.keys(vars)) layout.style.removeProperty(`--drawer-${name}`);
     };
   }, [layoutRef, swipe.visible, isPhone]);
   const toggle = () => {
