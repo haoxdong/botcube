@@ -353,6 +353,12 @@ importers:
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
+      aws-cdk-lib:
+        specifier: ^2.275.0
+        version: 2.275.0(constructs@10.8.1)
+      constructs:
+        specifier: ^10.8.1
+        version: 10.8.1
       yaml:
         specifier: ^2.9.1
         version: 2.9.1

@@ -6,7 +6,7 @@ import { App } from 'aws-cdk-lib';
 import { activeDeployRoot, deployIdentity, deployRootConfig } from './deploy-root.js';
 import { cdkPackageRoot } from './project-dir.js';
 import { defineProduction, type ProductionOptions } from './production.js';
-import { grantLambdasInline } from './lambda-inline-grants.js';
+import { grantLambdasInline } from 'botcube-config/lambda-inline-grants';
 import { productionChatImage, productionCredentialImage, serviceImages, type BotServiceDockerfiles } from './service-images.js';
 
 /** Where a bot keeps an ECS CDK app of its own, which wraps this one to add its own resources (ADR 0091). */

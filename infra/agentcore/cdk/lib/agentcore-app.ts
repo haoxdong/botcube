@@ -1,6 +1,6 @@
 import { Tags, type App } from 'aws-cdk-lib';
 import * as path from 'path';
-import { grantLambdasInline } from './lambda-inline-grants';
+import { grantLambdasInline } from 'botcube-config/lambda-inline-grants';
 import { AgentCoreStack, type AgentCoreStackProps, type AgentCorePhysicalIdentity } from './cdk-stack';
 import type { DeployConfig, DeployIdentity } from './deploy-config';
 import type { UserMemoryRole } from './user-memory-role';

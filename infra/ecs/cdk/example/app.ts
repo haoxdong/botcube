@@ -17,8 +17,7 @@ import { loadDeployConfig } from '../../../agentcore/cdk/lib/deploy-config.js';
 import { deployIdentity } from '../lib/deploy-root.js';
 import type { DeployIdentity } from '../lib/production-identity.js';
 import { defineProduction, type ProductionOptions } from '../lib/production.js';
-import { grantLambdasInline } from '../lib/lambda-inline-grants.js';
-import { placeLambdasInNetwork } from '../lib/existing-network.js';
+import { grantLambdasInline, placeLambdasInNetwork } from 'botcube-config/lambda-inline-grants';
 
 const EXAMPLE_DEPLOY_ROOT = path.resolve(__dirname, '../../../../examples/public/deploy');
 export const EXAMPLES_ROOT = path.resolve(__dirname, '../../../../examples');

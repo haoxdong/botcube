@@ -7,6 +7,13 @@
   },
   "exports": {
     ".": "./schema.ts",
+    "./lambda-inline-grants": {
+      "require": {
+        "types": "./lambda-inline-grants.d.cts",
+        "default": "./lambda-inline-grants.ts"
+      },
+      "default": "./lambda-inline-grants.ts"
+    },
     "./alarm-events": {
       "types": "./alarm-events.d.cts",
       "default": "./alarm-events.cjs"
@@ -45,6 +52,8 @@
   },
   "dependencies": {
     "ajv": "^8.20.0",
+    "aws-cdk-lib": "^2.275.0",
+    "constructs": "^10.8.1",
     "yaml": "^2.9.1",
     "zod": "^4.6.7"
   },

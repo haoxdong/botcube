@@ -1,4 +1,5 @@
 import { ArnFormat, CfnResource, Lazy, Stack, Token, Tokenization } from 'aws-cdk-lib';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
@@ -21,10 +22,40 @@ export function grantLambdasInline(scope: IConstruct): void {
     if (dropManagedPolicy(role, BASIC_EXECUTION)) {
       grantBeforeDeploying(fn, role, { actions: OWN_LOGS, resources: [logGroupArn(fn, ownLogGroupName(fn))] });
     }
-    const network = fn instanceof lambda.CfnFunction ? fn.vpcConfig : undefined;
+    const network = vpcConfig(fn);
     if (dropManagedPolicy(role, VPC_ACCESS) && network && !Tokenization.isResolvable(network)) {
-      grantNetwork(fn, network.subnetIds ?? [], network.securityGroupIds ?? []);
+      grantNetwork(fn, role, network.subnetIds ?? [], network.securityGroupIds ?? []);
     }
+  }
+}
+
+interface ExistingNetwork {
+  vpcId: string;
+  privateSubnetIds: readonly string[];
+}
+
+/**
+ * Put every Lambda function under `scope`, CDK's own custom-resource handlers included, in the existing network's
+ * private subnets, which bring their own egress, with an inline grant to attach there. A function already in a network
+ * keeps it.
+ */
+export function placeLambdasInNetwork(scope: IConstruct, network: ExistingNetwork): void {
+  const groups = new Map<Stack, ec2.CfnSecurityGroup>();
+  const groupIn = (stack: Stack) => {
+    const group = groups.get(stack) ?? new ec2.CfnSecurityGroup(stack, 'ExistingNetworkLambdas', {
+      vpcId: network.vpcId,
+      groupDescription: "BotCube's Lambda functions in the existing network",
+      securityGroupEgress: [{ ipProtocol: '-1', cidrIp: '0.0.0.0/0' }],
+    });
+    groups.set(stack, group);
+    return group;
+  };
+  for (const fn of scope.node.findAll().filter(isFunctionResource)) {
+    if (vpcConfig(fn) !== undefined) continue;
+    const group = groupIn(Stack.of(fn)).attrGroupId;
+    fn.addPropertyOverride('VpcConfig', { SubnetIds: [...network.privateSubnetIds], SecurityGroupIds: [group] });
+    const role = executionRole(fn);
+    if (role) grantNetwork(fn, role, network.privateSubnetIds, [group]);
   }
 }
 
@@ -32,9 +63,9 @@ export function grantLambdasInline(scope: IConstruct): void {
  * Let the function's role attach it to the network: create its interfaces only in `subnetIds` with
  * `securityGroupIds`, and manage only this account's interfaces.
  */
-export function grantNetwork(fn: CfnResource, subnetIds: readonly string[], securityGroupIds: readonly string[]): void {
-  const role = executionRole(fn);
-  if (!role) return;
+function grantNetwork(
+  fn: CfnResource, role: iam.IRole, subnetIds: readonly string[], securityGroupIds: readonly string[]
+): void {
   const ec2 = (resource: string, ids: readonly string[]) =>
     ids.map(id => Stack.of(fn).formatArn({ service: 'ec2', resource, resourceName: id }));
   const interfaces = ec2('network-interface', ['*']);
@@ -52,7 +83,11 @@ export function grantNetwork(fn: CfnResource, subnetIds: readonly string[], secu
   });
 }
 
-export function isFunctionResource(construct: IConstruct): construct is CfnResource {
+function vpcConfig(fn: CfnResource) {
+  return fn instanceof lambda.CfnFunction ? fn.vpcConfig : undefined;
+}
+
+function isFunctionResource(construct: IConstruct): construct is CfnResource {
   return construct instanceof CfnResource && construct.cfnResourceType === 'AWS::Lambda::Function';
 }
 
