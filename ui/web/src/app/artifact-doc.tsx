@@ -8,7 +8,7 @@ import { Editor, EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Fades } from "./motion";
 import { FileTextIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 
 import {
   pdfOf, saveFile, storedVersion, type ArtifactVersion, type Export, type ExportTarget, type ViewerProps,
@@ -28,20 +28,22 @@ const EXTENSIONS = [
   Markdown,
 ];
 
-function useDoc(label: string, markdown: string, editable: boolean, onUpdate?: (markdown: string) => void) {
-  return useEditor({
+const docAttributes = (title: string, editable: boolean) => ({
+  role: "textbox", "aria-label": title, "aria-multiline": "true", "aria-readonly": String(!editable), class: "artifact-doc",
+});
+
+function docOptions(title: string, markdown: string, editable: boolean) {
+  return {
     extensions: EXTENSIONS,
     content: markdown,
-    contentType: "markdown",
+    contentType: "markdown" as const,
     editable,
-    immediatelyRender: true,
-    editorProps: { attributes: { role: "textbox", "aria-label": label, "aria-multiline": "true", "aria-readonly": String(!editable), class: "artifact-doc" } },
-    onUpdate: ({ editor }) => onUpdate?.(editor.getMarkdown()),
-  });
+    editorProps: { attributes: docAttributes(title, editable) },
+  };
 }
 
 export function DocFrame({ title, markdown }: { title: string; markdown: string }) {
-  const editor = useDoc(title, markdown, false);
+  const editor = useEditor({ ...docOptions(title, markdown, false), immediatelyRender: true });
   useEffect(() => {
     editor.commands.setContent(markdown, { contentType: "markdown" });
   }, [editor, markdown]);
@@ -111,8 +113,30 @@ export function EditableDoc({ artifact: newest, read, save, shows }: ViewerProps
 }
 
 function DocEditor({ title, markdown, onEdit }: { title: string; markdown: string; onEdit: (markdown: string) => void }) {
-  const editor = useDoc(title, markdown, true, onEdit);
-  return <EditorContent editor={editor} />;
+  const host = useRef<HTMLDivElement>(null);
+  const editor = useRef<Editor | null>(null);
+  const edited = useEffectEvent(onEdit);
+  const create = useEffectEvent(() => new Editor({
+    ...docOptions(title, markdown, true),
+    onUpdate: ({ editor }) => edited(editor.getMarkdown()),
+  }));
+  useLayoutEffect(() => {
+    const instance = create();
+    editor.current = instance;
+    // Doc node views are native. EditorContent would redraw them to initialize React node views.
+    host.current?.append(instance.view.dom);
+    return () => {
+      editor.current = null;
+      instance.destroy();
+    };
+  }, []);
+  useLayoutEffect(() => {
+    const instance = editor.current;
+    if (instance && instance.view.dom.getAttribute("aria-label") !== title) {
+      instance.setOptions({ editorProps: { attributes: docAttributes(title, true) } });
+    }
+  }, [title]);
+  return <div ref={host} />;
 }
 
 function htmlOf(markdown: string): string {
