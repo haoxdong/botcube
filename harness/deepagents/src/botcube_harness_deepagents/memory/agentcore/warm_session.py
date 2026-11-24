@@ -1,7 +1,8 @@
-"""Bounded Session snapshots, reusable only under the same actor and writer epoch after successful settlement."""
+"""Bounded Session snapshots, reusable under the same actor and writer epoch."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import threading
@@ -10,6 +11,7 @@ from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -20,6 +22,7 @@ from langgraph.checkpoint.base import (
     CheckpointMetadata,
     CheckpointTuple,
 )
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph_checkpoint_aws import AgentCoreMemorySaver
 from langgraph_checkpoint_aws.checkpoint.agentcore.helpers import (
     BedrockAgentCoreClientWithRetry,
@@ -92,6 +95,23 @@ class _WarmSessions:
         self._versions: dict[_Key, int] = {}
         self._finished: dict[_Key, _Finished] = {}
         self._prepared: OrderedDict[_Key, _Prepared] = OrderedDict()
+        self._handoffs: OrderedDict[_Key, CheckpointTuple] = OrderedDict()
+
+    def remember_handoff(self, key: _Key, snapshot: CheckpointTuple) -> None:
+        with self._lock:
+            self._handoffs[key] = snapshot
+            self._handoffs.move_to_end(key)
+            while len(self._handoffs) > self._capacity:
+                self._handoffs.popitem(last=False)
+
+    def handoff(self, key: _Key) -> CheckpointTuple | None:
+        with self._lock:
+            return self._handoffs.get(key)
+
+    def discard_handoff(self, key: _Key, snapshot: CheckpointTuple) -> None:
+        with self._lock:
+            if self._handoffs.get(key) is snapshot:
+                del self._handoffs[key]
 
     def prepare(self, key: _Key, prepared: _Prepared) -> None:
         with self._lock:
@@ -134,6 +154,12 @@ class _WarmSessions:
             self._finished.pop(key, None)
             self._prepared.pop(key, None)
 
+    def drop(self, key: _Key) -> None:
+        with self._lock:
+            self._snapshots.pop(key, None)
+            self._handoffs.pop(key, None)
+            self._bump(key)
+
     def get(self, key: _Key) -> tuple[_Snapshot | None, int]:
         with self._lock:
             snapshot = self._snapshots.get(key)
@@ -169,6 +195,7 @@ class _WarmSessions:
             evicted, _ = self._snapshots.popitem(last=False)
             self._finished.pop(evicted, None)
             self._prepared.pop(evicted, None)
+            self._handoffs.pop(evicted, None)
 
     def _bump(self, key: _Key) -> int:
         self._finished.pop(key, None)
@@ -247,6 +274,40 @@ class WarmSessionSaver(AgentCoreMemorySaver):
         self._admission: tuple[_Key, str, str, str] | None = None
         self._written: tuple[_Key, _Confirmed] | None = None
         self._writes = CheckpointWrites()
+        self._staged: InMemorySaver | None = None
+        self._inherited: CheckpointTuple | None = None
+        self.predecessor: asyncio.Task[None] | None = None
+
+    def stage_writes(self, snapshot: CheckpointTuple | None, predecessor: asyncio.Task[None] | None) -> None:
+        if self._admission is not None:
+            self._staged = InMemorySaver(serde=self.serde)
+            self._inherited = snapshot
+            self.predecessor = predecessor
+
+    def handoff(self, config: RunnableConfig) -> CheckpointTuple | None:
+        staged, self._staged = self._staged, None
+        self._inherited = None
+        if staged is None or (self.predecessor is not None and self.predecessor.done() and self.predecessor.exception() is not None):
+            return None
+        assert self._admission is not None
+        snapshot = staged.get_tuple(config)
+        if snapshot is not None:
+            _SESSIONS.remember_handoff(self._admission[0], snapshot)
+        return snapshot
+
+    def discard_staged(self) -> None:
+        self._staged = None
+        self._inherited = None
+
+    def pending_snapshot(self, actor_id: str, epoch: str | None) -> CheckpointTuple | None:
+        if self._admission is None:
+            return None
+        key, actor, _, admitted_epoch = self._admission
+        return _SESSIONS.handoff(key) if (actor, admitted_epoch) == (actor_id, epoch) else None
+
+    def discard_handoff(self, snapshot: CheckpointTuple) -> None:
+        assert self._admission is not None
+        _SESSIONS.discard_handoff(self._admission[0], snapshot)
 
     def admit_snapshot_reuse(
         self, config: RunnableConfig, actor_id: str, run_id: str, epoch: str | None,
@@ -278,7 +339,6 @@ class WarmSessionSaver(AgentCoreMemorySaver):
             _SESSIONS.prepare(key, _Prepared(actor_id, epoch, confirmed))
 
     def finish_run(self) -> None:
-        """Promote only after graph settlement and successful Files publication under the Session lock."""
         if self._admission is None or self._written is None:
             return
         key, actor_id, run_id, epoch = self._admission
@@ -288,9 +348,13 @@ class WarmSessionSaver(AgentCoreMemorySaver):
                 confirmed.version, actor_id, epoch, run_id, confirmed.snapshot, confirmed.writes,
             ))
 
-    def abandon_run(self) -> None:
+    def abandon_run(self, *, drop_snapshot: bool = False) -> None:
         if self._admission is not None:
-            _SESSIONS.revoke(self._admission[0])
+            key = self._admission[0]
+            if drop_snapshot:
+                _SESSIONS.drop(key)
+            else:
+                _SESSIONS.revoke(key)
         self._written = None
 
     def _key(self, config: CheckpointerConfig) -> _Key:
@@ -298,6 +362,8 @@ class WarmSessionSaver(AgentCoreMemorySaver):
 
     def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
         checkpoint_config = CheckpointerConfig.from_runnable_config(dict(config))
+        if self._staged is not None and (staged := self._staged_tuple(config, checkpoint_config)) is not None:
+            return staged
         if checkpoint_config.checkpoint_id is not None:
             return super().get_tuple(config)
         key = self._key(checkpoint_config)
@@ -317,6 +383,14 @@ class WarmSessionSaver(AgentCoreMemorySaver):
         if confirmed.writes is not None:
             events.append(self.serializer.deserialize_event(confirmed.writes))
         return self._tuple(checkpoint_config, confirmed.snapshot.checkpoint_id, events)
+
+    def _staged_tuple(self, config: RunnableConfig, checkpoint_config: CheckpointerConfig) -> CheckpointTuple | None:
+        assert self._staged is not None
+        if (staged := self._staged.get_tuple(config)) is not None:
+            return staged
+        if self._inherited is not None and checkpoint_config.checkpoint_id in (None, self._inherited.checkpoint['id']):
+            return self._inherited
+        return None
 
     def _head_and_writes(self, config: CheckpointerConfig, checkpoint_id: str) -> tuple[str | None, list[WriteItem]]:
         """Memory's newest checkpoint key for the Session, and the held checkpoint's pending writes, read together.
@@ -394,23 +468,35 @@ class WarmSessionSaver(AgentCoreMemorySaver):
 
     async def settle_writes(self) -> None:
         await self._writes.settle()
+        if self.predecessor is not None:
+            await asyncio.shield(self.predecessor)
 
     async def aput(
         self, config: RunnableConfig, checkpoint: Checkpoint, metadata: CheckpointMetadata,
         new_versions: ChannelVersions,
     ) -> RunnableConfig:
-        return await self._writes.persist(super().aput(config, checkpoint, metadata, new_versions))
+        write = self._writes.enqueue(partial(super().aput, config, checkpoint, metadata, new_versions), self.predecessor)
+        if self._staged is None:
+            return await asyncio.shield(write)
+        return self._staged.put(config, checkpoint, metadata, checkpoint['channel_versions'])
 
     async def aput_writes(
         self, config: RunnableConfig, writes: Sequence[tuple[str, Any]], task_id: str, task_path: str = '',
     ) -> None:
-        await self._writes.persist(super().aput_writes(config, writes, task_id, task_path))
+        write = self._writes.enqueue(partial(super().aput_writes, config, writes, task_id, task_path), self.predecessor)
+        if self._staged is None:
+            await asyncio.shield(write)
+        else:
+            self._staged.put_writes(config, writes, task_id, task_path)
 
     async def aput_with_writes(
         self, config: RunnableConfig, checkpoint: Checkpoint, metadata: CheckpointMetadata,
         new_versions: ChannelVersions, pending_writes: Sequence[PendingWrite],
     ) -> RunnableConfig:
-        return await self._writes.persist(super().aput_with_writes(config, checkpoint, metadata, new_versions, pending_writes))
+        write = self._writes.enqueue(
+            partial(super().aput_with_writes, config, checkpoint, metadata, new_versions, pending_writes), self.predecessor,
+        )
+        return await asyncio.shield(write)
 
     def put_with_writes(
         self, config: RunnableConfig, checkpoint: Checkpoint, metadata: CheckpointMetadata,

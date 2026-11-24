@@ -8,6 +8,7 @@ sandbox (`ls: ...`) or recording a memory (`remember: ...`); otherwise it echoes
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -3469,6 +3470,110 @@ def test_invocation_eof_waits_for_real_record_settlement_before_purge(
     with pytest.raises(session_api.SessionNotFoundError, match='has no record'):
         _replay('user-1', 'thread-1')
     assert not any(memory.events.values())
+
+
+class _HeldAnswerWrite:
+    def __init__(self, write: Callable[..., dict[str, Any]], fails: bool) -> None:
+        self.write = write
+        self.fails = fails
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.committed = threading.Event()
+        self.premature_writes: list[str] = []
+
+    def __call__(self, **params: Any) -> dict[str, Any]:
+        if self.entered.is_set() and not self.committed.is_set():
+            self.premature_writes.append(params['sessionId'])
+        if not self.entered.is_set() and params['sessionId'] == 'thread-1' and self._carries_first_answer(params['payload']):
+            self.entered.set()
+            assert self.release.wait(5)
+            if self.fails:
+                raise RuntimeError('First answer was not published')
+            result = self.write(**params)
+            self.committed.set()
+            return result
+        return self.write(**params)
+
+    @staticmethod
+    def _carries_first_answer(payload: list[dict[str, str]]) -> bool:
+        for item in payload:
+            blob = json.loads(item['blob'])
+            if blob.get('channel') == 'messages' and b'Echo: first question' in base64.b64decode(blob['value']['data']):
+                return True
+        return False
+
+
+@pytest.mark.parametrize(('publication_fails', 'second_epoch'), [(False, 'writer-1'), (True, 'writer-1'), (False, 'writer-2')])
+def test_following_turn_dispatches_during_checkpoint_settlement(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch, publication_fails: bool, second_epoch: str,
+) -> None:
+    history = [{'id': f'history-{index}', 'role': 'assistant' if index % 2 else 'user',
+                'content': f'History entry {index}'} for index in range(202)]
+
+    def send(run: str, messages: list[dict[str, str]]) -> list[dict[str, Any]]:
+        response = service.client.post('/invocations', json={
+            'threadId': 'thread-1', 'runId': run, 'messages': messages,
+            'tools': [], 'context': [], 'state': {},
+            'forwardedProps': {
+                'actorId': 'actor-1', 'sessionUserId': 'user-1', 'memory': False,
+                'sessionSnapshotEpoch': {'epoch': second_epoch if run == 'second' else 'writer-1', 'turnId': run},
+                'turnIdentity': turn_identity('actor-1', 'user-1', 'thread-1', nonce=run),
+            },
+        }, headers={SESSION_HEADER: 'physical-runtime'})
+        assert response.status_code == 200
+        return _sse_events(response.text)
+
+    assert send('seed', history)[-1]['type'] == 'RUN_FINISHED'
+    held = _HeldAnswerWrite(agentcore_memory.create_event, publication_fails)
+    stream = _ScriptedModel._stream
+    dispatched = threading.Event()
+    dispatch_at: list[float] = []
+
+    def observe(
+        model: _ScriptedModel, messages: list[BaseMessage], *args: Any, **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        if messages[-1].content == 'second question':
+            assert messages[-2].content == 'Echo: first question'
+            dispatch_at.append(time.perf_counter())
+            dispatched.set()
+        yield from stream(model, messages, *args, **kwargs)
+
+    monkeypatch.setattr(agentcore_memory, 'create_event', held)
+    monkeypatch.setattr(_ScriptedModel, '_stream', observe)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(send, 'first', [{'id': 'first', 'role': 'user', 'content': 'first question'}])
+        try:
+            assert held.entered.wait(5)
+            started = time.perf_counter()
+            second = pool.submit(send, 'second', [{'id': 'second', 'role': 'user', 'content': 'second question'}])
+            started_during_write = dispatched.wait(1)
+            assert not first.done()
+            assert not second.done()
+        finally:
+            held.release.set()
+        first_events = first.result(timeout=10)
+        second_events = second.result(timeout=10)
+    assert not held.premature_writes
+    assert len(service.recorder.heard[-1]) == 103
+    assert service.recorder.heard[-1][-2:] == ['first question', 'second question']
+    assert started_during_write == (second_epoch == 'writer-1'), f'Following model dispatch took {dispatch_at[0] - started:.3f}s'
+    if publication_fails:
+        error = {'code': 'CHECKPOINT_WRITE_FAILED', 'message': 'First answer was not published'}
+        assert first_events[-1]['error'] == error
+        assert second_events[-1] == {'type': 'RUN_ERROR', **error}
+        assert not any(event.get('type') == 'RUN_FINISHED' for event in second_events)
+        monkeypatch.setattr(agentcore_memory, 'create_event', held.write)
+        agentcore_memory.listed.clear()
+        assert send('recovery', [{'id': 'recovery', 'role': 'user', 'content': 'recovery'}])[-1]['type'] == 'RUN_FINISHED'
+        assert agentcore_memory.listed
+        assert 'second question' not in service.recorder.heard[-1]
+    else:
+        assert first_events[-1]['type'] == second_events[-1]['type'] == 'RUN_FINISHED'
+        monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
+        assert _replay('user-1', 'thread-1')[-4:] == [
+            ('user', 'first question'), ('assistant', 'Echo: first question'),
+            ('user', 'second question'), ('assistant', 'Echo: second question'),
+        ]
 
 
 def test_a_sandbox_isolated_by_session_filing_keeps_its_own_rotating_token(service: _Service) -> None:

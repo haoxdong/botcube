@@ -609,21 +609,19 @@ def test_prepared_empty_sessions_obey_cache_capacity(
 
 
 
-def test_cancelled_checkpoint_callers_still_drain_queued_writes_before_raising(
+def test_cancelled_checkpoint_callers_settle_without_publishing_over_a_failed_write(
     memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def exercise() -> None:
         saver, _ = _turn(memory)
-        entered = [asyncio.Event(), asyncio.Event()]
-        release = [asyncio.Event(), asyncio.Event()]
+        entered, release = asyncio.Event(), asyncio.Event()
         order: list[str] = []
 
         async def put(self: Any, config: Any, checkpoint: Any, *args: Any) -> Any:
-            index = int(checkpoint['id'])
-            entered[index].set()
-            await release[index].wait()
             order.append(checkpoint['id'])
-            if index == 0:
+            if checkpoint['id'] == '0':
+                entered.set()
+                await release.wait()
                 raise ConnectionError('first write refused')
             return config
 
@@ -631,17 +629,14 @@ def test_cancelled_checkpoint_callers_still_drain_queued_writes_before_raising(
         writes = [asyncio.create_task(saver.aput(
             CONFIG, {**empty_checkpoint(), 'id': str(index)}, {'source': 'loop', 'step': index}, {},
         )) for index in range(2)]
-        await entered[0].wait()
+        await entered.wait()
         for write in writes:
             write.cancel()
         await asyncio.gather(*writes, return_exceptions=True)
         draining = asyncio.create_task(saver.settle_writes())
-        release[0].set()
-        await entered[1].wait()
-        assert not draining.done()
-        release[1].set()
+        release.set()
         with pytest.raises(ConnectionError, match='first write refused'):
             await draining
-        assert order == ['0', '1']
+        assert order == ['0']
 
     asyncio.run(exercise())

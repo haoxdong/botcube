@@ -82,7 +82,7 @@ class _Turn:
     finished: bool = False
     interrupted: bool = False
 
-    def publish(self, event: Any, *, put: Callable[[Any], None], files: TurnFiles) -> None:
+    def publish(self, event: Any, *, put: Callable[[Any], None], files: TurnFiles, early: bool = True) -> None:
         self.used_tools |= event.type == EventType.TOOL_CALL_START
         if event.type == EventType.CUSTOM and getattr(event, 'name', None) == 'on_interrupt':
             self.interrupted = True
@@ -90,7 +90,7 @@ class _Turn:
             self.finished = event.type == EventType.RUN_FINISHED
             self.interrupted |= getattr(getattr(event, 'outcome', None), 'type', None) == 'interrupt'
             self.completion = event
-            if self.finished and not self.interrupted and not self.used_tools and not files.used:
+            if early and self.finished and not self.interrupted and not self.used_tools and not files.used:
                 self.release(put)
             return
         put(event)

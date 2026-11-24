@@ -1,35 +1,35 @@
-"""Admitted checkpoint I/O outlives graph cancellation and settles under the Session lock."""
+"""Admitted checkpoint I/O outlives graph cancellation and settles before invocation EOF."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
+
+_T = TypeVar('_T')
 
 
 class CheckpointWrites:
     def __init__(self) -> None:
-        self._lock = asyncio.Lock()
-        self._pending: set[asyncio.Task[Any]] = set()
+        self._tail: asyncio.Task[Any] | None = None
 
-    async def persist(self, operation: Coroutine[Any, Any, Any]) -> Any:
-        async def write() -> Any:
-            async with self._lock:
-                return await operation
+    def enqueue(
+        self, operation: Callable[[], Awaitable[_T]], predecessor: asyncio.Task[None] | None,
+    ) -> asyncio.Task[_T]:
+        previous = self._tail or predecessor
 
-        task = asyncio.create_task(write())
-        self._pending.add(task)
-        try:
-            return await asyncio.shield(task)
-        finally:
-            if task.done() and not task.cancelled() and task.exception() is None:
-                self._pending.discard(task)
+        async def write() -> _T:
+            if previous is not None:
+                await asyncio.shield(previous)
+            return await operation()
+
+        self._tail = task = asyncio.create_task(write())
+        return task
 
     async def settle(self) -> None:
-        pending = self._pending.copy()
-        if pending:
-            results = await asyncio.gather(*pending, return_exceptions=True)
-            self._pending.difference_update(pending)
-            for result in results:
-                if isinstance(result, BaseException):
-                    raise result
+        if (tail := self._tail) is not None:
+            try:
+                await asyncio.shield(tail)
+            finally:
+                if tail is self._tail and tail.done():
+                    self._tail = None

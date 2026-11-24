@@ -698,8 +698,8 @@ async def _read_turn_checkpoint(
         if not current:
             return None
         if isinstance(saver, WarmSessionSaver):
-            saver.admit_snapshot_reuse(
-                _session_config(session), actor_id, run_id,
+            await _SESSION_TURNS.admit_checkpoint(
+                session, saver, actor_id, run_id,
                 agentcore_memory_backend.finished_snapshot_epoch(turn_identity, epoch),
             )
         with turn_timing.phase('checkpoint_read'):
@@ -782,11 +782,19 @@ def _preparation_event(
     return CustomEvent(name='SESSION_PREPARATION', value=value)
 
 
+@dataclass
+class _Publication:
+    saver: WarmSessionSaver
+    task: asyncio.Task[None]
+    followed: bool = False
+
+
 class _SessionTurns:
     def __init__(self) -> None:
         self._turns: dict[tuple[str | None, str | None], _Turn] = {}
         self._locks: dict[tuple[str | None, str | None], asyncio.Lock] = {}
         self._flush_failures: dict[tuple[str | None, str | None], Exception] = {}
+        self._publications: dict[tuple[str | None, str | None], _Publication] = {}
         self._feeds: dict[tuple[str | None, str | None], asyncio.Task[None]] = {}
         self._end = object()
 
@@ -798,11 +806,51 @@ class _SessionTurns:
             turn = self._turns.get(session)
             yield turn is not None and turn.input_data is input_data and not turn.stopped
 
+    async def admit_checkpoint(
+        self, session: tuple[str | None, str | None], saver: WarmSessionSaver, actor_id: str,
+        run_id: str, epoch: str | None,
+    ) -> None:
+        previous = self._publications.get(session)
+        snapshot = previous.saver.pending_snapshot(actor_id, epoch) if previous is not None else None
+        if previous is not None and snapshot is None:
+            await asyncio.wait([previous.task])
+            previous = None
+        saver.admit_snapshot_reuse(_session_config(session), actor_id, run_id, epoch)
+        if previous is not None:
+            previous.followed = True
+        saver.stage_writes(snapshot, previous.task if previous is not None else None)
+
+    def _publish_checkpoint(
+        self, session: tuple[str | None, str | None], saver: WarmSessionSaver, snapshot: CheckpointTuple,
+        turn: _Turn, feeds: list[TurnFeed],
+    ) -> asyncio.Task[None]:
+        async def publish() -> None:
+            try:
+                await saver.settle_writes()
+                saver.finish_run()
+                self._feed(session, turn, feeds)
+            except Exception as failure:
+                saver.abandon_run(drop_snapshot=True)
+                if isinstance(failure, CheckpointWriteError):
+                    raise
+                error = CheckpointWriteError(str(failure))
+                if not publication.followed:
+                    self._flush_failures[session] = error
+                raise error from failure
+            finally:
+                saver.discard_handoff(snapshot)
+                if self._publications.get(session) is publication:
+                    del self._publications[session]
+
+        task = asyncio.create_task(publish())
+        self._publications[session] = publication = _Publication(saver, task)
+        return task
+
     @asynccontextmanager
     async def preparation(self, session: tuple[str | None, str | None]) -> AsyncGenerator[bool, None]:
         lock = self._locks.setdefault(session, asyncio.Lock())
         turn = self._turns.get(session)
-        if lock.locked() or (turn is not None and not turn.finished):
+        if lock.locked() or session in self._publications or (turn is not None and not turn.finished):
             yield False
             return
         async with lock:
@@ -861,15 +909,14 @@ class _SessionTurns:
         input_data: RunAgentInput,
         files: FilesMount | None,
         context: _RequestContext,
-        read_locked: Callable[[LangGraphAgent], Awaitable[None]] | None = None,
         deadline: float | None = None,
     ) -> AsyncGenerator[Any, None]:
         previous = self._turns.get(session)
-        if previous is not None:
+        if previous is not None and not previous.finished:
             previous.stop()
         self._turns[session] = turn = _Turn(input_data.run_id, input_data=input_data)
         queue: asyncio.Queue[Any] = asyncio.Queue()
-        run = asyncio.create_task(self._run(session, turn, prepare, input_data, files, context, queue.put_nowait, read_locked, deadline))
+        run = asyncio.create_task(self._run(session, turn, prepare, input_data, files, context, queue.put_nowait, deadline))
         def completed(work: asyncio.Task[None]) -> None:
             if not work.cancelled() and (failure := work.exception()) is not None:
                 log.error(
@@ -895,7 +942,6 @@ class _SessionTurns:
         files: FilesMount | None,
         context: _RequestContext,
         put: Callable[[Any], None],
-        read_locked: Callable[[LangGraphAgent], Awaitable[None]] | None = None,
         deadline: float | None = None,
     ) -> None:
         trace_context = (
@@ -904,60 +950,11 @@ class _SessionTurns:
         )
         trace_context = baggage.set_baggage('run.id', input_data.run_id, context=trace_context)
         trace_token = otel_context.attach(trace_context)
-        lock = self._locks.setdefault(session, asyncio.Lock())
-        saver: Any = None
         steering_token = active_steering.set((turn.steering, put))
         completed = False
         try:
-            agent, root = await prepare()
-            async with lock:
-                if turn.stopped:
-                    put(_stopped())
-                    return
-                if (failure := self._flush_failures.pop(session, None)) is not None:
-                    raise failure
-                saver = getattr(getattr(agent, 'graph', None), 'checkpointer', None)
-                if read_locked is not None:
-                    await read_locked(agent)
-                if turn.stopped:
-                    _settle_finished_reuse(saver, False)
-                    put(_stopped())
-                    return
-                reply = _OpenReply()
-
-                with turn_files(files, root, excluded_paths(_require_bot().skills)) as readiness:
-                    readiness.prefetch()
-                    with prompt_cache_turn(context.session_id), collecting_turn_feeds() as feeds:
-                        publish = partial(turn.publish, put=put, files=readiness)
-                        turn.work = reply.create_task(_turn_events(agent, input_data, reply.watching(publish)))
-                    limited = await wait_for_turn(turn.work, deadline, finished=lambda: turn.finished)
-                    try:
-                        await _settle_turn_writes(saver, turn.work)
-                        await readiness.settle_prefetch()
-                        if not turn.work.cancelled():
-                            turn.work.result()
-                            readiness.raise_if_failed()
-                    finally:
-                        await readiness.settle_archives()
-                        if turn.work.cancelled():
-                            await reply.keep(agent, session)
-                            await reply.answer_cut_calls(agent, session)
-                            await reply.keep_clock(agent, session, put)
-                if turn.work.cancelled():
-                    _settle_finished_reuse(saver, False)
-                    await reply.finish_cancelled(agent, session, input_data, put, limited=limited and not turn.stopped)
-                elif turn.completion is not None:
-                    await reply.keep_failed(turn.completion, agent, session, put)
-                    finished = turn.finished_without_interruption(agent)
-                    turn.release(put)
-                    self._feed(session, turn, feeds)
-                    _settle_finished_reuse(saver, finished)
-                completed = turn.finished and not turn.stopped
-        except Exception as failure:
-            _settle_finished_reuse(saver, False)
-            if (deferred := turn.failure_after_answer(failure)) is not None:
-                self._flush_failures[session] = deferred
-            raise
+            await self._execute(session, turn, prepare, input_data, files, context, put, deadline)
+            completed = turn.finished and not turn.stopped
         finally:
             active_steering.reset(steering_token)
             await session_memory.settle_prefetch(wait=not completed)
@@ -965,6 +962,106 @@ class _SessionTurns:
             if self._turns.get(session) is turn:
                 del self._turns[session], self._locks[session]
             put(self._end)
+
+    async def _execute(
+        self, session: tuple[str | None, str | None], turn: _Turn,
+        prepare: Callable[[], Awaitable[tuple[LangGraphAgent, Path]]], input_data: RunAgentInput,
+        files: FilesMount | None, context: _RequestContext, put: Callable[[Any], None],
+        deadline: float | None,
+    ) -> None:
+        lock = self._locks.setdefault(session, asyncio.Lock())
+        agent, root = await prepare()
+        saver = getattr(getattr(agent, 'graph', None), 'checkpointer', None)
+        try:
+            async with lock:
+                if turn.stopped:
+                    put(_stopped())
+                    return
+                if (failure := self._flush_failures.pop(session, None)) is not None:
+                    raise failure
+                feeds, snapshot = await _run_graph(
+                    turn, agent, root, input_data, files, session, context, put, deadline,
+                )
+                if snapshot is None:
+                    _settle_finished_reuse(saver, turn.finished_without_interruption(agent))
+                    if turn.completion is not None:
+                        turn.release(put)
+                        self._feed(session, turn, feeds)
+                    return
+                assert isinstance(saver, WarmSessionSaver)
+                publication = self._publish_checkpoint(session, saver, snapshot, turn, feeds)
+        except Exception as failure:
+            _settle_finished_reuse(saver, False)
+            if not isinstance(failure, CheckpointWriteError) and (deferred := turn.failure_after_answer(failure)) is not None:
+                self._flush_failures[session] = deferred
+            raise
+        if saver.predecessor is not None:
+            await asyncio.wait([saver.predecessor])
+        if _publication_succeeded(saver.predecessor):
+            turn.release(put)
+        await publication
+
+
+def _publication_succeeded(task: asyncio.Task[None] | None) -> bool:
+    return task is None or (task.done() and not task.cancelled() and task.exception() is None)
+
+
+async def _run_graph(
+    turn: _Turn, agent: LangGraphAgent, root: Path, input_data: RunAgentInput, files: FilesMount | None,
+    session: tuple[str | None, str | None], context: _RequestContext, put: Callable[[Any], None], deadline: float | None,
+) -> tuple[list[TurnFeed], CheckpointTuple | None]:
+    saver = getattr(getattr(agent, 'graph', None), 'checkpointer', None)
+    predecessor = saver.predecessor if isinstance(saver, WarmSessionSaver) else None
+    reply = _OpenReply()
+    with turn_files(files, root, excluded_paths(_require_bot().skills)) as readiness:
+        readiness.prefetch()
+        with prompt_cache_turn(context.session_id), collecting_turn_feeds() as feeds:
+            publish = partial(turn.publish, put=put, files=readiness, early=predecessor is None)
+            turn.work = work = reply.create_task(_turn_events(agent, input_data, reply.watching(publish)))
+        limited = await wait_for_turn(work, deadline, finished=lambda: turn.finished)
+        snapshot = None
+        try:
+            try:
+                snapshot = await _finish_graph_checkpoint(
+                    saver, work, session, turn.finished_without_interruption(agent) and not readiness.used,
+                )
+                await readiness.settle_prefetch()
+                if not work.cancelled():
+                    readiness.raise_if_failed()
+            finally:
+                await readiness.settle_archives()
+                if work.cancelled() and _publication_succeeded(predecessor):
+                    await reply.keep(agent, session)
+                    await reply.answer_cut_calls(agent, session)
+                    await reply.keep_clock(agent, session, put)
+        except Exception:
+            if snapshot is not None:
+                assert isinstance(saver, WarmSessionSaver)
+                saver.discard_handoff(snapshot)
+                await _settle_turn_writes(saver, work)
+            raise
+    if work.cancelled():
+        await reply.finish_cancelled(agent, session, input_data, put, limited=limited and not turn.stopped)
+    elif turn.completion is not None:
+        await reply.keep_failed(turn.completion, agent, session, put)
+    return feeds, snapshot
+
+
+async def _finish_graph_checkpoint(
+    saver: Any, work: asyncio.Task[None], session: tuple[str | None, str | None], finished: bool,
+) -> CheckpointTuple | None:
+    if isinstance(saver, WarmSessionSaver):
+        try:
+            if (finished and not work.cancelled() and work.exception() is None
+                    and (snapshot := saver.handoff(_session_config(session))) is not None):
+                return snapshot
+        except Exception:
+            await _settle_turn_writes(saver, work)
+            raise
+        finally:
+            saver.discard_staged()
+    await _settle_turn_writes(saver, work)
+    return None
 
 
 _SESSION_TURNS = _SessionTurns()
