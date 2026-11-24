@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 /** @param {import('playwright').Browser} browser @param {string} screen */
 export async function checkRowLayout(browser, screen = 'Chromium 1440×900') {
   if (screen !== 'Chromium 1440×900') return;
-  const css = await Promise.all(['tokens.css', 'chat.css'].map(file => readFile(new URL(`../src/app/${file}`, import.meta.url), 'utf8')));
+  const css = await Promise.all(['design-system/tokens.css', 'app/chat.css'].map(file => readFile(new URL(`../src/${file}`, import.meta.url), 'utf8')));
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   try {
     const content = `<p>${'The long end moved while the front end held. '.repeat(15)}</p>`.repeat(12);

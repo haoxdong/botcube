@@ -12,9 +12,9 @@ const cube = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.
 const read = (file: string) => readFileSync(path.join(cube, file), 'utf8');
 
 // The tokens: globals.css imports them first, ahead of its sheets by surface.
-const GLOBALS = 'ui/web/src/app/tokens.css';
-// Every stylesheet of the app's own: globals.css, the sheets split from it by surface and those written apart.
-const APP_SHEETS = readdirSync(path.join(cube, 'ui/web/src/app')).filter((file) => file.endsWith('.css')).map((file) => `ui/web/src/app/${file}`);
+const GLOBALS = 'ui/web/src/design-system/tokens.css';
+// Every stylesheet of the app's own: the tokens, globals.css, the sheets split from it by surface and those written apart.
+const APP_SHEETS = [GLOBALS, ...readdirSync(path.join(cube, 'ui/web/src/app')).filter((file) => file.endsWith('.css')).map((file) => `ui/web/src/app/${file}`)];
 const tokens = tokensOf(read(GLOBALS));
 
 describe('tokens', () => {

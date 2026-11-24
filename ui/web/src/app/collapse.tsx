@@ -4,6 +4,7 @@ import { AnimatePresence, domAnimation, domMax, isMotionComponent, LazyMotion, M
 import { Children, Fragment, cloneElement, createContext, isValidElement, useContext, useEffect, useRef, useState, type Key, type KeyboardEventHandler, type ReactNode, type ReactElement, type Ref, type TransitionEvent } from "react";
 
 import { motionTokens } from "./motion-tokens";
+import { Arriving } from "./motion";
 
 type Tag = "div" | "li" | "span";
 
@@ -21,16 +22,17 @@ function presenceChildren(children: ReactNode, prefix = ""): ReactElement<Presen
   });
 }
 
-function Present({ children }: { children: ReactElement<{ inert?: boolean | undefined; initial?: unknown }> }) {
+function Present({ move, children }: { move: ReturnType<typeof motionTokens>["move"]; children: ReactElement<{ inert?: boolean | undefined; initial?: unknown }> }) {
   const present = useIsPresent();
-  return cloneElement(children, { inert: present ? children.props.inert : true });
+  const arriving = useContext(Arriving);
+  return cloneElement(children, { inert: present ? children.props.inert : true, ...(arriving ? { initial: false, transition: { opacity: { duration: 0 }, layout: move } } : {}) });
 }
 
 export function Presence({ children }: { children: ReactNode }) {
   const instant = useInstant();
   const { quick, move } = motionTokens();
   if (instant) return presenceChildren(children).map((child) => isMotionComponent(child.type) ? cloneElement(child, { initial: false }) : child);
-  return <LazyMotion features={domMax} strict><MotionConfig transition={{ opacity: quick, layout: move }}><AnimatePresence initial={false}>{presenceChildren(children).map((child) => <Present key={child.key}>{child}</Present>)}</AnimatePresence></MotionConfig></LazyMotion>;
+  return <LazyMotion features={domMax} strict><MotionConfig transition={{ opacity: quick, layout: move }}><AnimatePresence initial={false}>{presenceChildren(children).map((child) => <Present key={child.key} move={move}>{child}</Present>)}</AnimatePresence></MotionConfig></LazyMotion>;
 }
 
 export function Layout({ children, ...props }: HTMLMotionProps<"div">) {

@@ -24,6 +24,7 @@ declare module 'vitest/browser' {
   interface BrowserCommands {
     resetMousePosition: () => Promise<void>;
     emulateMedia: (reducedMotion: 'reduce' | 'no-preference') => Promise<void>;
+    captureScreen: (file: string) => Promise<void>;
     prepareRendering: () => Promise<RenderingProof>;
     recordRendering: (record: RenderingRecord) => Promise<void>;
     startRenderingTrace: (story: string) => Promise<void>;
@@ -77,9 +78,9 @@ afterEach(async (context) => {
     await expect(document.documentElement).toMatchScreenshot(context.task.name.replace(/[^a-zA-Z0-9-]+/g, '-'));
   }
   if (!output) return;
-  await page.screenshot({
-    path: `${output}/${context.task.name}-${inject('screen')}.png`,
-  });
+  const file = `${output}/${context.task.name}-${inject('screen')}.png`;
+  if (document.documentElement.dataset.screen) await commands.captureScreen(file);
+  else await page.screenshot({ path: file });
 });
 
 afterEach(async (context) => {

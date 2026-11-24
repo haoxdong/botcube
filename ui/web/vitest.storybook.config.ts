@@ -160,6 +160,18 @@ export default defineConfig({
         recordRendering: async (_context, record: Parameters<typeof recordRendering>[2]) => {
           await recordRendering(renderingDirectory, screen, record);
         },
+        // A story set to a device's screen (.storybook/screen.ts), captured at that screen's own size: the tester page
+        // grows so it does not scale the story's frame down.
+        captureScreen: async (context, file: string) => {
+          if (context.provider.name !== 'playwright') throw new Error('captureScreen needs Playwright');
+          const size = context.page.viewportSize();
+          await context.page.setViewportSize({ width: 2400, height: 1600 });
+          try {
+            await context.iframe.owner().screenshot({ path: file });
+          } finally {
+            if (size) await context.page.setViewportSize(size);
+          }
+        },
         emulateMedia: async (context, reducedMotion: 'reduce' | 'no-preference') => {
           if (context.provider.name !== 'playwright') throw new Error('emulateMedia needs Playwright');
           await context.page.emulateMedia({ reducedMotion });

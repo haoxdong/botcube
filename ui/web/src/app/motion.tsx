@@ -1,10 +1,12 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { createContext, useContext, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { moveMs } from "./motion-tokens";
 
 // One motion per user action. These fade on the Web Animations API, so `document.getAnimations()` sees
 // every one and the Storybook motion budget holds them; neither nests another fade, so a change never stacks stages.
+
+export const Arriving = createContext(false);
 
 function cssMs(name: string) {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -107,9 +109,10 @@ export function Arrives({ state, waiting = false, children, ref, ...rest }: Box 
   const [box, attach] = useBox(ref);
   const [last, setLast] = useState(state);
   const [arrivals, setArrivals] = useState(0);
+  const arriving = useContext(Arriving);
   if (state !== last) {
     setLast(state);
-    if (!waiting) setArrivals(arrivals + 1);
+    if (!waiting && !arriving) setArrivals(arrivals + 1);
   }
 
   useLayoutEffect(() => {

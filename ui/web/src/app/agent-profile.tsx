@@ -13,6 +13,7 @@ import { Button } from "../components/pill-button";
 import { Field, FieldLabel } from "../components/ui/field";
 import { Avatar } from "./avatar";
 import { LoadFailed, LoadingSkeleton, useLoad, type LoadState } from "./load-state";
+import { Arriving, useAfterMove } from "./motion";
 import { PictureField } from "./picture-field";
 import { throwIfRefused } from "./refusal";
 import { Input } from "@/components/ui/input";
@@ -694,6 +695,7 @@ export function AgentProfile({
   // The avatar's pencil opens Agent Identity's editor in the tab's place; closing it shows the tab again.
   const [editing, setEditing] = useState(false);
   const [wasOpen, setWasOpen] = useState(open);
+  const settled = useAfterMove(open);
   if (open !== wasOpen) {
     setWasOpen(open);
     if (open) {
@@ -713,65 +715,67 @@ export function AgentProfile({
   const panel = (name: AgentProfileTab) => builtIn[name] ?? <p className="agent-profile-empty">Nothing here yet.</p>;
 
   return (
-    <div ref={ref} className="agent-profile" role="dialog" aria-label="Agent profile" hidden={!open}>
-      <div className="agent-profile-header">
-        <div className="agent-profile-identity">
-          <button ref={closeRef} className="header-btn agent-profile-close" onClick={onClose} aria-label="Close agent profile">
-            <X size={20} aria-hidden />
-          </button>
-          <Presence>
-            {profile && <motionElement.div {...presenceMotion} key="avatar" className="agent-profile-avatar">
-              <Avatar picture={profile.picture ?? undefined} emoji={profile.avatar} name={profile.name} agent size={96} />
-              <button className="agent-profile-edit" onClick={() => setEditing(true)} aria-label="Edit agent"><Pencil size={16} aria-hidden /></button>
-            </motionElement.div>}
-            {profile && <motionElement.h2 {...presenceMotion} key="name" className="agent-profile-name">{profile.name}</motionElement.h2>}
-            {profile && character && <motionElement.p {...presenceMotion} key="character" className="agent-profile-character">{character}</motionElement.p>}
-            {profile && <motionElement.p {...presenceMotion} key="status" className={`agent-profile-status agent-profile-status-${profile.status}`}>
-              <Zap size={14} aria-hidden />{profile.status === "online" ? "Connected" : "Not connected"}
-            </motionElement.p>}
-          </Presence>
+    <Arriving value={open && !settled}>
+      <div ref={ref} className="agent-profile" role="dialog" aria-label="Agent profile" hidden={!open} data-settled={settled || undefined}>
+        <div className="agent-profile-header">
+          <div className="agent-profile-identity">
+            <button ref={closeRef} className="header-btn agent-profile-close" onClick={onClose} aria-label="Close agent profile">
+              <X size={20} aria-hidden />
+            </button>
+            <Presence>
+              {profile && <motionElement.div {...presenceMotion} key="avatar" className="agent-profile-avatar">
+                <Avatar picture={profile.picture ?? undefined} emoji={profile.avatar} name={profile.name} agent size={96} />
+                <button className="agent-profile-edit" onClick={() => setEditing(true)} aria-label="Edit agent"><Pencil size={16} aria-hidden /></button>
+              </motionElement.div>}
+              {profile && <motionElement.h2 {...presenceMotion} key="name" className="agent-profile-name">{profile.name}</motionElement.h2>}
+              {profile && character && <motionElement.p {...presenceMotion} key="character" className="agent-profile-character">{character}</motionElement.p>}
+              {profile && <motionElement.p {...presenceMotion} key="status" className={`agent-profile-status agent-profile-status-${profile.status}`}>
+                <Zap size={14} aria-hidden />{profile.status === "online" ? "Connected" : "Not connected"}
+              </motionElement.p>}
+            </Presence>
+          </div>
+          <Presence>{error && <motionElement.p {...presenceMotion} className="agent-profile-error">{error}</motionElement.p>}</Presence>
         </div>
-        <Presence>{error && <motionElement.p {...presenceMotion} className="agent-profile-error">{error}</motionElement.p>}</Presence>
-      </div>
-      <div className="agent-profile-tabs" role="tablist">
-        {TABS.map(([name, Icon]) => (
-          <button
-            key={name}
-            role="tab"
-            aria-selected={name === tab && !editor}
-            aria-label={name}
-            title={name}
-            className="agent-profile-tab"
-            onClick={() => {
-              setTab(name);
-              setEditing(false);
-            }}
-          >
-            <Icon size={20} aria-hidden />
-          </button>
-        ))}
-      </div>
-      <div className="agent-profile-panel" role="tabpanel" aria-label="Computer" hidden={!keptComputer}>
-        {computer?.(open && keptComputer)}
-      </div>
-      {open && editor && (
-        <div className="agent-profile-panel">
-          <IdentityEditor
-            chatServiceUrl={chatServiceUrl}
-            identityFile={identityFile}
-            picture={profile.picture}
-            onSaved={onSaved}
-            isAccountCurrent={isAccountCurrent}
-            onClose={() => setEditing(false)}
-          />
+        <div className="agent-profile-tabs" role="tablist">
+          {TABS.map(([name, Icon]) => (
+            <button
+              key={name}
+              role="tab"
+              aria-selected={name === tab && !editor}
+              aria-label={name}
+              title={name}
+              className="agent-profile-tab"
+              onClick={() => {
+                setTab(name);
+                setEditing(false);
+              }}
+            >
+              <Icon size={20} aria-hidden />
+            </button>
+          ))}
         </div>
-      )}
-      {/* The other tabs load afresh each time they show. */}
-      {open && !editor && !keptComputer && (
-        <div className="agent-profile-panel" role="tabpanel" aria-label={tab}>
-          {panel(tab)}
+        <div className="agent-profile-panel" role="tabpanel" aria-label="Computer" hidden={!keptComputer}>
+          {computer?.(open && keptComputer)}
         </div>
-      )}
-    </div>
+        {open && editor && (
+          <div className="agent-profile-panel">
+            <IdentityEditor
+              chatServiceUrl={chatServiceUrl}
+              identityFile={identityFile}
+              picture={profile.picture}
+              onSaved={onSaved}
+              isAccountCurrent={isAccountCurrent}
+              onClose={() => setEditing(false)}
+            />
+          </div>
+        )}
+        {/* The other tabs load afresh each time they show. */}
+        {open && !editor && !keptComputer && (
+          <div className="agent-profile-panel" role="tabpanel" aria-label={tab}>
+            {panel(tab)}
+          </div>
+        )}
+      </div>
+    </Arriving>
   );
 }

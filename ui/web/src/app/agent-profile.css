@@ -110,7 +110,7 @@
   align-items: center;
 }
 
-/* Close, the avatar, the name and the status: what a phone folds away under an open file (plugins.css). */
+/* Close, the avatar, the name and the status: what a phone folds away under an open file (below). */
 .agent-profile-identity {
   position: relative;
   align-self: stretch;
@@ -531,3 +531,83 @@
 .sign-in-actions { display: flex; gap: var(--space-8); grid-area: actions; margin-top: var(--space-8); }
 .sign-in-actions button:disabled { opacity: 0.5; cursor: default; }
 .sign-in-error { margin: 0; color: var(--color-red); font-size: var(--font-small); }
+
+@media (min-width: 641px) {
+  .agent-profile {
+    margin-right: calc(var(--profile-shown) * var(--docked-width) - var(--docked-width));
+  }
+}
+
+@media (max-width: 1139px) {
+  .agent-profile {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100;
+    box-shadow: var(--shadow-float);
+  }
+}
+
+@media (max-width: 640px) {
+  .agent-profile {
+    inset: 0;
+    width: auto;
+    border-left: none;
+    border-radius: var(--radius-screen);
+    animation: none;
+    transition: transform var(--motion-move) var(--ease);
+  }
+
+  @starting-style {
+    .agent-profile { transform: translateX(100%); }
+  }
+
+  .agent-profile[data-settled] {
+    transition-duration: 0s;
+  }
+
+  .app-layout[data-profile-swiping] > .agent-profile {
+    transform: translateX(calc(100% - var(--profile-drag-offset)));
+    transition: transform var(--motion-move) var(--ease);
+  }
+
+  .app-layout[data-profile-dragging] > .agent-profile {
+    transition: none;
+  }
+
+  .app-layout[data-profile-swiping] .app-shell {
+    isolation: isolate;
+  }
+
+  .app-layout[data-profile-swiping] .app-shell::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 400;
+    background: var(--frost);
+    opacity: var(--profile-drag-progress);
+  }
+
+  .agent-profile:has(.agent-file) :is(.agent-profile-identity, .agent-profile-tabs) {
+    display: none;
+  }
+
+  .agent-profile:has(.agent-file) .agent-profile-header > .agent-profile-error {
+    margin-top: var(--space-16);
+  }
+
+  .agent-profile-edit {
+    right: -8px;
+    bottom: -8px;
+    width: 44px;
+    height: 44px;
+    border: 6px solid transparent;
+    background-clip: padding-box;
+    box-shadow: inset 0 0 0 2px var(--color-white);
+  }
+
+  .agent-profile-tab {
+    min-height: 44px;
+  }
+}

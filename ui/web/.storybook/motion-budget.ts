@@ -91,11 +91,12 @@ export async function expectMotionBudget(
   const started = new Map<Animation, Seen>();
   let shift = 0;
   const shifted = new Set<string>();
-  type Shift = PerformanceEntry & { value: number; sources?: { node?: Node | null }[] };
+  type Shift = PerformanceEntry & { value: number; sources?: { node?: Node | null; previousRect: DOMRectReadOnly; currentRect: DOMRectReadOnly }[] };
+  const rect = ({ x, y, width, height }: DOMRectReadOnly) => [x, y, width, height].map(Math.round).join(',');
   const add = (entries: PerformanceEntryList) => {
     for (const entry of entries as Shift[]) {
       shift += entry.value;
-      for (const { node } of entry.sources ?? []) if (node instanceof Element) shifted.add(`${node.tagName.toLowerCase()}${[...node.classList].slice(0, 2).map((value) => `.${value}`).join('')}`);
+      for (const { node, previousRect, currentRect } of entry.sources ?? []) if (node instanceof Element) shifted.add(`${node.tagName.toLowerCase()}${[...node.classList].slice(0, 2).map((value) => `.${value}`).join('')} ${rect(previousRect)} → ${rect(currentRect)}`);
     }
   };
   const observer = new PerformanceObserver((list) => add(list.getEntries()));

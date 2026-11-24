@@ -15,9 +15,9 @@ import { ChatHeader, useHeaderWorking } from "./chat-header";
 import { KeptChat } from "./kept-chat";
 import { usePhoneProfileFocus } from "./phone-profile-focus";
 import { useDrawerSwipe } from "./drawer-swipe";
-import { useDrawerPreview } from "./drawer-preview";
+import { Sidebar, useSidebar } from "./sidebar";
 import { usePhoneViewport } from "./phone-viewport";
-import { PHONE_QUERY, useIsPhone } from "./phone-query";
+import { useIsPhone } from "./phone-query";
 import { isUnread } from "./conversations";
 import {
   AGENT_DOCUMENT_EDITED,
@@ -26,12 +26,12 @@ import {
   type AgentProfileData,
 } from "./agent-profile";
 import { endOpeningMoment, type HistoryMoment } from "./latency";
-import { forgetMainChatCopy, withStorage, type StoredMainChatCopy } from "./main-chat-copy";
+import { forgetMainChatCopy, type StoredMainChatCopy } from "./main-chat-copy";
 import { forgetSteering } from "./steering";
 import { useModelSelection } from "./model-selection";
 import { useAgentRunning } from "./agent-running";
 import { ChatLoadState, LoadingSkeleton } from "./load-state";
-import { menuIcon } from "./menu-icon";
+import { MenuButton } from "./menu-icon";
 import { webUiPlugin } from "@bot-ui";
 import { AGENT_THEME, BOT_SETTINGS } from "../bot-settings";
 import { AgentComputerView } from "../computer/agent-computer-view";
@@ -39,7 +39,6 @@ import { LiveBrowserPanel } from "../computer/live-browser-panel";
 import type { AuthUiState } from "../plugin/index.js";
 import { chatServiceUrl } from "../plugin/chat-service-url";
 import { SidebarRow } from "./sidebar-row";
-import { Button, buttonVariants } from "@/components/ui/button";
 
 import { ChatComputers } from "./chat-computers";
 import { SideChats } from "./side-chats";
@@ -60,8 +59,6 @@ const { config: UI_CONFIG } = webUiPlugin;
 const AGENT_ID = UI_CONFIG.agentId;
 const CHAT_SERVICE_URL = chatServiceUrl();
 
-const SIDEBAR_EXPANDED_KEY = 'botcube.sidebar-expanded';
-
 
 export default function App({
   auth,
@@ -74,7 +71,6 @@ export default function App({
   historyMoment: RefObject<HistoryMoment | null>;
   keptChatLatestShown: RefObject<number>;
 }) {
-  const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const isPhone = useIsPhone();
   const viewport = usePhoneViewport();
   const viewportStyle = { "--keyboard-inset": `${viewport.inset}px`, "--viewport-top": `${viewport.top}px` };
@@ -82,16 +78,7 @@ export default function App({
   const layoutRef = useRef<HTMLDivElement>(null);
   const [layoutElement, setLayoutElement] = useState<HTMLDivElement | null>(null);
   useLayoutEffect(() => setLayoutElement(layoutRef.current), []);
-  const drawerRef = useRef<HTMLElement>(null);
-  const swipe = useDrawerSwipe({ layoutRef, drawerRef, side: "left", name: "sidebar", enabled: isPhone, docked: !isPhone, expanded: sidebarExpanded, onExpandedChange: setSidebarExpanded });
-  useEffect(() => {
-    if (!window.matchMedia(PHONE_QUERY).matches && withStorage(() => localStorage.getItem(SIDEBAR_EXPANDED_KEY)) === 'true') setSidebarExpanded(true);
-  }, []);
-  useDrawerPreview(layoutRef, swipe.visible, isPhone);
-  const toggleSidebar = () => {
-    swipe.toggle();
-    if (!isPhone) withStorage(() => localStorage.setItem(SIDEBAR_EXPANDED_KEY, String(!sidebarExpanded)));
-  };
+  const swipe = useSidebar(layoutRef, isPhone);
   const [screen, setScreen] = useState<'chat' | 'apps' | 'artifacts'>('chat');
   const screenOpen = screen !== 'chat';
   const { request: artifactRequest, initialized: artifactWorkspace, select: selectArtifact } = useArtifactWorkspace(auth);
@@ -116,7 +103,7 @@ export default function App({
     deleteSideChat: handleDeleteConversation,
     messageSubmitted,
     turnStarting,
-  } = useSessionNavigation({ ready, accountId, chatServiceUrl: CHAT_SERVICE_URL, agentId: AGENT_ID, opening, reading: !screenOpen && !(isPhone && (agentProfileOpen || sidebarExpanded)) });
+  } = useSessionNavigation({ ready, accountId, chatServiceUrl: CHAT_SERVICE_URL, agentId: AGENT_ID, opening, reading: !screenOpen && !(isPhone && (agentProfileOpen || swipe.expanded)) });
   const surfaceKey = useChatSurfaceKey(accountId, activeId, artifactWorkspace);
   const { catalog: models, picker, properties, choiceError } = useModelSelection({
     ready, accountId, chatServiceUrl: CHAT_SERVICE_URL,
@@ -138,7 +125,7 @@ export default function App({
   const agentProfileRef = useRef<HTMLDivElement>(null);
   const profileSwipe = useDrawerSwipe({
     layoutRef, drawerRef: agentProfileRef, side: "right", name: "profile", slides: true,
-    enabled: isPhone && activeId !== null && ready && !screenOpen && !sidebarExpanded && !swipe.dragging,
+    enabled: isPhone && activeId !== null && ready && !screenOpen && !swipe.expanded && !swipe.dragging,
     docked: !isPhone,
     expanded: agentProfileOpen,
     onExpandedChange: setAgentProfileOpen,
@@ -226,21 +213,12 @@ export default function App({
 
   return (
     <div ref={layoutRef} className="app-layout" data-sidebar-swiping={swipe.swiping || undefined} data-sidebar-dragging={swipe.dragging || undefined} data-profile-swiping={profileSwipe.swiping || undefined} data-profile-dragging={profileSwipe.dragging || undefined} style={{ ...AGENT_THEME, ...swipe.style, ...profileSwipe.style, ...viewportStyle }}>
-      <aside ref={drawerRef} className={`sidebar ${swipe.visible ? "sidebar-expanded" : "sidebar-collapsed"}`} inert={profileSwipe.open}>
+      <Sidebar sidebar={swipe} inert={profileSwipe.open}>
         <div className="sidebar-top">
           <div className="sidebar-brand">
-            <Button
-              variant="outline"
-              size="icon-lg"
-              className="sidebar-logo-btn rounded-full"
-              onClick={toggleSidebar}
-              aria-label="Toggle sidebar"
-              aria-expanded={sidebarExpanded}
-              title={sidebarExpanded ? "Collapse sidebar" : "Expand sidebar"}
-            >
-              {menuIcon}
+            <MenuButton onClick={swipe.toggle} aria-expanded={swipe.expanded} title={swipe.expanded ? "Collapse sidebar" : "Expand sidebar"}>
               <UnreadDot unread={isPhone && (mainChatUnread || sideChats.some(isUnread))} drawer />
-            </Button>
+            </MenuButton>
             <span className="sidebar-brand-text">{UI_CONFIG.title}</span>
           </div>
 
@@ -278,7 +256,7 @@ export default function App({
 
         <div className="sidebar-bottom">
           <UserMenu
-            expanded={sidebarExpanded}
+            expanded={swipe.expanded}
             auth={auth}
             onLogout={() => {
               try {
@@ -293,13 +271,7 @@ export default function App({
             }}
           />
         </div>
-      </aside>
-      {/* It comes and goes with the drawer, whose slide is the one motion. */}
-      {swipe.visible && (
-        <button type="button" className="sidebar-strip-close" onClick={swipe.close} aria-label="Close sidebar">
-          <span className={`${buttonVariants({ variant: "outline", size: "icon-lg" })} sidebar-strip-close-menu rounded-full`}>{menuIcon}</span>
-        </button>
-      )}
+      </Sidebar>
 
       <div className="app-stage">
       {screenOpen && (
@@ -307,7 +279,7 @@ export default function App({
           <Suspense fallback={<LoadingSkeleton label={screenContent.label} />}>{screenContent.content}</Suspense>
         </main>
       )}
-      <main className="app-shell" style={{ visibility: screenOpen ? "hidden" : undefined }} aria-hidden={screenOpen} inert={screenOpen || profileSwipe.open || (isPhone && sidebarExpanded)}>
+      <main className="app-shell" style={{ visibility: screenOpen ? "hidden" : undefined }} aria-hidden={screenOpen} inert={screenOpen || profileSwipe.open || (isPhone && swipe.expanded)}>
         {!headerInPane && chatHeader}
         {activeId === null && !artifactWorkspace ? <>{paneHeader}{noChat}</> : (
           <Suspense fallback={<>{paneHeader}<div className="app-chat app-chat-opening">{keptChat}</div></>}>

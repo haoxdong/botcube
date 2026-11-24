@@ -17,6 +17,10 @@
   :root {
     --ui-zoom: 1.1;
   }
+
+  .app-layout {
+    height: calc((100dvh - var(--app-safe-top) - var(--app-safe-bottom)) / var(--ui-zoom));
+  }
 }
 
 @media (min-width: 1920px) and (hover: hover) and (pointer: fine) {
@@ -292,15 +296,6 @@
   overflow: hidden;
 }
 
-.sidebar-collapsed .sidebar-recents {
-  flex: none;
-}
-
-.sidebar-collapsed .sidebar-side-chats-toggle,
-.sidebar-collapsed .sidebar-list {
-  display: none;
-}
-
 .sidebar-section-header {
   display: flex;
   align-items: center;
@@ -394,5 +389,46 @@
 @media (max-width: 640px) {
   .app-stage > .app-plugins {
     position: fixed;
+  }
+}
+
+:root {
+  --shell-top: var(--app-safe-top);
+  --shell-right: var(--app-safe-right);
+  --shell-bottom: var(--app-safe-bottom);
+  --shell-left: var(--app-safe-left);
+}
+
+@media (max-width: 640px) {
+  .app-layout {
+    height: auto;
+    min-height: 100dvh;
+    margin-block: 0;
+    transform: none;
+    position: relative;
+    overflow-x: clip;
+  }
+
+  .app-layout::before {
+    content: "";
+    position: fixed;
+    inset: 0 0 auto;
+    height: var(--app-safe-top);
+    z-index: 1000;
+    pointer-events: none;
+    backdrop-filter: blur(4px);
+  }
+
+  .app-layout > :is(aside, [role="dialog"]) {
+    padding-block: var(--app-safe-top) var(--app-safe-bottom);
+  }
+
+  .app-shell:not(:has(> .chat-header)) {
+    padding-top: var(--app-safe-top);
+  }
+
+  .app-shell {
+    --chat-header-height: calc(109px + var(--app-safe-top));
+    padding-bottom: var(--app-safe-bottom);
   }
 }

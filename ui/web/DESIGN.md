@@ -5,7 +5,7 @@ phone, macOS on a desktop) and keeps only what is essential. The products we mea
 Claude apps on the same platform. Every value has one job. The system shrinks over time, never grows: a new value
 must first merge or drop another.
 
-The values live in `:root` of `src/app/tokens.css`, with the why in its comments. Nothing here is advisory:
+The values live in `:root` of `src/design-system/tokens.css`, with the why in its comments. Nothing here is advisory:
 `src/app/design-system.test.ts` fails on a value outside the set, and Stylelint (`pnpm lint`) keeps raw values out of
 components. An exception carries an inline disable with its reason and is listed under Exceptions first. Components
 are plain CSS on these tokens; Tailwind's `@theme inline` and shadcn's colour names map onto them, and there is no

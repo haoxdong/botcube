@@ -505,7 +505,7 @@
 
   .agent-computer-sheet-backdrop { background: var(--color-text); }
 
-  .agent-computer-sheet-head { justify-content: center; min-height: 44px; padding: max(var(--space-12), env(safe-area-inset-top)) var(--space-16) var(--space-12); }
+  .agent-computer-sheet-head { justify-content: center; min-height: 44px; padding: max(var(--space-12), var(--shell-top)) var(--space-16) var(--space-12); }
 
   .agent-computer-sheet-close {
     position: absolute;
@@ -519,7 +519,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    padding-bottom: max(var(--space-12), env(safe-area-inset-bottom));
+    padding-bottom: max(var(--space-12), var(--shell-bottom));
   }
 
 

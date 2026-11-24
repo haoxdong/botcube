@@ -6,7 +6,7 @@
 @import "@radix-ui/colors/green.css";
 @import "@radix-ui/colors/amber.css";
 @import "@radix-ui/colors/violet.css";
-@import "./tokens.css";
+@import "../design-system/tokens.css";
 @import "./chat.css";
 @import "./composer.css";
 @import "./waiting-steering.css";
@@ -14,6 +14,7 @@
 @import "./shell.css";
 @import "./components.css";
 @import "./menus.css";
+@import "./sidebar.css";
 @import "./header.css";
 @import "./agent-profile.css";
 @import "./list-rows.css";

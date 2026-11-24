@@ -36,18 +36,6 @@
 }
 
 @media (max-width: 640px) {
-  :root {
-    --chat-header-safe-top: var(--app-safe-top);
-  }
-
-  .app-shell {
-    --chat-header-height: calc(109px + var(--chat-header-safe-top));
-  }
-
-  .app-shell:has(> .chat-header) {
-    margin-top: calc(-1 * var(--app-safe-top));
-  }
-
   /* The chat grows with the page that scrolls it; the header and the composer stay on screen. */
   .app-shell {
     min-height: 100dvh;
@@ -75,7 +63,7 @@
      to its own. */
   .app-chat .kept-chat {
     position: fixed;
-    inset: 0 var(--app-safe-right) var(--app-safe-bottom) var(--app-safe-left);
+    inset: 0 var(--shell-right) var(--shell-bottom) var(--shell-left);
   }
 
   .app-chat .kept-chat :is(.chat-wrapper, .copilotKitChat) {
@@ -100,7 +88,7 @@
      LocalFrameView::fixedContainerEdges); 6px clear, the chat runs on under the toolbar in Safari's own blur. */
   .app-chat [data-testid='copilot-input-overlay'] {
     position: fixed;
-    bottom: max(calc(var(--app-safe-bottom) + 6px), var(--keyboard-inset, 0px));
+    bottom: max(calc(var(--shell-bottom) + 6px), var(--keyboard-inset, 0px));
   }
 
   .app-chat .kept-chat-composer {
@@ -140,7 +128,7 @@
     left: 50%;
     right: auto;
     translate: -50% 0;
-    padding-top: calc(1px + var(--chat-header-safe-top));
+    padding-top: calc(1px + var(--shell-top));
     /* The live browser pill hangs from this edge (live-browser.css). */
     anchor-name: --chat-header;
   }
@@ -191,26 +179,12 @@
    body, as on the phone; the chat scrolls beneath them, fading out over the header's height so its words
    never run into Marq or his name. */
 @media (min-width: 641px) {
-  .sidebar {
-    background: var(--color-white);
-  }
-
   /* The seam lies outside the 260px, so the rows keep their places */
   .sidebar-expanded {
     position: relative;
     flex-shrink: 0;
     box-sizing: content-box;
     border-right: 1px solid var(--color-line);
-  }
-
-  /* Shut, only the menu chip shows, over the chat's top left */
-  .sidebar-collapsed {
-    height: auto;
-    background: none;
-  }
-
-  .sidebar-collapsed :is(.sidebar-nav, .sidebar-recents, .sidebar-bottom) {
-    display: none;
   }
 
   /* Open, the menu chip closes the sidebar from beside its title */

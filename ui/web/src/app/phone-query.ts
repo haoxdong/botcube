@@ -4,6 +4,8 @@ import { useSyncExternalStore } from 'react';
 // with the page.
 export const PHONE_QUERY = '(max-width: 640px)';
 
+export const isPhoneNow = () => window.matchMedia(PHONE_QUERY).matches;
+
 const subscribeToPhoneQuery = (onChange: () => void) => {
   const query = window.matchMedia(PHONE_QUERY);
   query.addEventListener('change', onChange);
@@ -12,5 +14,5 @@ const subscribeToPhoneQuery = (onChange: () => void) => {
 
 /** Whether the window is phone-sized (PHONE_QUERY), following resizes; a server render is not. */
 export function useIsPhone() {
-  return useSyncExternalStore(subscribeToPhoneQuery, () => window.matchMedia(PHONE_QUERY).matches, () => false);
+  return useSyncExternalStore(subscribeToPhoneQuery, isPhoneNow, () => false);
 }

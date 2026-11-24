@@ -70,7 +70,7 @@ const happyDOM = () => (window as unknown as { happyDOM: { setViewport: (viewpor
 const here = path.dirname(fileURLToPath(import.meta.url));
 // The app's spacing tokens, which styles.css spaces with. Its motion tokens stay out: they would start animations the
 // tests then cancel.
-const spaceTokens = readFileSync(path.join(here, '../app/tokens.css'), 'utf8').match(/--space-\d+: [^;]+;/g);
+const spaceTokens = readFileSync(path.join(here, '../design-system/tokens.css'), 'utf8').match(/--space-\d+: [^;]+;/g);
 if (spaceTokens === null) throw new Error('tokens.css declares no --space-* tokens');
 const spacing = `:root { ${spaceTokens.join(' ')} }`;
 

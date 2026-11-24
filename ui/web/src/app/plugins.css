@@ -35,76 +35,6 @@
   white-space: nowrap;
 }
 
-/* Too narrow for the sidebar, a readable chat and the profile side by side (260 + 440 + 440): the
-   profile slides in over the chat's right edge instead of squeezing it. */
-@media (max-width: 1139px) {
-  .agent-profile {
-    position: fixed;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 100;
-    box-shadow: var(--shadow-float);
-  }
-}
-
-/* Phones: the profile is a full-screen sheet that slides in over the chat from the right, the mirror of the
-   drawer's card. */
-@media (max-width: 640px) {
-  /* Within the safe area, as a phone's layout runs under the status and home bars */
-  /* The drawer's card's shape: all four corners round as the screen's do, casting the card's shadow
-     on the chat beside it. */
-  .agent-profile {
-    position: fixed;
-    inset: var(--app-safe-top) 0 var(--app-safe-bottom);
-    z-index: 100;
-    width: auto;
-    border-left: none;
-    border-radius: var(--radius-screen);
-    box-shadow: var(--shadow-float);
-    animation: none;
-    transition: transform var(--motion-move) var(--ease);
-  }
-
-  /* Opened with a tap, it slides in from the screen's edge as a released swipe settles. */
-  @starting-style {
-    .agent-profile {
-      transform: translateX(100%);
-    }
-  }
-
-  /* A left swipe across the chat slides the profile in under the finger, and a right swipe on it slides it back off;
-     on release, or the profile's ✕, it settles (the mirror of the drawer's swipe). The chat under it stays and fades
-     with the profile's travel, as it does beside the drawer. */
-  .app-layout[data-profile-swiping] > .agent-profile {
-    transform: translateX(calc(100% - var(--profile-drag-offset)));
-    transition: transform var(--motion-move) var(--ease);
-  }
-
-  /* The fade stays inside the chat, under the profile, as the chat's old stacking kept it. */
-  .app-layout[data-profile-swiping] .app-shell {
-    isolation: isolate;
-  }
-
-  .app-layout[data-profile-swiping] .app-shell::after {
-    opacity: var(--profile-drag-progress);
-  }
-
-  .app-layout[data-profile-dragging] > .agent-profile {
-    transition: none;
-  }
-
-  /* An open file takes the whole sheet, as Muse stacks a file over the profile (Figs 17-20); its back
-     chevron returns to the profile. A profile error stays in view over it (ADR 0030). */
-  .agent-profile:has(.agent-file) :is(.agent-profile-identity, .agent-profile-tabs) {
-    display: none;
-  }
-
-  .agent-profile:has(.agent-file) .agent-profile-header > .agent-profile-error {
-    margin-top: var(--space-16);
-  }
-}
-
 /* Phones: CopilotKit's own 1rem side padding is the chat's gutter (dots Fig 7), so the messages'
    column adds none. Its min-width breakpoint (sm, 40rem) drops that padding at 640px itself. */
 @media (max-width: 639.98px) {
@@ -157,28 +87,12 @@
     width: 44px;
     height: 44px;
   }
-
-  /* The badge keeps its drawn 32px circle and white ring inside a clear 6px border, so it doesn't swamp the avatar */
-  .agent-profile-edit {
-    right: -8px;
-    bottom: -8px;
-    width: 44px;
-    height: 44px;
-    border: 6px solid transparent;
-    background-clip: padding-box;
-    box-shadow: inset 0 0 0 2px var(--color-white);
-  }
-
-  .agent-profile-tab {
-    min-height: 44px;
-  }
 }
 
 /* The wide desktop's zoom (see `--ui-zoom`): its viewport heights divided by it. */
 @media (min-width: 1760px) and (hover: hover) and (pointer: fine) {
   .app-layout {
     zoom: var(--ui-zoom);
-    height: calc((100dvh - var(--app-safe-top) - var(--app-safe-bottom)) / var(--ui-zoom));
   }
 
   .sidebar-expanded {

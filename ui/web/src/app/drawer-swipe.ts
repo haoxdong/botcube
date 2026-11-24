@@ -8,7 +8,7 @@ type DragSession =
   | { phase: 'idle' }
   | { phase: 'pending'; startExpanded: boolean }
   | { phase: 'dragging'; startExpanded: boolean; movement: number; width: number }
-  | { phase: 'settling'; targetExpanded: boolean; width: number; offset: number };
+  | { phase: 'settling'; targetExpanded: boolean; width: number; offset: number; held?: boolean };
 const IDLE: DragSession = { phase: 'idle' };
 type DragStyle = CSSProperties & Record<`--${string}`, string | number>;
 type Options = {
@@ -141,7 +141,7 @@ export function useDrawerSwipe({ layoutRef, drawerRef, side, name, enabled, dock
       if (current.phase !== 'settling') return;
       // A tap's open starts with no width: the panel has it now it is shown.
       const width = current.width || (drawerRef.current?.getBoundingClientRect().width ?? 0);
-      changeSession({ ...current, width, offset: current.targetExpanded ? width : 0 });
+      changeSession({ ...current, width, offset: current.targetExpanded ? width : 0, held: false });
       timer = window.setTimeout(() => changeSession(IDLE), moveMs() + 20);
     });
     return () => { cancelAnimationFrame(frame); window.clearTimeout(timer); };
@@ -173,7 +173,7 @@ export function useDrawerSwipe({ layoutRef, drawerRef, side, name, enabled, dock
     };
   }, [enabled, layoutRef]);
 
-  const dragging = enabled && session.phase === 'dragging';
+  const dragging = enabled && (session.phase === 'dragging' || (session.phase === 'settling' && session.held === true));
   const swiping = enabled && (session.phase === 'dragging' || session.phase === 'settling');
   const pixels = session.phase === 'dragging' ? offset(session, side) : session.phase === 'settling' ? session.offset : 0;
   const width = session.phase === 'dragging' || session.phase === 'settling' ? session.width : 0;
@@ -209,7 +209,7 @@ export function useDrawerSwipe({ layoutRef, drawerRef, side, name, enabled, dock
   const open = () => {
     if (docked) return dock(true);
     if (!enabled) return onExpandedChange(true);
-    if (!expanded && !slides) changeSession({ phase: 'settling', targetExpanded: true, width: 0, offset: 0 });
+    if (!expanded && !slides) changeSession({ phase: 'settling', targetExpanded: true, width: 0, offset: 0, held: true });
     onExpandedChange(true);
   };
   /** Shuts the panel: on a phone as a released swipe does, shown while what covers it slides back; docked, it slides out. */
@@ -217,7 +217,7 @@ export function useDrawerSwipe({ layoutRef, drawerRef, side, name, enabled, dock
     if (docked) return dock(false);
     if (!enabled) return onExpandedChange(false);
     const width = drawerRef.current?.getBoundingClientRect().width ?? 0;
-    if (expanded && width > 0) changeSession({ phase: 'settling', targetExpanded: false, width, offset: width });
+    if (expanded && width > 0) changeSession({ phase: 'settling', targetExpanded: false, width, offset: width, held: true });
     onExpandedChange(false);
   };
   // `open`: the panel stands open on a phone, no swipe moving it.

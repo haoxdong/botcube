@@ -5,7 +5,8 @@ import type { AuthUiState } from "../plugin/index.js";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "./avatar";
 import { LoadFailed, LoadingSkeleton } from "./load-state";
-import { menuIcon } from "./menu-icon";
+import { MenuButton } from "./menu-icon";
+import { Sidebar } from "./sidebar";
 import { WakeUpButton } from "./wake-up-button";
 
 /**
@@ -31,14 +32,14 @@ export function SessionGate({
   if (status === "loading") {
     return (
       <div className="app-layout" data-session-gate="loading" style={AGENT_THEME}>
-        <aside className="sidebar sidebar-collapsed" inert>
+        <Sidebar inert>
           <div className="sidebar-top">
             <div className="sidebar-brand">
-              <Button variant="outline" size="icon-lg" className="sidebar-logo-btn rounded-full" aria-label="Toggle sidebar">{menuIcon}</Button>
+              <MenuButton />
               <span className="sidebar-brand-text">{title}</span>
             </div>
           </div>
-        </aside>
+        </Sidebar>
         <main className="app-shell">
           <header className="chat-header" inert>
             <Button variant="ghost" className="chat-header-agent" disabled aria-label="Agent profile">

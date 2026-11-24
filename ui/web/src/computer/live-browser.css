@@ -126,8 +126,8 @@
 /* ── The live browser panel, floating over the chat while a Turn drives the computer ── */
 .live-browser-panel {
   position: fixed;
-  right: calc(24px + var(--app-safe-right));
-  bottom: calc(120px + var(--app-safe-bottom));
+  right: calc(24px + var(--shell-right));
+  bottom: calc(120px + var(--shell-bottom));
   z-index: 20;
   width: 288px;
   border-radius: var(--radius-lg);
@@ -143,9 +143,9 @@
 @media (max-width: 640px) {
   .live-browser-panel {
     /* Just under the header's real bottom edge, which its content sets; 128px where anchors are unsupported. */
-    top: calc(128px + var(--app-safe-top));
+    top: calc(128px + var(--shell-top));
     top: anchor(--chat-header bottom);
-    right: calc(12px + var(--app-safe-right));
+    right: calc(12px + var(--shell-right));
     bottom: auto;
     width: auto;
     border-radius: var(--radius-pill);

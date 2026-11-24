@@ -40,25 +40,14 @@
   overflow-y: clip;
 }
 
-/* Desktop: the docked sidebar and Agent Profile slide in from their edges and back out, drawer-swipe.ts springing
-   --<name>-shown from 0 to 1, while the chat stage beside them takes the rest of the row, so words never stretch. The
-   sidebar's seam lies outside its width. Until the spring binds, the margin is invalid and so 0: shown. */
+/* Desktop: the docked sidebar slides in from its edge and back out, drawer-swipe.ts springing --sidebar-shown from 0
+   to 1, while the chat stage beside it takes the rest of the row, so words never stretch (the Agent Profile's own,
+   agent-profile.css). Its seam lies outside its width. Until the spring binds, the margin is invalid and so 0: shown. */
 @media (min-width: 641px) {
   .sidebar-expanded {
     --docked-travel: calc(var(--docked-width) + 1px);
 
     margin-left: calc(var(--sidebar-shown) * var(--docked-travel) - var(--docked-travel));
-  }
-
-  .agent-profile {
-    margin-right: calc(var(--profile-shown) * var(--docked-width) - var(--docked-width));
-  }
-}
-
-/* Phones: the card's frosted pills rest their blur while it slides, which software rendering redoes every frame. */
-@media (max-width: 640px) {
-  .app-layout[data-sidebar-swiping] .chat-header-name {
-    backdrop-filter: none;
   }
 }
 

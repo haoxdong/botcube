@@ -10,8 +10,8 @@ const require = createRequire(resolve(root, 'botcube/ui/web/package.json'));
 /** @param {import('playwright').Browser} browser @param {string} screen */
 export async function checkBubbleShadow(browser, screen = 'Chromium 1440×900') {
   if (screen !== 'Chromium 1440×900') return;
-  const css = await Promise.all(['tokens.css', 'chat.css'].map(file => {
-    const path = `botcube/ui/web/src/app/${file}`;
+  const css = await Promise.all(['design-system/tokens.css', 'app/chat.css'].map(file => {
+    const path = `botcube/ui/web/src/${file}`;
     return process.env.SHADOW_CSS_REF
       ? execFileSync('git', ['show', `${process.env.SHADOW_CSS_REF}:${path}`], { cwd: root, encoding: 'utf8' })
       : readFile(resolve(root, path), 'utf8');
