@@ -105,13 +105,14 @@ from .session_format import (
     validate_checkpoint,
 )
 from .shell_backend import WorkerShellBackend
-from .shell_relay import ShellRelay, renew
+from .shell_relay import ShellRelay, bind_turn
 from .snapshot_build import answer_once, prime_process, walk_graph, workspace_at
 from .sse import keep_alive
 from .steering import SteeringMiddleware
 from .trace_relay import FailedCalls, counting_failed_calls, harness_trace_relay
 from .turn_lifecycle import (
     CheckpointWriteError,
+    PreparedTurn,
     SessionOpeningError,
     SessionTurns,
     session_config,
@@ -206,14 +207,16 @@ def configure_harness_definition(definition: HarnessDefinition, default_model: s
     def build_backend(environment: dict[str, str]) -> WorkerShellBackend:
         root = _workspace()
         definition.prepare_root(root)
-        relay = ShellRelay(definition.shell_environment)
-        return relay.bound(WorkerShellBackend(
+        config = botcube_config_from_env()
+        relay = ShellRelay(definition.shell_environment, config.get('caBundle')) if definition.shell_environment else None
+        backend = WorkerShellBackend(
             root_dir=root,
             virtual_mode=False,
-            env={**environment, **relay.environment, **shell_proxy_environment(botcube_config_from_env()), 'PYTHONDONTWRITEBYTECODE': '1'},
+            env={**environment, **(relay.environment if relay else {}), **shell_proxy_environment(config), 'PYTHONDONTWRITEBYTECODE': '1'},
             trace_relay_endpoint=harness_trace_relay(),
             inherit_env=True,
-        ))
+        )
+        return relay.bound(backend) if relay else backend
 
     def apply_session_id(backend: LocalShellBackend, session_id: str | None) -> None:
         cast(WorkerShellBackend, backend).set_environment_variable(  # pragma: no mutate: cast is a runtime no-op
@@ -345,14 +348,12 @@ def _get_agent(
         if cached is not None:
             backend = _BACKEND_BY_AGENT[cached]
             _apply_environment(backend, environment)
-            renew(backend, model_relay)
             return cached
 
         with turn_timing.phase('memory_backends'):
             store = _ensure_memory_backends()
         with turn_timing.phase('workspace'):
             backend = _backend_for((conversation_id, session_user_id, actor_id, environment_key), environment)
-            renew(backend, model_relay)
 
         root = Path(backend.cwd)
 
@@ -622,7 +623,7 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
             session, auth.actor_id, timing.receipt if timing is not None else perf_counter(),
         )
 
-        async def prepare() -> tuple[LangGraphAgent, Path]:
+        async def prepare() -> PreparedTurn:
             saved: CheckpointTuple | None = None
 
             async def read(saver: Any) -> CheckpointTuple | None:
@@ -641,7 +642,7 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
             agent, backend = await _turn_agent(build, turn_identity, input_data.run_id, persistent_memory, read, prefetch)
             validate_checkpoint(agent.graph, session_config(session), saved)
             _require_bot().apply_session_id(backend, input_data.thread_id)
-            return agent, Path(backend.cwd)
+            return agent, Path(backend.cwd), bind_turn(backend, auth.model_relay)
 
         candidate = forwarded.get('agentSystemPrompt')
         prompt_hash = _served_prompt_hash(candidate)

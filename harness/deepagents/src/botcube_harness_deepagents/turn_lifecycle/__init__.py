@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AbstractContextManager, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -64,6 +64,9 @@ class _Publication:
     saver: WarmSessionSaver
     task: asyncio.Task[None]
     followed: bool = False
+
+
+PreparedTurn = tuple[LangGraphAgent, Path, AbstractContextManager[None]]
 
 
 class SessionTurns:
@@ -203,7 +206,7 @@ class SessionTurns:
     async def stream(
         self,
         session: _Session,
-        prepare: Callable[[], Awaitable[tuple[LangGraphAgent, Path]]],
+        prepare: Callable[[], Awaitable[PreparedTurn]],
         input_data: RunAgentInput,
         files: FilesMount | None,
         context: InvocationContext,
@@ -237,7 +240,7 @@ class SessionTurns:
         self,
         session: _Session,
         turn: _Turn,
-        prepare: Callable[[], Awaitable[tuple[LangGraphAgent, Path]]],
+        prepare: Callable[[], Awaitable[PreparedTurn]],
         files: FilesMount | None,
         session_id: str | None,
         put: Callable[[Any], None],
@@ -261,12 +264,12 @@ class SessionTurns:
 
     async def _execute(
         self, session: _Session, turn: _Turn,
-        prepare: Callable[[], Awaitable[tuple[LangGraphAgent, Path]]],
+        prepare: Callable[[], Awaitable[PreparedTurn]],
         files: FilesMount | None, session_id: str | None, put: Callable[[Any], None],
         deadline: float | None, excluded: tuple[str, ...],
     ) -> None:
         lock = self._locks.setdefault(session, asyncio.Lock())
-        agent, root = await prepare()
+        agent, root, shell_binding = await prepare()
         saver = getattr(getattr(agent, 'graph', None), 'checkpointer', None)
         try:
             async with lock:
@@ -275,9 +278,10 @@ class SessionTurns:
                     return
                 if (failure := self._flush_failures.pop(session, None)) is not None:
                     raise failure
-                feeds, snapshot = await _run_graph(
-                    turn, agent, saver, root, files, session, session_id, put, deadline, excluded,
-                )
+                with shell_binding:
+                    feeds, snapshot = await _run_graph(
+                        turn, agent, saver, root, files, session, session_id, put, deadline, excluded,
+                    )
                 if snapshot is None:
                     _settle_finished_reuse(saver, turn.finished_without_interruption(agent))
                     if turn.completion is not None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -34,10 +35,10 @@ class ToolBindableFakeMessagesModel(FakeMessagesListChatModel):
         return self
 
 
-def prepared(agent: Any, root: Path) -> Callable[[], Awaitable[tuple[Any, Path]]]:
+def prepared(agent: Any, root: Path) -> Callable[[], Awaitable[tuple[Any, Path, AbstractContextManager[None]]]]:
     """A Turn preparation for `SessionTurns.stream` that is already done."""
-    async def prepare() -> tuple[Any, Path]:
-        return agent, root
+    async def prepare() -> tuple[Any, Path, AbstractContextManager[None]]:
+        return agent, root, nullcontext()
 
     return prepare
 

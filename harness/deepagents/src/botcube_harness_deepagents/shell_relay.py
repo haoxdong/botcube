@@ -1,9 +1,4 @@
-"""The agent's loopback origin to the Credential Service Relay, which signs each request with the current Turn's invocation.
-
-The bot settings' `environment` names it as `${BOTCUBE_RELAY_URL}`, so a stock CLI pointed at `${BOTCUBE_RELAY_URL}/<provider>`
-reaches that Relay provider. The shell never holds the credential, and a long-lived process reaches the Relay under the
-Turn that is current when it sends, not the one that started it. Each agent's shell has its own origin, bound to it.
-"""
+"""A per-shell loopback listener for providers named by the bot environment. It signs requests only during a Turn."""
 from __future__ import annotations
 
 import contextlib
@@ -12,15 +7,15 @@ import re
 import socket
 import socketserver
 import ssl
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
 from threading import Thread
 from typing import TypeVar
 from urllib.parse import unquote, urlsplit
 from weakref import WeakKeyDictionary, finalize
 
-from .botcube_config import botcube_config_from_env
 from .definition import ModelRelay
 from .proxy_relay import _carry, _read_head
+from .shell_backend import WorkerShellBackend
 
 log = logging.getLogger(__name__)
 
@@ -33,9 +28,8 @@ _BOUND: WeakKeyDictionary[object, ShellRelay] = WeakKeyDictionary()
 
 
 class ShellRelay:
-    """One loopback listener forwarding `/{provider}/…` to the Relay, for only the providers the bot's environment names."""
-
-    def __init__(self, bot_environment: Mapping[str, str]) -> None:
+    def __init__(self, bot_environment: Mapping[str, str], ca_bundle: str | None) -> None:
+        self._trust = ssl.create_default_context(cafile=ca_bundle)
         self.providers = frozenset(match[2] for value in bot_environment.values() for match in _REFERENCE.finditer(value) if match[2])
         self.current: ModelRelay | None = None
         relay = self
@@ -87,8 +81,7 @@ class ShellRelay:
         try:
             connection = socket.create_connection((upstream.hostname or '', upstream.port or (443 if secure else 80)))
             if secure:
-                trust = ssl.create_default_context(cafile=botcube_config_from_env().get('caBundle'))
-                connection = trust.wrap_socket(connection, server_hostname=upstream.hostname)
+                connection = self._trust.wrap_socket(connection, server_hostname=upstream.hostname)
         except OSError as error:
             log.error('Shell relay could not reach the Credential Service: %s', error)
             _answer(client, 502, 'The Credential Service could not be reached')
@@ -98,10 +91,17 @@ class ShellRelay:
             _carry(client, connection)
 
 
-def renew(backend: object, relay: ModelRelay | None) -> None:
-    """Sign the requests of `backend`'s shell with this Turn's relay; none, the shell's requests are refused."""
-    if (shell_relay := _BOUND.get(backend)) is not None:
-        shell_relay.current = relay
+@contextlib.contextmanager
+def bind_turn(backend: object, relay: ModelRelay | None) -> Generator[None]:
+    shell_relay = _BOUND.get(backend) if isinstance(backend, WorkerShellBackend) else None
+    if shell_relay is None:
+        yield
+        return
+    shell_relay.current = relay
+    try:
+        yield
+    finally:
+        shell_relay.current = None
 
 
 def _resolvable(path: str) -> bool:

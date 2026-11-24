@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import gc
+import shlex
 import socket
 import ssl
 import threading
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -17,7 +19,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from botcube_harness_deepagents import serving
+from botcube_harness_deepagents import serving, shell_relay
 from credential_service_fakes import mtls_fake
 from deployment_fixture import deploy
 from test_bot_settings import bot_service as bot_service
@@ -140,18 +142,47 @@ def test_a_url_the_shell_took_in_an_earlier_turn_reaches_the_relay_under_the_cur
 
 
 @pytest.mark.parametrize('bot_service', [PRODUCT], indirect=True)
-def test_each_sessions_origin_carries_its_own_sessions_credential(bot_service: _Service, relay: FakeRelay) -> None:
-    origins = {
-        thread: _tool_output(bot_service.turn('run: printf %s "$BOTCUBE_RELAY_URL"', thread=thread, **_bound(relay, f'invocation-{thread}'))).split('\n')[0]
-        for thread in ('thread-1', 'thread-2')
-    }
+def test_the_loopback_refuses_requests_between_turns(bot_service: _Service, relay: FakeRelay) -> None:
+    origin = _origin(bot_service, relay)
+    with pytest.raises(urllib.error.HTTPError) as refused:
+        urllib.request.urlopen(f'{origin}/product/v1/items', timeout=5)
+    assert refused.value.code == 401
+    assert relay.calls == []
 
-    for origin in origins.values():
-        with urllib.request.urlopen(f'{origin}/product/v1/items') as response:
-            assert response.read() == b'relayed'
+
+@pytest.mark.parametrize('bot_service', [PRODUCT], indirect=True)
+def test_each_sessions_origin_carries_its_own_sessions_credential(bot_service: _Service, relay: FakeRelay) -> None:
+    origins = set()
+    for thread in ('thread-1', 'thread-2'):
+        events = bot_service.turn(
+            'run: printf "%s\\n" "$BOTCUBE_RELAY_URL"; curl -sS "$PRODUCT_URL/items"',
+            thread=thread, **_bound(relay, f'invocation-{thread}'),
+        )
+        origin, body, *_ = _tool_output(events).split('\n')
+        origins.add(origin)
+        assert body == 'relayed'
+
+    assert len(origins) == 2
     assert [(call['authorization'], call['session']) for call in relay.calls] == [
         ('Bearer invocation-thread-1', 'thread-1'), ('Bearer invocation-thread-2', 'thread-2'),
     ]
+
+
+def test_an_empty_bot_environment_starts_no_shell_listener(
+    bot_service: _Service, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    listeners = []
+    serve = shell_relay.socketserver.ThreadingTCPServer
+
+    def record_listener(*args: Any, **kwargs: Any) -> shell_relay.socketserver.ThreadingTCPServer:
+        server = serve(*args, **kwargs)
+        listeners.append(server.server_address)
+        return server
+
+    monkeypatch.setattr(shell_relay.socketserver, 'ThreadingTCPServer', record_listener)
+    events = bot_service.turn('run: printenv BOTCUBE_RELAY_URL || echo absent')
+    assert listeners == []
+    assert _tool_output(events).startswith('absent\n')
 
 
 @pytest.mark.parametrize('bot_service', [{'environment': {'NOTE': 'cost $$5 at ${BOTCUBE_RELAY_URL}'}}], indirect=True)
@@ -171,18 +202,24 @@ def _origin(service: _Service, relay: FakeRelay, thread: str = 'thread-1') -> st
 
 @pytest.mark.parametrize('bot_service', [PRODUCT], indirect=True)
 def test_a_websocket_upgrade_reaches_the_relay_and_carries_its_frames_both_ways(bot_service: _Service, relay: FakeRelay) -> None:
-    origin = urlsplit(_origin(bot_service, relay))
+    script = """
+import os, socket
+from urllib.parse import urlsplit
 
-    with socket.create_connection((origin.hostname or '', origin.port or 80), timeout=5) as client:
-        client.sendall(b'GET /product/v1/socket HTTP/1.1\r\nHost: product\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n')
-        head = b''
-        while b'\r\n\r\n' not in head:
-            head += client.recv(1)
+origin = urlsplit(os.environ['BOTCUBE_RELAY_URL'])
+with socket.create_connection((origin.hostname, origin.port), timeout=5) as client:
+    client.sendall(b'GET /product/v1/socket HTTP/1.1\\r\\nHost: product\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\n\\r\\n')
+    with client.makefile('rb') as stream:
+        print(stream.readline().split()[1].decode())
+        for line in stream:
+            if line == b'\\r\\n':
+                break
         client.sendall(b'hello')
-        echoed = client.recv(5)
+        print(stream.read(5).decode())
+"""
+    events = bot_service.turn(f'run: python -c {shlex.quote(script)}', **_bound(relay, 'invocation-1'))
 
-    assert head.split(b'\r\n')[0].split(b' ')[1] == b'101'
-    assert echoed == b'hello'
+    assert _tool_output(events).startswith('101\nhello\n')
     assert relay.calls[-1]['authorization'] == 'Bearer invocation-1'
 
 
@@ -202,10 +239,29 @@ def test_the_loopback_reaches_a_credential_service_the_ca_bundle_trusts(
     (tmp_path / 'trusting').mkdir()
     deploy(monkeypatch, tmp_path / 'trusting', caBundle=str(tmp_path / 'certs' / 'ca.pem'))
 
-    events = bot_service.turn('run: curl -sS "$PRODUCT_URL/items"', **_bound(tls_relay, 'invocation-1'))
+    config_reads = 0
+    read_config = serving.botcube_config_from_env
+
+    def count_config_reads() -> dict[str, Any]:
+        nonlocal config_reads
+        config_reads += 1
+        return read_config()
+
+    context_calls = 0
+    create_context = shell_relay.ssl.create_default_context
+
+    def count_contexts(*args: Any, **kwargs: Any) -> ssl.SSLContext:
+        nonlocal context_calls
+        context_calls += 1
+        return create_context(*args, **kwargs)
+
+    monkeypatch.setattr(serving, 'botcube_config_from_env', count_config_reads)
+    monkeypatch.setattr(shell_relay.ssl, 'create_default_context', count_contexts)
+    events = bot_service.turn('run: curl -sS "$PRODUCT_URL/items" "$PRODUCT_URL/more"', **_bound(tls_relay, 'invocation-1'))
 
     assert _tool_output(events).startswith('relayed')
-    assert [call['authorization'] for call in tls_relay.calls] == ['Bearer invocation-1']
+    assert [call['path'] for call in tls_relay.calls] == ['/product/v1/items', '/product/v1/more']
+    assert config_reads == context_calls == 1
 
 
 @pytest.mark.parametrize('bot_service', [PRODUCT], indirect=True)
