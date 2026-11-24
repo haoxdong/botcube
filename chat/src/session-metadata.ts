@@ -307,6 +307,26 @@ const purgeKey = ({ session_id, filing_user_id }: SessionPurge) => ({ pk: PURGES
 
 type DispatchIdentity = { dispatchOwner: string; session: SessionPurge; claimDestination: string | null; snapshotEpoch: string | undefined };
 
+type TransactionWrite = NonNullable<TransactWriteCommandInput['TransactItems']>[number];
+type FailedWrites<Name extends string> = Pick<ReadonlyMap<Name, CancellationReason>, 'get' | 'has'>;
+
+function namedTransaction<const Name extends string>(writes: ReadonlyArray<readonly [Name, TransactionWrite]>) {
+  return {
+    command: new TransactWriteCommand({ TransactItems: writes.map(([, write]) => write) }),
+    conditions(error: unknown) {
+      const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
+      const failed = new Map<Name, CancellationReason>();
+      const passed = new Set<Name>();
+      for (const [index, [name]] of writes.entries()) {
+        const reason = reasons?.[index];
+        if (reason?.Code === 'ConditionalCheckFailed') failed.set(name, reason);
+        if (reason?.Code === 'None') passed.add(name);
+      }
+      return { failed, passed };
+    },
+  };
+}
+
 export class DynamoDBSessionMetadata implements SessionMetadata {
   readonly scheduledRuns: ScheduledRunStore;
   private readonly client: DynamoDBClient;
@@ -389,38 +409,38 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
   async completePurge(session: SessionPurge): Promise<void> {
     await this.assertNoDispatch(session);
     await this.deleteTurnSummaries(session.filing_user_id, session.session_id);
-    await this.documents.send(new TransactWriteCommand({ TransactItems: [
-      { Update: {
+    await this.documents.send(namedTransaction([
+      ['purgeJob', { Update: {
         TableName: this.tableName, Key: purgeKey(session),
         UpdateExpression: 'SET completed_at = if_not_exists(completed_at, :now)',
         ConditionExpression: 'session_id = :id AND filing_user_id = :filing',
         ExpressionAttributeValues: { ':now': metadataTimestamp(), ':id': session.session_id, ':filing': session.filing_user_id },
-      } },
-      { Delete: {
+      } }],
+      ['writerControl', { Delete: {
         TableName: this.tableName, Key: writerControlKey(session),
         ConditionExpression: POST_LEASE_AVAILABLE + ' AND (attribute_not_exists(runtime_writers) OR runtime_writers = :zero)',
         ExpressionAttributeValues: { ':zero': 0, ':now': Date.now() },
-      } },
-    ] }));
+      } }],
+    ]).command);
   }
 
   private async registerLegacyPurge(item: SessionItem): Promise<void> {
     const job = { session_id: item.session_id, filing_user_id: item.filing_user_id };
     const owner = item.pk.slice(OWNER.length);
-    await this.documents.send(new TransactWriteCommand({ TransactItems: [
-      { Update: {
+    await this.documents.send(namedTransaction([
+      ['session', { Update: {
         TableName: this.tableName, Key: { pk: item.pk, sk: item.sk },
         UpdateExpression: 'SET purge_registered = :registered',
         ConditionExpression: 'attribute_exists(deleted_at) AND filing_user_id = :filing',
         ExpressionAttributeValues: { ':registered': true, ':filing': item.filing_user_id },
-      } },
-      { Update: {
+      } }],
+      ['purgeJob', { Update: {
         TableName: this.tableName, Key: purgeKey(job),
         UpdateExpression: 'SET session_id = if_not_exists(session_id, :id), filing_user_id = if_not_exists(filing_user_id, :filing), #owner = if_not_exists(#owner, :owner)',
         ExpressionAttributeNames: { '#owner': 'owner' },
         ExpressionAttributeValues: { ':id': item.session_id, ':filing': item.filing_user_id, ':owner': owner },
-      } },
-    ] }));
+      } }],
+    ]).command);
   }
 
   private async fenceAccount(owner: string, deletedAt: string): Promise<void> {
@@ -490,7 +510,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     return transferred !== null && transferred.owner !== owner;
   }
 
-  private dispatchSessionWrite(owner: string, session: SessionPurge, epoch: string, previousEpoch: string | undefined, acceptedTurn?: AcceptedDispatch): NonNullable<TransactWriteCommandInput['TransactItems']>[number] {
+  private dispatchSessionWrite(owner: string, session: SessionPurge, epoch: string, previousEpoch: string | undefined, acceptedTurn?: AcceptedDispatch): TransactionWrite {
     const proof = acceptedTurn === undefined
       ? { condition: '', values: {} }
       : 'messageId' in acceptedTurn
@@ -507,35 +527,34 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     } };
   }
 
-  private dispatchTransaction(owner: string, identity: DispatchIdentity, token: string, epoch: string, now: number, postLeaseExpiresAt: number | undefined, acceptedTurn?: AcceptedDispatch, rejected: readonly RegisteredDispatch[] = [], recovery?: RejectedWriterRecovery): TransactWriteCommandInput {
+  private dispatchTransaction(owner: string, identity: DispatchIdentity, token: string, epoch: string, now: number, postLeaseExpiresAt: number | undefined, acceptedTurn?: AcceptedDispatch, rejected: readonly RegisteredDispatch[] = [], recovery?: RejectedWriterRecovery) {
     const { dispatchOwner, session, claimDestination } = identity;
     const claimedTurn = claimDestination === null ? undefined : acceptedTurn;
     const claimCondition = claimedTurn === undefined ? 'attribute_not_exists(pk)' : 'attribute_not_exists(pk) OR attribute_exists(destination)';
     const fencedOwner = claimDestination ?? dispatchOwner;
     const destination = dispatchOwner === owner ? claimDestination : null;
     const [registration, control] = this.writers.registration(session, token, now, postLeaseExpiresAt, rejected.length);
-    return { TransactItems: [
-      { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
-      { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(dispatchOwner),
+    return namedTransaction([
+      ['ownerFence', { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
+      ['claimFence', { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(dispatchOwner),
         ...(destination === null ? { ConditionExpression: claimCondition } : { ConditionExpression: 'destination = :destination', ExpressionAttributeValues: { ':destination': destination } }),
-      } },
-      this.dispatchSessionWrite(dispatchOwner, session, epoch, identity.snapshotEpoch, claimedTurn),
-      registration,
-      ...(fencedOwner === owner ? [] : [{ ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(fencedOwner), ConditionExpression: 'attribute_not_exists(pk)' } }]),
-      control,
-      ...(recovery === undefined ? [] : this.writers.recoveryConditions(session, recovery.runtimeTarget, rejected)),
-    ] };
+      } }],
+      ['session', this.dispatchSessionWrite(dispatchOwner, session, epoch, identity.snapshotEpoch, claimedTurn)],
+      ['registration', registration],
+      ...(fencedOwner === owner ? [] : [['destinationFence', { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(fencedOwner), ConditionExpression: 'attribute_not_exists(pk)' } }]] as const),
+      ['writerControl', control],
+      ...(recovery === undefined ? [] : this.writers.recoveryConditions(session, recovery.runtimeTarget, rejected).map((check) => ['recovery', check] as const)),
+    ]);
   }
 
-  private async retryDispatch(error: unknown, owner: string, identity: DispatchIdentity, acceptedTurn?: AcceptedDispatch): Promise<boolean> {
+  private async retryDispatch(error: unknown, failed: FailedWrites<'claimFence' | 'session'>, owner: string, identity: DispatchIdentity, acceptedTurn?: AcceptedDispatch): Promise<boolean> {
     const { dispatchOwner, session, claimDestination } = identity;
-    const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
-    const admissionChanged = [reasons?.[1], reasons?.[2]].some((reason) => reason?.Code === 'ConditionalCheckFailed');
+    const admissionChanged = failed.has('claimFence') || failed.has('session');
     if (acceptedTurn !== undefined && dispatchOwner === owner && admissionChanged) {
       if (await this.dispatchIdentityChanged(owner, session.session_id, claimDestination)) return true;
     }
-    if (reasons?.[1]?.Code === 'ConditionalCheckFailed') throw new SessionClaimError(owner);
-    if ([reasons?.[0], reasons?.[2], reasons?.[4]].some((reason) => reason?.Code === 'ConditionalCheckFailed')) throw new SessionDeletedError(session.session_id);
+    if (failed.has('claimFence')) throw new SessionClaimError(owner);
+    if (failed.has('session')) throw new SessionDeletedError(session.session_id);
     throw error;
   }
 
@@ -551,9 +570,10 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     const postLeaseExpiresAt = kind === 'session-post' ? now + REGISTRATION_EXPIRY_MS : undefined;
     const transaction = this.dispatchTransaction(owner, identity, token, epoch, now, postLeaseExpiresAt, acceptedTurn, rejected, recovery);
     try {
-      await this.documents.send(new TransactWriteCommand(transaction));
+      await this.documents.send(transaction.command);
     } catch (error) {
-      if (await this.writerAdmissionChanged(error, identity, transaction) || await this.retryDispatch(error, owner, identity, acceptedTurn)) {
+      const { failed } = transaction.conditions(error);
+      if (await this.writerAdmissionChanged(failed, identity) || await this.retryDispatch(error, failed, owner, identity, acceptedTurn)) {
         return this.beginDispatch(owner, sessionId, warmupFilingUserId, acceptedTurn, kind, recovery, expectedSession);
       }
     }
@@ -567,14 +587,18 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     return postLeaseExpiresAt === undefined ? complete : Object.assign(complete, { postLeaseExpiresAt });
   }
 
-  private async writerAdmissionChanged(error: unknown, identity: DispatchIdentity, transaction: TransactWriteCommandInput): Promise<boolean> {
-    const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
-    const writes = transaction.TransactItems ?? [];
-    const controlIndex = writes.findIndex((item) => item.Update?.Key?.pk === writerControlKey(identity.session).pk);
-    if (reasons?.[controlIndex]?.Code === 'ConditionalCheckFailed') throw writerBusy(reasons[controlIndex]);
-    if (reasons?.[2]?.Code !== 'ConditionalCheckFailed') return false;
-    const current = await this.getSessionItem(identity.dispatchOwner, identity.session.session_id);
-    return current !== null && current.snapshot_epoch !== identity.snapshotEpoch;
+  private async writerAdmissionChanged(failed: FailedWrites<'ownerFence' | 'destinationFence' | 'writerControl' | 'session' | 'claimFence' | 'recovery'>, identity: DispatchIdentity): Promise<boolean> {
+    if (failed.has('ownerFence') || failed.has('destinationFence')) throw new SessionDeletedError(identity.session.session_id);
+    const writerControl = failed.get('writerControl');
+    if (writerControl !== undefined) throw writerBusy(writerControl);
+    if (failed.has('session')) {
+      const current = await this.getSessionItem(identity.dispatchOwner, identity.session.session_id);
+      return current !== null && current.snapshot_epoch !== identity.snapshotEpoch;
+    }
+    if (!failed.has('claimFence') && failed.has('recovery')) {
+      throw new SessionBusyError('Session writer recovery changed during dispatch');
+    }
+    return false;
   }
 
   rejectedDispatches(session: SessionPurge, runtimeTarget?: string): Promise<RegisteredDispatch[]> {
@@ -617,58 +641,42 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     return { creating, filing: typeof main.filing_user_id === 'string' ? main.filing_user_id : filingUserId };
   }
 
-  private turnTransaction(owner: string, sessionId: string, { filingUserId, title, provider, running, messageId, warmup, opening, postAcceptance, scheduledTaskId }: TurnAdmission, creating: boolean, admission?: { session: SessionPurge }): TransactWriteCommandInput {
+  private turnTransaction(owner: string, sessionId: string, { filingUserId, title, provider, running, messageId, warmup, opening, postAcceptance, scheduledTaskId }: TurnAdmission, creating: boolean, admission?: { session: SessionPurge }) {
     const providerUpdate = providerWrite(provider, creating);
     const runningUpdate = runningWrite(running, postAcceptance);
     const scheduledUpdate = scheduledWrite(scheduledTaskId, postAcceptance);
     const runtime = turnIdentityWrite(creating, admission);
-    return {
-          TransactItems: [
-            {
-              ConditionCheck: {
-                TableName: this.tableName,
-                Key: ownerFenceKey(owner),
-                ConditionExpression: 'attribute_not_exists(pk)',
-              },
-            },
-            {
-              Update: {
-                TableName: this.tableName,
-                Key: key(owner, sessionId),
-                UpdateExpression:
-                  'SET session_id = :session_id, updated_at = :now, ' +
-                  'created_at = if_not_exists(created_at, :now), ' +
-                  (warmup || opening ? '' : 'title = if_not_exists(title, :title), ') +
-                  'filing_user_id = if_not_exists(filing_user_id, :filing_user_id)' +
-                  (messageId === undefined ? '' : ', latest_message_id = :latest_message_id') +
-                  scheduledUpdate.set +
-                  runningUpdate.set +
-                  providerUpdate.set + (postAcceptance ? '' : ' REMOVE turn_failure' + runningUpdate.remove + (provider === undefined ? '' : ', provider_pending')),
-                ConditionExpression: `attribute_not_exists(deleted_at) AND ${creating ? 'attribute_not_exists' : 'attribute_exists'}(session_id)` +
-                  scheduledUpdate.condition + runtime.condition + (warmup || postAcceptance ? '' : ' AND (attribute_not_exists(single_turn) OR (attribute_not_exists(title) AND attribute_not_exists(latest_message_id)))') + (opening ? " AND attribute_not_exists(title) AND attribute_not_exists(turn_latest_run_id) AND attribute_not_exists(latest_message_id) AND attribute_not_exists(turn_running_since)" : ""),
-                ExpressionAttributeValues: {
-                  ':session_id': sessionId,
-                  ':now': metadataTimestamp(),
-                  ...(warmup || opening ? {} : { ':title': title }),
-                  ...runtime.values,
-                  ':filing_user_id': filingUserId,
-                  ...(messageId === undefined ? {} : { ':latest_message_id': messageId }),
-                  ...scheduledUpdate.values,
-                  ...runningUpdate.values,
-                  ...providerUpdate.values,
-                },
-                ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
-              },
-            },
-            {
-              ConditionCheck: {
-                TableName: this.tableName,
-                Key: claimFenceKey(owner),
-                ConditionExpression: 'attribute_not_exists(pk)',
-              },
-            },
-          ],
-        };
+    return namedTransaction([
+      ['ownerFence', { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
+      ['session', { Update: {
+        TableName: this.tableName,
+        Key: key(owner, sessionId),
+        UpdateExpression:
+          'SET session_id = :session_id, updated_at = :now, ' +
+          'created_at = if_not_exists(created_at, :now), ' +
+          (warmup || opening ? '' : 'title = if_not_exists(title, :title), ') +
+          'filing_user_id = if_not_exists(filing_user_id, :filing_user_id)' +
+          (messageId === undefined ? '' : ', latest_message_id = :latest_message_id') +
+          scheduledUpdate.set +
+          runningUpdate.set +
+          providerUpdate.set + (postAcceptance ? '' : ' REMOVE turn_failure' + runningUpdate.remove + (provider === undefined ? '' : ', provider_pending')),
+        ConditionExpression: `attribute_not_exists(deleted_at) AND ${creating ? 'attribute_not_exists' : 'attribute_exists'}(session_id)` +
+          scheduledUpdate.condition + runtime.condition + (warmup || postAcceptance ? '' : ' AND (attribute_not_exists(single_turn) OR (attribute_not_exists(title) AND attribute_not_exists(latest_message_id)))') + (opening ? " AND attribute_not_exists(title) AND attribute_not_exists(turn_latest_run_id) AND attribute_not_exists(latest_message_id) AND attribute_not_exists(turn_running_since)" : ""),
+        ExpressionAttributeValues: {
+          ':session_id': sessionId,
+          ':now': metadataTimestamp(),
+          ...(warmup || opening ? {} : { ':title': title }),
+          ...runtime.values,
+          ':filing_user_id': filingUserId,
+          ...(messageId === undefined ? {} : { ':latest_message_id': messageId }),
+          ...scheduledUpdate.values,
+          ...runningUpdate.values,
+          ...providerUpdate.values,
+        },
+        ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
+      } }],
+      ['claimFence', { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
+    ]);
   }
 
   private async unmaterializedMainIdentity(owner: string, sessionId: string, currentMain?: Record<string, unknown>): Promise<Record<string, unknown> | undefined> {
@@ -705,29 +713,31 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     const token = randomUUID();
     const epoch = snapshotEpoch ?? randomUUID();
     const fallback = () => this.beginDispatch(owner, session.session_id, undefined, acceptedTurn, 'runtime', undefined, session);
+    const [registration, writerControl] = this.writers.registration(session, token);
+    const transaction = namedTransaction([
+      ['ownerFence', { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
+      ['claimFence', { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
+      ['session', this.dispatchSessionWrite(owner, session, epoch, snapshotEpoch)],
+      ['registration', registration],
+      ['writerControl', writerControl],
+    ]);
     try {
-      await this.documents.send(new TransactWriteCommand({ TransactItems: [
-        { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
-        { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
-        this.dispatchSessionWrite(owner, session, epoch, snapshotEpoch),
-        ...this.writers.registration(session, token),
-      ] }));
+      await this.documents.send(transaction.command);
     } catch (error) {
-      return this.refusedTurnDispatch(error, owner, session, snapshotEpoch, acceptedTurn !== undefined, fallback);
+      return this.refusedTurnDispatch(error, transaction.conditions(error).failed, owner, session, snapshotEpoch, acceptedTurn !== undefined, fallback);
     }
     return this.writers.acknowledgement(session, token, false, false, undefined, 'runtime', epoch);
   }
 
-  private async refusedTurnDispatch(error: unknown, owner: string, session: Readonly<SessionPurge>, snapshotEpoch: string | undefined, accepted: boolean, fallback: () => Promise<RegisteredSessionDispatch>): Promise<RegisteredSessionDispatch> {
-    const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
-    const failed = (index: number) => reasons?.[index]?.Code === 'ConditionalCheckFailed';
-    if (failed(0)) throw new SessionDeletedError(session.session_id);
-    if (reasons?.[4]?.Code === 'ConditionalCheckFailed') throw writerBusy(reasons[4]);
-    if (failed(1)) {
+  private async refusedTurnDispatch(error: unknown, failed: FailedWrites<'ownerFence' | 'writerControl' | 'claimFence' | 'session'>, owner: string, session: Readonly<SessionPurge>, snapshotEpoch: string | undefined, accepted: boolean, fallback: () => Promise<RegisteredSessionDispatch>): Promise<RegisteredSessionDispatch> {
+    if (failed.has('ownerFence')) throw new SessionDeletedError(session.session_id);
+    const writerControl = failed.get('writerControl');
+    if (writerControl !== undefined) throw writerBusy(writerControl);
+    if (failed.has('claimFence')) {
       if (accepted) return fallback();
       throw new SessionClaimError(owner);
     }
-    if (!failed(2)) throw turnTransactionError(error);
+    if (!failed.has('session')) throw turnTransactionError(error);
     const current = await this.getSessionItem(owner, session.session_id);
     if (current !== null && current.snapshot_epoch !== snapshotEpoch) return fallback();
     throw new SessionDeletedError(session.session_id);
@@ -738,9 +748,9 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     const transaction = this.turnTransaction(owner, sessionId, { ...turn, filingUserId: session.filing_user_id }, creating,
       { session });
     try {
-      await this.documents.send(new TransactWriteCommand(transaction));
+      await this.documents.send(transaction.command);
     } catch (error) {
-      if (retrySessionCreation(turnTransactionError(error), sessionId, creating, turn.scheduledTaskId, turn.opening)) return this.prepareTurn(owner, sessionId, turn);
+      if (retrySessionCreation(turnTransactionError(error), transaction.conditions(error).failed, sessionId, creating, turn.scheduledTaskId, turn.opening)) return this.prepareTurn(owner, sessionId, turn);
     }
     return { session, dispatch: () => this.dispatchTurn(owner, session, snapshotEpoch, turn.running ?? (turn.messageId === undefined ? undefined : { messageId: turn.messageId })) };
   }
@@ -749,10 +759,11 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     const admission = { ...turn };
     const { creating, filing } = await this.turnIdentity(owner, sessionId, admission.filingUserId, admission.allocation);
     const resolved = { ...admission, filingUserId: filing };
+    const transaction = this.turnTransaction(owner, sessionId, resolved, creating);
     try {
-      await this.documents.send(new TransactWriteCommand(this.turnTransaction(owner, sessionId, resolved, creating)));
+      await this.documents.send(transaction.command);
     } catch (error) {
-      if (retrySessionCreation(error, sessionId, creating, admission.scheduledTaskId, admission.opening)) {
+      if (retrySessionCreation(error, transaction.conditions(error).failed, sessionId, creating, admission.scheduledTaskId, admission.opening)) {
         return this.recordTurn(owner, sessionId, resolved);
       }
     }
@@ -829,22 +840,23 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
         ExpressionAttributeValues: { ':completed_at': completedAt },
       },
     };
+    const transaction = namedTransaction([
+      ['ownerFence', { ConditionCheck: {
+        TableName: this.tableName, Key: ownerFenceKey(owner),
+        ConditionExpression: 'attribute_not_exists(pk)',
+      } }],
+      ['session', { ConditionCheck: {
+        TableName: this.tableName, Key: key(owner, turn.sessionId),
+        ConditionExpression: 'attribute_exists(pk) AND attribute_not_exists(deleted_at)',
+      } }],
+      ['summary', write],
+    ]);
     try {
-      await this.documents.send(new TransactWriteCommand({ TransactItems: [
-        { ConditionCheck: {
-          TableName: this.tableName, Key: ownerFenceKey(owner),
-          ConditionExpression: 'attribute_not_exists(pk)',
-        } },
-        { ConditionCheck: {
-          TableName: this.tableName, Key: key(owner, turn.sessionId),
-          ConditionExpression: 'attribute_exists(pk) AND attribute_not_exists(deleted_at)',
-        } },
-        write,
-      ] }));
+      await this.documents.send(transaction.command);
     } catch (cause) {
-      const reasons = (cause as Partial<TransactionCanceledException>).CancellationReasons;
-      if (reasons?.[2]?.Code === 'ConditionalCheckFailed' && reasons.slice(0, 2).every((reason) => reason.Code === 'None')) return;
-      const error = reasons?.some((reason) => reason.Code === 'ConditionalCheckFailed') ? new SessionDeletedError(turn.sessionId) : cause;
+      const { failed, passed } = transaction.conditions(cause);
+      if (passed.has('ownerFence') && passed.has('session') && failed.has('summary')) return;
+      const error = failed.size > 0 ? new SessionDeletedError(turn.sessionId) : cause;
       if (error instanceof SessionDeletedError) {
         const transferred = await this.claimedSession(owner, turn.sessionId);
         if (transferred !== null && transferred.session.filing_user_id === turn.filingUserId) {
@@ -907,44 +919,46 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
 
   async markRead(owner: string, sessionId: string, observed: string | { runId: string }): Promise<void> {
     const byRun = typeof observed !== 'string';
+    const transaction = namedTransaction([
+      ['session', { Update: {
+        TableName: this.tableName, Key: key(owner, sessionId),
+        UpdateExpression: byRun ? 'SET read_at = turn_completed_at' : 'SET read_at = :completed',
+        ConditionExpression: 'attribute_exists(pk) AND attribute_not_exists(deleted_at) AND ' + (byRun
+          ? 'turn_completed_run_id = :run AND turn_latest_run_id = :run AND attribute_not_exists(turn_running_since)'
+          : 'turn_completed_at = :completed AND (attribute_not_exists(read_at) OR read_at < :completed)'),
+        ExpressionAttributeValues: byRun ? { ':run': observed.runId } : { ':completed': observed },
+      } }],
+      ['ownerFence', { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
+      ['claimFence', { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
+    ]);
     try {
-      await this.documents.send(new TransactWriteCommand({ TransactItems: [
-        { Update: {
-          TableName: this.tableName, Key: key(owner, sessionId),
-          UpdateExpression: byRun ? 'SET read_at = turn_completed_at' : 'SET read_at = :completed',
-          ConditionExpression: 'attribute_exists(pk) AND attribute_not_exists(deleted_at) AND ' + (byRun
-            ? 'turn_completed_run_id = :run AND turn_latest_run_id = :run AND attribute_not_exists(turn_running_since)'
-            : 'turn_completed_at = :completed AND (attribute_not_exists(read_at) OR read_at < :completed)'),
-          ExpressionAttributeValues: byRun ? { ':run': observed.runId } : { ':completed': observed },
-        } },
-        { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
-        { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
-      ] }));
+      await this.documents.send(transaction.command);
     } catch (error) {
-      const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
-      if (reasons?.[2]?.Code === 'ConditionalCheckFailed') throw new SessionClaimError(owner);
-      if (reasons?.[1]?.Code === 'ConditionalCheckFailed') throw new SessionDeletedError(sessionId);
-      if (!reasons?.some((reason) => reason.Code === 'ConditionalCheckFailed')) throw error;
+      const { failed } = transaction.conditions(error);
+      if (failed.has('claimFence')) throw new SessionClaimError(owner);
+      if (failed.has('ownerFence')) throw new SessionDeletedError(sessionId);
+      if (!failed.has('session')) throw error;
       if (await this.get(owner, sessionId) === null) throw new SessionDeletedError(sessionId);
     }
   }
 
   async rename(owner: string, sessionId: string, title: string): Promise<SessionSummary | null> {
+    const transaction = namedTransaction([
+      ['session', { Update: {
+        TableName: this.tableName, Key: key(owner, sessionId),
+        UpdateExpression: 'SET title = :title',
+        ConditionExpression: 'attribute_exists(title) AND attribute_not_exists(deleted_at)',
+        ExpressionAttributeValues: { ':title': title },
+      } }],
+      ['ownerFence', { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
+      ['claimFence', { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
+    ]);
     try {
-      await this.documents.send(new TransactWriteCommand({ TransactItems: [
-        { Update: {
-          TableName: this.tableName, Key: key(owner, sessionId),
-          UpdateExpression: 'SET title = :title',
-          ConditionExpression: 'attribute_exists(title) AND attribute_not_exists(deleted_at)',
-          ExpressionAttributeValues: { ':title': title },
-        } },
-        { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
-        { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
-      ] }));
+      await this.documents.send(transaction.command);
     } catch (error) {
-      const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
-      if (reasons?.[2]?.Code === 'ConditionalCheckFailed') throw new SessionClaimError(owner);
-      if (reasons?.some((reason) => reason.Code === 'ConditionalCheckFailed')) return null;
+      const { failed } = transaction.conditions(error);
+      if (failed.has('claimFence')) throw new SessionClaimError(owner);
+      if (failed.has('session') || failed.has('ownerFence')) return null;
       throw error;
     }
     return this.get(owner, sessionId);
@@ -1020,28 +1034,29 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     const { Item } = await this.read(key(owner, sessionId));
     if (Item === undefined) return null;
     const deletedAt = metadataTimestamp();
+    const transaction = namedTransaction([
+      ['session', { Update: {
+        TableName: this.tableName, Key: key(owner, sessionId),
+        UpdateExpression: 'SET deleted_at = if_not_exists(deleted_at, :now), purge_registered = :registered REMOVE title',
+        ConditionExpression: 'attribute_exists(pk) AND session_id = :id AND filing_user_id = :filing',
+        ExpressionAttributeValues: { ':now': deletedAt, ':id': sessionId, ':filing': Item.filing_user_id, ':registered': true },
+      } }],
+      // A completed purge is never rewritten, so a retried account erase resumes past it.
+      ['purgeJob', { Put: {
+        TableName: this.tableName,
+        Item: { ...purgeKey({ session_id: sessionId, filing_user_id: Item.filing_user_id }), session_id: sessionId, filing_user_id: Item.filing_user_id, owner },
+        ConditionExpression: 'attribute_not_exists(completed_at)',
+      } }],
+    ]);
     try {
-      await this.documents.send(new TransactWriteCommand({ TransactItems: [
-        { Update: {
-          TableName: this.tableName, Key: key(owner, sessionId),
-          UpdateExpression: 'SET deleted_at = if_not_exists(deleted_at, :now), purge_registered = :registered REMOVE title',
-          ConditionExpression: 'attribute_exists(pk) AND session_id = :id AND filing_user_id = :filing',
-          ExpressionAttributeValues: { ':now': deletedAt, ':id': sessionId, ':filing': Item.filing_user_id, ':registered': true },
-        } },
-        // A completed purge is never rewritten, so a retried account erase resumes past it.
-        { Put: {
-          TableName: this.tableName,
-          Item: { ...purgeKey({ session_id: sessionId, filing_user_id: Item.filing_user_id }), session_id: sessionId, filing_user_id: Item.filing_user_id, owner },
-          ConditionExpression: 'attribute_not_exists(completed_at)',
-        } },
-      ] }));
+      await this.documents.send(transaction.command);
       const { Item: fencedItem } = await this.read(key(owner, sessionId));
       if (fencedItem === undefined) throw new Error('The fenced Session disappeared before its acknowledgement');
       return { ...summaryWithLegacyProvider(fencedItem as SessionItem), owner };
     } catch (error) {
-      const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
+      const { failed } = transaction.conditions(error);
       // The Session is gone, or its purge already completed: nothing is left to purge.
-      if (reasons?.[0]?.Code === 'ConditionalCheckFailed' || reasons?.[1]?.Code === 'ConditionalCheckFailed') {
+      if (failed.has('session') || failed.has('purgeJob')) {
         return null;
       }
       throw error;
@@ -1071,7 +1086,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     for (const item of (await this.query(source, SESSION)).filter((item) => !fenced(item))) {
       // eslint-disable-next-line no-await-in-loop -- checks every Session before any write and stops at the first conflict
       if ((await this.get(destination, item.session_id)) !== null) {
-        throw new Error('destination already owns this Session ID');
+        throw new SessionConcurrencyError('destination already owns this Session ID');
       }
     }
     await this.documents.send(new PutCommand({
@@ -1108,16 +1123,20 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
         values[`:${field}`] = item[field];
       }
     }
+    const transaction = namedTransaction([
+      ['destinationSession', { Put: { TableName: this.tableName, Item: { ...item, ...key(destination, item.session_id) }, ConditionExpression: 'attribute_not_exists(pk)' } }],
+      ['sourceSession', { Delete: { TableName: this.tableName, Key: key(source, item.session_id), ConditionExpression: conditions.join(' AND '),
+        ...(Object.keys(values).length === 0 ? {} : { ExpressionAttributeValues: values }),
+      } }],
+    ]);
     try {
-      await this.documents.send(new TransactWriteCommand({ TransactItems: [
-        { Put: { TableName: this.tableName, Item: { ...item, ...key(destination, item.session_id) }, ConditionExpression: 'attribute_not_exists(pk)' } },
-        { Delete: { TableName: this.tableName, Key: key(source, item.session_id), ConditionExpression: conditions.join(' AND '),
-          ...(Object.keys(values).length === 0 ? {} : { ExpressionAttributeValues: values }),
-        } },
-      ] }));
+      await this.documents.send(transaction.command);
     } catch (error) {
-      const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
-      if (reasons?.[1]?.Code !== 'ConditionalCheckFailed') throw error;
+      const { failed } = transaction.conditions(error);
+      if (failed.has('destinationSession')) {
+        throw new SessionConcurrencyError('destination already owns this Session ID', { cause: error });
+      }
+      if (!failed.has('sourceSession')) throw error;
       const { Item } = await this.read(key(source, item.session_id));
       if (Item === undefined || fenced(Item as SessionItem)) throw error;
       if (fields.every((field) => Item[field] === item[field])) throw error;
@@ -1137,20 +1156,24 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     }
     const filing = inherited?.filing_user_id ?? filingUserId;
     const createdAt = metadataTimestamp();
+    const transaction = namedTransaction([
+      ['mainPointer', { Put: { TableName: this.tableName, ...mainPointer(owner, { session_id: sessionId, ...(filing === undefined ? {} : { filing_user_id: filing }) }, old) } }],
+      ['ownerFence', { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
+      ['claimFence', { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
+      ...(inherited === undefined ? [
+        ['session', { Put: { TableName: this.tableName, Item: { ...key(owner, sessionId), session_id: sessionId, filing_user_id: filing, created_at: createdAt, updated_at: createdAt, provider_pending: true }, ConditionExpression: 'attribute_not_exists(pk)' } }],
+      ] as const : []),
+    ]);
     try {
-      await this.documents.send(new TransactWriteCommand({ TransactItems: [
-        { Put: { TableName: this.tableName, ...mainPointer(owner, { session_id: sessionId, ...(filing === undefined ? {} : { filing_user_id: filing }) }, old) } },
-        { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
-        { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
-        ...(inherited === undefined ? [
-          { Put: { TableName: this.tableName, Item: { ...key(owner, sessionId), session_id: sessionId, filing_user_id: filing, created_at: createdAt, updated_at: createdAt, provider_pending: true }, ConditionExpression: 'attribute_not_exists(pk)' } },
-        ] : []),
-      ] }));
+      await this.documents.send(transaction.command);
     } catch (error) {
-      const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
-      if (reasons?.[1]?.Code === 'ConditionalCheckFailed') throw new SessionDeletedError(sessionId);
-      if (reasons?.[2]?.Code === 'ConditionalCheckFailed') throw new SessionClaimError(sessionId);
-      if (reasons?.[0]?.Code === 'ConditionalCheckFailed') return;
+      const { failed } = transaction.conditions(error);
+      if (failed.has('ownerFence')) throw new SessionDeletedError(sessionId);
+      if (failed.has('claimFence')) throw new SessionClaimError(sessionId);
+      if (failed.has('mainPointer')) return;
+      if (failed.has('session')) {
+        throw new SessionConcurrencyError('The allocated Main Chat Session ID already exists. Retry opening Main Chat.', { cause: error });
+      }
       throw error;
     }
   }
@@ -1180,12 +1203,11 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
   }
 }
 
-function retrySessionCreation(error: unknown, sessionId: string, creating: boolean, scheduledTaskId?: string, opening?: boolean): boolean {
-  const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
-  const [ownerFence, session, claimFence] = reasons ?? [];
-  if (ownerFence?.Code === 'ConditionalCheckFailed' || (session?.Code === 'ConditionalCheckFailed' && session.Item?.deleted_at !== undefined)) throw new SessionDeletedError(sessionId);
-  if (claimFence?.Code === 'ConditionalCheckFailed') throw new SessionClaimError(sessionId);
-  if (session?.Code !== 'ConditionalCheckFailed') throw error;
+function retrySessionCreation(error: unknown, failed: FailedWrites<'ownerFence' | 'session' | 'claimFence'>, sessionId: string, creating: boolean, scheduledTaskId?: string, opening?: boolean): boolean {
+  const session = failed.get('session');
+  if (failed.has('ownerFence') || session?.Item?.deleted_at !== undefined) throw new SessionDeletedError(sessionId);
+  if (failed.has('claimFence')) throw new SessionClaimError(sessionId);
+  if (session === undefined) throw error;
   if (session.Item?.single_turn?.BOOL === true && (session.Item.title !== undefined || session.Item.latest_message_id !== undefined)) throw new SessionConcurrencyError('This Session permits one Turn');
   if (opening && ['title', 'turn_latest_run_id', 'latest_message_id', 'turn_running_since'].some((field) => session.Item?.[field] !== undefined)) throw new SessionOpeningError();
   if (session.Item?.turn_running_since !== undefined && (scheduledTaskId !== undefined || session.Item.scheduled_task_id !== undefined)) {

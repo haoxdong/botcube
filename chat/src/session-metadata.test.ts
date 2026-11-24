@@ -5,14 +5,15 @@ import {
   ResourceNotFoundException,
   TransactionCanceledException,
 } from '@aws-sdk/client-dynamodb';
-import { DeleteCommand, DynamoDBDocumentClient, PutCommand, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DeleteCommand, DynamoDBDocumentClient, PutCommand, ScanCommand, TransactWriteCommand, UpdateCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../test/fakes/stack.js';
-import { DynamoDBSessionMetadata, SessionConcurrencyError, SessionDeletedError, SessionClaimError, SessionOpeningError } from './session-metadata.js';
+import { DynamoDBSessionMetadata, SessionBusyError, SessionConcurrencyError, SessionDeletedError, SessionClaimError, SessionOpeningError } from './session-metadata.js';
 import { SessionReadOnlyError } from './session-identity.js';
 import { purgeQueue } from './purges.js';
 import { RuntimeAdmissionUnprovedError, runtimeSessionId, sessionLifecycle } from './session-lifecycle.js';
 import { motoEndpoint } from '../test/fakes/moto.js';
+import { memoryDocuments } from '../test/memory-documents.js';
 
 const REJECTED_TARGET = 'configured-runtime';
 const T1 = '2026-01-02T03:04:05.678Z';
@@ -66,11 +67,11 @@ async function fence(owner: string, sessionId: string, at: string) {
 }
 
 /** Session Metadata over this test's table whose client runs `before` ahead of each command it sends. */
-function metadataWith(before: (command: string) => Promise<unknown>): DynamoDBSessionMetadata {
+function metadataWith(before: (command: string, input: unknown) => Promise<unknown>): DynamoDBSessionMetadata {
   const intercepted = client();
   intercepted.middlewareStack.add(
     (next, context) => async (args) => {
-      const output = await before(context.commandName as string);
+      const output = await before(context.commandName as string, args.input);
       return output === undefined ? next(args) : ({ output, response: {} } as Awaited<ReturnType<typeof next>>);
     },
     { step: 'initialize' },
@@ -888,7 +889,7 @@ describe('transferOwner', () => {
     const before = await items();
 
     await expect(metadata.transferOwner('account-2', 'account-1')).rejects.toThrow(
-      new Error('destination already owns this Session ID'),
+      new SessionConcurrencyError('destination already owns this Session ID'),
     );
     expect(await items()).toEqual(before);
   });
@@ -899,7 +900,7 @@ describe('transferOwner', () => {
     await fence('account-1', 'session-1', T1);
 
     await expect(metadata.transferOwner('account-2', 'account-1')).rejects.toBeInstanceOf(
-      TransactionCanceledException,
+      SessionConcurrencyError,
     );
     expect(await items()).toMatchObject([
       { pk: 'PURGES', sk: '["filed-account-1","session-1"]', session_id: 'session-1', filing_user_id: 'filed-account-1' },
@@ -1991,4 +1992,64 @@ it('admits only one Turn for a smoke Session, even after a warmup clears its run
   await metadata.prepareTurn('owner', 'smoke', first);
   await metadata.recordTurn('owner', 'smoke', { filingUserId: 'filing', title: 'warmup', warmup: true });
   await expect(metadata.prepareTurn('owner', 'smoke', { ...first, running: { runId: 'second', startedAt: T2 } })).rejects.toBeInstanceOf(SessionConcurrencyError);
+});
+
+it.each([false, true])('reports contention when a rejected writer changes after recovery reads it (claimed: %s)', async (claimed) => {
+  const proof = { messageId: 'post-1' };
+  await metadata.recordTurn('source', 'session-1', { filingUserId: 'filed-source', title: 'Session', allocation: true, ...proof });
+  const writer = await metadata.beginDispatch('source', 'session-1');
+  if (claimed) await metadata.transferOwner('source', 'destination');
+  const markRejected = defined(writer.markRejected, 'record rejection');
+  await markRejected(REJECTED_TARGET);
+  const racing = metadataWith(async (command) => {
+    if (command === 'TransactWriteItemsCommand') await markRejected('replacement-target');
+  });
+  const settle = vi.fn(async () => undefined);
+
+  await expect(racing.beginDispatch('source', 'session-1', undefined, proof, 'session-post', {
+    runtimeTarget: REJECTED_TARGET, settle,
+  })).rejects.toBeInstanceOf(SessionBusyError);
+  expect(settle).not.toHaveBeenCalled();
+});
+
+it('reports a destination Session created during Account Claim as a conflict', async () => {
+  await turn('source', 'session-1', T1, 'Source');
+  const racing = metadataWith(async (command) => {
+    if (command === 'TransactWriteItemsCommand') await turn('destination', 'session-1', T2, 'Destination');
+  });
+
+  await expect(racing.transferOwner('source', 'destination')).rejects.toBeInstanceOf(SessionConcurrencyError);
+  expect(await metadata.get('source', 'session-1')).toMatchObject({ title: 'Source' });
+  expect(await metadata.get('destination', 'session-1')).toMatchObject({ title: 'Destination' });
+});
+
+it('reports a Main Chat allocation collision without publishing a pointer', async () => {
+  const documents = memoryDocuments();
+  const racing = metadataWith(async (command, input) => {
+    if (command !== 'TransactWriteItemsCommand') return;
+    const transaction = input as TransactWriteCommandInput;
+    const item = defined(transaction.TransactItems?.find(({ Put }) => Put?.Item?.provider_pending === true)?.Put?.Item, 'allocated Session');
+    await documents.send(new PutCommand({ TableName: table, Item: { ...item, title: 'Existing' } }));
+    return documents.send(new TransactWriteCommand(transaction));
+  });
+
+  await expect(racing.mainChat('owner', 'filed-owner')).rejects.toBeInstanceOf(SessionConcurrencyError);
+  expect([...documents.items.values()]).toEqual([expect.objectContaining({ title: 'Existing' })]);
+  const allocated = await metadata.mainChat('owner', 'filed-owner');
+  expect(await metadata.get('owner', allocated)).toMatchObject({ session_id: allocated });
+});
+
+it.each(['source', 'destination'])('reports deletion when the %s account fence and writer lease both block dispatch', async (owner) => {
+  const proof = { messageId: 'post-1' };
+  await metadata.recordTurn('source', 'session', { filingUserId: 'filed-source', title: 'Session', allocation: true, ...proof });
+  if (owner === 'destination') await metadata.transferOwner('source', owner);
+  await metadata.beginDispatch(owner, 'session', undefined, proof, 'session-post');
+  const documents = DynamoDBDocumentClient.from(client());
+  const racing = metadataWith(async (command) => {
+    if (command === 'TransactWriteItemsCommand') {
+      await documents.send(new PutCommand({ TableName: table, Item: { pk: `SESSIONS#${owner}`, sk: 'DELETED', deleted_at: S2 } }));
+    }
+  });
+
+  await expect(racing.beginDispatch('source', 'session', undefined, proof)).rejects.toBeInstanceOf(SessionDeletedError);
 });

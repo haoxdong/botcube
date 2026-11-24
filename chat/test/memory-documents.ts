@@ -1,5 +1,6 @@
 import { ConditionalCheckFailedException, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { marshall } from '@aws-sdk/util-dynamodb';
 import { required } from './required.js';
 
 // An in-memory DynamoDB document client for unit tests: one table, and only the
@@ -12,6 +13,7 @@ interface Conditional {
   ConditionExpression?: string;
   ExpressionAttributeValues?: Values;
   ExpressionAttributeNames?: Record<string, string>;
+  ReturnValuesOnConditionCheckFailure?: 'ALL_OLD' | 'NONE';
 }
 
 const metadata = { $metadata: {} };
@@ -74,10 +76,18 @@ export function memoryDocuments({ rejectTransactionConflicts = false } = {}): Pi
     const operations = (input.TransactItems as Record<string, Conditional & Item>[]).map((operation) => {
       const [kind, body] = required(Object.entries(operation)[0], 'a transaction operation') as [keyof typeof writes, Conditional & Item];
       const key = kind === 'Put' ? (body.Item as Item) : required(body.Key, 'a key');
-      return { key: id(key), ok: check(key, body), apply: (writes[kind] as (input: unknown) => () => void)(body) };
+      const oldItem = body.ReturnValuesOnConditionCheckFailure === 'ALL_OLD' ? items.get(id(key)) : undefined;
+      return { key: id(key), ok: check(key, body), oldItem, apply: (writes[kind] as (input: unknown) => () => void)(body) };
     });
     if (!operations.every(({ ok }) => ok)) {
-      throw new TransactionCanceledException({ message: 'Transaction cancelled', ...metadata });
+      throw new TransactionCanceledException({
+        message: 'Transaction cancelled', ...metadata,
+        CancellationReasons: operations.map(({ ok, oldItem }) => ok ? { Code: 'None' } : {
+          Code: 'ConditionalCheckFailed',
+          Message: 'The conditional request failed',
+          ...(oldItem === undefined ? {} : { Item: marshall(oldItem, { removeUndefinedValues: true }) }),
+        }),
+      });
     }
     if (rejectTransactionConflicts && operations.some(({ key }) => transactions.has(key))) {
       throw new TransactionCanceledException({
