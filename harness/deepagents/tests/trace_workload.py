@@ -32,7 +32,7 @@ from langgraph.graph import END, START, StateGraph
 from opentelemetry import baggage, trace
 from opentelemetry.sdk.trace import TracerProvider
 
-from botcube_harness_deepagents import serving, trace_relay, turn_timing
+from botcube_harness_deepagents import serving, trace_relay, turn_lifecycle, turn_timing
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.definition import SESSION_ID_HEADER, HarnessDefinition
 from botcube_harness_deepagents.session_agent import SessionAgent
@@ -60,7 +60,7 @@ def credential_headers(mode: str, forwarded: dict[str, str]) -> dict[str, str]:
 
 async def exercise(session_id: str, mode: str) -> None:
     entered = asyncio.Event()
-    turns = serving._SessionTurns()
+    turns = turn_lifecycle.SessionTurns()
 
     async def reply(state: Any) -> dict[str, Any]:
         entered.set()
@@ -117,8 +117,7 @@ async def exercise(session_id: str, mode: str) -> None:
             })
         assert response.status_code == 200
         assert ('RUN_ERROR' if mode.endswith('error') else 'RUN_FINISHED') in response.text
-    while turns._turns:
-        await asyncio.sleep(0)
+    await turns.wait_for_checkpoint(('owner', session_id))
     assert baggage.get_baggage('session.id') is None
 
 
@@ -242,7 +241,7 @@ async def exercise_cli_turn(session_id: str, command: str, *, answer_fails: bool
                 await read_checkpoint(agent.graph.checkpointer)
             return agent, backend
 
-        serving._SESSION_TURNS = serving._SessionTurns()
+        serving._SESSION_TURNS = turn_lifecycle.SessionTurns()
         pytest.MonkeyPatch().setattr(serving, '_turn_agent', turn_agent)
         inputs = RunAgentInput(
             thread_id=session_id, run_id=session_id, messages=[UserMessage(id='question', role='user', content='question')],

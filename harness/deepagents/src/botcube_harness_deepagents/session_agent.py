@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
 from dataclasses import dataclass
 from time import perf_counter
@@ -22,6 +22,11 @@ from ag_ui.core import (
     StateSnapshotEvent,
 )
 from ag_ui_langgraph import LangGraphAgent
+from langchain.agents.middleware.types import (
+    AgentMiddleware,
+    ModelRequest,
+    ModelResponse,
+)
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.content import ReasoningContentBlock
 from langchain_core.runnables import RunnableConfig
@@ -31,7 +36,7 @@ from pydantic import TypeAdapter
 from . import message_times, turn_timing
 from .conversation import OPENING_INSTRUCTION, conversation, reasoning_chunk
 from .graph_stream import answering_model_step, clock_events, drain_after_answer
-from .turn_state import observe_reply_model
+from .turn_lifecycle import error_code, observe_reply_model
 
 log = logging.getLogger(f'{__package__}.serving')
 
@@ -84,12 +89,10 @@ class SessionAgent(LangGraphAgent):
                     if event.type in {EventType.RUN_FINISHED, EventType.RUN_ERROR}:
                         break
         except Exception as error:
-            from .serving import _error_code
-
             log.exception('Error during graph streaming')
             for closed in self._close_thoughts():
                 yield closed
-            yield RunErrorEvent(message=str(error) or type(error).__name__, code=_error_code(error))
+            yield RunErrorEvent(message=str(error) or type(error).__name__, code=error_code(error))
         finally:
             self._model_lane = None
             self._thinking.clear()
@@ -322,3 +325,28 @@ def _opening_messages(input: RunAgentInput) -> list[HumanMessage]:
                 'If Memory is empty, skip the Memory pitch; never invent one.',
         additional_kwargs={OPENING_INSTRUCTION: True},
     )]
+
+
+class AnsweredToolResultsMiddleware(AgentMiddleware):
+    """Send the first recorded result of each tool call to the model.
+
+    Older Sessions can hold a resent result after the call was answered.
+    Bedrock refuses later Turns on those Sessions. The
+    record keeps that result; only the model's request leaves it out. Read the
+    first result's identity from the full state because native summarization
+    can remove it from the request while keeping the replayed result.
+    """
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        first_results: dict[str, str | None] = {}
+        for message in request.state['messages']:
+            if isinstance(message, ToolMessage):
+                first_results.setdefault(message.tool_call_id, message.id)
+        messages = [
+            message for message in request.messages
+            if not isinstance(message, ToolMessage) or message.id == first_results[message.tool_call_id]
+        ]
+        return await handler(request.override(messages=messages))

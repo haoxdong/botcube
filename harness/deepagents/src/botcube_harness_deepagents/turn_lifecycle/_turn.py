@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Coroutine
-from contextvars import ContextVar, copy_context
+from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
@@ -23,11 +23,6 @@ from ag_ui.core import (
 )
 from ag_ui_langgraph import LangGraphAgent
 from ag_ui_langgraph.utils import agui_messages_to_langchain
-from langchain.agents.middleware.types import (
-    AgentMiddleware,
-    ModelRequest,
-    ModelResponse,
-)
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -39,45 +34,32 @@ from langchain_core.messages.content import ContentBlock
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
-from . import message_times
-from .conversation import MESSAGE_TIMES
-from .lazy_files import TurnFiles
-from .steering import PendingSteering
+from .. import message_times
+from ..conversation import MESSAGE_TIMES
+from ..lazy_files import TurnFiles
+from ..steering import PendingSteering
 
-log = logging.getLogger(__name__)
+log = logging.getLogger('botcube_harness_deepagents.serving')
 
 
 class CheckpointWriteError(RuntimeError):
     code = 'CHECKPOINT_WRITE_FAILED'
 
 
-_active_reply: ContextVar[_OpenReply | None] = ContextVar('_active_reply', default=None)
+_active_turn: ContextVar[_Turn | None] = ContextVar('_active_turn', default=None)
 
 
 def observe_reply_model(event: Any) -> None:
-    if (reply := _active_reply.get()) is not None:
-        reply.watch_model(event)
+    if (turn := _active_turn.get()) is not None:
+        turn.watch_model(event)
 
 
-async def _turn_events(
-    agent: LangGraphAgent,
-    input_data: RunAgentInput,
-    put: Callable[[Any], None],
-) -> None:
-    async for event in agent.run(input_data):
-        if event.type != EventType.STATE_SNAPSHOT:
-            put(event)
-            if event.type == EventType.RUN_FINISHED:
-                graph_end = getattr(agent, '_graph_ended_at', None)
-                if graph_end is not None:
-                    log.info('Harness Turn graph timing run_id=%s graph_end_to_completion_ms=%.3f snapshot=omitted',
-                             input_data.run_id, (perf_counter() - graph_end) * 1000)
+_Session = tuple[str | None, str | None]
 
 
 @dataclass
 class _Turn:
-    run_id: str
-    input_data: RunAgentInput | None = None
+    input_data: RunAgentInput
     steering: PendingSteering = field(default_factory=PendingSteering)
     work: asyncio.Task[None] | None = None
     response_finished: bool = False
@@ -87,7 +69,21 @@ class _Turn:
     finished: bool = False
     interrupted: bool = False
 
-    def publish(self, event: Any, *, put: Callable[[Any], None], files: TurnFiles, early: bool = True) -> None:
+    clock: message_times.ClockFrame | None = None
+    timing_id: str | None = None
+    started: bool = False
+    open_text: bool = False
+    message_id: str = ''
+    model_message_id: str | None = None
+    root_model_run_id: str | None = None
+    text: str = ''
+    started_at: int = 0
+    ended_at: int = 0
+    open_thoughts: set[str] = field(default_factory=set)
+    thoughts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    open_calls: set[str] = field(default_factory=set)
+
+    def _publish(self, event: Any, *, put: Callable[[Any], None], files: TurnFiles, early: bool) -> None:
         self.used_tools |= event.type == EventType.TOOL_CALL_START
         if event.type == EventType.CUSTOM and getattr(event, 'name', None) == 'on_interrupt':
             self.interrupted = True
@@ -123,52 +119,37 @@ class _Turn:
             self.work.cancel()
 
 
+    async def run(self, agent: LangGraphAgent, put: Callable[[Any], None], files: TurnFiles, *, early: bool) -> None:
+        _active_turn.set(self)
+        async for event in agent.run(self.input_data):
+            if event.type == EventType.STATE_SNAPSHOT:
+                continue
+            self._observe_reply(event)
+            self._publish(event, put=put, files=files, early=early)
+            if event.type == EventType.RUN_FINISHED and (graph_end := getattr(agent, '_graph_ended_at', None)) is not None:
+                log.info('Harness Turn graph timing run_id=%s graph_end_to_completion_ms=%.3f snapshot=omitted',
+                         self.input_data.run_id, (perf_counter() - graph_end) * 1000)
 
-class _OpenReply:
-    def __init__(self) -> None:
-        self.clock: message_times.ClockFrame | None = None
-        self.timing_id: str | None = None
-        self.started = False
-        self.open_text = False
-        self.message_id = ''
-        self.model_message_id: str | None = None
-        self.root_model_run_id: str | None = None
-        self.text = ''
-        self.started_at = self.ended_at = 0
-        self.open_thoughts: set[str] = set()
-        self.thoughts: dict[str, dict[str, Any]] = {}
-        # The tool calls started and not yet answered: the ones Stop cuts while they run.
-        self.open_calls: set[str] = set()
-
-    def create_task(self, events: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
-        context = copy_context()
-        context.run(_active_reply.set, self)
-        return asyncio.create_task(events, context=context)
-
-    def watching(self, put: Callable[[Any], None]) -> Callable[[Any], None]:
-        def watched(event: Any) -> None:
-            self._watch_clock(event)
-            self._watch_thought(event)
-            if event.type == EventType.RUN_STARTED:
-                self.started = True
-            if event.type == EventType.TEXT_MESSAGE_START:
-                self.open_text = True
-                self.message_id, self.text = event.message_id, ''
-                self.timing_id = (event.metadata or {}).get('timing_id')
-                self.started_at = self.ended_at = message_times.now()
-            elif event.type == EventType.TEXT_MESSAGE_END:
-                self.open_text = False
-            elif event.type == EventType.TEXT_MESSAGE_CONTENT:
-                self.text += event.delta
-                self.ended_at = message_times.now()
-            elif event.type == EventType.TOOL_CALL_START:
-                self.open_calls.add(event.tool_call_id)
-            elif event.type == EventType.TOOL_CALL_RESULT:
-                self.open_calls.discard(event.tool_call_id)
-                self.message_id, self.text, self.timing_id = '', '', None
-            put(event)
-
-        return watched
+    def _observe_reply(self, event: Any) -> None:
+        self._watch_clock(event)
+        self._watch_thought(event)
+        if event.type == EventType.RUN_STARTED:
+            self.started = True
+        if event.type == EventType.TEXT_MESSAGE_START:
+            self.open_text = True
+            self.message_id, self.text = event.message_id, ''
+            self.timing_id = (event.metadata or {}).get('timing_id')
+            self.started_at = self.ended_at = message_times.now()
+        elif event.type == EventType.TEXT_MESSAGE_END:
+            self.open_text = False
+        elif event.type == EventType.TEXT_MESSAGE_CONTENT:
+            self.text += event.delta
+            self.ended_at = message_times.now()
+        elif event.type == EventType.TOOL_CALL_START:
+            self.open_calls.add(event.tool_call_id)
+        elif event.type == EventType.TOOL_CALL_RESULT:
+            self.open_calls.discard(event.tool_call_id)
+            self.message_id, self.text, self.timing_id = '', '', None
 
     def watch_model(self, event: Any) -> None:
         if event.get('metadata', {}).get('lc_agent_name'):
@@ -199,8 +180,8 @@ class _OpenReply:
                 if operation.op == 'add' and operation.path == '/worklog_clock':
                     self.clock = operation.value
 
-    async def keep_failed(self, event: Any, agent: LangGraphAgent, session: tuple[str | None, str | None], put: Callable[[Any], None]) -> None:
-        if event.type == EventType.RUN_ERROR and self.clock is not None:
+    async def keep_failed(self, agent: LangGraphAgent, session: _Session, put: Callable[[Any], None]) -> None:
+        if self.completion is not None and self.completion.type == EventType.RUN_ERROR and self.clock is not None:
             await self.keep(agent, session)
             await self.keep_clock(agent, session, put)
 
@@ -213,24 +194,14 @@ class _OpenReply:
             put(TextMessageEndEvent(message_id=self.message_id))
             self.open_text = False
 
-    def finish_stopped(self, put: Callable[[Any], None]) -> None:
-        self._close_messages(put)
-        put(_stopped())
-
     async def finish_cancelled(
-        self, agent: LangGraphAgent, session: tuple[str | None, str | None],
-        input_data: RunAgentInput, put: Callable[[Any], None], *, limited: bool,
-    ) -> None:
-        if limited:
-            await self.finish_limited(agent, session, input_data, put)
-        else:
-            self.finish_stopped(put)
-
-    async def finish_limited(
-        self, agent: LangGraphAgent, session: tuple[str | None, str | None],
-        input_data: RunAgentInput, put: Callable[[Any], None],
+        self, agent: LangGraphAgent, session: _Session, put: Callable[[Any], None], *, limited: bool,
     ) -> None:
         self._close_messages(put)
+        if not limited:
+            put(_stopped())
+            return
+        input_data = self.input_data
         incoming = [] if self.started else agui_messages_to_langchain(input_data.messages)
         if not self.started:
             put(RunStartedEvent(thread_id=input_data.thread_id, run_id=input_data.run_id))
@@ -239,7 +210,7 @@ class _OpenReply:
             'I ran out of time for this Turn. Send another message to continue.', id=message_id,
         )
         now = message_times.now()
-        await agent.graph.aupdate_state(_session_config(session), {
+        await agent.graph.aupdate_state(session_config(session), {
             'messages': [*incoming, message_times.cut(message, now, now, [])],
         }, as_node='model')
         put(TextMessageStartEvent(message_id=message_id, role='assistant'))
@@ -247,12 +218,12 @@ class _OpenReply:
         put(TextMessageEndEvent(message_id=message_id))
         put(RunFinishedEvent(thread_id=input_data.thread_id, run_id=input_data.run_id))
 
-    async def keep(self, agent: LangGraphAgent, session: tuple[str | None, str | None]) -> None:
+    async def keep(self, agent: LangGraphAgent, session: _Session) -> None:
         thoughts = list(self.thoughts.values())
         if not self.text and not thoughts:
             return
         self.message_id = self.message_id or f"{thoughts[0]['id']}-reply"
-        config = _session_config(session)
+        config = session_config(session)
         recorded = (await agent.graph.aget_state(config)).values['messages']
         if any(message.id and message.id in (self.message_id, self.model_message_id) for message in recorded):
             return
@@ -264,11 +235,11 @@ class _OpenReply:
         ended = self.ended_at if self.text else thoughts[-1]['ended_at']
         await agent.graph.aupdate_state(config, {'messages': [message_times.cut(reply, started, ended, thoughts, timing_id=self.timing_id)]}, as_node='model')
 
-    async def keep_clock(self, agent: LangGraphAgent, session: tuple[str | None, str | None], put: Callable[[Any], None]) -> None:
+    async def keep_clock(self, agent: LangGraphAgent, session: _Session, put: Callable[[Any], None]) -> None:
         if self.clock is None:
             return
         clock = message_times.stop_frame(self.clock, message_times.now())
-        config = _session_config(session)
+        config = session_config(session)
         recorded = (await agent.graph.aget_state(config)).values['messages']
         question = next(message for message in recorded if isinstance(message, HumanMessage) and message.id == clock['question_id'])
         metadata = question.response_metadata
@@ -278,7 +249,7 @@ class _OpenReply:
         await agent.graph.aupdate_state(config, {'messages': [question]}, as_node='model')
         put(StateDeltaEvent(delta=[{'op': 'add', 'path': '/worklog_clock', 'value': clock}]))
 
-    async def answer_cut_calls(self, agent: LangGraphAgent, session: tuple[str | None, str | None]) -> None:
+    async def answer_cut_calls(self, agent: LangGraphAgent, session: _Session) -> None:
         """Answer each call Stop cut while it ran, timed to the Stop, in place of the saver's placeholder.
 
         The saver answers such a call on every load with an untimed placeholder, so a reopened Turn ended at the call's
@@ -286,7 +257,7 @@ class _OpenReply:
         """
         if not self.open_calls:
             return
-        config = _session_config(session)
+        config = session_config(session)
         recorded = (await agent.graph.aget_state(config)).values['messages']
         answered = {message.tool_call_id for message in recorded if isinstance(message, ToolMessage) and not _unanswered(message)}
         cut = self.open_calls - answered
@@ -296,7 +267,6 @@ class _OpenReply:
 
 
 def _answered(recorded: list[Any], cut: set[str], stopped_at: int) -> list[Any]:
-    """The record with each `cut` call answered right after the message that made it, and any placeholder for it gone."""
     messages: list[Any] = []
     for message in recorded:
         if isinstance(message, ToolMessage) and message.tool_call_id in cut:
@@ -324,33 +294,6 @@ def _stopped() -> RunErrorEvent:
 
 
 
-def _session_config(session: tuple[str | None, str | None]) -> RunnableConfig:
+def session_config(session: _Session) -> RunnableConfig:
     session_user_id, thread_id = session
     return {'configurable': {'thread_id': thread_id, **({'actor_id': session_user_id} if session_user_id is not None else {})}}
-
-
-
-class AnsweredToolResultsMiddleware(AgentMiddleware):
-    """Sends the model only the first recorded result of each tool call.
-
-    A Session recorded before SessionAgent's guard can hold a resent result after
-    its call was answered, and Bedrock refuses every later Turn on it. The
-    record keeps that result; only the model's request leaves it out. Read the
-    first result's identity from the full state because native summarization
-    can remove it from the request while keeping the replayed result.
-    """
-    async def awrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
-    ) -> ModelResponse:
-        first_results: dict[str, str | None] = {}
-        for message in request.state['messages']:
-            if isinstance(message, ToolMessage):
-                first_results.setdefault(message.tool_call_id, message.id)
-        messages = [
-            message for message in request.messages
-            if not isinstance(message, ToolMessage) or message.id == first_results[message.tool_call_id]
-        ]
-        return await handler(request.override(messages=messages))
-

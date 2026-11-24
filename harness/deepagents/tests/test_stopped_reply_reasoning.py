@@ -3,24 +3,27 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
 from ag_ui.core import (
     ReasoningMessageEndEvent,
     ReasoningMessageStartEvent,
+    RunAgentInput,
     TextMessageContentEvent,
     TextMessageStartEvent,
 )
 
 from botcube_harness_deepagents import message_times
 from botcube_harness_deepagents.conversation import conversation
-from botcube_harness_deepagents.turn_state import _OpenReply
+from botcube_harness_deepagents.definition import InvocationContext
+from botcube_harness_deepagents.turn_lifecycle import SessionTurns, observe_reply_model
+from conftest import prepared
 
 
 class _Graph:
-    """The agent's graph as `_OpenReply.keep` uses it: what is recorded, and what it records."""
-
     def __init__(self) -> None:
         self.recorded: list[Any] = []
 
@@ -32,40 +35,55 @@ class _Graph:
         self.recorded.extend(update['messages'])
 
 
-def test_a_reply_stopped_after_its_thought_replays_with_that_thought(monkeypatch: Any) -> None:
+def _stopped_reply(events: list[Any], root: Path) -> list[dict[str, Any]]:
+    session = ('user-1', 'thread-1')
+    turns = SessionTurns()
+    graph = _Graph()
+    request = RunAgentInput(thread_id=session[1], run_id='run-1', messages=[], tools=[], context=[], state={})
+
+    async def run(_request: RunAgentInput) -> AsyncIterator[Any]:
+        observe_reply_model({'event': 'on_chat_model_start', 'run_id': 'root'})
+        for event in events:
+            yield event
+        await asyncio.Event().wait()
+
+    async def exercise() -> None:
+        agent = SimpleNamespace(graph=graph, run=run)
+        received = []
+        async for event in turns.stream(session, prepared(agent, root), request, None, InvocationContext(None)):
+            received.append(event)
+            if event is events[-1]:
+                turns.stop(session, request.run_id)
+        assert received[-1].code == 'TURN_STOPPED'
+
+    asyncio.run(exercise())
+    return conversation(graph.recorded)
+
+
+def test_a_reply_stopped_after_its_thought_replays_with_that_thought(monkeypatch: Any, tmp_path: Path) -> None:
     clock = iter([1000, 1400, 1500, 1600])
     monkeypatch.setattr(message_times, 'now', lambda: next(clock))
-    reply = _OpenReply()
-    watched = reply.watching(lambda _event: None)
-    reply.watch_model({'event': 'on_chat_model_start', 'run_id': 'root'})
-    watched(ReasoningMessageStartEvent(message_id='root-reasoning-0', role='reasoning'))
-    watched(ReasoningMessageEndEvent(message_id='root-reasoning-0'))
-    watched(TextMessageStartEvent(message_id='answer-1', role='assistant'))
-    watched(TextMessageContentEvent(message_id='answer-1', delta='Prime numbers have'))
-    graph = _Graph()
-
-    asyncio.run(reply.keep(cast(Any, SimpleNamespace(graph=graph)), ('user-1', 'thread-1')))
-
-    replayed = conversation(graph.recorded)
+    replayed = _stopped_reply([
+        ReasoningMessageStartEvent(message_id='root-reasoning-0', role='reasoning'),
+        ReasoningMessageEndEvent(message_id='root-reasoning-0'),
+        TextMessageStartEvent(message_id='answer-1', role='assistant'),
+        TextMessageContentEvent(message_id='answer-1', delta='Prime numbers have'),
+    ], tmp_path)
     assert [(message['role'], message['id']) for message in replayed] == [('reasoning', 'root-reasoning-0'), ('assistant', 'answer-1')]
     assert replayed[0]['metadata'] == {'started_at': 1000, 'ended_at': 1400}
     assert replayed[1]['metadata'] == {'started_at': 1500, 'ended_at': 1600}
 
 
-def test_a_reasoning_only_stop_keeps_the_thought_without_inventing_answer_text(monkeypatch: Any) -> None:
+def test_a_reasoning_only_stop_keeps_the_thought_without_inventing_answer_text(monkeypatch: Any, tmp_path: Path) -> None:
     from ag_ui.core import ReasoningMessageContentEvent
 
     clock = iter([1000, 1800])
     monkeypatch.setattr(message_times, 'now', lambda: next(clock))
-    reply = _OpenReply()
-    watched = reply.watching(lambda _event: None)
-    reply.watch_model({'event': 'on_chat_model_start', 'run_id': 'root'})
-    watched(ReasoningMessageStartEvent(message_id='root-reasoning-0', role='reasoning'))
-    watched(ReasoningMessageContentEvent(message_id='root-reasoning-0', delta='Compare the bond durations'))
-    watched(ReasoningMessageEndEvent(message_id='root-reasoning-0'))
-    graph = _Graph()
-    asyncio.run(reply.keep(cast(Any, SimpleNamespace(graph=graph)), ('user-1', 'thread-1')))
-    replayed = conversation(graph.recorded)
+    replayed = _stopped_reply([
+        ReasoningMessageStartEvent(message_id='root-reasoning-0', role='reasoning'),
+        ReasoningMessageContentEvent(message_id='root-reasoning-0', delta='Compare the bond durations'),
+        ReasoningMessageEndEvent(message_id='root-reasoning-0'),
+    ], tmp_path)
     thought, answer = replayed
     assert (thought['role'], thought['id'], thought['content']) == (
         'reasoning', 'root-reasoning-0', 'Compare the bond durations',

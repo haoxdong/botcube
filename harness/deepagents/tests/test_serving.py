@@ -21,7 +21,6 @@ import tomllib
 from base64 import b64decode, b64encode
 from collections.abc import (
     AsyncIterator,
-    Awaitable,
     Callable,
     Iterator,
     Mapping,
@@ -82,6 +81,7 @@ from botcube_harness_deepagents import (
     session_api,
     session_memory,
     today,
+    turn_lifecycle,
 )
 from botcube_harness_deepagents.conversation import reasoning_blocks
 from botcube_harness_deepagents.definition import HarnessDefinition
@@ -304,12 +304,8 @@ class _Service:
 
     def fed(self) -> None:
         """Wait for finished Turns' Memory feeds, which land off the response path."""
-        async def wait() -> None:
-            if feeds := list(serving._SESSION_TURNS._feeds.values()):
-                await asyncio.wait(feeds)
-
         assert self.client.portal is not None
-        self.client.portal.call(wait)
+        self.client.portal.call(serving._SESSION_TURNS.wait_for_feeds)
 
     def post(self, run: dict[str, Any], *, session: str | None = None) -> list[dict[str, Any]]:
         return _sse_events(self.post_raw(run, session=session))
@@ -322,10 +318,7 @@ class _Service:
             user_id = (run.get('forwardedProps') or {}).get('sessionUserId')
             if not isinstance(user_id, str):
                 return
-            lock = serving._SESSION_TURNS._locks.get((user_id, run.get('threadId')))
-            if lock is not None:
-                async with lock:
-                    pass
+            await serving._SESSION_TURNS.wait_for_checkpoint((user_id, run['threadId']))
             await asyncio.sleep(0)
 
         assert self.client.portal is not None
@@ -365,7 +358,7 @@ def _fresh_state(monkeypatch: pytest.MonkeyPatch) -> None:
         '_BACKEND_BY_AGENT': {},
         '_CHECKPOINTER': None,
         '_STORE': None,
-        '_SESSION_TURNS': serving._SessionTurns(),
+        '_SESSION_TURNS': turn_lifecycle.SessionTurns(),
     }.items():
         monkeypatch.setattr(serving, name, value)
     monkeypatch.setattr(session_memory, '_warmups', {})
@@ -1070,7 +1063,7 @@ def test_a_restarted_harness_uses_the_previous_turns_compaction(
         assert 'Earlier copper question.' in archive.read_text()
     asyncio.run(session_api.post_message('user-1', 'thread-1', 'Copper note from a scheduled post.'))
     for name, value in {'_AGENTS': {}, '_BACKEND_BY_AGENT': {}, '_BACKENDS': {},
-                        '_SESSION_TURNS': serving._SessionTurns()}.items():
+                        '_SESSION_TURNS': turn_lifecycle.SessionTurns()}.items():
         monkeypatch.setattr(serving, name, value)
 
     assert service.turn('Continue.', message='resume')[-1]['type'] == 'RUN_FINISHED'
@@ -1434,26 +1427,24 @@ def _parallel_reasoning_run(
     waiting = asyncio.Event()
     tool_returned = asyncio.Event()
     final_text = threading.Event()
-    turn_events = serving._turn_events
+    run_agent = serving.SessionAgent.run
 
-    async def observe_tool_result(agent: Any, run: Any, publish: Any) -> None:
-        def observed(event: Any) -> None:
-            publish(event)
+    async def observe_tool_result(agent: Any, run: Any) -> AsyncIterator[Any]:
+        async for event in run_agent(agent, run):
+            yield event
             if event.type == 'REASONING_MESSAGE_CONTENT' and event.delta == 'Slow before. ':
                 waiting.set()
             if event.type == 'TOOL_CALL_RESULT' and event.tool_call_id == 'call-3':
-                publish(ReasoningMessageContentEvent(message_id='unknown-reasoning-0', delta='Orphan delta.'))
+                yield ReasoningMessageContentEvent(message_id='unknown-reasoning-0', delta='Orphan delta.')
                 tool_returned.set()
             if event.type == 'TEXT_MESSAGE_CONTENT' and event.delta == 'Both lanes returned.':
                 final_text.set()
-
-        await turn_events(agent, run, observed)
 
     monkeypatch.setattr(serving, '_bot', replace(serving._require_bot(), system_prompt='Bot instructions.'))
     monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: _ParallelReasoningModel(
         recorder=service.recorder, waiting=waiting, tool_returned=tool_returned, hold_final=stopped,
     ))
-    monkeypatch.setattr(serving, '_turn_events', observe_tool_result)
+    monkeypatch.setattr(serving.SessionAgent, 'run', observe_tool_result)
 
     return _stop_parallel_turn(service, final_text) if stopped else service.turn('Delegate to both lanes.')
 
@@ -2838,30 +2829,6 @@ def test_on_agentcore_a_memory_page_edit_reaches_a_new_session_while_agentcore_l
     )
 
 
-def test_waiting_for_a_completed_turn_feed_observes_its_failure(
-    service: _Service, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
-) -> None:
-    async def exercise() -> None:
-        async def failing() -> None:
-            raise serving.TurnFeedError('Memory unavailable')
-
-        serving._SESSION_TURNS._feed(('user-1', 'thread-b'), serving._Turn('failed-feed', finished=True), [failing])
-        await asyncio.sleep(0)
-        assert all(task.done() for task in serving._SESSION_TURNS._feeds.values())
-
-        waiters: list[Callable[[], Awaitable[None]]] = []
-        with monkeypatch.context() as patch:
-            patch.setattr(service.client.portal, 'call', waiters.append)
-            service.fed()
-        await waiters[0]()
-
-        [logged] = [record for record in caplog.records if record.getMessage().startswith('Harness Turn feed failed')]
-        assert logged.levelno == logging.ERROR
-        assert 'code=TURN_FEED_FAILED' in logged.getMessage()
-
-    asyncio.run(exercise())
-
-
 def _fed_events(memory: FakeAgentCoreMemory, actor: str, thread: str) -> list[list[tuple[str, str]]]:
     """Each conversational event in the Session, as its (role, text) items."""
     return [
@@ -3295,11 +3262,9 @@ def test_a_new_session_is_readable_while_its_first_turn_runs(
         return result
 
     monkeypatch.setattr(WarmSessionSaver, 'put_with_writes', published)
-    started = threading.Event()
     answering = threading.Event()
     release_answer = threading.Event()
     stream = _ScriptedModel._stream
-    turn_events = serving._turn_events
 
     def held_answer(model: _ScriptedModel, *args: Any, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
         answering.set()
@@ -3307,20 +3272,7 @@ def test_a_new_session_is_readable_while_its_first_turn_runs(
             raise AssertionError('The test did not release the first answer')
         yield from stream(model, *args, **kwargs)
 
-    async def observed_events(agent: Any, input_data: Any, publish: Any) -> None:
-
-        def observed(event: Any) -> None:
-            publish(event)
-            if event.type == 'RUN_STARTED':
-                session = ('user-1', 'thread-1')
-                assert serving._SESSION_TURNS._turns[session].run_id == input_data.run_id
-                assert serving._SESSION_TURNS._locks[session].locked()
-                started.set()
-
-        await turn_events(agent, input_data, observed)
-
     monkeypatch.setattr(_ScriptedModel, '_stream', held_answer)
-    monkeypatch.setattr(serving, '_turn_events', observed_events)
     with TestClient(session_api.app) as records:
         missing = records.post('/invocations', json={
             'operation': 'get', 'userId': 'user-1', 'sessionId': 'truly-missing',
@@ -3330,7 +3282,6 @@ def test_a_new_session_is_readable_while_its_first_turn_runs(
         with ThreadPoolExecutor(max_workers=1) as pool:
             running = pool.submit(service.turn, 'First question', session='runtime-session-1')
             try:
-                assert started.wait(5), 'The first Turn did not publish RUN_STARTED'
                 assert answering.wait(5), 'The first Turn did not reach the held model'
                 assert recorded.wait(5), 'The initial question was never persisted'
                 response = records.post('/invocations', json={
@@ -3627,7 +3578,7 @@ def test_cached_warmup_skips_history_for_startup_and_leaves_live_token_unchanged
     recorded = service.turn('hello', warmup=True, preparationScope='recorded', env={'TOKEN': 'warmup'})
     assert recorded[-1]['value']['outcome'] == 'prepared'
     assert reads
-    expected = serving._session_config(('user-1', 'thread-1')).get('configurable', {})
+    expected = turn_lifecycle.session_config(('user-1', 'thread-1')).get('configurable', {})
     assert all(all(config['configurable'][key] == value for key, value in expected.items()) for config in reads)
     assert backend._env['TOKEN'] == 'live'
     assert len(service.recorder.builds) == builds

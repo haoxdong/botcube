@@ -46,6 +46,7 @@ from agentcore_fake import (
     turn_identity,
 )
 from agentcore_fake import FakeAgentCoreMemory as _FakeAgentCoreMemory
+from botcube_harness_deepagents import turn_lifecycle
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.memory import agentcore
 from botcube_harness_deepagents.session_agent import SessionAgent
@@ -322,7 +323,7 @@ def _client_message_ids(sent: list[dict[str, Any]], events: list[Any]) -> list[s
 
 class _ServedSession(NamedTuple):
     turn: Callable[[list[dict[str, Any]]], Awaitable[list[str]]]
-    events: Callable[[list[dict[str, Any]]], Coroutine[Any, Any, list[Any]]]
+    events: Callable[..., Coroutine[Any, Any, list[Any]]]
     replay: Callable[[], Awaitable[list[dict[str, Any]]]]
 
 
@@ -359,7 +360,7 @@ def _serve_session(
     context = serving._RequestContext('agentcore-session-1')
     get = {'operation': 'get', 'sessionId': session_id, 'userId': 'user-1'}
 
-    async def events(sent: list[dict[str, Any]]) -> list[Any]:
+    async def events(sent: list[dict[str, Any]], observe: Callable[[Any], None] | None = None) -> list[Any]:
         # Validated from wire-shaped messages, as the Harness receives them.
         run = RunAgentInput.model_validate({
             'thread_id': session_id,
@@ -370,11 +371,12 @@ def _serve_session(
             'state': {},
             'forwarded_props': {'sessionUserId': 'user-1', 'turnIdentity': turn_identity('user-1', 'user-1', session_id), **({'worklog_clock': 1, 'turn_started_at': datetime.fromtimestamp(serving.message_times.now() / 1000, UTC).isoformat()} if canonical else {})},
         })
-        received = [event async for event in serving.invoke(run, context)]
-        lock = serving._SESSION_TURNS._locks.get(('user-1', session_id))
-        if lock is not None:
-            async with lock:
-                pass
+        received = []
+        async for event in serving.invoke(run, context):
+            received.append(event)
+            if observe is not None:
+                observe(event)
+        await serving._SESSION_TURNS.wait_for_checkpoint(('user-1', session_id))
         return received
 
     async def turn(sent: list[dict[str, Any]]) -> list[str]:
@@ -822,10 +824,16 @@ def test_a_cut_reply_that_cannot_be_kept_fails_its_turn_loud(
     model = _StoppedMidReplyModel()
     monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: model)
 
-    async def failing_keep(*_args: Any) -> NoReturn:
-        raise RuntimeError('cut reply not kept')
+    from langgraph.graph.state import CompiledStateGraph
 
-    monkeypatch.setattr(serving._OpenReply, 'keep', failing_keep)
+    update = CompiledStateGraph.aupdate_state
+
+    async def failing_keep(graph: Any, config: Any, values: Any, *args: Any, **kwargs: Any) -> Any:
+        if any(isinstance(message, AIMessage) for message in values.get('messages', [])):
+            raise RuntimeError('cut reply not kept')
+        return await update(graph, config, values, *args, **kwargs)
+
+    monkeypatch.setattr(CompiledStateGraph, 'aupdate_state', failing_keep)
     first = {'id': 'user-message-1', 'role': 'user', 'content': 'Explain duration'}
 
     async def stop_mid_reply() -> None:
@@ -1222,7 +1230,7 @@ def test_a_session_recorded_with_a_resent_tool_result_answers_its_next_turn(
 def retrieved_turn_failure(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     from botcube_harness_deepagents import serving
 
-    monkeypatch.setattr(serving, '_SESSION_TURNS', serving._SessionTurns())
+    monkeypatch.setattr(serving, '_SESSION_TURNS', turn_lifecycle.SessionTurns())
     yield
     gc.collect()
     records = [*caplog.get_records('call'), *caplog.get_records('teardown')]
@@ -1245,11 +1253,6 @@ class _ClockSignals:
                 if operation.op == 'add' and operation.path == '/worklog_clock' and operation.value['at'] == 9000:
                     self.advanced.set()
 
-    def watching(self, put: Callable[[Any], None]) -> Callable[[Any], None]:
-        def received(event: Any) -> None:
-            put(event)
-            self.observe(event)
-        return received
 
 
 @pytest.mark.parametrize('failed', [False, True], ids=['stop', 'error'])
@@ -1261,16 +1264,14 @@ def test_a_stopped_canonical_turn_keeps_its_terminal_clock_in_fresh_history(tmp_
     session = _serve_session(tmp_path, monkeypatch, _FakeAgentCoreMemory(), canonical=True)
     model = _StoppedMidReplyModel()
     monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: model)
-    watching = serving._OpenReply.watching
 
     async def exercise() -> None:
         nonlocal at
         signals = _ClockSignals()
-        monkeypatch.setattr(serving._OpenReply, 'watching', lambda reply, put: signals.watching(watching(reply, put)))
         model.text_streamed = asyncio.Event()
         if failed:
             model.failure = asyncio.Event()
-        running = asyncio.create_task(session.events([{'id': 'clock-question', 'role': 'user', 'content': 'Explain duration'}]))
+        running = asyncio.create_task(session.events([{'id': 'clock-question', 'role': 'user', 'content': 'Explain duration'}], signals.observe))
         await _await_fixture_admission_or_public_completion(running, signals.public_text)
         at = 9000
         await _await_fixture_admission_or_public_completion(running, signals.advanced)

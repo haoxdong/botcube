@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agentcore_fake import turn_identity
-from botcube_harness_deepagents import serving, session_api
+from botcube_harness_deepagents import serving, session_api, turn_lifecycle
 from botcube_harness_deepagents.bot_settings import BotSettingsError, load_bot_settings
 from deployment_fixture import ENDPOINT_MODELS, deploy
 from test_serving import _Recorder, _ScriptedModel, _Service, _tool_output
@@ -64,7 +64,7 @@ def bot_service(request: pytest.FixtureRequest, start: Start, tmp_path: Path, mo
         monkeypatch.setenv(name, value)
     _deployed(monkeypatch, tmp_path, bot)
     for name, value in {'AGENTCORE_MEMORY_ID': '', '_AGENTS': {}, '_BACKENDS': {}, '_BACKEND_BY_AGENT': {}, '_CHECKPOINTER': None,
-                        '_STORE': None, '_SESSION_TURNS': serving._SessionTurns()}.items():
+                        '_STORE': None, '_SESSION_TURNS': turn_lifecycle.SessionTurns()}.items():
         monkeypatch.setattr(serving, name, value)
     recorder = _Recorder()
 

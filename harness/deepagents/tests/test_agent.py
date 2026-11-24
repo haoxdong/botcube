@@ -11,7 +11,7 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from pydantic import SecretStr
 
-from botcube_harness_deepagents import aws_clients
+from botcube_harness_deepagents import aws_clients, turn_lifecycle
 from botcube_harness_deepagents.agent import AgentResponseError, ask, build_agent
 from botcube_harness_deepagents.session_agent import SessionAgent
 from conftest import KwargsRecorder, ToolBindableFakeModel, prepared
@@ -463,7 +463,7 @@ def test_default_general_purpose_subagent_reads_files_and_publishes_its_write(
     files = FilesMount.from_binding(binding())
 
     async def exercise() -> None:
-        stream = serving._SessionTurns().stream(
+        stream = turn_lifecycle.SessionTurns().stream(
             ('owner', 'delegated-files'), prepared(agent, tmp_path), request, files, serving._RequestContext(None),
         )
         if not files_available:

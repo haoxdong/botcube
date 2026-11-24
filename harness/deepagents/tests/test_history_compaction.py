@@ -23,6 +23,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field
 
+from botcube_harness_deepagents import turn_lifecycle
 from botcube_harness_deepagents.agent import build_agent
 from conftest import ToolBindableFakeMessagesModel
 
@@ -265,7 +266,7 @@ def test_summary_failure_preserves_raw_history(tmp_path: Path, monkeypatch: pyte
         )
 
         async def run() -> list[Any]:
-            turns = serving._SessionTurns()
+            turns = turn_lifecycle.SessionTurns()
             return [event async for event in turns.stream(
                 ('member', 'failed-recovery'), prepared(agent, tmp_path), request, None, serving._RequestContext(None),
             )]
@@ -354,7 +355,7 @@ def test_cancelled_emergency_waits_for_archive_publication_to_settle(tmp_path: P
         config: RunnableConfig = {'configurable': {'thread_id': 'cancelled-emergency'}}
         await graph.aupdate_state(config, {'messages': _history()}, as_node='model')
         monkeypatch.setattr(serving, '_require_bot', lambda: SimpleNamespace(skills=()))
-        turns = serving._SessionTurns()
+        turns = turn_lifecycle.SessionTurns()
         session = ('member', 'cancelled-emergency')
         agent = SessionAgent(name='summary-stop', graph=graph)
         request = RunAgentInput(

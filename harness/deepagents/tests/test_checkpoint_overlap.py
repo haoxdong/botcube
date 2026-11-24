@@ -133,7 +133,7 @@ def test_superseded_graph_failure_cannot_revoke_replacement_snapshot(
     from concurrent.futures import ThreadPoolExecutor
 
     built, read, release = threading.Event(), threading.Event(), threading.Event()
-    build, initial = serving._agent_and_backend, serving._read_turn_checkpoint
+    build, initial = serving._agent_and_backend, serving._SESSION_TURNS.read_checkpoint
     calls = 0
 
     def held_build(**kwargs: Any) -> Any:
@@ -153,7 +153,7 @@ def test_superseded_graph_failure_cannot_revoke_replacement_snapshot(
         return saved
 
     monkeypatch.setattr(serving, '_agent_and_backend', held_build)
-    monkeypatch.setattr(serving, '_read_turn_checkpoint', observed_read)
+    monkeypatch.setattr(serving._SESSION_TURNS, 'read_checkpoint', observed_read)
     with ThreadPoolExecutor(max_workers=1) as pool:
         older = pool.submit(_turn, service, 'obsolete')
         try:

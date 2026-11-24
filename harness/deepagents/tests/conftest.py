@@ -35,7 +35,7 @@ class ToolBindableFakeMessagesModel(FakeMessagesListChatModel):
 
 
 def prepared(agent: Any, root: Path) -> Callable[[], Awaitable[tuple[Any, Path]]]:
-    """A Turn preparation for `_SessionTurns.stream` that is already done."""
+    """A Turn preparation for `SessionTurns.stream` that is already done."""
     async def prepare() -> tuple[Any, Path]:
         return agent, root
 

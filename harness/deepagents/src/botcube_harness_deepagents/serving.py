@@ -19,7 +19,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import aclosing, asynccontextmanager
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -41,8 +41,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from langgraph.checkpoint.base import CheckpointTuple
 from langgraph.store.memory import InMemoryStore
-from opentelemetry import baggage, trace
-from opentelemetry import context as otel_context
+from opentelemetry import trace
 from starlette.types import Message as ASGIMessage
 from starlette.types import Receive, Scope, Send
 
@@ -79,7 +78,7 @@ from .files import (
     pop_files_mount,
 )
 from .files_mount import FilesMount, FilesMountError
-from .lazy_files import TurnFiles, turn_files
+from .lazy_files import TurnFiles
 from .llm import (
     PLAN_MODEL_PREFIX,
     PlanUsageError,
@@ -96,11 +95,10 @@ from .memory.agentcore.warm_session import WarmSessionSaver
 from .memory_tools import AGENTCORE_MEMORY_ID, AWS_REGION
 from .prompt_cache_observability import (
     PromptCacheUsageMiddleware,
-    prompt_cache_turn,
 )
 from .proxy_relay import shell_proxy_environment
 from .scheduled_tasks import propose_scheduled_task
-from .session_agent import SessionAgent
+from .session_agent import AnsweredToolResultsMiddleware, SessionAgent
 from .session_format import (
     SessionFormatLegacyError,
     latest_checkpoint,
@@ -110,19 +108,17 @@ from .shell_backend import WorkerShellBackend
 from .shell_relay import ShellRelay, renew
 from .snapshot_build import answer_once, prime_process, walk_graph, workspace_at
 from .sse import keep_alive
-from .steering import SteeringMiddleware, active_steering
+from .steering import SteeringMiddleware
 from .trace_relay import FailedCalls, counting_failed_calls, harness_trace_relay
-from .turn_lifetime import invocation_deadline, wait_for_turn
-from .turn_memory import TurnFeed, TurnFeedError, collecting_turn_feeds
-from .turn_state import (
-    AnsweredToolResultsMiddleware,
+from .turn_lifecycle import (
     CheckpointWriteError,
-    _OpenReply,
-    _session_config,
-    _stopped,
-    _Turn,
-    _turn_events,
+    SessionOpeningError,
+    SessionTurns,
+    session_config,
 )
+from .turn_lifecycle import error_code as _error_code
+from .turn_lifetime import invocation_deadline
+from .turn_memory import TurnFeedError
 
 log = logging.getLogger(__name__)
 AGENT_SYSTEM_PROMPT = """You are the user's own agent, with your own computer, Files and schedule.
@@ -175,10 +171,6 @@ def _served_prompt_hash(candidate: str | None) -> str | None:
     if candidate is None:
         return None
     return hashlib.sha256(candidate.encode()).hexdigest()
-
-
-class SessionOpeningError(RuntimeError):
-    code = 'SESSION_OPENING_ALREADY_STARTED'
 
 
 class MissingUserIdError(RuntimeError):
@@ -281,14 +273,6 @@ class _AgentKey(NamedTuple):
     bot_system_prompt: str | None
 
 
-def _error_code(error: Exception) -> str:
-    if isinstance(error, (PlanUsageError, FilesMountError, CheckpointWriteError)):
-        return error.code
-    if agentcore_memory_backend.is_access_denied(error):
-        return 'MEMORY_ACCESS_DENIED'
-    return 'INTERNAL_ERROR'
-
-
 _AGENTS: dict[_AgentKey, LangGraphAgent] = {}
 _CHECKPOINTER: Any | None = None
 _STORE: InMemoryStore | None = None
@@ -296,6 +280,7 @@ _BACKENDS: dict[tuple[str, str, str, tuple[tuple[str, str], ...]], LocalShellBac
 _BACKEND_BY_AGENT: dict[Any, LocalShellBackend] = {}
 _MODEL_RELAYS: dict[_AgentKey, ModelRelay] = {}
 _CACHE_LOCK = threading.RLock()
+_SESSION_TURNS = SessionTurns()
 
 
 def _build_checkpointer() -> Any:
@@ -642,9 +627,9 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
 
             async def read(saver: Any) -> CheckpointTuple | None:
                 nonlocal saved
-                saved = await _read_turn_checkpoint(
+                saved = await _SESSION_TURNS.read_checkpoint(
                     saver, input_data, session=session, opening=opening, actor_id=auth.actor_id,
-                    run_id=input_data.run_id, epoch=forwarded.get('sessionSnapshotEpoch'), turn_identity=turn_identity,
+                    epoch=forwarded.get('sessionSnapshotEpoch'), turn_identity=turn_identity,
                 )
                 return saved
 
@@ -654,7 +639,7 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
                 return None
 
             agent, backend = await _turn_agent(build, turn_identity, input_data.run_id, persistent_memory, read, prefetch)
-            validate_checkpoint(agent.graph, _session_config(session), saved)
+            validate_checkpoint(agent.graph, session_config(session), saved)
             _require_bot().apply_session_id(backend, input_data.thread_id)
             return agent, Path(backend.cwd)
 
@@ -662,6 +647,7 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
         prompt_hash = _served_prompt_hash(candidate)
         async with aclosing(_SESSION_TURNS.stream(
             session, prepare, input_data, files, context, deadline=invocation_deadline(auth.model_relay),
+            excluded=excluded_paths(_require_bot().skills),
         )) as events:
             async for event in events:
                 yield event
@@ -676,41 +662,6 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
                 files, reads_history, forwarded.get('sessionSnapshotEpoch'),
             )
     yield _preparation_event(input_data, 'prepared' if allowed else 'skipped-busy')
-
-
-async def _read_turn_checkpoint(
-    saver: Any, input_data: RunAgentInput, *, session: tuple[str | None, str | None], opening: bool,
-    actor_id: str, run_id: str, epoch: Any, turn_identity: TurnIdentity | None,
-) -> CheckpointTuple | None:
-    async with _SESSION_TURNS.checkpoint_read(session, input_data) as current:
-        if not current:
-            return None
-        if isinstance(saver, WarmSessionSaver):
-            await _SESSION_TURNS.admit_checkpoint(
-                session, saver, actor_id, run_id,
-                agentcore_memory_backend.finished_snapshot_epoch(turn_identity, epoch),
-            )
-        with turn_timing.phase('checkpoint_read'):
-            saved = await saver.aget_tuple(_session_config(session))
-            if opening and saved is not None:
-                raise SessionOpeningError('This Session already has a Turn')
-            return saved
-
-
-async def _settle_turn_writes(saver: Any, work: asyncio.Task[None]) -> None:
-    failure = None if work.cancelled() else work.exception()
-    if isinstance(saver, WarmSessionSaver):
-        await saver.settle_writes()
-    if failure is not None:
-        raise failure
-
-
-def _settle_finished_reuse(saver: Any, finished: bool) -> None:
-    if isinstance(saver, WarmSessionSaver):
-        if finished:
-            saver.finish_run()
-        else:
-            saver.abandon_run()
 
 
 async def _prepare_agent(
@@ -730,11 +681,11 @@ async def _prepare_agent(
 
         saver = getattr(agent.graph, 'checkpointer', None)
         if isinstance(saver, WarmSessionSaver):
-            saver.discard_preparation(_session_config(session))
+            saver.discard_preparation(session_config(session))
 
         async def read_history() -> None:
             nonlocal memory_read
-            reads: list[Awaitable[Any]] = [latest_checkpoint(agent.graph, _session_config(session))]
+            reads: list[Awaitable[Any]] = [latest_checkpoint(agent.graph, session_config(session))]
             if AGENTCORE_MEMORY_ID and persistent_memory:
                 reads.append(session_memory.read_warmup(
                     lambda: agentcore_memory_backend.opening(agent.graph.store, actor_id),
@@ -749,7 +700,7 @@ async def _prepare_agent(
             await read_history()
         if reads_history and isinstance(saver, WarmSessionSaver):
             saver.finish_preparation(
-                _session_config(session), actor_id,
+                session_config(session), actor_id,
                 agentcore_memory_backend.finished_snapshot_epoch(turn_identity, epoch),
             )
     except BaseException:
@@ -768,291 +719,6 @@ def _preparation_event(
     if error is not None:
         value['error'] = {'code': error.code, 'message': error.message}
     return CustomEvent(name='SESSION_PREPARATION', value=value)
-
-
-@dataclass
-class _Publication:
-    saver: WarmSessionSaver
-    task: asyncio.Task[None]
-    followed: bool = False
-
-
-class _SessionTurns:
-    def __init__(self) -> None:
-        self._turns: dict[tuple[str | None, str | None], _Turn] = {}
-        self._locks: dict[tuple[str | None, str | None], asyncio.Lock] = {}
-        self._flush_failures: dict[tuple[str | None, str | None], Exception] = {}
-        self._publications: dict[tuple[str | None, str | None], _Publication] = {}
-        self._feeds: dict[tuple[str | None, str | None], asyncio.Task[None]] = {}
-        self._end = object()
-
-    @asynccontextmanager
-    async def checkpoint_read(
-        self, session: tuple[str | None, str | None], input_data: RunAgentInput,
-    ) -> AsyncGenerator[bool, None]:
-        async with self._locks.setdefault(session, asyncio.Lock()):
-            turn = self._turns.get(session)
-            yield turn is not None and turn.input_data is input_data and not turn.stopped
-
-    async def admit_checkpoint(
-        self, session: tuple[str | None, str | None], saver: WarmSessionSaver, actor_id: str,
-        run_id: str, epoch: str | None,
-    ) -> None:
-        previous = self._publications.get(session)
-        snapshot = previous.saver.pending_snapshot(actor_id, epoch) if previous is not None else None
-        if previous is not None and snapshot is None:
-            await asyncio.wait([previous.task])
-            previous = None
-        saver.admit_snapshot_reuse(_session_config(session), actor_id, run_id, epoch)
-        if previous is not None:
-            previous.followed = True
-        saver.stage_writes(snapshot, previous.task if previous is not None else None)
-
-    def _publish_checkpoint(
-        self, session: tuple[str | None, str | None], saver: WarmSessionSaver, snapshot: CheckpointTuple,
-        turn: _Turn, feeds: list[TurnFeed],
-    ) -> asyncio.Task[None]:
-        async def publish() -> None:
-            try:
-                await saver.settle_writes()
-                saver.finish_run()
-                self._feed(session, turn, feeds)
-            except Exception as failure:
-                saver.abandon_run(drop_snapshot=True)
-                if isinstance(failure, CheckpointWriteError):
-                    raise
-                error = CheckpointWriteError(str(failure))
-                if not publication.followed:
-                    self._flush_failures[session] = error
-                raise error from failure
-            finally:
-                saver.discard_handoff(snapshot)
-                if self._publications.get(session) is publication:
-                    del self._publications[session]
-
-        task = asyncio.create_task(publish())
-        self._publications[session] = publication = _Publication(saver, task)
-        return task
-
-    @asynccontextmanager
-    async def preparation(self, session: tuple[str | None, str | None]) -> AsyncGenerator[bool, None]:
-        lock = self._locks.setdefault(session, asyncio.Lock())
-        turn = self._turns.get(session)
-        if lock.locked() or session in self._publications or (turn is not None and not turn.finished):
-            yield False
-            return
-        async with lock:
-            yield True
-
-    def steer(self, session: tuple[str | None, str | None], input_data: RunAgentInput) -> bool:
-        turn = self._turns.get(session)
-        if turn is None or turn.stopped or turn.finished:
-            return False
-        for message in input_data.messages:
-            if message.role != 'user' or not isinstance(message.content, str) or not message.content:
-                raise ValueError('Steering requires user text messages')
-            turn.steering.add(message.id, message.content)
-        return True
-
-    def withdraw(self, session: tuple[str | None, str | None], message_id: object) -> bool:
-        if not isinstance(message_id, str) or not message_id:
-            raise ValueError('Withdrawing steering requires a message ID')
-        turn = self._turns.get(session)
-        if turn is None or turn.stopped or turn.finished:
-            return True
-        return turn.steering.withdraw(message_id)
-
-    def stop(self, session: tuple[str | None, str | None], run_id: str) -> None:
-        turn = self._turns.get(session)
-        if turn is not None and turn.run_id == run_id:
-            turn.stop()
-
-    def _feed(self, session: tuple[str | None, str | None], turn: _Turn, feeds: list[TurnFeed]) -> None:
-        if not turn.finished or not feeds:
-            return
-        previous = self._feeds.get(session)
-
-        async def feed() -> None:
-            if previous is not None:
-                await asyncio.wait([previous])
-            for each in feeds:
-                await each()
-
-        def fed(task: asyncio.Task[None]) -> None:
-            if self._feeds.get(session) is task:
-                del self._feeds[session]
-            if not task.cancelled() and isinstance(failure := task.exception(), Exception):
-                log.error('Harness Turn feed failed run_id=%s code=%s', turn.run_id, getattr(failure, 'code', 'INTERNAL_ERROR'),
-                          exc_info=(type(failure), failure, failure.__traceback__))
-                if not isinstance(failure, TurnFeedError):
-                    self._flush_failures[session] = failure
-
-        self._feeds[session] = task = asyncio.create_task(feed())
-        task.add_done_callback(fed)
-
-    async def stream(
-        self,
-        session: tuple[str | None, str | None],
-        prepare: Callable[[], Awaitable[tuple[LangGraphAgent, Path]]],
-        input_data: RunAgentInput,
-        files: FilesMount | None,
-        context: _RequestContext,
-        deadline: float | None = None,
-    ) -> AsyncGenerator[Any, None]:
-        previous = self._turns.get(session)
-        if previous is not None and not previous.finished:
-            previous.stop()
-        self._turns[session] = turn = _Turn(input_data.run_id, input_data=input_data)
-        queue: asyncio.Queue[Any] = asyncio.Queue()
-        run = asyncio.create_task(self._run(session, turn, prepare, input_data, files, context, queue.put_nowait, deadline))
-        def completed(work: asyncio.Task[None]) -> None:
-            if not work.cancelled() and (failure := work.exception()) is not None:
-                log.error(
-                    'Harness Turn failed run_id=%s code=%s', turn.run_id,
-                    getattr(failure, 'code', 'INTERNAL_ERROR'),
-                    exc_info=(type(failure), failure, failure.__traceback__),
-                )
-
-        run.add_done_callback(completed)
-        try:
-            while (event := await queue.get()) is not self._end:
-                yield event
-            run.result()
-        finally:
-            turn.stop()
-
-    async def _run(
-        self,
-        session: tuple[str | None, str | None],
-        turn: _Turn,
-        prepare: Callable[[], Awaitable[tuple[LangGraphAgent, Path]]],
-        input_data: RunAgentInput,
-        files: FilesMount | None,
-        context: _RequestContext,
-        put: Callable[[Any], None],
-        deadline: float | None = None,
-    ) -> None:
-        trace_context = (
-            baggage.set_baggage('session.id', context.session_id)
-            if context.session_id else otel_context.get_current()
-        )
-        trace_context = baggage.set_baggage('run.id', input_data.run_id, context=trace_context)
-        trace_token = otel_context.attach(trace_context)
-        steering_token = active_steering.set((turn.steering, put))
-        completed = False
-        try:
-            await self._execute(session, turn, prepare, input_data, files, context, put, deadline)
-            completed = turn.finished and not turn.stopped
-        finally:
-            active_steering.reset(steering_token)
-            await session_memory.settle_prefetch(wait=not completed)
-            otel_context.detach(trace_token)
-            if self._turns.get(session) is turn:
-                del self._turns[session], self._locks[session]
-            put(self._end)
-
-    async def _execute(
-        self, session: tuple[str | None, str | None], turn: _Turn,
-        prepare: Callable[[], Awaitable[tuple[LangGraphAgent, Path]]], input_data: RunAgentInput,
-        files: FilesMount | None, context: _RequestContext, put: Callable[[Any], None],
-        deadline: float | None,
-    ) -> None:
-        lock = self._locks.setdefault(session, asyncio.Lock())
-        agent, root = await prepare()
-        saver = getattr(getattr(agent, 'graph', None), 'checkpointer', None)
-        try:
-            async with lock:
-                if turn.stopped:
-                    put(_stopped())
-                    return
-                if (failure := self._flush_failures.pop(session, None)) is not None:
-                    raise failure
-                feeds, snapshot = await _run_graph(
-                    turn, agent, root, input_data, files, session, context, put, deadline,
-                )
-                if snapshot is None:
-                    _settle_finished_reuse(saver, turn.finished_without_interruption(agent))
-                    if turn.completion is not None:
-                        turn.release(put)
-                        self._feed(session, turn, feeds)
-                    return
-                assert isinstance(saver, WarmSessionSaver)
-                publication = self._publish_checkpoint(session, saver, snapshot, turn, feeds)
-        except Exception as failure:
-            _settle_finished_reuse(saver, False)
-            if not isinstance(failure, CheckpointWriteError) and (deferred := turn.failure_after_answer(failure)) is not None:
-                self._flush_failures[session] = deferred
-            raise
-        if saver.predecessor is not None:
-            await asyncio.wait([saver.predecessor])
-        if _publication_succeeded(saver.predecessor):
-            turn.release(put)
-        await publication
-
-
-def _publication_succeeded(task: asyncio.Task[None] | None) -> bool:
-    return task is None or (task.done() and not task.cancelled() and task.exception() is None)
-
-
-async def _run_graph(
-    turn: _Turn, agent: LangGraphAgent, root: Path, input_data: RunAgentInput, files: FilesMount | None,
-    session: tuple[str | None, str | None], context: _RequestContext, put: Callable[[Any], None], deadline: float | None,
-) -> tuple[list[TurnFeed], CheckpointTuple | None]:
-    saver = getattr(getattr(agent, 'graph', None), 'checkpointer', None)
-    predecessor = saver.predecessor if isinstance(saver, WarmSessionSaver) else None
-    reply = _OpenReply()
-    with turn_files(files, root, excluded_paths(_require_bot().skills)) as readiness:
-        readiness.prefetch()
-        with prompt_cache_turn(context.session_id), collecting_turn_feeds() as feeds:
-            publish = partial(turn.publish, put=put, files=readiness, early=predecessor is None)
-            turn.work = work = reply.create_task(_turn_events(agent, input_data, reply.watching(publish)))
-        limited = await wait_for_turn(work, deadline, finished=lambda: turn.finished)
-        snapshot = None
-        try:
-            try:
-                snapshot = await _finish_graph_checkpoint(
-                    saver, work, session, turn.finished_without_interruption(agent) and not readiness.used,
-                )
-                await readiness.settle_prefetch()
-                if not work.cancelled():
-                    readiness.raise_if_failed()
-            finally:
-                await readiness.settle_archives()
-                if work.cancelled() and _publication_succeeded(predecessor):
-                    await reply.keep(agent, session)
-                    await reply.answer_cut_calls(agent, session)
-                    await reply.keep_clock(agent, session, put)
-        except Exception:
-            if snapshot is not None:
-                assert isinstance(saver, WarmSessionSaver)
-                saver.discard_handoff(snapshot)
-                await _settle_turn_writes(saver, work)
-            raise
-    if work.cancelled():
-        await reply.finish_cancelled(agent, session, input_data, put, limited=limited and not turn.stopped)
-    elif turn.completion is not None:
-        await reply.keep_failed(turn.completion, agent, session, put)
-    return feeds, snapshot
-
-
-async def _finish_graph_checkpoint(
-    saver: Any, work: asyncio.Task[None], session: tuple[str | None, str | None], finished: bool,
-) -> CheckpointTuple | None:
-    if isinstance(saver, WarmSessionSaver):
-        try:
-            if (finished and not work.cancelled() and work.exception() is None
-                    and (snapshot := saver.handoff(_session_config(session))) is not None):
-                return snapshot
-        except Exception:
-            await _settle_turn_writes(saver, work)
-            raise
-        finally:
-            saver.discard_staged()
-    await _settle_turn_writes(saver, work)
-    return None
-
-
-_SESSION_TURNS = _SessionTurns()
 
 
 def _is_assistant_text(event: Any) -> TypeGuard[TextMessageContentEvent]:
@@ -1148,8 +814,7 @@ async def _invocation_frames(
     finished = False
     terminal_sent = False
     calls = FailedCalls()
-    reply = _OpenReply()
-    observe = reply.watching(lambda event: None)
+    reply = ''
     forwarded = run_input.forwarded_props or {}
     environment = {
         **os.environ, **{key: value for key, value in forwarded.items() if isinstance(value, str)},
@@ -1159,7 +824,7 @@ async def _invocation_frames(
         with turn_timing.use(timing), counting_failed_calls(calls):
             try:
                 async for event in _events_with_response_check(run_input, context):
-                    observe(event)
+                    reply = turn_output.reply_text(reply, event)
                     frame = _timed_frame(event, encoder, timing)
                     if isinstance(event, RunErrorEvent):
                         stream_error = event
@@ -1188,7 +853,7 @@ async def _invocation_frames(
     finally:
         _record_failed_calls(calls, responded=finished)
         if finished and not timing.warmup:
-            turn_output.retain(reply.text, environment, invocation_token=context.credential_token)
+            turn_output.retain(reply, environment, invocation_token=context.credential_token)
         failure = error or stream_error
         timing.finish(_invocation_status(finished, failure))
 

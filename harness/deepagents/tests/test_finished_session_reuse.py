@@ -328,13 +328,13 @@ def test_completed_recorded_warmup_moves_checkpoint_reads_before_send(
     assert _turn(service, '', warmup=True)[-1]['value']['outcome'] == 'prepared'
     memory.listed.clear()
     reads_at_dispatch: list[int] = []
-    read = serving._read_turn_checkpoint
+    read = serving._SESSION_TURNS.read_checkpoint
 
     async def reading(*args: Any, **kwargs: Any) -> None:
         await read(*args, **kwargs)
         reads_at_dispatch.append(sum(memory.listed.values()))
 
-    monkeypatch.setattr(serving, '_read_turn_checkpoint', reading)
+    monkeypatch.setattr(serving._SESSION_TURNS, 'read_checkpoint', reading)
     assert _turn(service, 'second')[-1]['type'] == 'RUN_FINISHED'
     assert reads_at_dispatch == [0]
     assert service.recorder.heard[-1] == (['first', 'second'] if existing else ['second'])
@@ -362,13 +362,13 @@ def test_ineligible_preparation_reads_current_checkpoint(
         asyncio.run(session_api.post_message('user-1', 'thread-1', 'New result', 'post-after-warmup'))
     memory.listed.clear()
     reads_at_dispatch: list[int] = []
-    read = serving._read_turn_checkpoint
+    read = serving._SESSION_TURNS.read_checkpoint
 
     async def reading(*args: Any, **kwargs: Any) -> None:
         await read(*args, **kwargs)
         reads_at_dispatch.append(sum(memory.listed.values()))
 
-    monkeypatch.setattr(serving, '_read_turn_checkpoint', reading)
+    monkeypatch.setattr(serving._SESSION_TURNS, 'read_checkpoint', reading)
     props = {'actor': 'new-owner'} if reason == 'actor' else {}
     assert _turn(service, 'second', 'epoch-2' if reason in {'epoch', 'write'} else 'epoch-1', **props)[-1]['type'] == 'RUN_FINISHED'
     assert reads_at_dispatch[0] > 0

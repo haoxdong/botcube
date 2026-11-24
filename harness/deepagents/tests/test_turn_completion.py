@@ -22,7 +22,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from botcube_harness_deepagents import serving
+from botcube_harness_deepagents import serving, turn_lifecycle
 from botcube_harness_deepagents.files_mount import FilesMount
 from botcube_harness_deepagents.lazy_files import (
     LazyFilesMiddleware,
@@ -237,7 +237,7 @@ def test_replacement_after_completion_does_not_cancel_iterator_cleanup(
 
         monkeypatch.setattr(serving, '_require_bot', lambda: SimpleNamespace(skills=()))
         files = cast(FilesMount, SimpleNamespace(pull=lambda *args: None))
-        turns = serving._SessionTurns()
+        turns = turn_lifecycle.SessionTurns()
         stream = turns.stream(('owner', 'session'), prepared(cast(LangGraphAgent, Agent()), tmp_path), _input(), files, serving._RequestContext(None))
         completion = asyncio.create_task(anext(stream))
         await closing.wait()
@@ -282,7 +282,7 @@ def test_an_errored_stream_drains_background_files_before_eof(
     files = cast(FilesMount, SimpleNamespace(pull=pull))
 
     async def exercise() -> None:
-        stream = serving._SessionTurns().stream(
+        stream = turn_lifecycle.SessionTurns().stream(
             ('owner', 'session'), prepared(cast(LangGraphAgent, Agent()), tmp_path),
             _input(), files, serving._RequestContext(None),
         )

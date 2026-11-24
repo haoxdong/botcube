@@ -151,12 +151,11 @@ def test_warmup_without_a_turn_identity_or_during_session_work_does_not_read_mem
         'actorId': 'actor-1', 'sessionUserId': 'actor-1', 'memory': True, 'warmup': True,
         'preparationScope': 'startup',
     }
-    lock = asyncio.Lock()
+    preparation = serving._SESSION_TURNS.preparation(('actor-1', 'thread-1'))
     assert service.client.portal is not None
     if busy:
         props['turnIdentity'] = turn_identity('actor-1', 'actor-1', 'thread-1')
-        serving._SESSION_TURNS._locks[('actor-1', 'thread-1')] = lock
-        service.client.portal.call(lock.acquire)
+        assert service.client.portal.call(preparation.__aenter__)
     try:
         response = service.client.post('/invocations', json={
             'threadId': 'thread-1', 'runId': 'warmup', 'messages': [],
@@ -175,7 +174,7 @@ def test_warmup_without_a_turn_identity_or_during_session_work_does_not_read_mem
         assert service.recorder.builds == []
     finally:
         if busy:
-            service.client.portal.call(lock.release)
+            service.client.portal.call(preparation.__aexit__, None, None, None)
 
 
 def test_failed_cold_memory_refresh_fails_the_turn_and_retries(
@@ -246,7 +245,7 @@ def _ack(run_id: str, outcome: str, **error: str) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize('failure_at', [None, 'authentication', 'build', 'history'])
-def test_preparation_ack_follows_lock_release_even_when_preparation_fails(
+def test_preparation_ack_reports_its_outcome_once_even_when_preparation_fails(
     service: _Service, monkeypatch: pytest.MonkeyPatch, failure_at: str | None,
 ) -> None:
     encoded: list[dict[str, Any]] = []
@@ -266,8 +265,6 @@ def test_preparation_ack_follows_lock_release_even_when_preparation_fails(
 
     def observe(encoder: Any, event: Any) -> str:
         if event.type == 'CUSTOM' and event.name == 'SESSION_PREPARATION':
-            lock = serving._SESSION_TURNS._locks.get(('user-1', 'thread-1'))
-            assert lock is None or not lock.locked(), 'ACK was published before releasing preparation'
             encoded.append(event.value)
         return encode(encoder, event)
 

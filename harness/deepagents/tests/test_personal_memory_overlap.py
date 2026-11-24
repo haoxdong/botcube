@@ -54,7 +54,7 @@ def test_failed_preparation_joins_personal_memory_before_eof(
 ) -> None:
     started, release, ended, failed = (threading.Event() for _ in range(4))
     build, validate = serving.build_agent, serving.validate_checkpoint
-    read = serving._read_turn_checkpoint
+    read = serving._SESSION_TURNS.read_checkpoint
 
     def opening(store: Any, actor: str) -> str:
         started.set()
@@ -85,7 +85,7 @@ def test_failed_preparation_joins_personal_memory_before_eof(
 
     monkeypatch.setattr(agentcore, 'opening', opening)
     monkeypatch.setattr(serving, 'build_agent', graph)
-    monkeypatch.setattr(serving, '_read_turn_checkpoint', checkpoint)
+    monkeypatch.setattr(serving._SESSION_TURNS, 'read_checkpoint', checkpoint)
     monkeypatch.setattr(serving, 'validate_checkpoint', validation)
     with ThreadPoolExecutor() as pool:
         result = pool.submit(service.turn, 'never execute', **MEMBER)
