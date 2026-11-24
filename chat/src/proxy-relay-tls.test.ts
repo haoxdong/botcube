@@ -82,7 +82,7 @@ describe('the proxy relay to a proxy with TLS', () => {
     const calls = join(certificates.dir, 'certificate-command-calls');
     writeFileSync(calls, '');
     const start = Date.now();
-    const expiry = explicitExpiry ? start + 120_000 : new X509Certificate(certificates.pem('clientA').cert).validToDate.getTime();
+    const expiry = explicitExpiry ? start + 90_000 : new X509Certificate(certificates.pem('clientA').cert).validToDate.getTime();
     const clock = vi.spyOn(Date, 'now').mockReturnValue(start);
     const print = (name: 'clientA' | 'clientB', expiresAt: number) => {
       const { cert, key } = certificates.pem(name);
@@ -101,7 +101,7 @@ describe('the proxy relay to a proxy with TLS', () => {
     await tunnel(relay);
     expect(proxy.clients()).toEqual(['client-a', 'client-a']);
 
-    clock.mockReturnValue(expiry - 10_000);
+    clock.mockReturnValue(expiry - (explicitExpiry ? 55_000 : 10_000));
     await Promise.all([tunnel(relay), tunnel(relay)]);
     expect(proxy.clients()).toEqual(['client-a', 'client-a', 'client-b', 'client-b']);
     expect(readFileSync(calls, 'utf8')).toBe('xx');

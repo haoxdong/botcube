@@ -44,6 +44,20 @@ it('keeps an unknown external post fenced across Account Claim and releases only
   } finally { await stack.stop(); }
 });
 
+it('admits a Turn after a scheduled-post lease with only an external token expires', async () => {
+  const stack = await startInProcess();
+  const documents = DynamoDBDocumentClient.from(stack.table.client);
+  try {
+    await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
+    await documents.send(new PutCommand({
+      TableName: stack.table.name,
+      Item: { pk: 'WRITERS#["original","main"]', sk: 'CONTROL', external_token: 'expired-post', lease_expires_at: Date.now() - 1 },
+    }));
+    const turn = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main');
+    await turn();
+  } finally { await stack.stop(); }
+});
+
 it('issues a trusted epoch and advances it after external mutation', async () => {
   const stack = await startInProcess();
   try {

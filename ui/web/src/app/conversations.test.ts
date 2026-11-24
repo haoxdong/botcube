@@ -107,11 +107,11 @@ describe('Chat Service requests', () => {
     ]);
   });
 
-  it('prepends older replay pages until the requested message is found', async () => {
+  it('prepends older replay pages without duplicating messages already loaded', async () => {
     const message = (id: string) => ({ id, role: 'user', content: id });
     const pages = [
       { messages: [message('newest')], nextBefore: 'newest' },
-      { messages: [message('target')], nextBefore: 'target' },
+      { messages: [message('target'), message('newest')], nextBefore: 'target' },
     ];
     const { calls, fetchImpl } = recordingFetch(() => json(pages.shift())());
     const session = await openConversation({ id: 'thread-42', chatServiceUrl: SERVICE, at: 'target', fetchImpl });
