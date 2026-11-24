@@ -3,11 +3,12 @@ import * as path from 'node:path';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as cr from 'aws-cdk-lib/custom-resources';
-import { CfnOutput, Duration } from 'aws-cdk-lib';
+import { CfnOutput, CustomResource, Duration } from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as efs from 'aws-cdk-lib/aws-efs';
 import { Secret as ContainerSecret } from 'aws-cdk-lib/aws-ecs';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import { Secret, type ISecret } from 'aws-cdk-lib/aws-secretsmanager';
 import type { ChatStorageStack, ExistingFiles } from './chat-storage-stack.js';
@@ -22,10 +23,10 @@ export const CHAT_FILES_MOUNT = '/mnt/files-efs';
  * Files on EFS: mount targets in the browser subnets, the Chat Service's mount of every account's directory,
  * and the key it signs each upload or download link with, which it serves itself.
  */
-export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatService, storage: ChatStorageStack, browsers: { subnets: Array<{ id: string }> }, cubeRoot: string, clients: ec2.ISecurityGroup[] = [],
+export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatService, storage: ChatStorageStack, browsers: { subnets: Array<{ id: string; availabilityZone: string }> }, cubeRoot: string, clients: ec2.ISecurityGroup[] = [],
   mountRoleName?: string) {
   const existing = storage.existingFiles;
-  const { mountTargetIp, targets, accounts } = existing ? existingFilesNetwork(origin, existing) : createdFilesNetwork(origin, chat, storage, browsers, clients);
+  const { mountTargetIp, targets, accounts } = existing ? existingFilesNetwork(origin, existing, browsers.subnets[0]?.availabilityZone) : createdFilesNetwork(origin, chat, storage, browsers, clients);
   const grantMount = (grant: (statement: iam.PolicyStatement) => unknown, accessPointArn: string, operator: 'StringEquals' | 'ArnLike' = 'StringEquals') => {
     if (!existing) grant(new iam.PolicyStatement({
       actions: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'],
@@ -126,17 +127,29 @@ function createdFilesNetwork(origin: PreviewOriginStack, chat: PreviewChatServic
   return { mountTargetIp: first.attrIpAddress, targets, accounts: { id: accounts.ref, attrArn: accounts.attrArn, created: accounts } };
 }
 
-/** The existing file system's mount target, by the address EFS reports for it, so no mount depends on the VPC's resolver. */
-function existingFilesNetwork(origin: PreviewOriginStack, { fileSystemId, accountsAccessPointId }: ExistingFiles): FilesNetwork {
+function existingFilesNetwork(origin: PreviewOriginStack, { fileSystemId, accountsAccessPointId }: ExistingFiles, availabilityZone: string | undefined): FilesNetwork {
+  if (!availabilityZone) throw new Error('Existing Files EFS requires a runtime subnet');
   const attrArn = origin.formatArn({ service: 'elasticfilesystem', resource: 'access-point', resourceName: accountsAccessPointId });
-  const mountTarget = new cr.AwsCustomResource(origin, 'FilesMountTarget', {
-    onUpdate: {
-      service: 'EFS', action: 'describeMountTargets', parameters: { FileSystemId: fileSystemId },
-      physicalResourceId: cr.PhysicalResourceId.of(fileSystemId), outputPaths: ['MountTargets.0.IpAddress'],
-    },
-    installLatestAwsSdk: false,
-    // A read of the mount targets' metadata on any file system, so no BotCube policy names an existing resource.
-    policy: cr.AwsCustomResourcePolicy.fromSdkCalls({ resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE }),
+  const lookup = new lambda.Function(origin, 'FilesMountAddressLookup', {
+    runtime: lambda.Runtime.NODEJS_22_X, handler: 'index.handler', timeout: Duration.seconds(30),
+    code: lambda.Code.fromInline(`
+const { EFSClient, paginateDescribeMountTargets } = require('@aws-sdk/client-efs');
+const efs = new EFSClient();
+exports.handler = async ({ RequestType, ResourceProperties: { FileSystemId, AvailabilityZone } }) => {
+  const PhysicalResourceId = FileSystemId + ':' + AvailabilityZone;
+  if (RequestType === 'Delete') return { PhysicalResourceId };
+  for await (const { MountTargets } of paginateDescribeMountTargets({ client: efs }, { FileSystemId })) {
+    const target = MountTargets?.find(item => item.AvailabilityZoneName === AvailabilityZone && item.LifeCycleState === 'available');
+    if (target?.IpAddress) return { PhysicalResourceId, Data: { IpAddress: target.IpAddress } };
+  }
+  throw new Error('No available IPv4 EFS mount target for ' + FileSystemId + ' in ' + AvailabilityZone);
+};
+`),
   });
-  return { mountTargetIp: mountTarget.getResponseField('MountTargets.0.IpAddress'), targets: [], accounts: { id: accountsAccessPointId, attrArn } };
+  lookup.addToRolePolicy(new iam.PolicyStatement({ actions: ['elasticfilesystem:DescribeMountTargets'], resources: ['*'] }));
+  const provider = new cr.Provider(origin, 'FilesMountAddressProvider', { onEventHandler: lookup });
+  const address = new CustomResource(origin, 'FilesMountAddress', {
+    serviceToken: provider.serviceToken, properties: { FileSystemId: fileSystemId, AvailabilityZone: availabilityZone },
+  });
+  return { mountTargetIp: address.getAttString('IpAddress'), targets: [], accounts: { id: accountsAccessPointId, attrArn } };
 }

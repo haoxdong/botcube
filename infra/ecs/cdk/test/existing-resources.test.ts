@@ -3,6 +3,7 @@
 // internet through its proxy; the expected values are its file's.
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { runInNewContext } from 'node:vm';
 import { App, Stack } from 'aws-cdk-lib';
 import { AssetManifestArtifact } from 'aws-cdk-lib/cx-api';
 import { Template } from 'aws-cdk-lib/assertions';
@@ -185,14 +186,31 @@ test("serves Files from the existing file system, leasing Users' access points f
   expect(ofType('AWS::Lambda::Function').filter(({ Properties }) => Properties.FileSystemConfigs)).toEqual([]);
 });
 
-test("mounts the existing Files by the address of the file system's mount target, read from the file system at deploy", () => {
+test('looks up the existing Files mount address in the first runtime subnet AZ', () => {
   const address = environment('chat-service').BOTCUBE_FILES_MOUNT_TARGET_IP;
   const [read] = references(address);
-  expect(address).toEqual({ 'Fn::GetAtt': [read, 'MountTargets.0.IpAddress'] });
-  const call = templates.flatMap(template => Object.entries(template.Resources)).find(([logicalId]) => logicalId === read)?.[1].Properties.Create;
-  expect(JSON.parse(String(call))).toMatchObject({
-    service: 'EFS', action: 'describeMountTargets', parameters: { FileSystemId: 'fs-0fea7e5f11e5' }, outputPaths: ['MountTargets.0.IpAddress'],
+  expect(address).toEqual({ 'Fn::GetAtt': [read, 'IpAddress'] });
+  const lookup = templates.flatMap(template => Object.entries(template.Resources)).find(([logicalId]) => logicalId === read)?.[1];
+  expect(lookup?.Properties).toMatchObject({
+    FileSystemId: 'fs-0fea7e5f11e5', AvailabilityZone: 'us-east-1a',
   });
+});
+
+test('selects an available EFS target by AZ across pages and fails when that AZ has none', async () => {
+  const [lookup] = ofType('AWS::Lambda::Function').filter(({ Properties }) => JSON.stringify(Properties.Code).includes('paginateDescribeMountTargets'));
+  const code = lookup.Properties.Code as { ZipFile: string };
+  const sdk = {
+    EFSClient: class {},
+    paginateDescribeMountTargets: async function* () {
+      yield { MountTargets: [{ AvailabilityZoneName: 'us-east-1b', LifeCycleState: 'available', IpAddress: '192.0.2.2' }] };
+      yield { MountTargets: [{ AvailabilityZoneName: 'us-east-1a', LifeCycleState: 'available', IpAddress: '192.0.2.1' }] };
+    },
+  };
+  const exports = {} as { handler(event: { RequestType: string; ResourceProperties: { FileSystemId: string; AvailabilityZone: string } }): Promise<unknown> };
+  runInNewContext(code.ZipFile, { exports, require: () => sdk });
+  const request = (AvailabilityZone: string) => exports.handler({ RequestType: 'Create', ResourceProperties: { FileSystemId: 'fs-0fea7e5f11e5', AvailabilityZone } });
+  await expect(request('us-east-1a')).resolves.toEqual({ PhysicalResourceId: 'fs-0fea7e5f11e5:us-east-1a', Data: { IpAddress: '192.0.2.1' } });
+  await expect(request('us-east-1c')).rejects.toThrow('No available IPv4 EFS mount target for fs-0fea7e5f11e5 in us-east-1c');
 });
 
 test('uses the existing tables and their stream', () => {

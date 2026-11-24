@@ -68,13 +68,18 @@ export function proxyUrl(proxy: BotCubeConfig['integrations']['proxy'], env: Nod
   if (proxy.credential === undefined && proxy.headers === undefined && proxy.tls === undefined) return async () => proxy.url;
   const key = JSON.stringify(proxy);
   return () => {
-    const started = relays.get(key) ?? startProxyRelay({
+    const running = relays.get(key);
+    if (running) return running;
+    const started = startProxyRelay({
       upstream: new URL(proxy.url),
       listen: { host: '127.0.0.1', port: 0 },
       credential: proxy.credential && credentialSource('proxy', proxy.credential, { env }),
       headers: proxy.headers ?? {},
       tls: proxy.tls && endpointTls('proxy', proxy.tls, { env }),
-    }).then((relay) => relay.url);
+    }).then((relay) => relay.url, (error: unknown) => {
+      relays.delete(key);
+      throw error;
+    });
     relays.set(key, started);
     return started;
   };

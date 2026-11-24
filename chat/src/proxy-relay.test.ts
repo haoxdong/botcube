@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { connect, createServer, type Server, type Socket } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { connect, createServer, Server, type Socket } from 'node:net';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { credentialSource, type CredentialSource } from './credential-source.js';
 import { proxyUrl, startProxyRelay, type ProxyRelay } from './proxy-relay.js';
 
@@ -41,7 +41,7 @@ class FakeUpstreamProxy {
 }
 
 /** Sends `head` through the relay and reads until the socket ends; with `tunnelled`, sends it once answered and ends on its echo. */
-function exchange(relay: ProxyRelay, head: string, tunnelled?: string): Promise<string> {
+function exchange(relay: Pick<ProxyRelay, 'url'>, head: string, tunnelled?: string): Promise<string> {
   const url = new URL(relay.url);
   return new Promise((resolve, reject) => {
     const socket = connect(Number(url.port), url.hostname);
@@ -140,6 +140,27 @@ describe("the BotCube Config's proxy in a process", () => {
     expect(await proxyUrl(proxy)?.()).toBe(result);
   });
 
+  it('starts a new relay after a failed listen', async () => {
+    const upstream = new FakeUpstreamProxy();
+    opened.push(upstream);
+    const url = proxyUrl({ kind: 'forward', url: (await upstream.listen()).href, headers: { 'x-route': 'retry' } });
+    const listen = vi.spyOn(Server.prototype, 'listen').mockImplementationOnce(function (this: Server) {
+      process.nextTick(() => this.emit('error', new Error('relay could not listen')));
+      return this;
+    });
+    try {
+      await expect(url?.()).rejects.toThrow('relay could not listen');
+      const [relay, concurrent] = await Promise.all([url?.(), url?.()]);
+      expect(relay).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+      expect(concurrent).toBe(relay);
+      const answer = await exchange({ url: relay ?? '' }, 'GET http://api.example.com/ HTTP/1.1\r\nHost: api.example.com\r\n\r\n');
+      expect(answer).toContain('HTTP/1.1 200 OK');
+      expect(header(upstream.heads[0] ?? '', 'x-route')).toEqual(['retry']);
+    } finally {
+      listen.mockRestore();
+    }
+  });
+
   it('is one loopback relay, started when first asked for, with the credential and headers', async () => {
     const upstream = new FakeUpstreamProxy();
     opened.push(upstream);
@@ -150,7 +171,7 @@ describe("the BotCube Config's proxy in a process", () => {
     expect(relay).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(await url?.()).toBe(relay);
     expect(await proxyUrl(proxy)?.()).toBe(relay);
-    const answer = await exchange({ url: relay ?? '', close: async () => undefined }, 'CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n');
+    const answer = await exchange({ url: relay ?? '' }, 'CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n');
     expect(answer).toContain(`proxy credential (file ${proxy.credential.path}): ENOENT`);
   });
 });
