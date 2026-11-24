@@ -74,6 +74,15 @@ export class SessionBusyError extends Error {
   constructor(message: string, readonly holder?: SessionWriterHolder) { super(message); }
 }
 
+function writerBusy({ Item }: CancellationReason): SessionBusyError {
+  const token = Item?.lease_token?.S;
+  const expiry = Number(Item?.lease_expires_at?.N);
+  const holder = token === undefined ? undefined : {
+    token, scheduled: true, createdAt: Number.isFinite(expiry) ? new Date(expiry - REGISTRATION_EXPIRY_MS).toISOString() : 'unknown',
+  };
+  return new SessionBusyError('Session persistence writer is still active', holder);
+}
+
 export class SessionConcurrencyError extends Error {}
 
 /** What the agent did in one finished Turn, as the Agent Profile's Activity shows it. */
@@ -568,7 +577,12 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       }
     }
     const complete = this.writers.acknowledgement(session, token, false, false, undefined, kind, issueEpoch ? epoch : undefined);
-    if (rejected.length > 0) await recovery?.settle(session, rejected);
+    try {
+      if (rejected.length > 0) await recovery?.settle(session, rejected);
+    } catch (error) {
+      await this.writers.abandonPost(session, token);
+      throw error;
+    }
     return kind === 'session-post' ? Object.assign(complete, { postLeaseExpiresAt: now + REGISTRATION_EXPIRY_MS }) : complete;
   }
 
@@ -576,24 +590,10 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
     const writes = transaction.TransactItems ?? [];
     const controlIndex = writes.findIndex((item) => item.Update?.Key?.pk === writerControlKey(identity.session).pk);
-    if (reasons?.[controlIndex]?.Code === 'ConditionalCheckFailed') {
-      await this.writerConflict(identity.session, reasons[controlIndex]);
-      return true;
-    }
+    if (reasons?.[controlIndex]?.Code === 'ConditionalCheckFailed') throw writerBusy(reasons[controlIndex]);
     if (reasons?.[2]?.Code !== 'ConditionalCheckFailed') return false;
     const current = await this.getSessionItem(identity.dispatchOwner, identity.session.session_id);
     return current !== null && current.snapshot_epoch !== identity.snapshotEpoch;
-  }
-
-  private async writerConflict(session: SessionPurge, reason: CancellationReason): Promise<void> {
-    const control = reason.Item === undefined ? await this.writers.postControl(session) : undefined;
-    const token = reason.Item?.external_token?.S ?? control?.external_token;
-    const leaseToken = reason.Item?.lease_token?.S ?? control?.lease_token;
-    const holder = await this.writers.holder(session, token);
-    if (holder?.scheduled && token !== leaseToken && Date.parse(holder.createdAt) + REGISTRATION_EXPIRY_MS < Date.now()) {
-      return this.writers.backfillPostLease(session, holder);
-    }
-    throw new SessionBusyError('Session persistence writer is still active', holder);
   }
 
   rejectedDispatches(session: SessionPurge, runtimeTarget?: string): Promise<RegisteredDispatch[]> {
@@ -741,10 +741,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
     const failed = (index: number) => reasons?.[index]?.Code === 'ConditionalCheckFailed';
     if (failed(0)) throw new SessionDeletedError(session.session_id);
-    if (reasons?.[4]?.Code === 'ConditionalCheckFailed') {
-      await this.writerConflict(session, reasons[4]);
-      return fallback();
-    }
+    if (reasons?.[4]?.Code === 'ConditionalCheckFailed') throw writerBusy(reasons[4]);
     if (failed(1)) {
       if (accepted) return fallback();
       throw new SessionClaimError(owner);

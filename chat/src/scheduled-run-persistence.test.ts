@@ -384,7 +384,7 @@ describe('scheduled persistence dispatch admission', () => {
     const next = await stack.sessionMetadata.beginDispatch(account, main);
     await next();
   });
-  it('retains a completed scheduled answer through a failed writer recovery attempt', async () => {
+  it('admits the next Main Chat Turn after scheduled writer recovery fails', async () => {
     const account = owner();
     const task = { id: 'busy-main-result', proposalId: 'busy-main-result', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false };
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
@@ -397,7 +397,7 @@ describe('scheduled persistence dispatch admission', () => {
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
     const post = vi.fn<SessionApi>(async () => ({}));
-    const stop = vi.fn<() => Promise<void>>().mockRejectedValueOnce(new Error('Temporary stop failure')).mockResolvedValue(undefined);
+    const stop = vi.fn<() => Promise<void>>().mockRejectedValue(new Error('Temporary stop failure'));
     const deps = {
       turnIdentity: null, summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed.' }),
       bot, sessionMetadata: stack.sessionMetadata,
@@ -410,12 +410,25 @@ describe('scheduled persistence dispatch admission', () => {
     const active = await stack.sessionMetadata.beginDispatch(account, main);
     await defined(active.markRejected, 'rejected writer')('scheduled-recovery-runtime');
     const message = { owner: account, taskId: task.id, deliveryId: 'busy-main-occurrence' };
-    await runScheduledTask(deps, message);
-    expect(post).toHaveBeenCalledOnce();
-    expect(post.mock.calls[0]?.[0]).toMatchObject({ scheduledRun: { status: 'done', text: 'Saved answer' } });
-    expect(deps.scheduledTasks.recordRun).toHaveBeenCalledWith(account, task.id, { at: expect.any(String), status: 'done' });
-    const next = await stack.sessionMetadata.beginDispatch(account, main);
-    await next();
+    await expect(runScheduledTask(deps, message)).rejects.toThrow('Temporary stop failure');
+    expect(post).not.toHaveBeenCalled();
+    const client = new AbortController();
+    const warnings = vi.spyOn(console, 'warn').mockImplementation((message: unknown) => {
+      if (String(message).startsWith('Turn is waiting for Session persistence writer')) client.abort();
+    });
+    try {
+      const response = await stack.app.request('/', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-test-owner': account }, signal: client.signal,
+        body: JSON.stringify({ threadId: main, runId: 'next-main-turn', state: {}, tools: [], context: [], forwardedProps: {},
+          messages: [{ id: 'next-question', role: 'user', content: 'Next question' }] }),
+      });
+      const body = await response.text();
+      expect(response.status, body).toBe(200);
+      expect(body).toContain('RUN_FINISHED');
+    } finally {
+      warnings.mockRestore();
+    }
+    expect(stop).toHaveBeenCalledOnce();
   });
 
   it.each([false, true])('holds a completed Side result while Main writers settle without fencing replacements (Claim: %s)', async (claim) => {

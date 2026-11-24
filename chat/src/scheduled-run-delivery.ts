@@ -38,14 +38,7 @@ async function beginScheduledPost(deps: ScheduledDeliveryDeps, store: ScheduledR
   const upstream = deps.upstream;
   const recovery = upstream?.runtimeTarget === undefined ? undefined : {
     runtimeTarget: upstream.runtimeTarget,
-    settle: async (...args: Parameters<typeof upstream.recoverRejectedWriters>) => {
-      try {
-        await upstream.recoverRejectedWriters(...args);
-      } catch (error) {
-        console.warn('Scheduled post is retrying rejected Runtime writer recovery', error);
-        await upstream.recoverRejectedWriters(...args);
-      }
-    },
+    settle: upstream.recoverRejectedWriters,
   };
   const attempt = async () => {
     const owner = await store.executionOwner(delivery);

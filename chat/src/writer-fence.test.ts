@@ -181,7 +181,7 @@ it('removes idle writer control only after durable Session purge completion', as
 });
 
 
-it.each(['absent', 'failed'] as const)('retains rejected writers and the post lease after %s recovery', async (result) => {
+it.each(['absent', 'failed'] as const)('retains rejected writers and releases the post lease after %s recovery', async (result) => {
   const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
@@ -196,7 +196,8 @@ it.each(['absent', 'failed'] as const)('retains rejected writers and the post le
     await expect(stack.sessionMetadata.beginDispatch('acct_account-1', 'main', undefined, undefined, 'session-post', recovery)).rejects.toThrow();
     expect(stop).toHaveBeenCalledWith(rejected.session.session_id);
     expect(await stack.sessionMetadata.rejectedDispatches(rejected.session, 'runtime-target')).toHaveLength(1);
-    await expect(stack.sessionMetadata.beginDispatch('acct_account-1', 'main')).rejects.toThrow(SessionBusyError);
+    const next = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main');
+    await next();
     await expect(stack.sessionMetadata.beginDispatch('acct_account-1', 'main', undefined, undefined, 'session-post')).rejects.toThrow(SessionBusyError);
   } finally { await stack.stop(); }
 });

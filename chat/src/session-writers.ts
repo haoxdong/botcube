@@ -43,16 +43,6 @@ type WriterItem = { pk: string; sk: string; dispatcher?: string } & Record<strin
 export class SessionWriters {
   constructor(private readonly tableName: string, private readonly documents: DynamoDBDocumentClient) {}
 
-  async postControl(session: SessionPurge) {
-    return (await this.documents.send(new GetCommand({ TableName: this.tableName, Key: writerControlKey(session), ConsistentRead: true }))).Item;
-  }
-
-  async holder(session: SessionPurge, token: unknown): Promise<SessionWriterHolder | undefined> {
-    if (typeof token !== 'string') return undefined;
-    const { Item } = await this.documents.send(new GetCommand({ TableName: this.tableName, Key: dispatchKey(session, token), ConsistentRead: true }));
-    return { token, createdAt: typeof Item?.created_at === 'string' ? Item.created_at : 'unknown', scheduled: Item?.writer_control === 'session-post' };
-  }
-
   /** The writer's registration and its count on the Session's writer control; a scheduled post holds the control exclusively. */
   registration(session: SessionPurge, token: string, kind: 'runtime' | 'session-post', rejectedCount = 0, now = Date.now()): [TransactItem, TransactItem] {
     return [
@@ -106,10 +96,7 @@ export class SessionWriters {
       try {
         await this.documents.send(new TransactWriteCommand({ TransactItems: [
           { Update }, ...(completion === undefined ? [] : [completion]),
-          ...(writerKind === 'session-post' ? [{ Update: {
-            TableName: this.tableName, Key: writerControlKey(session), UpdateExpression: 'REMOVE external_token, lease_token, lease_expires_at',
-            ConditionExpression: 'external_token = :token', ExpressionAttributeValues: { ':token': token },
-          } }] : []),
+          ...(writerKind === 'session-post' ? [this.releasePostLease(session, token)] : []),
         ] }));
       } catch (error) {
         if (writerKind !== 'session-post' || !(error as Partial<TransactionCanceledException>).CancellationReasons?.some((reason) => reason.Code === 'ConditionalCheckFailed')) throw error;
@@ -212,27 +199,23 @@ export class SessionWriters {
     ).map((row) => this.acknowledgeSuccessfulDispatch(session, row.sk, 'session-post')));
   }
 
-  async backfillPostLease(session: SessionPurge, holder: Pick<SessionWriterHolder, 'token' | 'createdAt'>): Promise<void> {
-    try {
-      await this.documents.send(new UpdateCommand({
-        TableName: this.tableName, Key: writerControlKey(session),
-        UpdateExpression: 'SET lease_token = :token, lease_expires_at = :expiry',
-        ConditionExpression: 'external_token = :token AND (attribute_not_exists(lease_token) OR lease_token <> :token)',
-        ExpressionAttributeValues: { ':token': holder.token, ':expiry': Date.parse(holder.createdAt) + REGISTRATION_EXPIRY_MS },
-      }));
-    } catch (error) {
-      if (!(error instanceof ConditionalCheckFailedException)) throw error;
-    }
+  async abandonPost(session: SessionPurge, token: string): Promise<void> {
+    await this.documents.send(new TransactWriteCommand({ TransactItems: [
+      this.releasePostLease(session, token),
+      { Delete: { TableName: this.tableName, Key: dispatchKey(session, token) } },
+    ] }));
+  }
+
+  private releasePostLease(session: SessionPurge, token: string): TransactItem {
+    return { Update: {
+      TableName: this.tableName, Key: writerControlKey(session), UpdateExpression: 'REMOVE external_token, lease_token, lease_expires_at',
+      ConditionExpression: 'external_token = :token', ExpressionAttributeValues: { ':token': token },
+    } };
   }
 
   async settleExpired(session: SessionPurge, now = Date.now()): Promise<void> {
     const expired = (await this.queryPartition(dispatchKey(session, '').pk))
       .filter((item) => registrationExpired(String(item.created_at), now) && item.writer_succeeded !== 'session-post');
-    if (expired.some((item) => item.writer_control === 'session-post')) {
-      const control = await this.postControl(session);
-      const legacyPost = expired.find((item) => item.writer_control === 'session-post' && item.sk === control?.external_token && item.sk !== control.lease_token);
-      if (legacyPost !== undefined) await this.backfillPostLease(session, { token: legacyPost.sk, createdAt: String(legacyPost.created_at) });
-    }
     for (const item of expired) {
       const kind = item.writer_control === 'runtime' || item.writer_control === 'session-post' ? item.writer_control : undefined;
       // eslint-disable-next-line no-await-in-loop -- each expired registration is archived before the purge rechecks the rest
