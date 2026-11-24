@@ -25,11 +25,19 @@ The UI-facing service and durable center: it holds Session Metadata and reaches 
 _Avoid_: Backend, middleware, gateway, chat server
 
 **Session**:
-A multi-turn exchange between a User and the agent, owned by one User and identified by its Session ID, and its one persisted record of the agent's context, which serves both resume and replay. The Harness persists it in its library's format, so a Session stays on the harness library that started it.
-_Avoid_: conversation, thread (except as the wire field), chat, checkpoint, STM, session history, Journal
+One User's ongoing exchange with the agent, identified by its Session ID and owned by that User, with one writer at a time. Main Chat and Side Chat are Sessions. It is LangGraph's thread, and it stays on the harness library that started it.
+_Avoid_: conversation, thread (except as the wire field), chat, checkpoint (the Harness's internal saved state), STM, Journal
+
+**Transcript**:
+A Session's full record of its messages, which replay shows and resume continues. Compaction never shortens it.
+_Avoid_: session history, rollout, checkpoint
+
+**Context**:
+What the model is sent for its next call: the Transcript after compaction, with the system prompt and Memory reads, bounded by the model's context window. A project's glossary scope is a bounded context, never bare Context.
+_Avoid_: effective history, prompt, history
 
 **Session Metadata**:
-The Chat Service's lookup record for one Session — owner, title, last activity, and deletion state — used for listing, owner changes, and deletion. For the Activity it also keeps each finished Turn's completion time, request's first line, and summary (ADR 0067 §2); it holds no transcript.
+The Chat Service's lookup record for one Session — owner, title, last activity, and deletion state — used for listing, owner changes, and deletion. For the Activity it also keeps each finished Turn's completion time, request's first line, and summary (ADR 0067 §2); it holds no Transcript.
 _Avoid_: Journal, session history, session index, thread table
 
 **User**:
