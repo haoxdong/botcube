@@ -34,7 +34,7 @@ it('keeps an unknown external post fenced across Account Claim and releases only
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
     const post = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main', undefined, undefined, 'session-post');
     await stack.sessionMetadata.transferOwner('acct_account-1', 'destination');
-    await expect(stack.sessionMetadata.beginDispatch('destination', 'main')).rejects.toThrow(SessionBusyError);
+    await expect(stack.sessionMetadata.beginDispatch('destination', 'main')).rejects.toMatchObject({ holder: { token: post.token } });
     await expect(post()).rejects.toThrow('completion is unproved');
     await defined(post.markSucceeded, 'confirmed Lambda completion')('session-post');
     const continued = await stack.sessionMetadata.beginDispatch('destination', 'main');

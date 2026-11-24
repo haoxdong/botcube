@@ -36,25 +36,24 @@ const registrationExpired = (created: string, now: number) => Date.parse(created
 const dispatchKey = ({ session_id, filing_user_id }: SessionPurge, token: string) => ({ pk: `DISPATCH#${JSON.stringify([filing_user_id, session_id])}`, sk: token });
 
 export const writerControlKey = ({ session_id, filing_user_id }: SessionPurge) => ({ pk: `WRITERS#${JSON.stringify([filing_user_id, session_id])}`, sk: 'CONTROL' });
-export const POST_LEASE_AVAILABLE = '(attribute_not_exists(external_token) OR (lease_token = external_token AND lease_expires_at < :now))';
+export const POST_LEASE_AVAILABLE = '(attribute_not_exists(external_token) OR lease_expires_at < :now)';
 type TransactItem = NonNullable<TransactWriteCommandInput['TransactItems']>[number];
 type WriterItem = { pk: string; sk: string; dispatcher?: string } & Record<string, unknown>;
 
 export class SessionWriters {
   constructor(private readonly tableName: string, private readonly documents: DynamoDBDocumentClient) {}
 
-  /** The writer's registration and its count on the Session's writer control; a scheduled post holds the control exclusively. */
-  registration(session: SessionPurge, token: string, kind: 'runtime' | 'session-post', rejectedCount = 0, now = Date.now()): [TransactItem, TransactItem] {
+  registration(session: SessionPurge, token: string, now = Date.now(), postLeaseExpiresAt?: number, rejectedCount = 0): [TransactItem, TransactItem] {
     return [
-      { Put: { TableName: this.tableName, Item: { ...dispatchKey(session, token), ...session, writer_control: kind, dispatcher: dispatcherId, created_at: new Date(now).toISOString().replace('Z', '000+00:00') } } },
+      { Put: { TableName: this.tableName, Item: { ...dispatchKey(session, token), ...session, writer_control: postLeaseExpiresAt === undefined ? 'runtime' : 'session-post', dispatcher: dispatcherId, created_at: new Date(now).toISOString().replace('Z', '000+00:00') } } },
       { Update: {
         TableName: this.tableName, Key: writerControlKey(session),
-        UpdateExpression: kind === 'runtime'
-          ? 'REMOVE external_token, lease_token, lease_expires_at ADD runtime_writers :one'
-          : 'SET external_token = :token, lease_token = :token, lease_expires_at = :expiry',
-        ConditionExpression: POST_LEASE_AVAILABLE + (kind === 'runtime' ? '' : rejectedCount === 0 ? ' AND (attribute_not_exists(runtime_writers) OR runtime_writers = :zero)' : ' AND runtime_writers = :zero'),
+        UpdateExpression: postLeaseExpiresAt === undefined
+          ? 'REMOVE external_token, lease_expires_at ADD runtime_writers :one'
+          : 'SET external_token = :token, lease_expires_at = :expiry',
+        ConditionExpression: POST_LEASE_AVAILABLE + (postLeaseExpiresAt === undefined ? '' : rejectedCount === 0 ? ' AND (attribute_not_exists(runtime_writers) OR runtime_writers = :zero)' : ' AND runtime_writers = :zero'),
         ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
-        ExpressionAttributeValues: kind === 'runtime' ? { ':one': 1, ':now': now } : { ':token': token, ':zero': rejectedCount, ':now': now, ':expiry': now + REGISTRATION_EXPIRY_MS },
+        ExpressionAttributeValues: postLeaseExpiresAt === undefined ? { ':one': 1, ':now': now } : { ':token': token, ':zero': rejectedCount, ':now': now, ':expiry': postLeaseExpiresAt },
       } },
     ];
   }
@@ -208,7 +207,7 @@ export class SessionWriters {
 
   private releasePostLease(session: SessionPurge, token: string): TransactItem {
     return { Update: {
-      TableName: this.tableName, Key: writerControlKey(session), UpdateExpression: 'REMOVE external_token, lease_token, lease_expires_at',
+      TableName: this.tableName, Key: writerControlKey(session), UpdateExpression: 'REMOVE external_token, lease_expires_at',
       ConditionExpression: 'external_token = :token', ExpressionAttributeValues: { ':token': token },
     } };
   }

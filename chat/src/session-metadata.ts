@@ -75,12 +75,11 @@ export class SessionBusyError extends Error {
 }
 
 function writerBusy({ Item }: CancellationReason): SessionBusyError {
-  const token = Item?.lease_token?.S;
+  const token = Item?.external_token?.S;
   const expiry = Number(Item?.lease_expires_at?.N);
-  const holder = token === undefined ? undefined : {
+  return new SessionBusyError('Session persistence writer is still active', token === undefined ? undefined : {
     token, scheduled: true, createdAt: Number.isFinite(expiry) ? new Date(expiry - REGISTRATION_EXPIRY_MS).toISOString() : 'unknown',
-  };
-  return new SessionBusyError('Session persistence writer is still active', holder);
+  });
 }
 
 export class SessionConcurrencyError extends Error {}
@@ -508,13 +507,13 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     } };
   }
 
-  private dispatchTransaction(owner: string, identity: DispatchIdentity, token: string, epoch: string, kind: 'runtime' | 'session-post', now: number, acceptedTurn?: AcceptedDispatch, rejected: readonly RegisteredDispatch[] = [], recovery?: RejectedWriterRecovery): TransactWriteCommandInput {
+  private dispatchTransaction(owner: string, identity: DispatchIdentity, token: string, epoch: string, now: number, postLeaseExpiresAt: number | undefined, acceptedTurn?: AcceptedDispatch, rejected: readonly RegisteredDispatch[] = [], recovery?: RejectedWriterRecovery): TransactWriteCommandInput {
     const { dispatchOwner, session, claimDestination } = identity;
     const claimedTurn = claimDestination === null ? undefined : acceptedTurn;
     const claimCondition = claimedTurn === undefined ? 'attribute_not_exists(pk)' : 'attribute_not_exists(pk) OR attribute_exists(destination)';
     const fencedOwner = claimDestination ?? dispatchOwner;
     const destination = dispatchOwner === owner ? claimDestination : null;
-    const [registration, control] = this.writers.registration(session, token, kind, rejected.length, now);
+    const [registration, control] = this.writers.registration(session, token, now, postLeaseExpiresAt, rejected.length);
     return { TransactItems: [
       { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
       { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(dispatchOwner),
@@ -547,10 +546,10 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     assertContinuable(session);
     const token = randomUUID();
     const epoch = kind === 'session-post' ? randomUUID() : identity.snapshotEpoch ?? randomUUID();
-    const issueEpoch = kind === 'runtime';
     const rejected = kind === 'session-post' && recovery !== undefined ? await this.rejectedDispatches(session, recovery.runtimeTarget) : [];
     const now = Date.now();
-    const transaction = this.dispatchTransaction(owner, identity, token, epoch, kind, now, acceptedTurn, rejected, recovery);
+    const postLeaseExpiresAt = kind === 'session-post' ? now + REGISTRATION_EXPIRY_MS : undefined;
+    const transaction = this.dispatchTransaction(owner, identity, token, epoch, now, postLeaseExpiresAt, acceptedTurn, rejected, recovery);
     try {
       await this.documents.send(new TransactWriteCommand(transaction));
     } catch (error) {
@@ -558,14 +557,14 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
         return this.beginDispatch(owner, sessionId, warmupFilingUserId, acceptedTurn, kind, recovery, expectedSession);
       }
     }
-    const complete = this.writers.acknowledgement(session, token, false, false, undefined, kind, issueEpoch ? epoch : undefined);
+    const complete = this.writers.acknowledgement(session, token, false, false, undefined, kind, kind === 'runtime' ? epoch : undefined);
     try {
       if (rejected.length > 0) await recovery?.settle(session, rejected);
     } catch (error) {
       await this.writers.abandonPost(session, token);
       throw error;
     }
-    return kind === 'session-post' ? Object.assign(complete, { postLeaseExpiresAt: now + REGISTRATION_EXPIRY_MS }) : complete;
+    return postLeaseExpiresAt === undefined ? complete : Object.assign(complete, { postLeaseExpiresAt });
   }
 
   private async writerAdmissionChanged(error: unknown, identity: DispatchIdentity, transaction: TransactWriteCommandInput): Promise<boolean> {
@@ -711,7 +710,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
         { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
         { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
         this.dispatchSessionWrite(owner, session, epoch, snapshotEpoch),
-        ...this.writers.registration(session, token, 'runtime'),
+        ...this.writers.registration(session, token),
       ] }));
     } catch (error) {
       return this.refusedTurnDispatch(error, owner, session, snapshotEpoch, acceptedTurn !== undefined, fallback);
