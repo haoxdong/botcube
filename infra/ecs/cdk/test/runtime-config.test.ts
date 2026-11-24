@@ -10,6 +10,8 @@ test.each(['public', 'enterprise'])('the %s example runs its named Bot Image wit
   const [runtime] = Object.values(agentCore.findResources('AWS::BedrockAgentCore::Runtime'));
   expect(runtime.Properties.AgentRuntimeArtifact.ContainerConfiguration.ContainerUri)
     .toBe(readConfig(botcubeConfigPath(example)).agentCore?.runtime?.containerUri);
-  expect(runtime.Properties.EnvironmentVariables.BOTCUBE_CONFIG).toBe(`/opt/botcube/examples/${example}/botcube.yaml`);
+  const [publisher] = Object.keys(agentCore.findResources('Custom::CDKBucketDeployment'));
+  expect(runtime.DependsOn).toContain(publisher);
+  expect(runtime.Properties.EnvironmentVariables.BOTCUBE_CONFIG).toMatch(/^s3:\/\/botcube-config-.*\/resolved\/[a-f0-9]{64}\.json$/);
   agentCore.resourceCountIs('AWS::CodeBuild::Project', 0);
 });

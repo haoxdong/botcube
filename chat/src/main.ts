@@ -1,3 +1,3 @@
-import { serveChatService } from './server.js';
+import { startChatService } from './server.js';
 
-serveChatService();
+await startChatService();

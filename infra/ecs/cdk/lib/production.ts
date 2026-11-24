@@ -1,3 +1,5 @@
+import { ok as assert } from 'node:assert';
+import { publishConfig } from 'botcube-infra-agentcore-cdk/config-publisher';
 import { runtimeLogGroupPattern } from 'botcube-infra-agentcore-cdk/exports';
 import { optionalPhysicalName } from './physical-name.js';
 import * as fs from 'node:fs';
@@ -10,7 +12,7 @@ import type { DeployIdentity } from './production-identity.js';
 import type { SynthesizedConfig } from './parking-transition.js';
 import { existingFilesRoleNames } from './files-role-names.js';
 import { createProductionParking } from './production-parking-stack.js';
-import { ContainerImage, Secret, type ContainerDefinition } from 'aws-cdk-lib/aws-ecs';
+import { ContainerImage, Secret } from 'aws-cdk-lib/aws-ecs';
 import { grantModelsEndpoint } from './models-endpoint.js';
 import { grantSecretReads } from './secret-reads.js';
 import * as kms from 'aws-cdk-lib/aws-kms';
@@ -83,10 +85,7 @@ export interface ProductionOptions {
   privateSubnets?: ec2.SubnetSelection;
   kmsKey?: kms.IKey;
   permissionsBoundary?: iam.IManagedPolicy;
-  chat?: Partial<Omit<import('./preview-chat-service.js').PreviewChatServiceProps, 'chatTable' | 'image' | 'vpc' | 'subnets' | 'executionRole' | 'permissionsBoundary' | 'browserId'>> & {
-    /** The chat image's BotCube Config path (BOTCUBE_CONFIG); absent, Chat Service defaults. */
-    botcubeConfig?: string;
-  };
+  chat?: Partial<Omit<import('./preview-chat-service.js').PreviewChatServiceProps, 'chatTable' | 'image' | 'vpc' | 'subnets' | 'executionRole' | 'permissionsBoundary' | 'browserId'>>;
   credentials?: CredentialOverrides;
   existingCredentialEndpoint?: { url: string; targetGroupArn: string; securityGroupId: string };
   /** The BotCube Config's non-Bedrock `models`, as botcube/config's `modelGatewayResources` gives them. */
@@ -218,9 +217,8 @@ function defineStacks(app: App, options: ProductionOptions) {
     chatTable: storage.chatTable as ITable,
     chatTableExisting: storage.chatTableExisting,
     image: images.chat,
-    ...withoutBotCubeConfig(options.chat),
+    ...options.chat,
   });
-  addBotCubeConfig(chat.container, options.chat?.botcubeConfig);
   addSmokePolicy(origin, identity, storage, options.chat?.runtimeArn ?? input.runtimeArn);
   const agentNetwork = new ec2.SecurityGroup(origin, 'AgentNetwork', { vpc: chat.cluster.vpc, ...optionalPhysicalName('securityGroupName', options.originConfig?.agentNetworkSecurityGroupName) });
   new ssm.StringParameter(origin, 'AgentSecurityGroupParameter', {
@@ -280,6 +278,13 @@ function defineStacks(app: App, options: ProductionOptions) {
   chat.container.addSecret(CREDENTIAL_SERVICE_ENV.invocationToken, Secret.fromSecretsManager(credentials.invocationSecret as ISecret));
   // The product's own resources beside BotCube's, such as a login browser of its own (ADR 0091).
   options.serving?.({ origin, chat, credentials, agentComputerBrowser: agentComputer.browser, images });
+  const published = publishConfig(origin, options.config.path);
+  for (const { task, container } of [chat, credentials]) {
+    container.addEnvironment('BOTCUBE_CONFIG', published.locator);
+    const definition = task.node.defaultChild;
+    assert(definition, 'Config readers need an ECS task definition');
+    published.grantRead(task.taskRole, definition);
+  }
   // Agent Computers run in their own browser.
   chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
     actions: ['bedrock-agentcore:GetBrowser', 'bedrock-agentcore:StartBrowserSession',
@@ -426,14 +431,4 @@ function createChatStorage(app: App, options: ProductionOptions): ChatStorageSta
   const env = { account: identity.aws.account, region: identity.aws.region };
   if (options.chatTableName !== undefined && options.storage?.tableName !== undefined) throw new Error('Choose chatTableName or storage.tableName, not both');
   return new ChatStorageStack(app, 'ChatStorage', { env, ...options.storage, ...(options.chatTableName ? { tableName: options.chatTableName } : {}) });
-}
-
-/** The Chat Service's props, without the BotCube Config path that addBotCubeConfig sets. */
-function withoutBotCubeConfig({ botcubeConfig: _path, ...chat }: NonNullable<ProductionOptions['chat']> = {}) {
-  return chat;
-}
-
-/** Point the Chat Service at the BotCube Config its image ships; absent, it keeps its defaults. */
-function addBotCubeConfig(container: ContainerDefinition, botcubeConfig: string | undefined) {
-  if (botcubeConfig) container.addEnvironment('BOTCUBE_CONFIG', botcubeConfig);
 }

@@ -1,5 +1,6 @@
 import { readConfig } from 'botcube-config/read';
-import { App } from 'aws-cdk-lib';
+import { App, Stack } from 'aws-cdk-lib';
+import { Role } from 'aws-cdk-lib/aws-iam';
 import { Template } from 'aws-cdk-lib/assertions';
 import { setSessionProjectRoot } from '@aws/agentcore-cdk';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
@@ -277,6 +278,35 @@ test('puts the runtime in the private NAT browser subnets behind the parameteriz
     },
   });
   template.hasOutput('PrivateNatBrowserId', { Value: PRIVATE_NAT_BROWSER.id });
+});
+
+test('a custom app publishes config and grants its separately imported execution role a read', async () => {
+  const app = new App();
+  const config = await loadDeployConfig(DEPLOY_ROOT, process.cwd());
+  const [target] = config.targets;
+  if (!target) throw new Error('The example needs a deployment target');
+  const imports = new Stack(app, 'CorporateResources', { env: { account: target.account, region: target.region } });
+  const role = Role.fromRoleArn(
+    imports,
+    'ExecutionRole',
+    `arn:aws:iam::${target.account}:role/corporate-agent-execution`
+  );
+  addAgentCoreStacks(app, config, COMMIT, { executionRole: role });
+  const runtimeStack = app.node.children.find(stack => stack.node.id.startsWith('AgentCore-'));
+  if (!Stack.isStack(runtimeStack)) throw new Error('The app has no AgentCore stack');
+  const runtime = Template.fromStack(runtimeStack);
+  const [publisher] = Object.keys(runtime.findResources('Custom::CDKBucketDeployment'));
+  const [definition] = Object.values(runtime.findResources('AWS::BedrockAgentCore::Runtime'));
+  expect(definition?.DependsOn).toContain(publisher);
+  expect(definition?.Properties.EnvironmentVariables.BOTCUBE_CONFIG).toMatch(/^s3:\/\/botcube-config-/);
+  const policies = [runtime, Template.fromStack(imports)].flatMap(template =>
+    Object.values(template.findResources('AWS::IAM::Policy'))
+  );
+  const granted = policies.find(policy => policy.Properties.Roles.includes('corporate-agent-execution'));
+  expect(granted?.Properties.PolicyDocument.Statement).toContainEqual(
+    expect.objectContaining({ Action: 's3:GetObject', Effect: 'Allow' })
+  );
+  expect(JSON.stringify(granted)).toContain('/resolved/*');
 });
 
 test('the deployed runtime role keeps no Memory, log-read or configuration-bundle permission', () => {

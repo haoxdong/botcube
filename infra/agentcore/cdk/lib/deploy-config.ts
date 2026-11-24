@@ -101,6 +101,7 @@ export interface DeployIdentity {
 
 export interface DeployConfig {
   deployRoot: string;
+  botcubeConfigPath?: string;
   identity: DeployIdentity;
   spec: AgentCoreProjectSpec;
   targets: AwsDeploymentTarget[];
@@ -224,6 +225,7 @@ export async function loadDeployConfig(configuredRoot: string | undefined, cwd: 
   const existingMemoryKeyArn = config.existing.kmsKeys?.memory;
   return {
     deployRoot,
+    botcubeConfigPath: path.resolve(deployRoot, '../botcube.yaml'),
     identity,
     spec,
     targets,

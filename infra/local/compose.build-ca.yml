@@ -1,4 +1,7 @@
 services:
+  config-resolve:
+    build:
+      secrets: [build_ca]
   chat-table-init:
     build:
       secrets: [build_ca]

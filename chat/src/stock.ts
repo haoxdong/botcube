@@ -2,6 +2,8 @@ import { Hono, type Context } from 'hono';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { BotSettings } from 'botcube-config';
 import { openEgressProxy } from 'botcube-config/deployment';
+import { localConfig } from './config-locator.js';
+import type { BotCubeConfig } from 'botcube-config';
 import { loadBotCube } from 'botcube-config/load';
 import { accountCookies } from './account-cookies.js';
 import { accountDeletions, serviceHealthy } from './account-deletions.js';
@@ -82,10 +84,10 @@ function withoutLiveView(computers: ComputerStates): ComputerStates {
   };
 }
 
-function deployment(env: NodeJS.ProcessEnv) {
+function deployment(env: NodeJS.ProcessEnv, config?: BotCubeConfig) {
   const path = env.BOTCUBE_CONFIG;
   if (!path) throw new Error('BOTCUBE_CONFIG is not set: the stock Chat Service serves the BotCube Config it names');
-  return loadBotCube(path);
+  return loadBotCube(path, undefined, config ?? localConfig(path));
 }
 
 /** The accounts of the bot its BotCube Config names, in BOTCUBE_CHAT_TABLE. */
@@ -118,6 +120,7 @@ export type StockOverrides = Omit<Partial<StockChat>, 'signInNeeded'> & {
 
 export interface StockOptions {
   accountStore?: AccountStore;
+  botcubeConfig?: BotCubeConfig;
   /** The page each local Agent Computer opens on; blank unless given. */
   startPage?: string;
   /** The local Agent Computer in place of the deploy's own, such as a test's that starts no browser. */
@@ -134,8 +137,8 @@ function withoutOutputCeiling({ maxTokens: _ceiling, ...model }: BotSettings['mo
 
 /** BotCube's own Chat Service, composed from the BotCube Config and the settings its Bot Image carries (ADR 0091). */
 export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions = {}): (history: AccountHistory) => StockChat {
-  const { config, bot } = deployment(env);
-  const accountStore = options.accountStore ?? stockAccountStore(env);
+  const { config, bot } = deployment(env, options.botcubeConfig);
+  const accountStore = options.accountStore ?? new AccountStore(chatTable(env), { key: bot.accountKey, product: bot.agentIdentity.name });
   const store = () => accountStore;
   const cookies = accountCookies(bot.accountKey);
   const identity = config.integrations.signIn.kind === 'oidc' ? oidcIdentity(config.integrations.signIn, env, { store, cookies, returnOrigins: allowedOrigins(config), proxy: config.integrations.proxy }) : null;

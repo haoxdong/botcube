@@ -108,7 +108,7 @@ corepack pnpm --dir infra/agentcore/cdk cdk synth
 
 The example uses the placeholder account `000000000000`. Set your account in `env.account` and publish the images named by `agentCore.runtime.containerUri` and `services` before deployment. Publish your Bot Image and name it in `agentCore.runtime.containerUri` before synthesis. Synthesis does not deploy resources.
 
-[`infra/ecs/cdk/example/app.ts`](infra/ecs/cdk/example/app.ts) defines both CDK apps from a BotCube Config with `defineExample`. The Chat Service image ships that config and `/bot/bot.yaml`. Copy them in `chat/Dockerfile`.
+[`infra/ecs/cdk/example/app.ts`](infra/ecs/cdk/example/app.ts) defines both CDK apps from a BotCube Config with `defineExample`. The Chat Service reads the resolved BotCube Config from S3 and the bot settings from `/bot/bot.yaml` in its image.
 
 Lower-level construct users composing their own CDK applications can use a custom entry point instead of the default `bin/cdk.ts`. Import resources into a stack with the same account and region as your target, then pass them to `addAgentCoreStacks`.
 
@@ -246,7 +246,7 @@ A key for an AWS value uses its CloudFormation or CDK name. A key with no outsid
 
 The Bot Image carries the bot's own settings at `/bot/bot.yaml`, against [`bot.schema.json`](config/bot.schema.json): agent identity, models, skills, `productName` and `productService`. The BotCube Config contains no bot settings, so the settings and the image roll back together.
 
-`BOTCUBE_CONFIG` locates `botcube.yaml` inside each image. The CDK apps set it on the Chat Service, Credential Service, Harness and parking Transition Lambda. The Dockerfiles and tool-staging hook copy the config into those images; synthesis stops when an image does not ship the config it is given. `botcube footprint` prints the resources, grants, images and egress a BotCube Config needs.
+`BOTCUBE_CONFIG` locates the resolved BotCube Config by S3 URL or local file path. The CDK apps publish the JSON before the Chat Service and Credential Service task definitions and AgentCore Runtime revisions use it. Each revision names its own retained object. Allow the S3 reads reported by `botcube footprint` when you supply the network or proxy. The local Compose stacks resolve to a mounted JSON file before starting the services.
 
 ### The images
 

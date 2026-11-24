@@ -1,6 +1,7 @@
+import { publishConfig } from 'botcube-infra-agentcore-cdk/config-publisher';
 import type { AgentCoreApplication } from '@aws/agentcore-cdk';
 import type { Stack } from 'aws-cdk-lib';
-import type * as bedrockagentcore from 'aws-cdk-lib/aws-bedrockagentcore';
+import * as bedrockagentcore from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
@@ -76,6 +77,22 @@ type AgentCoreRuntime =
       ? R
       : never
     : never;
+export function publishRuntimeConfig(
+  stack: Stack,
+  runtimes: readonly { runtime: AgentCoreRuntime }[],
+  { botcubeConfigPath, executionRole }: { botcubeConfigPath?: string | undefined; executionRole?: iam.IRole }
+): void {
+  if (botcubeConfigPath === undefined || runtimes.length === 0) return;
+  const published = publishConfig(stack, botcubeConfigPath);
+  for (const { runtime } of runtimes) {
+    const definition = runtime.node.defaultChild;
+    if (!(definition instanceof bedrockagentcore.CfnRuntime))
+      throw new Error('Config readers need an AgentCore Runtime definition');
+    runtime.addEnvironmentVariable('BOTCUBE_CONFIG', published.locator);
+    published.grantRead(executionRole ?? runtime.role, definition);
+  }
+}
+
 /**
  * The BotCube Config's wiring on one Runtime: where its models run, who may invoke it, and the secret its proxy
  * credential is read from. Absent, `harnessAuth` is

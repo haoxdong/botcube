@@ -27,7 +27,16 @@ const COMPOSED_TAG_TYPES = [
  */
 export function addAgentCoreStacks(
   app: App,
-  { deployRoot, identity, spec, targets, runtimeImage, existingMemoryKeyArn, tags = {} }: DeployConfig,
+  {
+    deployRoot,
+    botcubeConfigPath,
+    identity,
+    spec,
+    targets,
+    runtimeImage,
+    existingMemoryKeyArn,
+    tags = {},
+  }: DeployConfig,
   commit: string,
   overrides: Omit<Partial<AgentCoreStackProps>, 'spec' | 'physicalIdentity' | 'env'> = {},
   awsAccess: 'web-identity' | 'assume-role' = 'web-identity'
@@ -75,6 +84,7 @@ export function addAgentCoreStacks(
         ...(agentCore.rollbackVersion !== undefined ? { rollbackVersion: agentCore.rollbackVersion } : {}),
         harnessCodeLocation: path.resolve(deployRoot, runtime.codeLocation),
         runtimeImage,
+        botcubeConfigPath,
         ...memoryEncryption,
         runtimeNetwork: agentCore.runtimeNetworkParameter
           ? {

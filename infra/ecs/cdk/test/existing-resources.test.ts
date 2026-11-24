@@ -47,9 +47,12 @@ function environment(name: string): Record<string, unknown> {
 }
 
 const PRIVATE_SUBNETS = ['subnet-fixtureprivatea', 'subnet-fixtureprivateb'];
-test('creates no network, KMS key, table or bucket', () => {
+test('creates only the two config buckets alongside the supplied infrastructure', () => {
   const created = ['AWS::EC2::VPC', 'AWS::EC2::Subnet', 'AWS::KMS::Key', 'AWS::DynamoDB::Table', 'AWS::DynamoDB::GlobalTable', 'AWS::S3::Bucket'];
-  expect(resources.filter(({ Type }) => created.includes(Type)).map(({ Type }) => Type)).toEqual([]);
+  expect(resources.filter(({ Type }) => created.includes(Type))).toEqual([
+    expect.objectContaining({ Type: 'AWS::S3::Bucket', Properties: expect.objectContaining({ BucketName: expect.stringMatching(/^botcube-config-/) }) }),
+    expect.objectContaining({ Type: 'AWS::S3::Bucket', Properties: expect.objectContaining({ BucketName: expect.stringMatching(/^botcube-config-/) }) }),
+  ]);
 });
 
 /** Each existing resource as the enterprise example's file names it. */
@@ -170,7 +173,7 @@ test('creates no Files file system, mount target or access point, nor the access
 test('creates no Files pool, file system or access point in pool mode either: it leases only the existing access points', () => {
   const created = pooled.node.children.filter((child): child is Stack => child instanceof Stack)
     .flatMap(stack => Object.entries((Template.fromStack(stack).toJSON() as StackTemplate).Resources))
-    .filter(([logicalId, { Type }]) => Type.startsWith('AWS::EFS::') || Type === 'AWS::S3::Bucket'
+    .filter(([logicalId, { Type }]) => Type.startsWith('AWS::EFS::') || (Type === 'AWS::S3::Bucket' && !logicalId.startsWith('BotCubeConfig'))
       || (logicalId.startsWith('FilesPool') && !['AWS::CloudWatch::Alarm', 'AWS::Logs::MetricFilter'].includes(Type)))
     .map(([logicalId, { Type }]) => `${logicalId} ${Type}`);
   expect(created).toEqual([]);
@@ -332,8 +335,9 @@ test("sets no proxy variable on any process: each reaches the proxy only for the
 });
 
 test('hands each process the BotCube Config by its locator, never the values projected from it', () => {
-  expect(environment('chat-service').BOTCUBE_CONFIG).toBe('/opt/chat-service/examples/enterprise/botcube.yaml');
-  expect(environment('credential-service').BOTCUBE_CONFIG).toBe('/opt/botcube/examples/enterprise/botcube.yaml');
+  const locator = environment('chat-service').BOTCUBE_CONFIG;
+  expect(locator).toMatch(/^s3:\/\/botcube-config-/);
+  expect(environment('credential-service').BOTCUBE_CONFIG).toBe(locator);
   const [runtime] = ofType('AWS::BedrockAgentCore::Runtime');
   for (const variables of [environment('chat-service'), environment('credential-service'), runtime.Properties.EnvironmentVariables]) {
     expect(Object.keys(variables ?? {}).filter(name => PROJECTED.includes(name))).toEqual([]);

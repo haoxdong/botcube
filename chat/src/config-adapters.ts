@@ -1,7 +1,7 @@
 import { X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { sectionDefaults, type BotCubeConfig } from 'botcube-config';
-import { loadConfig } from 'botcube-config/load';
+import { localConfig } from './config-locator.js';
 import { allowedOrigins } from './cors.js';
 import type { ChatHarnessAuth } from './harness-auth.js';
 
@@ -26,8 +26,7 @@ export interface ConfigAdapters {
  * The adapters the Chat Service runs on: each section's `kind` in the BotCube Config at BOTCUBE_CONFIG,
  * or the schema's defaults without one (ADR 0091). Startup stops on a chosen kind whose environment is missing.
  */
-export function configAdapters(env: NodeJS.ProcessEnv): ConfigAdapters {
-  const config = env.BOTCUBE_CONFIG ? loadConfig(env.BOTCUBE_CONFIG) : sectionDefaults();
+export function configAdapters(env: NodeJS.ProcessEnv, config = env.BOTCUBE_CONFIG ? localConfig(env.BOTCUBE_CONFIG) : sectionDefaults()): ConfigAdapters {
   const { integrations: { harnessAuth, awsAccess, telemetry, proxy }, schedules, parking, caBundle } = config;
   if (caBundle !== undefined) loadCaBundle(caBundle);
   return {

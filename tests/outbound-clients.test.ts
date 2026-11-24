@@ -22,6 +22,7 @@ type Route =
 
 /** Every outbound client the Chat Service and the Credential Service build, by the file that builds it. */
 const CLIENTS: Readonly<Record<string, readonly { client: string; route: Route }[]>> = {
+  [`${CHAT}/config-locator.ts`]: [{ client: 'the resolved BotCube Config bucket', route: { direct: 'aws' } }],
   [`${CHAT}/tracing.ts`]: [{ client: 'the OTLP trace exporter', route: { reference: 'integrations.telemetry.proxy', reads: [[`${CHAT}/tracing.ts`, 'otlp?.proxy && proxyUrl(proxy, env)']] } }],
   [`${CHAT}/oidc-sign-in.ts`]: [{ client: "the OIDC issuer's discovery, token and userinfo calls", route: { reference: 'integrations.signIn.proxy', reads: [[`${CHAT}/oidc-sign-in.ts`, 'identity.proxy && proxyUrl(proxy, env)']] } }],
   [`${CHAT}/credential-source.ts`]: [
@@ -57,6 +58,7 @@ const CLIENTS: Readonly<Record<string, readonly { client: string; route: Route }
     'park-history.ts', 'production-activity.ts', 'scheduled-execution.ts', 'scheduled-run-store.ts', 'scheduled-tasks.ts', 'scheduler.ts',
     'schedules.ts', 'session-metadata.ts', 'session-writers.ts', 'table-schedules.ts', 'turn-credentials.ts', 'turn-quota.ts',
   ].map((file) => [`${CHAT}/${file}`, [{ client: 'an AWS SDK client', route: { direct: 'aws' } }]])),
+  [`${CREDENTIAL_SERVICE}/resolved_config.py`]: [{ client: 'the resolved BotCube Config bucket', route: { direct: 'aws' } }],
   [`${CREDENTIAL_SERVICE}/models.py`]: [{ client: "the models Relay provider's client", route: { reference: 'integrations.modelGateway.proxy', reads: [[`${CREDENTIAL_SERVICE}/models.py`, "proxy_url_from_config(config, env) if models.get('proxy')"]] } }],
   [`${CREDENTIAL_SERVICE}/openai.py`]: [{
     client: "the openai Relay provider's client: Plan Usage's calls and its sign-in's refresh",

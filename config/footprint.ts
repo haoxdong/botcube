@@ -1,3 +1,4 @@
+import { configStores } from './config-stores.js';
 import { outsideIssuer } from './credential-fields.js';
 import { physicalNames } from './deployment.js';
 import { footprintImages, sorted } from './footprint-images.js';
@@ -297,12 +298,13 @@ function credentialNeed(field: string, credential: CredentialSource, readers: re
   }
 }
 
-/** The existing, created and runtime resources, IAM actions, egress hosts, images and commands this BotCube Config needs. */
+/** The resources, grants and network access a BotCube Config needs. */
 export function footprint(config: BotCubeConfig, { filesAccessPointMode = 'runtime', bot }: FootprintOptions = {}): Footprint {
   const resources = existingResources(config);
+  const { need, created } = configStores(config);
   const sections: AdapterSections = { ...config.integrations, schedules: config.schedules, liveView: config.liveView };
   const needs = [BUILT_IN, config.existing.files ? {} : FILES_ACCESS_POINTS[filesAccessPointMode],
-    ...(Object.keys(ADAPTERS) as Section[]).flatMap(section => adapter(section, sections[section])), resources.need];
+    ...(Object.keys(ADAPTERS) as Section[]).flatMap(section => adapter(section, sections[section])), resources.need, need];
   const iam: Footprint['iam'] = {};
   for (const principal of Object.keys(PRINCIPALS) as Principal[]) {
     const grants = needs.flatMap(need => need.iam?.[principal] ?? []);
@@ -320,7 +322,7 @@ export function footprint(config: BotCubeConfig, { filesAccessPointMode = 'runti
       ...Object.entries(origins).flatMap(([key, origin]) => (origin ? [[`domains.${key}`, origin] as const] : [])),
     ],
     existing: needs.flatMap(need => need.existing ?? []).map(resource => ({ ...resource, grants: resource.grants.map(grant => ({ ...grant, actions: sorted(grant.actions) })) })),
-    created: resources.created,
+    created: [...resources.created, ...created],
     runtime: needs.flatMap(need => need.runtime ?? []),
     iam,
     models: modelLines(config.integrations.modelGateway, bot),

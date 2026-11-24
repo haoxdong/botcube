@@ -42,13 +42,11 @@ export function productionApp({ images: dockerfiles = {}, ...product }: ProductO
   const botcubeConfig = readConfig(config.path);
   const { services, tags } = botcubeConfig;
   const chatImage = productionChatImage(repositoryRoot, deployRoot, dockerfiles.chat, services?.chatService?.image);
-  const corsOrigins = configWebOrigins(chatImage.config === config.path ? botcubeConfig : readConfig(chatImage.config)) ?? [];
+  const corsOrigins = configWebOrigins(botcubeConfig) ?? [];
   let origin;
-  let chat;
   if (app.node.tryGetContext('previewOrigin')) {
     const inputPath = process.env.PREVIEW_ORIGIN_INPUT;
     if (!inputPath) throw new Error('PREVIEW_ORIGIN_INPUT is required');
-    if (chatImage.botcubeConfig) chat = { botcubeConfig: chatImage.botcubeConfig };
     origin = {
       input: JSON.parse(fs.readFileSync(inputPath, 'utf8')),
       images: serviceImages(repositoryRoot, services, {
@@ -67,7 +65,7 @@ export function productionApp({ images: dockerfiles = {}, ...product }: ProductO
     }
     webLatency = { ...webLatency, moments };
   }
-  defineProduction(app, { repositoryRoot, deployRoot, identity, config, corsOrigins, origin, ...(tags ? { tags } : {}), ...(chat ? { chat } : {}), ...product, ...(webLatency ? { webLatency } : {}) });
+  defineProduction(app, { repositoryRoot, deployRoot, identity, config, corsOrigins, origin, ...(tags ? { tags } : {}), ...product, ...(webLatency ? { webLatency } : {}) });
   grantLambdasInline(app);
   return app;
 }

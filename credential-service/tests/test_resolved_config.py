@@ -1,7 +1,11 @@
+import json
 import subprocess
+from io import BytesIO
 from pathlib import Path
 
+import boto3
 import pytest
+from botocore.stub import Stubber
 
 from botcube_credential_service import botcube_config
 from botcube_credential_service.resolved_config import load_resolved_config
@@ -13,12 +17,13 @@ BOTCUBE = Path(__file__).resolve().parents[2]
 @pytest.mark.parametrize('example', ['public', 'enterprise'])
 def test_reads_a_resolved_example(tmp_path: Path, example: str) -> None:
     source = BOTCUBE / 'examples' / example / 'botcube.yaml'
-    resolved = tmp_path / 'resolved.json'
+    resolved = tmp_path / 'resolved'
     with resolved.open('w', encoding='utf8') as output:
         subprocess.run(['node', str(BOTCUBE / 'config/cli.ts'), 'resolve', str(source)], stdout=output, check=True)
 
     current = botcube_config.load_botcube_config(source)
     config = load_resolved_config(resolved)
+    assert botcube_config.botcube_config_from_env({'BOTCUBE_CONFIG': str(resolved)}) == config['config']
     assert config['physicalNames'] == botcube_config.deployment_names(current)
     assert config['webOrigins'] == botcube_config.web_origins(current)
     assert config['credentialServiceHttpPath'] == botcube_config.credential_service_http_path(current)
@@ -42,3 +47,16 @@ def test_requires_its_exact_format_version(tmp_path: Path, version: str) -> None
 
     with pytest.raises(ValueError, match='formatVersion'):
         load_resolved_config(path)
+
+def test_reads_the_revision_object_and_names_it_on_access_denied(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = boto3.client('s3', region_name='us-east-1', aws_access_key_id='local', aws_secret_access_key='local')
+    monkeypatch.setattr(boto3, 'client', lambda service: client)
+    target = {'Bucket': 'config-bucket', 'Key': 'resolved/previous.json'}
+    locator = 's3://config-bucket/resolved/previous.json'
+    previous = load_resolved_config()
+    with Stubber(client) as stub:
+        stub.add_response('get_object', {'Body': BytesIO(json.dumps(previous).encode())}, target)
+        stub.add_client_error('get_object', service_error_code='AccessDenied', expected_params=target)
+        assert load_resolved_config(locator) == previous
+        with pytest.raises(ValueError, match=r's3://config-bucket/resolved/previous.json: .*AccessDenied'):
+            load_resolved_config(locator)

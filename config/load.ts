@@ -16,8 +16,7 @@ export function loadConfig(path: string): BotCubeConfig {
 }
 
 /** A deployment: its BotCube Config at `path`, and the bot settings its Bot Image holds at `botPath`. */
-export function loadBotCube(path: string, botPath = '/bot/bot.yaml'): Deployment {
-  const config = loadConfig(path);
+export function loadBotCube(path: string, botPath = '/bot/bot.yaml', config = loadConfig(path)): Deployment {
   const bot = loadBotSettings(botPath);
   if (config.liveView.kind === 'none' && bot.agentComputer.liveBrowser) {
     throw new BotCubeConfigError(`BotCube Config ${path}: liveView: none, but the bot settings turn agentComputer.liveBrowser on`);

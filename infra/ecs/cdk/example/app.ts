@@ -1,6 +1,5 @@
 // The examples' deploy entry (ADR 0091): both BotCube CDK apps, configured from a BotCube Config.
 // It reads the seam, so it sits outside this package's `tsc` build, which compiles only what is under it.
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { App } from 'aws-cdk-lib';
 import { commandCredentialOptIn, trustEnvironment } from '../../../../config/environment.js';
@@ -20,29 +19,6 @@ import { defineProduction, type ProductionOptions } from '../lib/production.js';
 import { grantLambdasInline, placeLambdasInNetwork } from 'botcube-config/lambda-inline-grants';
 
 const EXAMPLE_DEPLOY_ROOT = path.resolve(__dirname, '../../../../examples/public/deploy');
-export const EXAMPLES_ROOT = path.resolve(__dirname, '../../../../examples');
-export const IMAGE_EXAMPLES_ROOT = '/opt/chat-service/examples';
-export const CREDENTIAL_IMAGE_EXAMPLES_ROOT = '/opt/botcube/examples';
-
-/** An image the examples deploy: its Dockerfile, the prefix its COPY sources under botcube/examples/ carry, and where it ships them. */
-interface ExampleImage {
-  name: string;
-  dockerfile: string;
-  sources: string;
-  root: string;
-}
-
-const CHAT_IMAGE: ExampleImage = {
-  name: 'chat', dockerfile: path.resolve(__dirname, '../../../../chat/Dockerfile'), sources: '${BOTCUBE_ROOT}/examples/', root: IMAGE_EXAMPLES_ROOT,
-};
-const CREDENTIAL_IMAGE: ExampleImage = {
-  name: 'Credential Service', dockerfile: path.resolve(__dirname, '../../../../credential-service/Dockerfile'),
-  sources: '${BOTCUBE_ROOT}/examples/', root: CREDENTIAL_IMAGE_EXAMPLES_ROOT,
-};
-const RUNTIME_IMAGE: ExampleImage = {
-  name: 'Runtime', dockerfile: path.resolve(__dirname, '../../../../examples/bot/Dockerfile'), sources: 'examples/', root: CREDENTIAL_IMAGE_EXAMPLES_ROOT,
-};
-
 interface ExampleOptions {
   repositoryRoot: string;
   /** The checkout's commit the stacks deploy. */
@@ -58,9 +34,6 @@ interface ExampleOptions {
 /** Define the deployment the BotCube Config at `configPath` describes, failing on a bad field before any stack. */
 export async function defineExample(app: App, configPath: string, options: ExampleOptions): Promise<void> {
   const config = loadConfig(configPath);
-  const botcubeConfig = imageBotCubeConfig(CHAT_IMAGE, configPath, []);
-  const credentialBotCubeConfig = imageBotCubeConfig(CREDENTIAL_IMAGE, configPath, []);
-  const runtimeBotCubeConfig = imageBotCubeConfig(RUNTIME_IMAGE, configPath, []);
   const network = ownEgressVpc(config);
   const configDeployRoot = path.join(path.dirname(path.resolve(configPath)), 'deploy');
   const identity = (options.identity ?? (same => same))(deployIdentity(configDeployRoot));
@@ -79,12 +52,12 @@ export async function defineExample(app: App, configPath: string, options: Examp
     storage: { ...(tables?.chat ? { existingChatTable: tables.chat } : {}), ...(config.existing.files ? { existingFiles: config.existing.files } : {}) },
     ...(buckets?.connectionLogs ? { originConfig: { existingConnectionLogsBucketName: buckets.connectionLogs } } : {}),
     chat: {
-      ...seams.chat, botcubeConfig, environment: commandOptIn, trustEnvironment: environment, imageRegistry: registryHost(config.integrations.imageRegistry),
+      ...seams.chat, environment: commandOptIn, trustEnvironment: environment, imageRegistry: registryHost(config.integrations.imageRegistry),
       telemetry: config.integrations.telemetry.kind === 'xray' ? { kind: 'xray' } : { kind: config.integrations.telemetry.kind, environment: telemetry.chatService, secretIds: telemetry.secretIds },
     },
     ...(credentialService ? { existingCredentialEndpoint: credentialService } : {}),
     credentials: {
-      environment: { ...environment, ...commandOptIn, BOTCUBE_CONFIG: credentialBotCubeConfig },
+      environment: { ...environment, ...commandOptIn },
       ...(tables?.vault ? { existingVaultTableName: tables.vault.tableName } : {}),
       ...(kmsKeys?.vault ? { existingVaultKeyArn: kmsKeys.vault } : {}),
       ...(kmsKeys?.sheet ? { existingSheetKeyAlias: kmsKeys.sheet } : {}),
@@ -94,34 +67,14 @@ export async function defineExample(app: App, configPath: string, options: Examp
   const agentCore = await loadDeployConfig(configDeployRoot, process.cwd());
   addAgentCoreStacks(app, agentCore, options.commit, {
     ...seams.agentCore,
+    botcubeConfigPath: path.resolve(configPath),
     imageRegistry: registryHost(config.integrations.imageRegistry),
-    runtimeEnvironment: { ...environment, ...telemetry.harness, ...commandOptIn, BOTCUBE_CONFIG: runtimeBotCubeConfig },
+    runtimeEnvironment: { ...environment, ...telemetry.harness, ...commandOptIn },
     telemetry: { kind: config.integrations.telemetry.kind, secretIds: telemetry.secretIds },
     ...(kmsKeys?.images ? { existingImageKeyArn: kmsKeys.images } : {}),
   }, config.integrations.awsAccess.kind);
   if (network) placeLambdasInNetwork(app, { vpcId: network.vpcId, privateSubnetIds: network.privateSubnets.map(({ subnetId }) => subnetId) });
   grantLambdasInline(app);
-}
-
-/**
- * Where the image holds this BotCube Config, so each process serves what its infrastructure was built from. The
- * image ships only the files under botcube/examples/ its Dockerfile copies, each at the same path under its root, so
- * the config's relative paths it reads (`bot` for the chat image) still resolve; any other config fails here.
- */
-function imageBotCubeConfig({ name, dockerfile, sources, root }: ExampleImage, configPath: string, beside: readonly string[]): string {
-  const shipped = new Set(fs.readFileSync(dockerfile, 'utf8').split('\n')
-    .filter(line => /^COPY\s/.test(line) && !line.includes('--from='))
-    .flatMap(line => line.trim().split(/\s+/).slice(1, -1))
-    .filter(source => source.startsWith(sources))
-    .map(source => source.slice(sources.length)));
-  const config = path.relative(EXAMPLES_ROOT, path.resolve(configPath));
-  const files = beside.map(file => path.relative(EXAMPLES_ROOT, path.resolve(path.dirname(configPath), file)));
-  for (const file of [config, ...files]) {
-    if (!file || !shipped.has(file.split(path.sep).join('/'))) {
-      throw new Error(`BotCube Config ${configPath}: the ${name} image ships only ${[...shipped].join(', ')} under ${EXAMPLES_ROOT}, not ${path.resolve(EXAMPLES_ROOT, file)}; copy it in ${dockerfile}`);
-    }
-  }
-  return path.posix.join(root, config.split(path.sep).join('/'));
 }
 
 /** Each seam's adapter (ADR 0091) as the two CDK apps take it: models, Harness auth, schedules, Turn credentials, identity. */

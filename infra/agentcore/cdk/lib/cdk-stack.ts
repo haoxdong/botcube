@@ -15,7 +15,7 @@ import { applyRuntimePlatform, type RuntimePlatformVersion } from './runtime-pla
 import { sessionApiExports } from 'botcube-infra-agentcore-cdk/exports';
 import { Construct } from 'constructs';
 import { configureRuntimeTelemetry } from './runtime-telemetry';
-import { applyDeploymentSeams, useExistingImageKey } from './runtime-seams';
+import { applyDeploymentSeams, publishRuntimeConfig, useExistingImageKey } from './runtime-seams';
 import type { HarnessAuth, ModelsDeployment, RuntimeTelemetry } from '../../../../config/seams.js' with {
   'resolution-mode': 'import',
 };
@@ -101,8 +101,9 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
   imageRegistry?: string;
   /** agentCore.runtime.containerUri: the Bot Image to run, else built. */
   runtimeImage?: string | undefined;
-  /** Variables every runtime gets, such as the proxy and the OTLP traces endpoint (BotCube Config plain parameters). */
+  /** Extra environment variables for every Runtime. */
   runtimeEnvironment?: Record<string, string>;
+  botcubeConfigPath?: string | undefined;
   permissionsBoundary?: iam.IManagedPolicy;
   runtimeMaxLifetimeSeconds?: number;
   runtimeIdleTimeoutSeconds?: number;
@@ -244,6 +245,7 @@ export class AgentCoreStack extends Stack {
   }
 
   private configureRuntimes(props: AgentCoreStackProps): void {
+    publishRuntimeConfig(this, this.runtimes, props);
     // agentcore-cdk does not expose lifecycle or request-header settings.
     for (const env of this.runtimes) {
       const cfnRuntime = env.runtime.node.defaultChild as bedrockagentcore.CfnRuntime;
@@ -366,7 +368,6 @@ export class AgentCoreStack extends Stack {
     new CfnOutput(this, 'SessionApiFunctionArn', { value: sessionApi.functionArn });
   }
 
-  // The Runtime role gets no S3 access: the agent's shell can use that role (ADR 0077).
   private addPrivateNatBrowser(config: PrivateNatBrowserConfig): void {
     new CfnOutput(this, 'PrivateNatBrowserId', {
       value: config.id,

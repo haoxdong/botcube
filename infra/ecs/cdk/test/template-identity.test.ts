@@ -226,7 +226,6 @@ test.each([true, false])('composition names adopter-owned networks and browser r
   parkingTemplate(app.node.findChild('PrivateEgress') as Stack, parked).resourceCountIs('AWS::EC2::NatGateway', parked ? 0 : 1);
   expect((app.node.findChild('PreviewOrigin') as Stack).stackName).toBe(identity.aws.ecs.previewOriginStackName);
   origin.hasResourceProperties('AWS::BedrockAgentCore::BrowserCustom', { Name: identity.aws.agentCore.agentComputerBrowser.name });
-  // Without a BotCube Config the Chat Service keeps its defaults: none is named.
   const chatEnvironment = Object.values(origin.findResources('AWS::ECS::TaskDefinition'))
     .flatMap(({ Properties }) => Properties.ContainerDefinitions as { Name: string; Environment?: { Name: string }[] }[])
     .filter(({ Name }) => Name === 'chat-service')
@@ -237,7 +236,7 @@ test.each([true, false])('composition names adopter-owned networks and browser r
       { Name: 'BOTCUBE_WORKSPACE', Value: '/mnt/corporate/files' },
     ]) })]),
   });
-  expect(chatEnvironment).not.toContain('BOTCUBE_CONFIG');
+  expect(chatEnvironment).toContain('BOTCUBE_CONFIG');
 });
 
 test('composition rejects competing chat table names before creating resources', () => {
@@ -277,7 +276,7 @@ test.each([
   const health = parkingTemplate(app.node.findChild('ApiHealth') as Stack, mode);
   health.resourceCountIs('AWS::CloudWatch::Alarm', chat);
   if (chat) health.hasResourceProperties('AWS::CloudWatch::Alarm', { ActionsEnabled: true });
-  origin.resourceCountIs('AWS::CloudWatch::Alarm', chat ? 13 : credentials ? 4 : 1);
+  origin.resourceCountIs('AWS::CloudWatch::Alarm', chat ? 12 : credentials ? 4 : 1);
 });
 
 type Resource = { Properties?: Record<string, unknown> };

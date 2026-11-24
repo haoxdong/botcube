@@ -64,7 +64,17 @@ def credential_service_http_path(config: Mapping[str, Any]) -> str:
 
 @cache
 def _loaded(path: str | None) -> dict[str, Any]:
-    return load_botcube_config(Path(path)) if path else _with_defaults({})
+    if path is None or path.startswith('s3://') or not path.endswith(('.yaml', '.yml')):
+        from .resolved_config import load_resolved_config
+
+        # The generated TypedDict has the same JSON shape the serving adapters take.
+        try:
+            return dict(load_resolved_config(path)['config'])
+        except FileNotFoundError:
+            raise BotCubeConfigError(f'BotCube Config {path}: no file') from None
+        except ValueError as error:
+            raise BotCubeConfigError(str(error)) from error
+    return load_botcube_config(Path(path))
 
 
 def load_botcube_config(path: Path) -> dict[str, Any]:

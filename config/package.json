@@ -24,6 +24,8 @@
       "default": "./harness-alarm-events.cjs"
     },
     "./blocks": "./blocks.ts",
+    "./cli": "./cli.ts",
+    "./config-bucket": "./config-bucket.cjs",
     "./existing": "./existing.ts",
     "./images": "./images.ts",
     "./user-pool": "./user-pool.ts",
@@ -37,6 +39,7 @@
     "./proxied-fields": "./proxied-fields.ts",
     "./load": "./load.ts",
     "./parse": "./parse.ts",
+    "./resolved": "./resolved.ts",
     "./footprint": "./footprint.ts",
     "./models": "./models.ts",
     "./seams": "./seams.d.ts",

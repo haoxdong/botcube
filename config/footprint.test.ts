@@ -6,6 +6,10 @@ import { SUPPLIABLE } from './suppliable.js';
 import type { CredentialSource } from './blocks.js';
 
 const example = (name: string) => fileURLToPath(new URL(`../examples/${name}/botcube.yaml`, import.meta.url));
+const configReads = [
+  '  Resolved BotCube Config: s3:GetObject on s3://botcube-config-000000000000-us-east-1-54bde42c6729292d/resolved/* (chatService, credentialService)',
+  '  Resolved BotCube Config: s3:GetObject on s3://botcube-config-000000000000-us-east-1-4dcc6a31a7bde934/resolved/* (harness)',
+];
 const printedFor = (name: string) => formatFootprint(footprint(loadConfig(example(name))));
 /** The lines of one printed section, from its heading to the next unindented line. */
 function section(printed: string, heading: string): string[] {
@@ -89,8 +93,11 @@ describe('the enterprise example', () => {
     expect(iam.harness?.actions).not.toContain('kms:Decrypt');
   });
 
-  it('creates none of the resources it supplies', () => {
-    expect(section(printedFor('enterprise'), 'Created resources')).toEqual([]);
+  it('lists the config reads and bucket endpoints for its own network', () => {
+    const printed = printedFor('enterprise');
+    expect(section(printed, 'Created resources')).toEqual(configReads);
+    expect(section(printed, 'Egress hosts')).toContain('  botcube-config-000000000000-us-east-1-4dcc6a31a7bde934.s3.us-east-1.amazonaws.com (harness)');
+    expect(section(printed, 'Egress hosts')).toContain('  botcube-config-000000000000-us-east-1-54bde42c6729292d.s3.us-east-1.amazonaws.com (chatService, credentialService)');
   });
 
   it('supplies the resources used by a deployment with published images', () => {
@@ -162,6 +169,7 @@ describe('the public example', () => {
       "  existing.buckets.connectionLogs: the origin load balancer's connection logs bucket",
       "  existing.credentialService: the Credential Service's private DNS namespace and Cloud Map service",
       '  existing.files: the Files file system, its mount targets and access points',
+      ...configReads,
     ]);
   });
 

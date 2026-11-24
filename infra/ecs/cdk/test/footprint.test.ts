@@ -8,7 +8,6 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import { footprint } from '../../../../config/footprint.js';
 import type { Principal } from '../../../../config/principals.js';
 import { loadConfig } from '../../../../config/load.js';
-import { CREDENTIAL_IMAGE_EXAMPLES_ROOT, EXAMPLES_ROOT, IMAGE_EXAMPLES_ROOT } from '../example/app.js';
 import { deployIdentity } from '../lib/deploy-root.js';
 import { botcubeConfigPath, synthesizeExample } from './example-fixture.js';
 import { parkingTemplate } from './resolve-parking.js';
@@ -32,7 +31,7 @@ const CONFIGURED_EGRESS: Record<string, string[]> = {
   enterprise: ['login.example.com', 'models.example.com', 'otel-collector.example.com:4318', 'proxy.example.com:3128'],
 };
 /** Hosts BotCube's own code names under every config, so no deployed setting shows them: AWS APIs and Plan Usage's OpenAI hosts. */
-const codeNamed = (host: string) => host.endsWith('.<region>.amazonaws.com') || ['api.openai.com', 'auth.openai.com'].includes(host);
+const codeNamed = (host: string) => (host.endsWith('.<region>.amazonaws.com') || /^botcube-config-.*\.s3\..*\.amazonaws\.com$/.test(host)) || ['api.openai.com', 'auth.openai.com'].includes(host);
 
 /** Where the hosts the deployment is configured to reach and the footprint's hosts beyond code-named ones differ, each way. */
 function egressDrift(printed: string[], configured: string[]) {
@@ -95,7 +94,7 @@ interface Properties {
 type Resources = Record<string, { Type: string; Properties: Properties }>;
 
 /** What each footprint principal is granted and which images run, across the stacks BotCube's runtime lives in. */
-function granted(app: App) {
+function granted(app: App, example: string) {
   const grants: [Principal, Granted][] = [];
   const images: string[] = [];
   const egressHosts: string[] = [];
@@ -105,7 +104,7 @@ function granted(app: App) {
     const resources = template.toJSON().Resources as Resources;
     grants.push(...principalGrants(resources, principalsById(stack)));
     images.push(...imagesIn(resources));
-    egressHosts.push(...configuredHosts(resources));
+    egressHosts.push(...configuredHosts(resources, example));
   }
   const iamByPrincipal: Partial<Record<Principal, Granted>> = {};
   for (const [principal, { actions, managedPolicies }] of grants.filter(([, { actions, managedPolicies }]) => actions.length + managedPolicies.length > 0)) {
@@ -122,7 +121,7 @@ const sorted = (values: string[]) => [...new Set(values)].sort();
 function principalsById(stack: Stack): Map<string, Principal | undefined> {
   const holders = stack.node.findAll().filter(construct => construct instanceof iam.Role || construct instanceof iam.ManagedPolicy)
     .map(construct => [stack.getLogicalId(construct.node.defaultChild as iam.CfnRole), construct.node.path] as const);
-  const unknown = holders.map(([, path]) => path).filter(path => !(path in PRINCIPAL_ROLES || MACHINERY.has(path)));
+  const unknown = holders.map(([, path]) => path).filter(path => !(path in PRINCIPAL_ROLES || MACHINERY.has(path) || /\/Custom::CDKBucketDeployment[^/]+\/ServiceRole$/.test(path)));
   assert(unknown.length === 0, `Neither a footprint principal nor deploy machinery: ${unknown.join(', ')}`);
   return new Map(holders.map(([logicalId, path]) => [logicalId, PRINCIPAL_ROLES[path]]));
 }
@@ -157,26 +156,20 @@ const isOwn = ({ host, hostname }: URL) =>
  * at, other than the deployment's own origins, loopback and its private namespace: where its processes are configured
  * to reach beyond the AWS APIs their roles name.
  */
-function configuredHosts(resources: Resources): string[] {
+function configuredHosts(resources: Resources, example: string): string[] {
   return Object.values(resources).flatMap(({ Type, Properties }) => {
     const variables: [string, unknown][] = Type === 'AWS::ECS::TaskDefinition'
       ? (Properties.ContainerDefinitions ?? []).flatMap(container => (container.Environment ?? []).map(({ Name, Value }) => [Name, Value] as [string, unknown]))
       : Type === 'AWS::BedrockAgentCore::Runtime' ? Object.entries(Properties.EnvironmentVariables ?? {}) : [];
-    const values = variables.map(([name, value]) => (name === 'BOTCUBE_CONFIG' ? servedBotCubeConfig(value) : value));
+    const values = variables.map(([name, value]) => (name === 'BOTCUBE_CONFIG' ? servedBotCubeConfig(example) : value));
     return values.filter((value): value is string => typeof value === 'string')
       .flatMap(value => value.match(/\b(?:https?|wss?):\/\/[^\s"',;]+/g) ?? [])
       .filter(url => URL.canParse(url)).map(url => new URL(url)).filter(url => !isOwn(url)).map(url => url.host);
   });
 }
 
-/**
- * The text of the BotCube Config at `imagePath` in the chat or Credential Service image, which ships it from
- * botcube/examples/, without its image registry: ECS and Docker pull from that, not the processes the Config configures.
- */
-function servedBotCubeConfig(imagePath: unknown): string {
-  const root = [IMAGE_EXAMPLES_ROOT, CREDENTIAL_IMAGE_EXAMPLES_ROOT].find(prefix => typeof imagePath === 'string' && imagePath.startsWith(`${prefix}/`));
-  assert(typeof imagePath === 'string' && root !== undefined, `${JSON.stringify(imagePath)} is under ${IMAGE_EXAMPLES_ROOT} or ${CREDENTIAL_IMAGE_EXAMPLES_ROOT}`);
-  const { integrations: { imageRegistry: _pulledFrom, ...integrations } = {}, ...config } = readConfig(path.join(EXAMPLES_ROOT, path.posix.relative(root, imagePath)));
+function servedBotCubeConfig(example: string): string {
+  const { integrations: { imageRegistry: _pulledFrom, ...integrations } = {}, ...config } = readConfig(botcubeConfigPath(example));
   return JSON.stringify({ ...config, integrations });
 }
 
@@ -213,8 +206,8 @@ describe.each(EXAMPLES)('the %s example', example => {
   let synthesized: ReturnType<typeof granted>;
   let pooled: ReturnType<typeof granted>;
   beforeAll(async () => {
-    synthesized = granted(await appOf(example));
-    pooled = granted(await synthesizeExample(example, undefined, { filesAccessPointMode: 'pool' }));
+    synthesized = granted(await appOf(example), example);
+    pooled = granted(await synthesizeExample(example, undefined, { filesAccessPointMode: 'pool' }), example);
   }, 120_000);
 
   test('grants each BotCube role exactly the IAM actions its footprint prints', () => {

@@ -5,6 +5,10 @@
     "./exports": {
       "types": "./lib/agentcore-exports.d.cts",
       "default": "./lib/agentcore-exports.cjs"
+    },
+    "./config-publisher": {
+      "types": "./config-publisher.d.cts",
+      "default": "./config-publisher.cjs"
     }
   },
   "bin": {

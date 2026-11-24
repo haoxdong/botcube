@@ -19,7 +19,7 @@ export async function synthesizeExample(example: string, identity?: (identity: D
 }
 
 /** The deployment the BotCube Config at `configPath` describes, synthesized as an example's is, under the CDK `context` given. */
-export async function synthesizeExampleAt(configPath: string, adjust: (identity: DeployIdentity) => DeployIdentity = same => same, context: Record<string, string> = {}): Promise<App> {
+async function synthesizeExampleAt(configPath: string, adjust: (identity: DeployIdentity) => DeployIdentity = same => same, context: Record<string, string> = {}): Promise<App> {
   const app = new App({ context });
   const { services } = readConfig(configPath);
   await defineExample(app, configPath, {

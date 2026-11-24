@@ -1,50 +1,36 @@
-// The deployed Chat Service reads the BotCube Config its infrastructure was built from (ADR 0091): each example's
-// chat container names, in BOTCUBE_CONFIG, the copy its image ships, beside the bot settings it names.
-import * as fs from 'node:fs';
-import * as os from 'node:os';
+import { createHash } from 'node:crypto';
+import { readFileSync, readdirSync } from 'node:fs';
 import * as path from 'node:path';
-import { App, Stack } from 'aws-cdk-lib';
+import type { Stack } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
-import { synthesizeExample, synthesizeExampleAt } from './example-fixture.js';
+import { loadConfig } from '../../../../config/load.js';
+import { resolveConfig, resolvedJson } from '../../../../config/resolved.js';
+import { botcubeConfigPath, synthesizeExample } from './example-fixture.js';
 
 interface Container { Name: string; Environment?: { Name: string; Value: unknown }[] }
 
-const BOTCUBE = path.resolve(__dirname, '../../../..');
-const DOCKERFILE = fs.readFileSync(path.join(BOTCUBE, 'chat/Dockerfile'), 'utf8').split('\n');
-const CREDENTIAL_DOCKERFILE = fs.readFileSync(path.resolve(__dirname, '../../../../credential-service/Dockerfile'), 'utf8').split('\n');
-
-function containerEnvironment(app: App, name: string): Record<string, unknown> {
-  const origin = app.node.findChild('PreviewOrigin') as Stack;
-  const container = Object.values(Template.fromStack(origin).findResources('AWS::ECS::TaskDefinition'))
-    .flatMap(({ Properties }) => Properties.ContainerDefinitions as Container[])
-    .find(({ Name }) => Name === name);
-  if (container === undefined) throw new Error(`The preview origin has no ${name} container`);
-  return Object.fromEntries((container.Environment ?? []).map(({ Name, Value }) => [Name, Value]));
-}
-
-test.each(['public', 'enterprise'])('the %s example names the BotCube Config its chat image ships', async example => {
+test.each(['public', 'enterprise'])('the %s deploy publishes its resolved bytes before either task revision', async example => {
   const app = await synthesizeExample(example);
-  expect(containerEnvironment(app, 'chat-service').BOTCUBE_CONFIG).toBe(`/opt/chat-service/examples/${example}/botcube.yaml`);
-  // The build stage gathers the config and its `../bot/bot.yaml`; the runtime stage ships them under its WORKDIR.
-  expect(DOCKERFILE).toEqual(expect.arrayContaining([
-    `COPY \${BOTCUBE_ROOT}/examples/${example}/botcube.yaml examples/${example}/botcube.yaml`,
-    'COPY ${BOTCUBE_ROOT}/examples/bot/bot.yaml /bot/bot.yaml',
-    'WORKDIR /opt/chat-service',
-    'COPY --from=build /workspace/botcube/examples/ examples/',
-    'COPY --from=build /bot/ /bot/',
-  ]));
-  expect(containerEnvironment(app, 'credential-service').BOTCUBE_CONFIG).toBe(`/opt/botcube/examples/${example}/botcube.yaml`);
-  expect(CREDENTIAL_DOCKERFILE).toContain(`COPY \${BOTCUBE_ROOT}/examples/${example}/botcube.yaml /opt/botcube/examples/${example}/botcube.yaml`);
-}, 180_000);
+  const origin = app.node.findChild('PreviewOrigin') as Stack;
+  const template = Template.fromStack(origin);
+  const [[publishId, publish]] = Object.entries(template.findResources('Custom::CDKBucketDeployment'));
+  const bucket = Object.values(template.findResources('AWS::S3::Bucket')).find(
+    resource => resource.Properties.BucketName?.startsWith('botcube-config-'),
+  );
+  if (!bucket) throw new Error('The origin has no config bucket');
+  expect(publish.Properties).toMatchObject({ Prune: false, RetainOnDelete: true, DestinationBucketKeyPrefix: 'resolved' });
+  expect(bucket.DeletionPolicy).toBe('Retain');
 
-test('a BotCube Config the chat image does not ship fails before any stack', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'outside-examples-'));
-  try {
-    const config = path.join(root, 'botcube.yaml');
-    fs.copyFileSync(path.resolve(__dirname, '../../../../examples/bot/bot.yaml'), path.join(root, 'bot.yaml'));
-    fs.copyFileSync(path.join(BOTCUBE, 'tests/required-keys.json'), config);
-    await expect(synthesizeExampleAt(config)).rejects.toThrow(`BotCube Config ${config}: the chat image ships only`);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+  const json = resolvedJson(resolveConfig(loadConfig(botcubeConfigPath(example))));
+  const key = createHash('sha256').update(json).digest('hex') + '.json';
+  const locator = `s3://${bucket.Properties.BucketName}/resolved/${key}`;
+  const tasks = Object.values(template.findResources('AWS::ECS::TaskDefinition'));
+  for (const name of ['chat-service', 'credential-service']) {
+    const task = tasks.find(({ Properties }) => Properties.ContainerDefinitions.some((container: Container) => container.Name === name));
+    expect(task?.DependsOn).toContain(publishId);
+    const container = task?.Properties.ContainerDefinitions.find((candidate: Container) => candidate.Name === name);
+    expect(container.Environment).toContainEqual({ Name: 'BOTCUBE_CONFIG', Value: locator });
   }
-});
+  const staged = readdirSync(app.outdir, { recursive: true, encoding: 'utf8' }).find(file => path.basename(file) === key);
+  expect(staged && readFileSync(path.join(app.outdir, staged), 'utf8')).toBe(json);
+}, 180_000);

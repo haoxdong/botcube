@@ -1,4 +1,16 @@
 services:
+  config-resolve:
+    build:
+      context: ../..
+      dockerfile: infra/local/chat.Dockerfile
+      target: build
+      args:
+        REGISTRY: ${BOTCUBE_LOCAL_REGISTRY:-public.ecr.aws}
+    command: ["sh", "-ec", "node config/cli.ts resolve /source/botcube.yaml > /resolved/botcube.tmp && mv /resolved/botcube.tmp /resolved/botcube.json"]
+    volumes:
+      - ./deployment/botcube.yaml:/source/botcube.yaml:ro
+      - resolved-config:/resolved
+
   dynamodb:
     image: ${BOTCUBE_LOCAL_DYNAMODB_IMAGE:-amazon/dynamodb-local:3.3.0}
     user: root
@@ -63,6 +75,8 @@ services:
       dockerfile: infra/local/credential-service.Dockerfile
       args: *harness-build-args
     depends_on:
+      config-resolve:
+        condition: service_completed_successfully
       fake-site:
         condition: service_healthy
       vault-table-init:
@@ -73,11 +87,11 @@ services:
       BOTCUBE_VAULT_TABLE: credential-vault
       BOTCUBE_LOCAL_VAULT_KEY_FILE: /var/lib/local-vault/key
       BOTCUBE_CREDENTIAL_INVOCATION_SECRET: local-invocation-secret
-      BOTCUBE_CONFIG: &config /opt/botcube/botcube.yaml
+      BOTCUBE_CONFIG: /resolved/botcube.json
       FAKE_SITE_URL: http://fake-site:8124
     volumes:
+      - resolved-config:/resolved:ro
       - credential-key:/var/lib/local-vault
-      - &config-file ./deployment/botcube.yaml:/opt/botcube/botcube.yaml:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8125/health')"]
       interval: 2s
@@ -90,14 +104,17 @@ services:
       context: ../../examples/bot
       additional_contexts:
         harness: service:session-api
+    depends_on:
+      config-resolve:
+        condition: service_completed_successfully
     environment:
       NO_PROXY: ${NO_PROXY:-},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
       no_proxy: ${no_proxy:-${NO_PROXY:-}},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
       BOTCUBE_CHECKPOINT_PATH: ${BOTCUBE_CHECKPOINT_PATH:-/var/lib/botcube-harness/checkpoints.sqlite3}
-      BOTCUBE_CONFIG: *config
+      BOTCUBE_CONFIG: /resolved/botcube.json
     volumes:
+      - resolved-config:/resolved:ro
       - harness-state:/var/lib/botcube-harness
-      - *config-file
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/ping')"]
       interval: 2s
@@ -131,6 +148,8 @@ services:
       args:
         REGISTRY: ${BOTCUBE_LOCAL_REGISTRY:-public.ecr.aws}
     depends_on:
+      config-resolve:
+        condition: service_completed_successfully
       harness:
         condition: service_healthy
       session-api:
@@ -144,9 +163,9 @@ services:
       BOTCUBE_CREDENTIAL_SERVICE_URL: http://credential-service:8125
       BOTCUBE_CREDENTIAL_INVOCATION_SECRET: local-invocation-secret
       BOTCUBE_AGENT_COMPUTER_CDP_URL: ws://chat-service:8123/agent-computer/cdp
-      BOTCUBE_CONFIG: *config
+      BOTCUBE_CONFIG: /resolved/botcube.json
     volumes:
-      - *config-file
+      - resolved-config:/resolved:ro
     ports:
       - "${BOTCUBE_LOCAL_CHAT_PORT:-8123}:8123"
 
@@ -166,6 +185,7 @@ services:
       - "${BOTCUBE_LOCAL_UI_PORT:-3001}:3001"
 
 volumes:
+  resolved-config:
   dynamodb-state:
   harness-state:
   credential-key:
