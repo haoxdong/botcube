@@ -20,7 +20,6 @@ function synthesize(userMemoryRole?: AgentCoreStackProps['userMemoryRole'], exis
         runtime: IDENTITY.aws.agentCore.runtime,
         memory: IDENTITY.aws.agentCore.memory,
         sessionApiFunction: IDENTITY.aws.agentCore.sessionApiFunction,
-        sessionApiAlias: IDENTITY.aws.agentCore.sessionApiAlias,
         ecrRepository: IDENTITY.aws.ecr.repository,
         codeBuildProject: IDENTITY.aws.codeBuild.project,
         lambdaFunction: IDENTITY.aws.lambda.family,

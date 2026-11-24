@@ -1,3 +1,4 @@
+import { runtimeLogGroupName, sessionApiExports } from 'botcube-infra-agentcore-cdk/exports';
 import { readConfig } from 'botcube-config/read';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -20,7 +21,7 @@ test('bundles the transition when cdk.out sits inside ecs/cdk, as in the deploy 
       fs.mkdirSync(path.dirname(path.join(infraRoot, file)), { recursive: true });
       fs.writeFileSync(path.join(infraRoot, file), '');
     }
-    for (const file of ['ecs/deploy_identity.py', 'identity-defaults.json', 'transition-requirements.txt']) fs.copyFileSync(path.resolve(__dirname, '../../..', file), path.join(infraRoot, file));
+    for (const file of ['ecs/deploy_identity.py', 'ecs/transition.py', 'identity-defaults.json', 'transition-requirements.txt']) fs.copyFileSync(path.resolve(__dirname, '../../..', file), path.join(infraRoot, file));
     fs.symlinkSync(path.resolve(__dirname, '../../../../credential-service'), path.join(root, 'credential-service'));
     const app = new App({ outdir: path.join(infraRoot, 'ecs/cdk/cdk.out') });
     const stack = new Stack(app, 'Parking', { env: { account: identity.aws.account, region: identity.aws.region } });
@@ -54,6 +55,13 @@ test('bundles the transition when cdk.out sits inside ecs/cdk, as in the deploy 
       'import json, sys; sys.path[:0] = [sys.argv[1], sys.argv[1] + "/ecs"]; import deploy_identity; print(json.dumps(deploy_identity.load_deployment()))', bundle],
     { env: { PATH: process.env.PATH, BOTCUBE_CONFIG: path.join(bundle, 'botcube.yaml') }, encoding: 'utf8' }));
     expect(loaded).toEqual(readConfig(CONFIG.path));
+    const exports = JSON.parse(execFileSync('python3', ['-I', '-S', '-c',
+      'import json, sys; sys.path[:0] = [sys.argv[1], sys.argv[1] + "/ecs"]; import transition; print(json.dumps(transition.agentcore_exports()))', bundle],
+    { env: { PATH: process.env.PATH, BOTCUBE_CONFIG: path.join(bundle, 'botcube.yaml') }, encoding: 'utf8' }));
+    expect(exports).toEqual({
+      sessionApi: sessionApiExports(stack, identity.aws.agentCore.sessionApiFunction).capacity,
+      runtimeLogGroup: runtimeLogGroupName('{runtimeId}'),
+    });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

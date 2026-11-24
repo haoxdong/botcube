@@ -31,7 +31,6 @@ const PHYSICAL_IDENTITY = {
   runtime: DEPLOY_IDENTITY.aws.agentCore.runtime,
   memory: DEPLOY_IDENTITY.aws.agentCore.memory,
   sessionApiFunction: DEPLOY_IDENTITY.aws.agentCore.sessionApiFunction,
-  sessionApiAlias: DEPLOY_IDENTITY.aws.agentCore.sessionApiAlias,
   ecrRepository: DEPLOY_IDENTITY.aws.ecr.repository,
   codeBuildProject: DEPLOY_IDENTITY.aws.codeBuild.project,
   lambdaFunction: DEPLOY_IDENTITY.aws.lambda.family,

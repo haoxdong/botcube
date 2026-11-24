@@ -6,6 +6,7 @@
     "botcube": "./cli.ts"
   },
   "exports": {
+    "./session-api-capacity": {"types": "./session-api-capacity.d.cts", "default": "./session-api-capacity.cjs"},
     ".": "./schema.ts",
     "./lambda-inline-grants": {
       "require": {

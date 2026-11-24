@@ -436,6 +436,9 @@ importers:
       botcube-config:
         specifier: workspace:*
         version: link:../../../config
+      botcube-infra-agentcore-cdk:
+        specifier: workspace:*
+        version: link:../../agentcore/cdk
       constructs:
         specifier: ^10.8.1
         version: 10.8.1

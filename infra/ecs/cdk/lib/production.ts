@@ -1,3 +1,4 @@
+import { runtimeLogGroupPattern } from 'botcube-infra-agentcore-cdk/exports';
 import { optionalPhysicalName } from './physical-name.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -190,7 +191,7 @@ function defineStacks(app: App, options: ProductionOptions) {
   const webLatency = new WebLatencyStack(app, 'WebLatency', {
     env, stackName: identity.aws.ecs.webLatency.stackName, appMonitorName: identity.aws.ecs.webLatency.appMonitorName,
     domains: options.corsOrigins.filter(origin => origin.startsWith('https://')).map(origin => new URL(origin).hostname),
-    turnLogGroups: [`/${identity.aws.ecs.cluster}/chat-service-preview`, `/aws/bedrock-agentcore/runtimes/${identity.aws.agentCore.runtime}-*`],
+    turnLogGroups: [`/${identity.aws.ecs.cluster}/chat-service-preview`, runtimeLogGroupPattern(identity.aws.agentCore.runtime)],
     ...options.webLatency,
     moments: options.webLatency?.moments ?? latencyMoments(options.deployRoot),
   });
@@ -212,7 +213,6 @@ function defineStacks(app: App, options: ProductionOptions) {
     hostnames: [identity.domains.chatServicePreview, identity.domains.chatService].map(url => new URL(url).hostname),
     runtimeArn: input.runtimeArn,
     sessionApiFunctionName: identity.aws.agentCore.sessionApiFunction,
-    sessionApiAlias: identity.aws.agentCore.sessionApiAlias,
     // aws-cdk-lib's Table declares `T | undefined` getters where ITable declares `prop?: T`,
     // which exactOptionalPropertyTypes rejects; the construct is its interface.
     chatTable: storage.chatTable as ITable,

@@ -23,7 +23,6 @@ function stack(app = new cdk.App()): AgentCoreStack {
       runtime: IDENTITY.aws.agentCore.runtime,
       memory: IDENTITY.aws.agentCore.memory,
       sessionApiFunction: IDENTITY.aws.agentCore.sessionApiFunction,
-      sessionApiAlias: IDENTITY.aws.agentCore.sessionApiAlias,
       ecrRepository: IDENTITY.aws.ecr.repository,
       codeBuildProject: IDENTITY.aws.codeBuild.project,
       lambdaFunction: IDENTITY.aws.lambda.family,
@@ -87,13 +86,13 @@ test('park and wake own alias provisioned concurrency while scaling retains its 
   assert(functionId, 'the stack declares the session API function');
   const [aliasId] = Object.keys(
     synthesized.findResources('AWS::Lambda::Alias', {
-      Properties: { Name: IDENTITY.aws.agentCore.sessionApiAlias, FunctionName: { Ref: functionId } },
+      Properties: { Name: 'live', FunctionName: { Ref: functionId } },
     })
   );
   assert(aliasId, 'the stack declares the session API alias');
 
   synthesized.hasResourceProperties('AWS::Lambda::Alias', {
-    Name: IDENTITY.aws.agentCore.sessionApiAlias,
+    Name: 'live',
     ProvisionedConcurrencyConfig: Match.absent(),
   });
   synthesized.resourceCountIs('AWS::ApplicationAutoScaling::ScalableTarget', 1);
@@ -119,7 +118,7 @@ test('the Session API decoder is deployed before a runtime can write its snapsho
   const synthesized = template();
   const [aliasId] = Object.keys(
     synthesized.findResources('AWS::Lambda::Alias', {
-      Properties: { Name: IDENTITY.aws.agentCore.sessionApiAlias },
+      Properties: { Name: 'live' },
     })
   );
   assert(aliasId, 'the stack declares the Session API alias');

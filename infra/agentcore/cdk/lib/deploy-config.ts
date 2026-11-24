@@ -70,7 +70,6 @@ export interface DeployIdentity {
       runtime: string;
       memory: string;
       sessionApiFunction: string;
-      sessionApiAlias: string;
       platformVersion: RuntimePlatformVersion;
       maxLifetime?: number;
       idleRuntimeSessionTimeout?: number;
@@ -131,7 +130,6 @@ export function readDeployIdentity(deployRoot: string, config = readDeployment(d
           : undefined,
         memory: names.memoryName,
         sessionApiFunction: names.sessionApiFunctionName,
-        sessionApiAlias: 'live',
         privateNatBrowser: config.existing.browsers?.link
           ? {
               name: names.linkBrowserName,

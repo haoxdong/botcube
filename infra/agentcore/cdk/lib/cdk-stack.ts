@@ -12,7 +12,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import { sessionApiCode, sessionApiTimeout } from './predeploy-assets';
 import { applyRuntimeNetwork, type RuntimeNetwork } from './runtime-network';
 import { applyRuntimePlatform, type RuntimePlatformVersion } from './runtime-platform';
-import { scaleSessionApi } from './session-api-scaling';
+import { sessionApiExports } from 'botcube-infra-agentcore-cdk/exports';
 import { Construct } from 'constructs';
 import { configureRuntimeTelemetry } from './runtime-telemetry';
 import { applyDeploymentSeams, useExistingImageKey } from './runtime-seams';
@@ -56,8 +56,6 @@ export interface AgentCorePhysicalIdentity {
   runtime: string;
   memory: string;
   sessionApiFunction: string;
-  /** The alias the Chat Service calls the session API through. */
-  sessionApiAlias: string;
   ecrRepository: string;
   codeBuildProject: string;
   lambdaFunction: string;
@@ -363,8 +361,7 @@ export class AgentCoreStack extends Stack {
       // Lambda sets AWS_REGION, the function's region, and reserves the name.
       environment: { AGENTCORE_MEMORY_ID: memory.memoryId },
     });
-    const sessionApiAlias = sessionApi.addAlias(identity.sessionApiAlias);
-    scaleSessionApi(sessionApiAlias);
+    const sessionApiAlias = sessionApiExports(this, identity.sessionApiFunction).addAlias(sessionApi);
     for (const env of this.runtimes) env.runtime.node.addDependency(sessionApiAlias);
     new CfnOutput(this, 'SessionApiFunctionArn', { value: sessionApi.functionArn });
   }

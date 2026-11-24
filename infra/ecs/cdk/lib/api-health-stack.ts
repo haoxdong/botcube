@@ -1,3 +1,4 @@
+import { runtimeLogGroupName } from 'botcube-infra-agentcore-cdk/exports';
 import { CfnOutput, CfnResource, Fn, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as actions from 'aws-cdk-lib/aws-cloudwatch-actions';
@@ -105,7 +106,7 @@ function runtimeAlarms(stack: Stack, runtime: RuntimeMonitoring, topicArn: strin
   const arn = ssm.StringParameter.valueForStringParameter(stack, runtime.arnParameter);
   const filter = new logs.CfnMetricFilter(stack, 'RuntimeErrorLines', {
     filterName: runtime.filterName, filterPattern: '?ERROR ?Exception ?Traceback',
-    logGroupName: Fn.join('', ['/aws/bedrock-agentcore/runtimes/', Fn.select(1, Fn.split(':runtime/', arn)), '-DEFAULT']),
+    logGroupName: runtimeLogGroupName(Fn.select(1, Fn.split(':runtime/', arn))),
     metricTransformations: [{ metricName: 'RuntimeLogErrors', metricNamespace: runtime.metricNamespace, metricValue: '1', defaultValue: 0 }],
   });
   filter.applyRemovalPolicy(RemovalPolicy.RETAIN);

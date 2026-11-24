@@ -1,7 +1,6 @@
 {
   "aws": {
     "agentCore": {
-      "sessionApiAlias": "live",
       "platformVersion": "V2"
     },
     "credentialService": {

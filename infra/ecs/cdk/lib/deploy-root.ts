@@ -38,7 +38,6 @@ export function deployIdentity(deployRoot: string): DeployIdentity {
         } : undefined,
         runtimeNetworkParameter: config.existing.browsers?.link ? `/${config.name}/agentcore/security-group-id` : undefined,
         sessionApiFunction: names.sessionApiFunctionName,
-        sessionApiAlias: 'live',
         agentComputerBrowser: {
           name: names.agentComputerBrowserName,
           profileNamePrefix: names.agentComputerBrowserProfileNamePrefix,

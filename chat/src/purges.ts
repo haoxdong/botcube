@@ -11,7 +11,7 @@ const RETRY_BACKOFF_MS = [5_000, 30_000, 120_000];
 /**
  * Sessions an account erase purges at once. AgentCore allows 20 DeleteEvent calls a second per AWS
  * account, and each session API environment paces itself to 5, so four saturate it; it also leaves one
- * of the process's SESSION_API_CALLS_AT_ONCE for page loads. Serial, a 1,948-Session account outlived
+ * of the process's Session API concurrency limit for page loads. Serial, a 1,948-Session account outlived
  * every task that tried it.
  */
 const ERASE_AT_ONCE = 4;

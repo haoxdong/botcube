@@ -1,3 +1,4 @@
+import { runtimeLogGroupName, runtimeLogGroupPattern, sessionApiExports } from 'botcube-infra-agentcore-cdk/exports';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
@@ -56,6 +57,7 @@ export function deployedStacks(identity: DeployIdentity) {
 
 export function parkingTransition(stack: Stack, infraRoot: string, identity: DeployIdentity, config: SynthesizedConfig, imageRegistry?: string) {
   const { ecs, agentCore } = identity.aws;
+  const sessionApi = sessionApiExports(stack, agentCore.sessionApiFunction);
   const worker = new lambda.Function(stack, 'Transition', {
     functionName: `${ecs.parking.functionName}-transition`,
     runtime: lambda.Runtime.PYTHON_3_12, handler: 'parking_transition.handler',
@@ -66,6 +68,9 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
       local: { tryBundle(outputDir) {
         fs.cpSync(lockedSdk(infraRoot), outputDir, { recursive: true });
         bundleConfig(infraRoot, config, outputDir);
+        fs.writeFileSync(path.join(outputDir, 'agentcore-exports.json'), JSON.stringify({
+          sessionApi: sessionApi.capacity, runtimeLogGroup: runtimeLogGroupName('{runtimeId}'),
+        }));
         fs.copyFileSync(path.join(infraRoot, 'identity-defaults.json'), path.join(outputDir, 'identity-defaults.json'));
         // Copy entry by entry: cdk.out sits under ecs/cdk, and copying ecs/ whole into it is a copy into itself.
         const skip = (source: string) => ['cdk', 'parking', '__pycache__'].includes(path.basename(source));
@@ -91,18 +96,13 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
   allow(['secretsmanager:GetSecretValue'], [stack.formatArn({ service: 'secretsmanager', resource: `secret:${ecs.originTokenSecretName}-*` })]);
   allow(['ec2:DescribeRouteTables', 'ec2:DescribeNatGateways', 'ec2:DescribeAddresses',
     'elasticloadbalancing:DescribeTargetHealth', 'cloudwatch:DescribeAlarms', 'cloudwatch:GetMetricStatistics', 'sns:ListSubscriptionsByTopic',
-    'application-autoscaling:DescribeScalableTargets', 'application-autoscaling:RegisterScalableTarget',
     'bedrock-agentcore:ListAgentRuntimes'], ['*']);
   allow(['route53:GetHealthCheck'], ['*']);
   allow(['events:DescribeRule'], [stack.formatArn({ service: 'events', resource: 'rule', resourceName: '*' })]);
   allow(['ecs:DescribeServices', 'ecs:DescribeTasks', 'ecs:ListTasks', 'ecs:RunTask', 'ecs:StopTask'], ['*']);
   allow(['iam:PassRole'], [stack.formatArn({ service: 'iam', region: '', resource: 'role', resourceName: `${ecs.previewOriginStackName}-ChatServiceReaperTask*` })]);
-  allow(['logs:FilterLogEvents'], [stack.formatArn({ service: 'logs', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'log-group', resourceName: `/aws/bedrock-agentcore/runtimes/${agentCore.runtime}-*` })]);
-  allow(['lambda:GetProvisionedConcurrencyConfig', 'lambda:PutProvisionedConcurrencyConfig', 'lambda:DeleteProvisionedConcurrencyConfig', 'lambda:ListProvisionedConcurrencyConfigs', 'lambda:GetAlias', 'lambda:UpdateAlias'],
-    [stack.formatArn({ service: 'lambda', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'function', resourceName: agentCore.sessionApiFunction }),
-      stack.formatArn({ service: 'lambda', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'function', resourceName: `${agentCore.sessionApiFunction}:*` })]);
-  // RegisterScalableTarget checks the caller can manage target-tracking alarms on any resource (run 5e5fb38a, 2026-11-12).
-  allow(['cloudwatch:PutMetricAlarm', 'cloudwatch:DescribeAlarms', 'cloudwatch:DeleteAlarms'], ['*']);
+  allow(['logs:FilterLogEvents'], [stack.formatArn({ service: 'logs', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'log-group', resourceName: runtimeLogGroupPattern(agentCore.runtime) })]);
+  sessionApi.grantCapacityControl(worker.grantPrincipal);
   allow(['bedrock-agentcore:GetAgentRuntime', 'bedrock-agentcore:GetAgentRuntimeEndpoint', 'bedrock-agentcore:UpdateAgentRuntime'], ['*']);
   allow(['iam:PassRole'], [stack.formatArn({ service: 'iam', region: '', resource: 'role', resourceName: identity.aws.iam.runtimeRole })]);
   const advance = new tasks.LambdaInvoke(stack, 'Advance', { lambdaFunction: worker, payloadResponseOnly: true, retryOnServiceExceptions: false });

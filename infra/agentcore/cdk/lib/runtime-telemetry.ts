@@ -1,3 +1,4 @@
+import { runtimeLogGroupName } from 'botcube-infra-agentcore-cdk/exports';
 import { Stack } from 'aws-cdk-lib';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
@@ -29,7 +30,7 @@ export function configureRuntimeTelemetry(
       })
     );
   new logs.LogRetention(scope, id, {
-    logGroupName: `/aws/bedrock-agentcore/runtimes/${runtimeId}-DEFAULT`,
+    logGroupName: runtimeLogGroupName(runtimeId),
     retention: logs.RetentionDays.ONE_MONTH,
   });
 }

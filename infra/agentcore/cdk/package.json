@@ -1,6 +1,12 @@
 {
   "name": "botcube-infra-agentcore-cdk",
   "version": "0.1.0",
+  "exports": {
+    "./exports": {
+      "types": "./lib/agentcore-exports.d.cts",
+      "default": "./lib/agentcore-exports.cjs"
+    }
+  },
   "bin": {
     "cdk": "dist/bin/cdk.js"
   },

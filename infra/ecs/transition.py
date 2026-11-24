@@ -3,7 +3,8 @@ import json
 import sys
 import time
 from collections.abc import Callable, Iterable, Mapping
-from typing import Any
+from pathlib import Path
+from typing import Any, TypedDict
 
 from deploy_identity import deployment_names, load_deployment, required
 
@@ -29,26 +30,43 @@ def stored_state():
     return parse_state(required(parameter.get('Value'), 'stored park state Value'))
 
 
-SESSION_API_CAPACITY = 'lambda:function:ProvisionedConcurrency'
+class SessionApiCapacity(TypedDict):
+    functionName: str
+    alias: str
+    resourceId: str
+    serviceNamespace: str
+    scalableDimension: str
+
+
+class AgentCoreExports(TypedDict):
+    sessionApi: SessionApiCapacity
+    runtimeLogGroup: str
+
+
+def agentcore_exports() -> AgentCoreExports:
+    return json.loads((Path(__file__).resolve().parents[1] / 'agentcore-exports.json').read_text())
 
 
 def session_api_capacity(target: str, autoscaling: Any = None, functions: Any = None,
-                         pause: Callable[[float], None] = time.sleep, timeout: float = 600):
+                         pause: Callable[[float], None] = time.sleep, timeout: float = 600, *,
+                         capacity: SessionApiCapacity | None = None):
     """Parked, the session API alias keeps no provisioned environment, which bills by the hour; Live, it gets its
     scaling minimum back and scaling resumes. Re-running either converges."""
     import boto3
     autoscaling = autoscaling or boto3.client('application-autoscaling')
     functions = functions or boto3.client('lambda')
 
-    function, alias = NAMES['sessionApiFunctionName'], 'live'
-    resource = f'function:{function}:{alias}'
-    found = autoscaling.describe_scalable_targets(ServiceNamespace='lambda', ResourceIds=[resource], ScalableDimension=SESSION_API_CAPACITY)['ScalableTargets']
+    capacity = capacity if capacity is not None else agentcore_exports()['sessionApi']
+    function, alias = capacity['functionName'], capacity['alias']
+    resource, namespace, dimension = capacity['resourceId'], capacity['serviceNamespace'], capacity['scalableDimension']
+    found = autoscaling.describe_scalable_targets(
+        ServiceNamespace=namespace, ResourceIds=[resource], ScalableDimension=dimension)['ScalableTargets']
     if not found:
         raise RuntimeError(f'{resource} has no scalable target; deploy the AgentCore stack')
     parked = target != 'live'
     if not parked:
         provision_alias(functions, function, alias, found[0]['MinCapacity'], pause, timeout)
-    autoscaling.register_scalable_target(ServiceNamespace='lambda', ResourceId=resource, ScalableDimension=SESSION_API_CAPACITY, SuspendedState={
+    autoscaling.register_scalable_target(ServiceNamespace=namespace, ResourceId=resource, ScalableDimension=dimension, SuspendedState={
         'DynamicScalingInSuspended': parked, 'DynamicScalingOutSuspended': parked, 'ScheduledScalingSuspended': parked})
     configs = functions.list_provisioned_concurrency_configs(FunctionName=function)['ProvisionedConcurrencyConfigs']
     if parked and any(config['FunctionArn'].endswith(f':{alias}') for config in configs):
@@ -185,7 +203,8 @@ def first_spare_handoff(events: Iterable[Mapping[str, Any]], now: float) -> floa
 
 
 def await_spare_handoff(runtime: Mapping[str, Any], logs: Any = None, clock: Callable[[], float] = time.time,
-                        pause: Callable[[float], None] = time.sleep, timeout: float = 300):
+                        pause: Callable[[float], None] = time.sleep, timeout: float = 300, *,
+                        log_group: str | None = None):
     """A refreshed version starts its spares minutes after READY (4 min on 2026-11-05), and a chat before then waits
     about 29 s for a fresh microVM, so unpark reports Live after the first spare handoff, or after `timeout`
     with a warning. The runtime logs carry no version, so a spare handed off since the version's READY counts."""
@@ -195,7 +214,7 @@ def await_spare_handoff(runtime: Mapping[str, Any], logs: Any = None, clock: Cal
     import boto3
     logs = logs or boto3.client('logs')
     version, since = runtime['agentRuntimeVersion'], runtime['lastUpdatedAt'].timestamp()
-    group = f'/aws/bedrock-agentcore/runtimes/{runtime["agentRuntimeId"]}-DEFAULT'
+    group = (log_group or agentcore_exports()['runtimeLogGroup']).format(runtimeId=runtime['agentRuntimeId'])
     while True:
         now = clock()
         events = [event for page in logs.get_paginator('filter_log_events').paginate(

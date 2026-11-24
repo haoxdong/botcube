@@ -28,7 +28,6 @@ export interface DeployIdentity {
       runtimeMonitoring?: { alarmPrefix: string; filterName: string; metricNamespace: string };
       runtimeNetworkParameter: string;
       sessionApiFunction: string;
-      sessionApiAlias: string;
       /** The Agent Computer's own browser (ADR 0077); its profiles' names start with the prefix. */
       agentComputerBrowser: { name: string; profileNamePrefix: string };
       /** The fixed-egress private network: its subnets hold the services and browsers; the product's login browser is `id`. */

@@ -1,8 +1,9 @@
+import { sessionApiExports } from 'botcube-infra-agentcore-cdk/exports';
 import { parkingTemplate } from './resolve-parking.js';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { ok as assert } from 'node:assert';
-import { App, CfnParameter, Fn } from 'aws-cdk-lib';
+import { App, CfnParameter, Fn, Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import type { ITable } from 'aws-cdk-lib/aws-dynamodb';
 import { ContainerImage } from 'aws-cdk-lib/aws-ecs';
@@ -11,11 +12,15 @@ import { ChatStorageStack } from '../lib/chat-storage-stack.js';
 import { PreviewChatService, type PreviewChatServiceProps } from '../lib/preview-chat-service.js';
 import { PreviewOriginStack } from '../lib/preview-origin-stack.js';
 
+const env = { account: '123456789012', region: 'us-east-1' };
+const sessionApiFunctionName = 'test-session-api';
+const grantStack = new Stack(new App(), 'SessionApiGrant', { env });
+const sessionApiArn = grantStack.resolve(sessionApiExports(grantStack, sessionApiFunctionName).invokeArn);
+
 const privateSubnets = [{ id: 'subnet-fixture33333333', availabilityZone: 'us-east-1a' }, { id: 'subnet-fixture44444444', availabilityZone: 'us-east-1b' }];
 
 function synth(runtimeArn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime', parked = false, subnets = privateSubnets, overrides: Partial<PreviewChatServiceProps> | ((origin: PreviewOriginStack) => Partial<PreviewChatServiceProps>) = {}, prepareOrigin = false) {
   const app = new App();
-  const env = { account: '123456789012', region: 'us-east-1' };
   const storage = new ChatStorageStack(app, 'Storage', { env });
   const origin = new PreviewOriginStack(app, 'Origin', {
     env, hostname: 'preview.example.com', production: { hostname: 'api.example.com' }, repositoryRoot, originProviderPath,
@@ -26,7 +31,7 @@ function synth(runtimeArn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:ru
   new PreviewChatService(origin, 'ChatService', {
     vpcId: 'vpc-fixture12345678', privateSubnets: subnets,
     clusterName: 'test', alertsTopicName: 'existing-alerts', hostnames: ['preview.example.com', 'api.example.com'],
-    runtimeArn, sessionApiFunctionName: 'test-session-api', sessionApiAlias: 'live', chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'), ...(typeof overrides === 'function' ? overrides(origin) : overrides),
+    runtimeArn, sessionApiFunctionName, chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'), ...(typeof overrides === 'function' ? overrides(origin) : overrides),
   });
   return parkingTemplate(origin, parked, prepareOrigin);
 }
@@ -116,28 +121,16 @@ test('the Chat Service alone stops Sessions on its configured runtime before pur
 
 test('the Chat Service alone invokes the session API, through the alias kept initialized', () => {
   const template = synth();
-  const functionArn = { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':lambda:us-east-1:123456789012:function:test-session-api:live']] };
   template.hasResourceProperties('AWS::ECS::TaskDefinition', {
     ContainerDefinitions: Match.arrayWith([Match.objectLike({ Environment: Match.arrayWith([
-      { Name: 'BOTCUBE_SESSION_API_FUNCTION_ARN', Value: functionArn },
+      { Name: 'BOTCUBE_SESSION_API_FUNCTION_ARN', Value: sessionApiArn },
     ]) })]),
   });
   const statements = Object.entries(template.findResources('AWS::IAM::Policy'))
     .flatMap(([id, policy]) => policy.Properties.PolicyDocument.Statement.map((statement: object) => ({ id, ...statement })))
     .filter(statement => JSON.stringify(statement).includes('test-session-api'));
   expect(statements).toEqual([
-    expect.objectContaining({ id: expect.stringContaining('ChatServiceTaskTaskRole'), Action: 'lambda:InvokeFunction', Resource: functionArn }),
-  ]);
-});
-
-test('allows only the live session API alias after the unqualified rollout drains', () => {
-  const template = synth();
-  const statements = named(template, 'ChatServiceTaskTaskRoleDefaultPolicy').Properties.PolicyDocument.Statement
-    .filter((statement: { Effect: string; Action: string }) => statement.Effect === 'Allow' && statement.Action === 'lambda:InvokeFunction');
-  const grants = statements.flatMap((statement: { Resource: unknown }) => Array.isArray(statement.Resource) ? statement.Resource : [statement.Resource]);
-
-  expect(grants).toEqual([
-    { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':lambda:us-east-1:123456789012:function:test-session-api:live']] },
+    expect.objectContaining({ id: expect.stringContaining('ChatServiceTaskTaskRole'), Action: 'lambda:InvokeFunction', Resource: sessionApiArn }),
   ]);
 });
 
@@ -347,7 +340,7 @@ test('the Chat Service container serves port 8123 on Linux x86-64 with its full 
       { Name: 'AWS_DEFAULT_REGION', Value: 'us-east-1' },
       { Name: 'AWS_REGION', Value: 'us-east-1' },
       { Name: 'AGENTCORE_RUNTIME_ARN', Value: 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime' },
-      { Name: 'BOTCUBE_SESSION_API_FUNCTION_ARN', Value: { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':lambda:us-east-1:123456789012:function:test-session-api:live']] } },
+      { Name: 'BOTCUBE_SESSION_API_FUNCTION_ARN', Value: sessionApiArn },
       { Name: 'AGENTCORE_BROWSER_ID', Value: 'aws.browser.v1' },
       { Name: 'BOTCUBE_CHAT_TABLE', Value: { 'Fn::ImportValue': 'Storage:ExportsOutputRefChatTable7A2D1C242A7F282B' } },
       { Name: 'OTEL_LOG_LEVEL', Value: 'error' },
@@ -395,7 +388,7 @@ test('the Chat Service task role grants only its data, runtime, session API, liv
   expect(statements.slice(2)).toEqual([
     { Action: 'bedrock-agentcore:InvokeAgentRuntime', Effect: 'Allow', Resource: ['arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime', 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime/runtime-endpoint/*'] },
     { Action: 'bedrock-agentcore:StopRuntimeSession', Effect: 'Allow', Resource: ['arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime', 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime/runtime-endpoint/*'] },
-    { Action: 'lambda:InvokeFunction', Effect: 'Allow', Resource: { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':lambda:us-east-1:123456789012:function:test-session-api:live']] } },
+    { Action: 'lambda:InvokeFunction', Effect: 'Allow', Resource: sessionApiArn },
     { Action: 'bedrock-agentcore:ConnectBrowserLiveViewStream', Effect: 'Allow', Resource: { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':bedrock-agentcore:us-east-1:aws:browser/aws.browser.v1']] } },
     {
       Action: 'ecs:DescribeTasks', Effect: 'Allow',

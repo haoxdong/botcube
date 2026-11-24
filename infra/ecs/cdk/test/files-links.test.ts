@@ -26,7 +26,7 @@ function synth(parked: boolean, context: Record<string, unknown> = {}) {
     vpcId: 'vpc-fixture12345678', privateSubnets: subnets,
     clusterName: 'test', alertsTopicName: 'existing-alerts', hostnames: ['preview.example.com'],
     runtimeArn: 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime',
-    sessionApiFunctionName: 'test-session-api', sessionApiAlias: 'live',
+    sessionApiFunctionName: 'test-session-api',
     chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'),
   });
   const runtime = new SecurityGroup(origin, 'RuntimeNetwork', { vpc: chat.cluster.vpc });

@@ -1,9 +1,10 @@
+import { sessionApiExports } from 'botcube-infra-agentcore-cdk/exports';
 import { chatAlarmEvents } from 'botcube-config/alarm-events';
 import { harnessAlarmEvents } from 'botcube-config/harness-alarm-events';
 import { accountDeletionFailureFilter } from './account-deletion-filter.js';
 import { parkState, parkServiceIngress } from './park-state.js';
 import { optionalPhysicalName } from './physical-name.js';
-import { ArnFormat, CfnOutput, CfnResource, Duration, Stack, Token } from 'aws-cdk-lib';
+import { CfnOutput, CfnResource, Duration, Stack, Token } from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as sns from 'aws-cdk-lib/aws-sns';
@@ -85,8 +86,6 @@ export interface PreviewChatServiceProps extends ScheduledRunsProps {
   harnessAuth?: HarnessAuth;
   /** The session API function the AgentCore stack deploys (ADR 0067 §5). */
   sessionApiFunctionName: string;
-  /** The session API alias the AgentCore stack keeps initialized. */
-  sessionApiAlias: string;
   chatTable: dynamodb.ITable;
   /** The operator existing the chat table with its grants: the task role is granted nothing on it. */
   chatTableExisting?: boolean;
@@ -154,11 +153,8 @@ export class PreviewChatService extends Construct {
     grantRuntimeInvocation(task, props.runtimeArn, harnessAuth);
     // The Chat Service reaches Memory only through the session API; a Turn reaches it with its own tagged credentials.
     // The session API has no public endpoint; this grant is its only caller.
-    const sessionApiFunctionArn = origin.formatArn({
-      service: 'lambda', resource: 'function', resourceName: props.sessionApiFunctionName, arnFormat: ArnFormat.COLON_RESOURCE_NAME,
-    });
-    const sessionApiArn = `${sessionApiFunctionArn}:${props.sessionApiAlias}`;
-    task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['lambda:InvokeFunction'], resources: [sessionApiArn] }));
+    const sessionApi = sessionApiExports(origin, props.sessionApiFunctionName);
+    sessionApi.grantInvoke(task.taskRole);
     const browserId = props.browserId ?? 'aws.browser.v1';
     if (props.liveView !== 'none') task.addToTaskRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock-agentcore:ConnectBrowserLiveViewStream'],
@@ -181,7 +177,7 @@ export class PreviewChatService extends Construct {
         AWS_DEFAULT_REGION: origin.region,
         AWS_REGION: origin.region,
         ...(props.runtimeArn ? { AGENTCORE_RUNTIME_ARN: props.runtimeArn } : {}),
-        BOTCUBE_SESSION_API_FUNCTION_ARN: sessionApiArn,
+        BOTCUBE_SESSION_API_FUNCTION_ARN: sessionApi.invokeArn,
         AGENTCORE_BROWSER_ID: browserId,
         BOTCUBE_CHAT_TABLE: props.chatTable.tableName,
         OTEL_LOG_LEVEL: 'error',

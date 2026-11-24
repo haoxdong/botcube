@@ -1,3 +1,4 @@
+import { sessionApiScaling } from 'botcube-config/session-api-capacity';
 import pLimit from 'p-limit';
 import { Agent, type Dispatcher } from 'undici';
 import { awsFetch } from './aws.js';
@@ -42,9 +43,6 @@ export class SessionApiError extends HttpError {
   }
 }
 
-// Match the maximum provisioned concurrency of the Session API alias.
-const SESSION_API_CALLS_AT_ONCE = 5;
-
 function timeoutSeconds(operation: Operation): number {
   const deadline = contract.operations[operation].deadline;
   if (!Object.hasOwn(contract.deadlines, deadline)) throw new Error(`Unknown Session API deadline: ${deadline}`);
@@ -52,7 +50,7 @@ function timeoutSeconds(operation: Operation): number {
 }
 
 export function sessionApi(config: SessionApiConfig): SessionApi {
-  const limit = pLimit(SESSION_API_CALLS_AT_ONCE);
+  const limit = pLimit(sessionApiScaling.max);
   // Undici defaults to 300 s for headers and body, shorter than a purge.
   const dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
   return (operation, args, postLeaseExpiresAt) =>

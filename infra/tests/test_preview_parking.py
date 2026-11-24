@@ -407,21 +407,27 @@ SUSPENDED = {'DynamicScalingInSuspended': True, 'DynamicScalingOutSuspended': Tr
 RESUMED = dict.fromkeys(SUSPENDED, False)
 
 
+SESSION_API_CAPACITY = {
+    'functionName': 'bot-cube-session-api', 'alias': 'live', 'resourceId': 'function:bot-cube-session-api:live',
+    'serviceNamespace': 'lambda', 'scalableDimension': 'lambda:function:ProvisionedConcurrency',
+}
+
+
 class SessionApiCapacityTests(unittest.TestCase):
 
     def test_park_releases_every_provisioned_environment_with_scaling_suspended_so_it_stays_released(self):
         api = SessionApiProduction()
-        transition['session_api_capacity']('parked', api, api)
+        transition['session_api_capacity']('parked', api, api, capacity=SESSION_API_CAPACITY)
         self.assertEqual((api.provisioned, api.suspended), (None, SUSPENDED))
 
     def test_a_park_re_run_with_nothing_provisioned_converges(self):
         api = SessionApiProduction(provisioned=None)
-        transition['session_api_capacity']('parked', api, api)
+        transition['session_api_capacity']('parked', api, api, capacity=SESSION_API_CAPACITY)
         self.assertEqual((api.provisioned, api.suspended), (None, SUSPENDED))
 
     def test_unpark_restores_the_scaling_minimum_and_resumes_scaling(self):
         api = SessionApiProduction(provisioned=None, minimum=2)
-        transition['session_api_capacity']('live', api, api)
+        transition['session_api_capacity']('live', api, api, capacity=SESSION_API_CAPACITY)
         self.assertEqual((api.provisioned, api.suspended), (2, RESUMED))
 
     def test_unpark_waits_out_an_agentcore_deploys_alias_weights(self):
@@ -429,14 +435,14 @@ class SessionApiCapacityTests(unittest.TestCase):
         api = SessionApiProduction(provisioned=None, minimum=2)
         api.weighted_for = 2
         pauses: list[float] = []
-        transition['session_api_capacity']('live', api, api, pause=pauses.append)
+        transition['session_api_capacity']('live', api, api, capacity=SESSION_API_CAPACITY, pause=pauses.append)
         self.assertEqual((api.provisioned, api.suspended, len(pauses)), (2, RESUMED, 2))
 
     def test_alias_weights_that_outlast_the_wait_with_provisioning_in_place_fail_loud(self):
         api = SessionApiProduction(provisioned=2)
         api.weighted_for = 99
         with self.assertRaisesRegex(RuntimeError, "still routes by weights after .*re-run unpark once the AgentCore deploy finishes"):
-            transition['session_api_capacity']('live', api, api, pause=lambda _: None, timeout=-1)
+            transition['session_api_capacity']('live', api, api, capacity=SESSION_API_CAPACITY, pause=lambda _: None, timeout=-1)
         self.assertEqual(api.alias_updates, [])
 
     def test_unpark_clears_weights_a_park_orphaned_and_provisions(self):
@@ -444,7 +450,7 @@ class SessionApiCapacityTests(unittest.TestCase):
         # 172's environments were ready; a park deleted the provisioning a minute later, so the shift could never finish.
         api = SessionApiProduction(provisioned=None, minimum=2)
         api.weighted_for = 99
-        transition['session_api_capacity']('live', api, api, pause=lambda _: None, timeout=-1)
+        transition['session_api_capacity']('live', api, api, capacity=SESSION_API_CAPACITY, pause=lambda _: None, timeout=-1)
         self.assertEqual(api.alias_updates, [{'FunctionName': api.function, 'Name': api.alias, 'FunctionVersion': '172',
                                               'RoutingConfig': {'AdditionalVersionWeights': {}}}])
         self.assertEqual((api.provisioned, api.suspended), (2, RESUMED))
@@ -453,12 +459,12 @@ class SessionApiCapacityTests(unittest.TestCase):
         api = SessionApiProduction(provisioned=None)
         api.put_provisioned_concurrency_config = Mock(side_effect=RuntimeError('AccessDeniedException'))
         with self.assertRaisesRegex(RuntimeError, 'AccessDeniedException'):
-            transition['session_api_capacity']('live', api, api, pause=lambda _: self.fail('waited on an unrelated refusal'))
+            transition['session_api_capacity']('live', api, api, capacity=SESSION_API_CAPACITY, pause=lambda _: self.fail('waited on an unrelated refusal'))
 
     def test_a_missing_scalable_target_fails_loud(self):
         api = SessionApiProduction(target=False)
         with self.assertRaisesRegex(RuntimeError, 'has no scalable target; deploy the AgentCore stack'):
-            transition['session_api_capacity']('parked', api, api)
+            transition['session_api_capacity']('parked', api, api, capacity=SESSION_API_CAPACITY)
 
 
 class NetworkModeFixture(TypedDict):
@@ -688,7 +694,8 @@ class SpareHandoffTests(unittest.TestCase):
             clock[0] += seconds
         runtime = {'agentRuntimeId': 'rt-1', 'agentRuntimeVersion': '208', 'lastUpdatedAt': READY}
         with patch('builtins.print') as printed:
-            transition['await_spare_handoff'](runtime, logs, clock=lambda: clock[0], pause=pause)
+            transition['await_spare_handoff'](runtime, logs, clock=lambda: clock[0], pause=pause,
+                                                 log_group='/aws/bedrock-agentcore/runtimes/{runtimeId}-DEFAULT')
         return '\n'.join(call.args[0] for call in printed.call_args_list)
 
     def test_live_follows_the_first_spare_handoff_and_not_a_fresh_microvm_started_for_a_chat(self):

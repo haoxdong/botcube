@@ -95,7 +95,6 @@ const HARNESS = path.join(botcubeRoot, 'harness/deepagents');
 test("the template names only its project, runtime and memory: BotCube's defaults fill the rest", async () => {
   const config = await loadDeployConfig(PUBLIC_EXAMPLE, '/');
 
-  expect(config.identity.aws.agentCore.sessionApiAlias).toBe('live');
   expect(config.spec).toMatchObject({
     version: 1,
     managedBy: 'CDK',

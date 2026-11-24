@@ -36,7 +36,6 @@ export function addAgentCoreStacks(
     runtime: identity.aws.agentCore.runtime,
     memory: identity.aws.agentCore.memory,
     sessionApiFunction: identity.aws.agentCore.sessionApiFunction,
-    sessionApiAlias: identity.aws.agentCore.sessionApiAlias,
     ecrRepository: identity.aws.ecr.repository,
     codeBuildProject: identity.aws.codeBuild.project,
     lambdaFunction: identity.aws.lambda.family,
