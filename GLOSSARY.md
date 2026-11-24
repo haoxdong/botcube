@@ -29,8 +29,8 @@ One User's ongoing exchange with the agent, identified by its Session ID and own
 _Avoid_: conversation, thread (except as the wire field), chat, checkpoint (the Harness's internal saved state), STM, Journal
 
 **Transcript**:
-A Session's full record of its messages, which replay shows and resume continues. Compaction never shortens it.
-_Avoid_: session history, rollout, checkpoint
+A Session's full record of its messages, which replay shows and resume continues. Compaction never shortens it. It is stored in AgentCore Memory's short-term memory.
+_Avoid_: session history, rollout, checkpoint, STM
 
 **Context**:
 What the model is sent for its next call: the Transcript after compaction, with the system prompt and Memory reads, bounded by the model's context window. A project's glossary scope is a bounded context, never bare Context.
@@ -113,12 +113,16 @@ The owner's list of answered Turns across their Sessions, most recent first.
 _Avoid_: history, task log
 
 **Memory**:
-What the agent knows about a user across Sessions.
-_Avoid_: long-term memory, LTM, store, memory records, AgentCore Memory
+What the agent knows about a User across Sessions: Written Memory and Extracted Memory.
+_Avoid_: long-term memory, LTM, store, memory records, AgentCore Memory, agent-owned memory
 
-**Pending Memory**:
-What the user asked the agent to remember that is not yet consolidated into Memory. The agent reads it back directly, so a new Session sees it right away.
-_Avoid_: journal, memory journal, recent saves
+**Written Memory**:
+The User's `AGENTS.md` in their Files, which the agent and the User both write and the agent reads verbatim when a Session starts. It is deep agents' memory.
+_Avoid_: notes, agent notes
+
+**Extracted Memory**:
+Facts and preferences the agent derives in the background from past Turns and explicit saves, found by search and not shown to the User. It is AgentCore Memory's long-term memory.
+_Avoid_: LTM, auto-generated memory, Recall, Pending Memory
 
 **Sandbox**:
 The disposable compute that runs the Harness for one Session. Losing it costs only a cold start.
