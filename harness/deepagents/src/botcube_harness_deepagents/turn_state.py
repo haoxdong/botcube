@@ -54,6 +54,11 @@ class CheckpointWriteError(RuntimeError):
 _active_reply: ContextVar[_OpenReply | None] = ContextVar('_active_reply', default=None)
 
 
+def observe_reply_model(event: Any) -> None:
+    if (reply := _active_reply.get()) is not None:
+        reply.watch_model(event)
+
+
 async def _turn_events(
     agent: LangGraphAgent,
     input_data: RunAgentInput,
@@ -127,10 +132,11 @@ class _OpenReply:
         self.open_text = False
         self.message_id = ''
         self.model_message_id: str | None = None
+        self.root_model_run_id: str | None = None
         self.text = ''
         self.started_at = self.ended_at = 0
         self.open_thoughts: set[str] = set()
-        self.thoughts: dict[str, dict[str, Any] | None] = {}
+        self.thoughts: dict[str, dict[str, Any]] = {}
         # The tool calls started and not yet answered: the ones Stop cuts while they run.
         self.open_calls: set[str] = set()
 
@@ -164,14 +170,20 @@ class _OpenReply:
 
         return watched
 
-    def register_thought(self, message_id: str) -> None:
-        self.thoughts[message_id] = None
+    def watch_model(self, event: Any) -> None:
+        if event.get('metadata', {}).get('lc_agent_name'):
+            return
+        if event['event'] == 'on_chat_model_start':
+            self.root_model_run_id, self.model_message_id = event['run_id'], None
+            self.thoughts.clear()
+        elif event['event'] == 'on_chat_model_end':
+            self.model_message_id = getattr(event.get('data', {}).get('output'), 'id', None)
 
     def _watch_thought(self, event: Any) -> None:
         if event.type == EventType.REASONING_MESSAGE_START:
             message_id = event.message_id
             self.open_thoughts.add(message_id)
-            if message_id in self.thoughts:
+            if self.root_model_run_id == message_id.rpartition('-reasoning-')[0]:
                 at = message_times.now()
                 self.thoughts[message_id] = {'id': message_id, 'started_at': at, 'ended_at': at, 'text': ''}
         elif event.type == EventType.REASONING_MESSAGE_END:
@@ -236,7 +248,7 @@ class _OpenReply:
         put(RunFinishedEvent(thread_id=input_data.thread_id, run_id=input_data.run_id))
 
     async def keep(self, agent: LangGraphAgent, session: tuple[str | None, str | None]) -> None:
-        thoughts = [thought for thought in self.thoughts.values() if thought is not None]
+        thoughts = list(self.thoughts.values())
         if not self.text and not thoughts:
             return
         self.message_id = self.message_id or f"{thoughts[0]['id']}-reply"

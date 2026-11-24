@@ -31,14 +31,13 @@ from pydantic import TypeAdapter
 from . import message_times, turn_timing
 from .conversation import conversation, reasoning_chunk
 from .graph_stream import answering_model_step, clock_events, drain_after_answer
-from .turn_state import _active_reply
+from .turn_state import observe_reply_model
 
 log = logging.getLogger(f'{__package__}.serving')
 
 
 @dataclass
 class _Thinking:
-    root: bool = False
     block: int = 0
     index: int | str | None = None
     open: bool = False
@@ -108,13 +107,13 @@ class SessionAgent(LangGraphAgent):
         return events
 
     async def _handle_single_event(self, event: Any, state: Any) -> AsyncGenerator[Any, None]:
-        root = event.get('parent_ids') == []
+        graph_event = event.get('parent_ids') == []
         chunk = event.get('data', {}).get('chunk')
         if isinstance(chunk, tuple):
             chunk = chunk[-1]
-        if root and event.get('event') == 'on_chain_stream' and isinstance(chunk, dict) and '__interrupt__' in chunk:
+        if graph_event and event.get('event') == 'on_chain_stream' and isinstance(chunk, dict) and '__interrupt__' in chunk:
             self._interrupted = True
-        ended = root and event.get('event') == 'on_chain_end'
+        ended = graph_event and event.get('event') == 'on_chain_end'
         ended |= self._early_answer and not self._used_tools and answering_model_step(event)
         if ended:
             self._graph_ended_at = perf_counter()
@@ -126,13 +125,6 @@ class SessionAgent(LangGraphAgent):
                 yield emitted
             run = cast(dict[str, Any], self.active_run)
             yield self._emit_success_finish(thread_id=run['thread_id'], run_id=run['id'])
-
-    def _thought_start(self, lane: str, thought: _Thinking) -> list[Any]:
-        message_id = f'{lane}-reasoning-{thought.block}'
-        if thought.root and (reply := _active_reply.get()) is not None:
-            reply.register_thought(message_id)
-        return [self._dispatch_event(ReasoningStartEvent(message_id=message_id)),
-                self._dispatch_event(ReasoningMessageStartEvent(message_id=message_id, role='reasoning'))]
 
     def _thought_end(self, lane: str, thought: _Thinking) -> list[Any]:
         if not thought.open:
@@ -148,13 +140,17 @@ class SessionAgent(LangGraphAgent):
         if thought.open and thought.index != index:
             events.extend(self._thought_end(lane, thought))
             thought.block += 1
+        message_id = f'{lane}-reasoning-{thought.block}'
         if not thought.open:
-            events.extend(self._thought_start(lane, thought))
+            events.extend([
+                self._dispatch_event(ReasoningStartEvent(message_id=message_id)),
+                self._dispatch_event(ReasoningMessageStartEvent(message_id=message_id, role='reasoning')),
+            ])
             thought.open = True
         thought.index = index
         if text := reasoning.get('reasoning'):
             events.append(self._dispatch_event(ReasoningMessageContentEvent(
-                message_id=f'{lane}-reasoning-{thought.block}', delta=text)))
+                message_id=message_id, delta=text)))
         return events
 
     def _thought_chunk(self, event: Any, lane: str, thought: _Thinking | None, chunk: Any) -> list[Any] | None:
@@ -182,14 +178,15 @@ class SessionAgent(LangGraphAgent):
             elif kind == 'on_chat_model_end':
                 self._record_usage(event, getattr(data.get('output'), 'usage_metadata', None), streamed=False)
             return
+        observe_reply_model(event)
         if kind == 'on_chat_model_end' and (error := self._model_completion_error(event)) is not None:
             yield error
             return
         lane = event['run_id']
         self._model_lane = lane
         try:
-            if kind == 'on_chat_model_start':
-                self._start_model_lane(lane, metadata)
+            if kind == 'on_chat_model_start' and metadata.get('botcube_thinking'):
+                self._thinking[lane] = _Thinking()
             thought = self._thinking.get(lane)
             chunk = event.get('data', {}).get('chunk')
             handled = self._thought_chunk(event, lane, thought, chunk)
@@ -203,18 +200,8 @@ class SessionAgent(LangGraphAgent):
         finally:
             self._model_lane = None
 
-    def _start_model_lane(self, lane: str, metadata: dict[str, Any]) -> None:
-        root = not metadata.get('lc_agent_name')
-        if root and (reply := _active_reply.get()) is not None:
-            reply.thoughts.clear()
-            reply.model_message_id = None
-        if metadata.get('botcube_thinking'):
-            self._thinking[lane] = _Thinking(root=root)
-
     def _model_completion_error(self, event: Any) -> RunErrorEvent | None:
         output = event.get('data', {}).get('output')
-        if not event.get('metadata', {}).get('lc_agent_name') and (reply := _active_reply.get()) is not None:
-            reply.model_message_id = getattr(output, 'id', None)
         response = getattr(output, 'response_metadata', {})
         reason = (response.get('finish_reason') or response.get('stop_reason') or response.get('stopReason')
                   or (response.get('incomplete_details') or {}).get('reason'))
