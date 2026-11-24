@@ -175,6 +175,10 @@ export function defineProduction(app: App, options: ProductionOptions) {
   }
 }
 
+function applyBoundary(stacks: readonly Stack[], boundary?: iam.IManagedPolicy) {
+  if (boundary) for (const stack of stacks) iam.PermissionsBoundary.of(stack).apply(boundary);
+}
+
 function defineStacks(app: App, options: ProductionOptions) {
   const { identity } = options;
   const env = { account: identity.aws.account, region: identity.aws.region };
@@ -193,14 +197,12 @@ function defineStacks(app: App, options: ProductionOptions) {
     ...options.webLatency,
     moments: options.webLatency?.moments ?? latencyMoments(options.deployRoot),
   });
-  if (options.permissionsBoundary) {
-    for (const stack of [storage, health, webLatency]) iam.PermissionsBoundary.of(stack).apply(options.permissionsBoundary);
-  }
+  applyBoundary([storage, health, webLatency], options.permissionsBoundary);
   if (!options.origin) return;
   const { input, images, commit } = options.origin;
   const filesRoles = existingFilesRoleNames(storage, identity.aws.iam);
   const parking = createProductionParking(app, cubeRoot, storage.chatTable as ITable, storage.chatTableExisting, identity, options.config, options.imageRegistry);
-  if (options.permissionsBoundary) iam.PermissionsBoundary.of(parking).apply(options.permissionsBoundary);
+  applyBoundary([parking], options.permissionsBoundary);
   const origin = createServingOrigin(app, options, input, health, egress, parking.wakeUrl);
   const chat = new PreviewChatService(origin, 'ChatService', {
     ...(options.vpc ? { vpc: options.vpc } : {}),
@@ -348,7 +350,7 @@ function createServingOrigin(app: App, options: ProductionOptions, input: Origin
     parkedDnsTarget: identity.aws.ecs.parkedDnsTarget, wakeUrl,
     ...options.originConfig,
   });
-  if (options.permissionsBoundary) iam.PermissionsBoundary.of(origin).apply(options.permissionsBoundary);
+  applyBoundary([origin], options.permissionsBoundary);
   if (egress) origin.addDependency(egress);
   health.addDependency(origin);
   return origin;
