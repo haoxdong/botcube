@@ -36,10 +36,10 @@ export class CredentialSourceError extends Error {
 export function credentialSource(
   seam: string,
   source: CredentialSourceConfig,
-  options: { now?: () => number; env?: NodeJS.ProcessEnv; botcube?: BotCubeSigner } = {},
+  options: { now?: () => number; env?: NodeJS.ProcessEnv; botcube?: BotCubeSigner; fetch?: oidc.CustomFetch | undefined } = {},
 ): CredentialSource {
   const now = options.now ?? Date.now;
-  const adapted = adapter(source, now, options.env ?? process.env, options.botcube);
+  const adapted = adapter(source, now, options.env ?? process.env, options.botcube, options.fetch);
   const named = `${seam} credential (${adapted.about})`;
   if ('refused' in adapted) throw new CredentialSourceError(`${named}: ${adapted.refused}`);
   return refreshingAhead(named, adapted.read, now);
@@ -83,7 +83,7 @@ function refreshWindows({ expiresAt }: Pick<Credential, 'expiresAt'>, mintedAt: 
 
 type Adapter = { readonly about: string; readonly read: () => Promise<Credential> } | { readonly about: string; readonly refused: string };
 
-function adapter(source: CredentialSourceConfig, now: () => number, env: NodeJS.ProcessEnv, botcube: BotCubeSigner | undefined): Adapter {
+function adapter(source: CredentialSourceConfig, now: () => number, env: NodeJS.ProcessEnv, botcube: BotCubeSigner | undefined, fetch?: oidc.CustomFetch): Adapter {
   switch (source.kind) {
     case 'secret': return {
       about: `secret ${source.secretId}`,
@@ -113,7 +113,7 @@ function adapter(source: CredentialSourceConfig, now: () => number, env: NodeJS.
           const clientSecret = await secret.read().catch((error: unknown) => {
             throw new Error(`${secretNamed}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
           });
-          return clientCredentialsGrant(source, clientSecret.value, now);
+          return clientCredentialsGrant(source, clientSecret.value, now, fetch);
         },
       };
     }
@@ -140,10 +140,12 @@ async function clientCredentialsGrant(
   { tokenEndpoint, clientId, scopes }: Extract<CredentialSourceConfig, { kind: 'oauth-client-credentials' }>,
   clientSecret: string,
   now: () => number,
+  fetch: oidc.CustomFetch | undefined,
 ): Promise<Credential> {
   const endpoint = new URL(tokenEndpoint);
   const configuration = new oidc.Configuration({ issuer: endpoint.origin, token_endpoint: tokenEndpoint }, clientId, undefined, oidc.ClientSecretBasic(clientSecret));
   if (endpoint.protocol === 'http:') oidc.allowInsecureRequests(configuration);
+  if (fetch) configuration[oidc.customFetch] = fetch;
   const token = await oidc.clientCredentialsGrant(configuration, scopes ? { scope: scopes.join(' ') } : {}).catch((error: unknown) => {
     throw tokenEndpointError(error);
   });

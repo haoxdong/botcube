@@ -6,7 +6,7 @@ import { clearCookie, type AccountCookies } from './account-cookies.js';
 import type { AccountStore } from './account-store.js';
 import { HttpError } from './http-error.js';
 import { credentialSource, type CredentialSource } from './credential-source.js';
-import { proxiedFetch, proxyUrl, type ProxyUrl } from './proxy-relay.js';
+import { proxiedFetch, proxyUrl } from './proxy-relay.js';
 
 interface OidcClient {
   clientId: string;
@@ -17,7 +17,7 @@ interface OidcIdentity {
   issuer: string;
   clients: readonly [OidcClient, ...OidcClient[]];
   /** Where the issuer is reached through the BotCube Config's proxy; absent, direct. */
-  through?: ProxyUrl | undefined;
+  fetch?: client.CustomFetch | undefined;
 }
 
 interface OidcSignInOptions {
@@ -40,14 +40,16 @@ export function oidcIdentity(
   env: NodeJS.ProcessEnv,
   { store, cookies, returnOrigins, proxy }: Pick<OidcSignInOptions, 'store' | 'cookies' | 'returnOrigins'> & { proxy: BotCubeConfig['integrations']['proxy'] },
 ) {
+  const through = identity.proxy && proxyUrl(proxy, env);
+  const fetch = through && proxiedFetch(through);
   const client = ({ clientId, clientSecret }: (typeof identity.clients)[number], index: number): OidcClient =>
-    ({ clientId, clientSecret: credentialSource(`identity.clients.${index}.clientSecret`, clientSecret, { env }) });
+    ({ clientId, clientSecret: credentialSource(`identity.clients.${index}.clientSecret`, clientSecret, { env, fetch }) });
   const [first, ...rest] = identity.clients;
   return oidcSignIn({
     identity: {
       issuer: identity.issuer,
       clients: [client(first, 0), ...rest.map((other, index) => client(other, index + 1))],
-      through: identity.proxy && proxyUrl(proxy, env),
+      fetch,
     },
     store,
     cookies,
@@ -148,18 +150,13 @@ export function oidcSignIn({ identity, store, cookies, returnOrigins, publicOrig
   return { routes, deletion, credentials: identity.clients.map(({ clientSecret }) => clientSecret) };
 }
 
-async function discover({ issuer, through }: OidcIdentity, { clientId, clientSecret }: OidcClient): Promise<client.Configuration> {
+async function discover({ issuer, fetch }: OidcIdentity, { clientId, clientSecret }: OidcClient): Promise<client.Configuration> {
   // A stand-in issuer on this machine speaks http; the schema allows nothing else over http.
   const execute = new URL(issuer).protocol === 'http:' ? [client.allowInsecureRequests] : [];
   // Read at each redemption, so a rotated secret reaches the provider without a restart.
   const clientSecretPost: client.ClientAuth = async (...request) => client.ClientSecretPost((await clientSecret.get()).value)(...request);
   // openid-client sends the configuration's later calls, token and userinfo, with the fetch discovery used.
-  return client.discovery(new URL(issuer), clientId, undefined, clientSecretPost, { execute, ...(through ? { [client.customFetch]: issuerFetch(through) } : {}) });
-}
-
-function issuerFetch(through: ProxyUrl): client.CustomFetch {
-  const send = proxiedFetch(through);
-  return (url, { method, headers, body, redirect, signal }) => send(url, { method, headers, body: body ?? null, redirect, signal: signal ?? null });
+  return client.discovery(new URL(issuer), clientId, undefined, clientSecretPost, { execute, ...(fetch ? { [client.customFetch]: fetch } : {}) });
 }
 
 function pendingSignIn(cookie: string | undefined): PendingSignIn {

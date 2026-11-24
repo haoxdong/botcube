@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import type { ServerResponse } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { HttpFake, sendJson, type RecordedRequest } from '../test/fakes/http-fake.js';
+import { TunnellingProxy } from '../test/fakes/tunnelling-proxy.js';
+import { startChatTracing } from './tracing.js';
 import { credentialSource } from './credential-source.js';
 
 const START = Date.parse('2026-11-19T12:00:00Z');
@@ -49,6 +51,21 @@ const oauthSource = (tokenUrl: string, scopes?: string[]) => ({
 });
 
 describe('an OAuth client-credentials source', () => {
+  it('gets the telemetry token through the proxy named by its Endpoint', async () => {
+    const endpoint = await tokenEndpoint(issuing(3600));
+    const proxy = new TunnellingProxy();
+    const tracing = startChatTracing({
+      kind: 'otlp', url: endpoint.url, credential: oauthSource(endpoint.url), proxy: 'integrations.proxy',
+    }, { OTEL_TRACES_EXPORTER: 'otlp' }, { kind: 'forward', url: await proxy.listen() });
+    try {
+      expect(await tracing?.credential?.get()).toMatchObject({ value: 'idp-token-1' });
+      expect(proxy.targets).toEqual([new URL(endpoint.url).host]);
+    } finally {
+      await tracing?.shutdown();
+      await proxy.close();
+    }
+  });
+
   it("gives the token endpoint's access token until it expires, asking with the client's id and secret and its scopes", async () => {
     const endpoint = await tokenEndpoint(issuing(3600));
     const source = credentialSource('harnessAuth', oauthSource(endpoint.url, ['harness.invoke', 'harness.stop']), { now: () => START });

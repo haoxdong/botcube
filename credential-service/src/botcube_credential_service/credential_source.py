@@ -167,6 +167,7 @@ def credential_source(
     *,
     env: Mapping[str, str] = os.environ,
     now: Callable[[], float] = time.time,
+    proxy: str | None = None,
 ) -> CredentialSource:
     """The `source` of `seam`, such as `models`; a malformed source, or a command the deploy did not opt in to, is refused here, at startup."""
     try:
@@ -174,13 +175,13 @@ def credential_source(
     except ValidationError as error:
         raise CredentialSourceError('\n'.join(f'{seam} credential: {_field(issue)}: {issue["msg"]}' for issue in error.errors())) from None
     try:
-        about, read = _adapter(parsed, env, now)
+        about, read = _adapter(parsed, env, now, proxy)
     except _Refused as refused:
         raise CredentialSourceError(f'{seam} credential ({refused.about}): {refused.reason}') from None
     return CredentialSource(f'{seam} credential ({about})', read, now)
 
 
-def _adapter(source: Source, env: Mapping[str, str], now: Callable[[], float]) -> tuple[str, Callable[[], Credential]]:
+def _adapter(source: Source, env: Mapping[str, str], now: Callable[[], float], proxy: str | None = None) -> tuple[str, Callable[[], Credential]]:
     match source:
         case SecretSource(secret_id=secret_id):
             return f'secret {secret_id}', lambda: Credential(_secret_string(secret_id, env), now() + REREAD_AFTER_SECONDS)
@@ -191,14 +192,14 @@ def _adapter(source: Source, env: Mapping[str, str], now: Callable[[], float]) -
                 raise _Refused(f'command {command[0]}', f'a command credential runs only when {ALLOW_COMMAND_CREDENTIALS_ENV}=1')
             return f'command {command[0]}', lambda: _exec_credential(stdout_of(command, timeout))
         case OAuthClientCredentialsSource():
-            return _oauth_adapter(source, env, now)
+            return _oauth_adapter(source, env, now, proxy)
         case AwsSource(audience=audience):
             return f'aws {audience}', lambda: Credential(_caller_identity_request(audience, env), now() + SIGV4_VALID_SECONDS)
         case BotCubeSource(audience=audience):
             raise _Refused(f'botcube {audience}', 'only the Chat Service signs a botcube token, with its Turn identity keys')
 
 
-def _oauth_adapter(source: OAuthClientCredentialsSource, env: Mapping[str, str], now: Callable[[], float]) -> tuple[str, Callable[[], Credential]]:
+def _oauth_adapter(source: OAuthClientCredentialsSource, env: Mapping[str, str], now: Callable[[], float], proxy: str | None) -> tuple[str, Callable[[], Credential]]:
     about = f'oauth-client-credentials {source.token_endpoint}'
     try:
         secret_about, read_secret = _adapter(source.client_secret, env, now)
@@ -210,7 +211,7 @@ def _oauth_adapter(source: OAuthClientCredentialsSource, env: Mapping[str, str],
             secret = read_secret().value
         except Exception as error:
             raise RuntimeError(f'client secret ({secret_about}): {error}') from error
-        return _client_credentials_grant(source, secret, now)
+        return _client_credentials_grant(source, secret, now, proxy)
 
     return about, read
 
@@ -244,11 +245,11 @@ class _ErrorReply(BaseModel):
     error: str = Field(pattern=r'^[\x20-\x21\x23-\x5B\x5D-\x7E]+$')
 
 
-def _client_credentials_grant(source: OAuthClientCredentialsSource, client_secret: str, now: Callable[[], float]) -> Credential:
+def _client_credentials_grant(source: OAuthClientCredentialsSource, client_secret: str, now: Callable[[], float], proxy: str | None) -> Credential:
     """RFC 6749 section 4.4: the client authenticates with HTTP Basic, its id and secret each form-encoded."""
     basic = base64.b64encode(f'{quote_plus(source.client_id)}:{quote_plus(client_secret)}'.encode()).decode()
     form = {'grant_type': 'client_credentials', **({'scope': ' '.join(source.scopes)} if source.scopes else {})}
-    response = httpx.post(source.token_endpoint, data=form, headers={'authorization': f'Basic {basic}', 'accept': 'application/json'})
+    response = httpx.post(source.token_endpoint, proxy=proxy, data=form, headers={'authorization': f'Basic {basic}', 'accept': 'application/json'})
     if not response.is_success:
         try:
             error = _ErrorReply.model_validate_json(response.content)

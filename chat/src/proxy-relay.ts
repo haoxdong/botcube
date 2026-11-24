@@ -1,7 +1,8 @@
 import { connect as tcpConnect, createServer, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 import type { BotCubeConfig } from 'botcube-config';
-import { ProxyAgent, type RequestInit } from 'undici';
+import type { CustomFetch } from 'openid-client';
+import { ProxyAgent } from 'undici';
 import { dispatcherFetch } from './dispatcher-fetch.js';
 import { credentialSource, type CredentialSource } from './credential-source.js';
 import { endpointTls, EndpointTlsError, type EndpointTls, type TlsConnectOptions } from './endpoint-tls.js';
@@ -80,13 +81,14 @@ export function proxyUrl(proxy: BotCubeConfig['integrations']['proxy'], env: Nod
 }
 
 /** `fetch` through the proxy `through` names, its agent built on the first request and again after a failed start. */
-export function proxiedFetch(through: ProxyUrl): (url: string, init: RequestInit) => Promise<Response> {
+export function proxiedFetch(through: ProxyUrl): CustomFetch {
   let agent: Promise<ProxyAgent> | undefined;
   const built = () => (agent ??= through().then((uri) => new ProxyAgent(uri), (error: unknown) => {
     agent = undefined;
     throw error;
   }));
-  return async (url, init) => dispatcherFetch(url, { ...init, dispatcher: await built() });
+  return async (url, { method, headers, body, redirect, signal }) =>
+    dispatcherFetch(url, { method, headers, body: body ?? null, redirect, signal: signal ?? null, dispatcher: await built() });
 }
 
 /** The client's request head, up to its blank line, and any bytes after it. */

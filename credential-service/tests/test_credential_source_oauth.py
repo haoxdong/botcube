@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import threading
@@ -11,11 +12,13 @@ from urllib.parse import parse_qsl
 
 import pytest
 
+from botcube_credential_service.audit import CredentialAuditRecorder
 from botcube_credential_service.credential_source import (
     Credential,
     CredentialSourceError,
     credential_source,
 )
+from botcube_credential_service.models import models_provider_from_config
 
 START = 1_795_000_000.0
 CLIENT_SECRET = 's3cret-client-value'
@@ -72,6 +75,24 @@ def secret_file(tmp_path: Path) -> str:
 
 def oauth(url: str, secret_path: str, **extra: object) -> dict[str, object]:
     return {'kind': 'oauth-client-credentials', 'tokenEndpoint': url, 'clientId': 'botcube-models', 'clientSecret': {'kind': 'file', 'path': secret_path}, **extra}
+
+
+def test_models_endpoint_gets_its_token_through_its_named_proxy(endpoint: TokenEndpoint, secret_file: str) -> None:
+    with ThreadingHTTPServer(('127.0.0.1', 0), endpoint.server.RequestHandlerClass) as proxy:
+        thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+        thread.start()
+        try:
+            config = {'integrations': {
+                'proxy': {'kind': 'forward', 'url': f'http://127.0.0.1:{proxy.server_port}'},
+                'modelGateway': {'kind': 'openai-compatible', 'url': 'https://models.example/v1',
+                                 'credential': oauth(endpoint.url, secret_file), 'proxy': 'integrations.proxy'},
+            }}
+            provider = models_provider_from_config(CredentialAuditRecorder(), config, {})
+            assert provider is not None
+            asyncio.run(provider.aclose())
+            assert [request['path'] for request in endpoint.requests] == [endpoint.url]
+        finally:
+            proxy.shutdown()
 
 
 def test_gives_the_endpoints_access_token_until_it_expires_asking_with_the_clients_id_secret_and_scopes(endpoint: TokenEndpoint, secret_file: str) -> None:

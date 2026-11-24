@@ -50,21 +50,22 @@ def models_provider_from_config(
     models = config['integrations']['modelGateway']
     if models['kind'] != 'openai-compatible':
         return None
-    gateway = credential_source('models', models['credential'], env=env, now=now)
+    through = proxy_url_from_config(config, env) if models.get('proxy') else None
+    proxy = through() if through else None
+    gateway = credential_source('models', models['credential'], env=env, now=now, proxy=proxy)
     gateway.get()
     routes: dict[str, ProviderRoute] = {}
     for provider, own in gateway_routes(models).items():
         credential = gateway
         if 'credential' in own:
-            credential = credential_source(f'models {provider}', own['credential'], env=env, now=now)
+            credential = credential_source(f'models {provider}', own['credential'], env=env, now=now, proxy=proxy)
             credential.get()
         headers = own.get('headers', models.get('headers')) or {}
         routes[provider] = ProviderRoute(own.get('url', models['url']).rstrip('/'), dict(headers), credential)
     tls = endpoint_tls('models', models['tls'], env=env) if 'tls' in models else None
     if tls is not None:
         tls.context()
-    through = proxy_url_from_config(config, env) if models.get('proxy') else None
-    return ModelsEndpointProvider(routes, audit=audit, transport=transport, tls=tls, proxy=through() if through else None)
+    return ModelsEndpointProvider(routes, audit=audit, transport=transport, tls=tls, proxy=proxy)
 
 
 @dataclass(frozen=True)

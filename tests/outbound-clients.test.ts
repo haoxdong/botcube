@@ -11,8 +11,8 @@ const DIRECT = {
   botcube: "one of BotCube's own services in the deployment: the Credential Service, a local Harness or session API, the Chat Service",
   proxy: 'the forward proxy itself',
   operator: "an operator command, on the operator's own machine and its environment",
-  tokenEndpoint: "a Credential Source's token endpoint, which the schema gives no proxy reference",
   sender: 'sends with the dispatcher its caller gives',
+  harnessToken: 'the Harness bearer, whose configuration has no proxy reference',
 } as const;
 
 type Route =
@@ -26,7 +26,9 @@ const CLIENTS: Readonly<Record<string, readonly { client: string; route: Route }
   [`${CHAT}/oidc-sign-in.ts`]: [{ client: "the OIDC issuer's discovery, token and userinfo calls", route: { reference: 'integrations.signIn.proxy', reads: [[`${CHAT}/oidc-sign-in.ts`, 'identity.proxy && proxyUrl(proxy, env)']] } }],
   [`${CHAT}/credential-source.ts`]: [
     { client: 'a secret Credential Source: Secrets Manager', route: { direct: 'aws' } },
-    { client: 'an oauth-client-credentials Credential Source', route: { direct: 'tokenEndpoint' } },
+    { client: 'an OAuth token grant for the Harness bearer', route: { direct: 'harnessToken' } },
+    { client: 'an OAuth token grant for telemetry', route: { reference: 'integrations.telemetry.proxy', reads: [[`${CHAT}/tracing.ts`, 'fetch: through && proxiedFetch(through)']] } },
+    { client: 'an OAuth token grant for sign-in', route: { reference: 'integrations.signIn.proxy', reads: [[`${CHAT}/oidc-sign-in.ts`, 'const through = identity.proxy && proxyUrl(proxy, env)'], [`${CHAT}/oidc-sign-in.ts`, 'clientSecret, { env, fetch }']] } },
   ],
   [`${CHAT}/upstream.ts`]: [
     { client: 'the AgentCore Runtime invocation and stop', route: { direct: 'aws' } },
@@ -65,7 +67,7 @@ const CLIENTS: Readonly<Record<string, readonly { client: string; route: Route }
   }],
   [`${CREDENTIAL_SERVICE}/credential_source.py`]: [
     { client: 'a secret Credential Source: Secrets Manager', route: { direct: 'aws' } },
-    { client: 'an oauth-client-credentials Credential Source', route: { direct: 'tokenEndpoint' } },
+    { client: 'an OAuth token grant for the model gateway', route: { reference: 'integrations.modelGateway.proxy', reads: [[`${CREDENTIAL_SERVICE}/models.py`, "models['credential'], env=env, now=now, proxy=proxy"]] } },
   ],
   [`${CREDENTIAL_SERVICE}/endpoint_tls.py`]: [{ client: 'the connection to the proxy', route: { direct: 'proxy' } }],
   [`${CREDENTIAL_SERVICE}/sign_in.py`]: [{ client: "KMS and AgentCore Browser's automation stream", route: { direct: 'aws' } }],

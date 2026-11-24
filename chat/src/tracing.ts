@@ -9,7 +9,7 @@ import { Agent, type RequestOptions } from 'node:https';
 import type { Duplex } from 'node:stream';
 import { credentialSource, type CredentialSource } from './credential-source.js';
 import { endpointTls, EndpointTlsError, type EndpointTls, type TlsConnectOptions } from './endpoint-tls.js';
-import { proxyUrl, type ProxyUrl } from './proxy-relay.js';
+import { proxiedFetch, proxyUrl, type ProxyUrl } from './proxy-relay.js';
 
 let activeTurns: Set<Promise<void>> | undefined;
 
@@ -33,8 +33,8 @@ export function startChatTracing(
 ): { shutdown(): Promise<void>; credential: CredentialSource | undefined } | undefined {
   if (env.OTEL_TRACES_EXPORTER !== 'otlp') return undefined;
   const otlp = telemetry.kind === 'otlp' ? telemetry : undefined;
-  const source = otlp?.credential && credentialSource('telemetry.credential', otlp.credential, { env });
   const through = otlp?.proxy && proxyUrl(proxy, env);
+  const source = otlp?.credential && credentialSource('telemetry.credential', otlp.credential, { env, fetch: through && proxiedFetch(through) });
   const transport = otlp?.tls && tlsTransport(endpointTls('telemetry', otlp.tls, { env }), through);
   const sdk = new NodeSDK({
     serviceName: 'botcube-chat',
