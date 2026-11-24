@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
-import { Swap } from "./collapse";
+import { Arrives } from "./motion";
 import { AGENT_THEME } from "../bot-settings";
 import type { AuthUiState } from "../plugin/index.js";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "./avatar";
+import { AlertLine } from "./alert-line";
 import { LoadFailed, LoadingSkeleton } from "./load-state";
 import { MenuButton } from "./menu-icon";
 import { Sidebar } from "./sidebar";
@@ -56,15 +57,15 @@ export function SessionGate({
     <div className="account-session-gate">
       {/* Parked says the name once: the notice is the heading. */}
       <h1 className="welcome-title">{status === "parked" ? `${title} is paused, back soon.` : title}</h1>
-      <Swap state={status === "error" ? (loadFailure ? "retry" : "unavailable") : status}>{status === "parked" ? (
+      <Arrives state={status === "error" ? (loadFailure ? "retry" : "unavailable") : status}>{status === "parked" ? (
         <WakeUpButton title={title} chatServiceUrl={chatServiceUrl} />
       ) : (
         loadFailure ? (
           <LoadFailed error={loadFailure.error} onRetry={loadFailure.retry} />
         ) : (
-          <p className="welcome-error">Account session unavailable.</p>
+          <AlertLine className="text-center">Account session unavailable.</AlertLine>
         )
-      )}</Swap>
+      )}</Arrives>
     </div>
   );
 }

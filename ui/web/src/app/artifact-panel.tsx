@@ -1,6 +1,7 @@
 "use client";
 
 import { contentToText, type AbstractAgent } from "@ag-ui/client";
+import { Arrives, Glides, Shows } from "./motion";
 import { useRenderTool } from "@copilotkit/react-core/v2";
 import { ChevronDownIcon, Maximize2Icon, Minimize2Icon, PanelLeftIcon, PanelRightIcon, XIcon } from "lucide-react";
 import {
@@ -9,29 +10,31 @@ import {
 } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { z } from "zod";
+import { cn } from "cn";
 
 import { webUiPlugin } from "@bot-ui";
 
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../components/ui/resizable";
 import { Sheet } from "../components/ui/sheet";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { agentFiles } from "./agent-files";
+import { AlertLine } from "./alert-line";
 import { Refusal, useExports } from "./artifact-exports";
 import { readBytes, readFile } from "./artifact-files";
 import { newestInFiles, useNewestInFiles } from "./artifact-newest";
 import { artifactVersions } from "./artifact-versions";
-import { ArtifactFace } from "./artifact-face";
+import { ArtifactIcon } from "./artifact-face";
 import { agoOf, byDay, historyOf, timeOf, type HistoryVersion } from "./artifact-history";
 import { AnswerCards, Published, publishedOf } from "./artifact-published";
 import { useArtifactRequest, type ArtifactRequest } from "./artifact-request";
 import { TYPES } from "./artifact-types";
 import type { ArtifactEdit, ViewerProps } from "./artifact-viewer";
 import { withStorage } from "./main-chat-copy";
-import { Fade, Layout, Swap } from "./collapse";
 import { motionTokens } from "./motion-tokens";
 import type { AgentProfileData } from "./agent-profile";
 import { Avatar } from "./avatar";
-import { reason } from "./composer-files";
-import { useIsPhone } from "./phone-query";
+import { FileAttachment, QuietLine, reason } from "./composer-files";
+import { useViewport } from "@/design-system/viewport";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -115,7 +118,7 @@ export function ArtifactLayout({ agent, profile = null, children, header, accoun
   const artifact = opened === null ? undefined : newest[opened.id];
   const shown = useMemo(() => shownOf(opened, artifact), [opened, artifact]);
   const kept = useKept(shown);
-  const phone = useIsPhone();
+  const phone = useViewport() === "phone";
   useAgentPublications(agent, seen);
   const failures = useNewestInFiles(opened?.id, artifact, newestOf, seen);
   useRenderTool({
@@ -209,11 +212,11 @@ function ArtifactSplit({ shown, close, children, accountId, phone }: { phone: bo
     if (!isOpen) panel.collapse();
     else if (panel.isCollapsed()) panel.resize(OPEN_SIZE);
   }, [isOpen, side]);
-  // Motion's `layout` measures on every render; the chat column glides only for the Artifact panel. While the pane
-  // glides open or shut, the chat lays out once at its settled width and the pane keeps its Artifact.
+  // The chat column glides only for the Artifact panel. While the pane glides open or shut, the chat lays out once at
+  // its settled width and the pane keeps its Artifact.
   return (
     <ResizablePanelGroup orientation="horizontal" className="artifact-layout" elementRef={group} data-side={position} data-settling={settling.on ? (isOpen ? "open" : "shut") : undefined} dir={position === "left" ? "rtl" : "ltr"}>
-      <ResizablePanel id="chat" className="artifact-chat-panel" minSize="30%" style={{ overflow: "visible" }}><Layout className="artifact-chat-motion" layout={phone ? false : "position"} layoutDependency={`${isOpen} ${position}`} style={{ direction: "ltr" }}>{children}</Layout></ResizablePanel>
+      <ResizablePanel id="chat" className="artifact-chat-panel" minSize="30%" style={{ overflow: "visible" }}><Glides className="artifact-chat-motion" on={!phone} dependency={`${isOpen} ${position}`} style={{ direction: "ltr" }}>{children}</Glides></ResizablePanel>
       <ResizableHandle className="resizable-handle" disabled={!isOpen} data-closed={!isOpen || undefined} />
       <ResizablePanel id="artifact" className="artifact-side-panel" style={{ overflow: "visible" }} panelRef={side} collapsible collapsedSize="0%" defaultSize="0%" minSize="25%"
         onResize={(size, _id, previous) => {
@@ -224,7 +227,7 @@ function ArtifactSplit({ shown, close, children, accountId, phone }: { phone: bo
         }}>
         {inPane && (
           <div key={pathOf(inPane)} className="artifact-side" inert={!isOpen}>
-            <Layout className="artifact-view-motion" layout={inPane.full ? false : "position"} {...(inPane.full ? { transformTemplate: () => "none" } : {})} style={{ direction: "ltr" }}><ArtifactView shown={inPane} heading={<DesktopHeading shown={inPane} />} controls={<DesktopControls shown={inPane} position={position} switchSide={switchSide} />} /></Layout>
+            <Glides className="artifact-view-motion" on={!inPane.full} dependency={`${isOpen} ${position}`} style={{ direction: "ltr" }}><ArtifactView shown={inPane} heading={<DesktopHeading shown={inPane} />} controls={<DesktopControls shown={inPane} position={position} switchSide={switchSide} />} /></Glides>
           </div>
         )}
       </ResizablePanel>
@@ -248,10 +251,14 @@ function ArtifactResult({ result }: { result: string }) {
 export function ArtifactCard({ artifact }: { artifact: Published }) {
   const { shown, open, seen } = usePanel();
   useEffect(() => seen(artifact), [seen, artifact]);
+  const isOpen = shown !== null && shown.artifact.id === artifact.id;
+  const type = typeOf(artifact.type);
   return (
-    <button type="button" data-artifact-id={artifact.id} className={`sent-file artifact-card ${typeOf(artifact.type).tint}`} data-open={(shown !== null && shown.artifact.id === artifact.id) || undefined}
+    // The card is the stock Attachment; the native button around it only opens the Artifact, as a link around a reply's file card downloads it.
+    <button type="button" data-artifact-id={artifact.id} className="artifact-open" data-open={isOpen || undefined}
       onClick={() => open({ id: artifact.id, full: false })}>
-      <ArtifactFace artifact={artifact} />
+      <FileAttachment name={artifact.title} untitled icon={<ArtifactIcon type={artifact.type} />} second={<QuietLine>{type.label}</QuietLine>}
+        className={cn("artifact-card", type.tint, isOpen && "border-(--color-blue)")} />
     </button>
   );
 }
@@ -282,8 +289,8 @@ function ArtifactView({ shown, heading, controls }: { shown: Shown; heading?: Re
 
 function DesktopHeading({ shown }: { shown: Shown }) {
   return (
-    <span className="sent-file-text">
-      <span className="sent-file-name">{titleOf(shown)}</span>
+    <span className="artifact-title">
+      <span className="artifact-title-name">{titleOf(shown)}</span>
       <History shown={shown} />
     </span>
   );
@@ -311,7 +318,7 @@ function History({ shown }: { shown: Shown }) {
   const { agent } = usePanel();
   const { artifact } = shown;
   const history = useHistory(artifact);
-  const phone = useIsPhone();
+  const phone = useViewport() === "phone";
   const versions = history && "versions" in history ? history.versions : [];
   const now = new Date();
   const newest = versions[0];
@@ -319,11 +326,11 @@ function History({ shown }: { shown: Shown }) {
   const failure = history && "failure" in history ? history.failure : null;
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button type="button" variant="secondary" size="xs" className="artifact-history self-center font-normal text-muted-foreground" />}>
+      <DropdownMenuTrigger render={<Button type="button" variant="secondary" size="xs" className="artifact-history self-center font-normal text-(--color-text-muted)" />}>
         Edited by {artifact.author === "user" ? "you" : agent.name}{when}<ChevronDownIcon data-icon="inline-end" aria-hidden />
       </DropdownMenuTrigger>
       <DropdownMenuContent align={phone ? "start" : "center"} className="artifact-history-menu w-auto min-w-72">
-        <Fade open={failure !== null} className="artifact-history-failure"><DropdownMenuLabel role="alert">{failure}</DropdownMenuLabel></Fade>
+        <Shows appear when={failure !== null} className="artifact-history-failure"><AlertLine className="px-1.5 py-1">{failure}</AlertLine></Shows>
         {byDay(versions, now).map(({ day, versions: inDay }) => (
           <DropdownMenuGroup key={day}>
             <DropdownMenuLabel>{day}</DropdownMenuLabel>
@@ -332,9 +339,9 @@ function History({ shown }: { shown: Shown }) {
                 <Avatar size={32} agent={author !== "user"} picture={author === "user" ? undefined : agent.picture} emoji={author === "user" ? undefined : agent.avatar} />
                 <span className="flex flex-col">
                   <span>{author === "user" ? "You" : agent.name}</span>
-                  <span className="text-xs text-muted-foreground">Version {version} · {timeOf(at)}</span>
+                  <span className="text-xs text-(--color-text-muted)">Version {version} · {timeOf(at)}</span>
                 </span>
-                <Swap state={version === artifact.version ? "current" : "earlier"} className="ml-auto flex">{version === artifact.version && <Badge variant="outline">Current</Badge>}</Swap>
+                <Arrives state={version === artifact.version ? "current" : "earlier"} className="ml-auto flex">{version === artifact.version && <Badge variant="outline">Current</Badge>}</Arrives>
               </DropdownMenuItem>
             ))}
           </DropdownMenuGroup>
@@ -353,11 +360,20 @@ function DesktopControls({ shown, position, switchSide }: { shown: Shown; positi
   const SideIcon = position === "left" ? PanelRightIcon : PanelLeftIcon;
   return (
     <>
-      <Button type="button" variant="ghost" size="icon-lg" aria-label={move} title={move} onClick={switchSide}><SideIcon aria-hidden /></Button>
-      <Button type="button" variant="ghost" size="icon-lg" aria-label={label} title={label} onClick={() => open((current) => current && { ...current, full: !full })}>
-        <FullIcon aria-hidden />
-      </Button>
-      <Button type="button" variant="ghost" size="icon-lg" aria-label="Close" title="Close" onClick={() => open(null)}><XIcon aria-hidden /></Button>
+      <Tooltip>
+        <TooltipTrigger render={<Button type="button" variant="ghost" size="icon-lg" aria-label={move} onClick={switchSide} />}><SideIcon aria-hidden /></TooltipTrigger>
+        <TooltipContent>{move}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger render={<Button type="button" variant="ghost" size="icon-lg" aria-label={label} onClick={() => open((current) => current && { ...current, full: !full })} />}>
+          <FullIcon aria-hidden />
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger render={<Button type="button" variant="ghost" size="icon-lg" aria-label="Close" onClick={() => open(null)} />}><XIcon aria-hidden /></TooltipTrigger>
+        <TooltipContent>Close</TooltipContent>
+      </Tooltip>
     </>
   );
 }

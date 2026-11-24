@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useState, type ComponentProps } from 'react';
+import { Arrives } from "./motion";
 import { PlotlyChart } from '../components/plotly-chart';
-import { Swap } from './collapse';
 import { isFigureName } from '../components/plotly-figure';
 import { linkedPath, type FilesPath } from './files-path';
 import { ReplyImage } from './reply-image';
 import { useReplyFile } from './use-reply-file';
+import { viewport } from '../design-system/viewport';
+import { AlertLine } from './alert-line';
 
 /**
  * A reply's image: a `.plotly.json` file the agent embeds as `![<caption>](<file path>)` draws as a live chart,
@@ -22,7 +24,7 @@ export function ReplyVisual(props: ComponentProps<'img'>) {
  * The width a reply's chart is drawn at before it is scaled to the bubble: about twice a phone bubble's 290px, and
  * 1.25 times a desktop bubble's 573px, so the chart's text sits under the reply's own.
  */
-export const replyChartDrawWidth = () => (window.matchMedia('(max-width: 640px)').matches ? 573 : 720);
+export const replyChartDrawWidth = () => (viewport() === 'phone' ? 573 : 720);
 
 /**
  * One of the agent's `.plotly.json` files as a live chart across the reply's width, its box there from the first frame
@@ -50,13 +52,13 @@ export function ReplyChart({ path, label }: { path: FilesPath; label: string }) 
   const state = failure !== null ? 'failed' : text !== null && 'text' in text ? 'chart' : 'loading';
   return (
     <span className="reply-chart" data-loading={state === 'loading' ? '' : undefined}>
-      <Swap as="span" state={state} className="reply-chart-body">
+      <Arrives as="span" state={state} className="reply-chart-body">
         {failure !== null ? (
-          <span className="reply-image-error" role="alert">{`${label} could not load: ${failure}`}</span>
+          <AlertLine className="reply-image-error">{`${label} could not load: ${failure}`}</AlertLine>
         ) : text !== null && 'text' in text ? (
           <PlotlyChart key={text.text} text={text.text} title={label} drawWidth={replyChartDrawWidth()} />
         ) : null}
-      </Swap>
+      </Arrives>
     </span>
   );
 }

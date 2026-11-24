@@ -1,8 +1,9 @@
 /* Motion beyond the tokens in globals.css's :root (DESIGN.md Motion). */
 
-/* What opens and closes in the column (a Worklog, a step's detail, an alert, a sheet's row) grows its rows from
-   nothing and closes them before it unmounts (collapse.tsx), so what's below follows it instead of jumping. It clips only
-   vertically, so a step's hover pill still reaches past its sides, and its inner box holds its content's margins. */
+/* What opens and closes in the column (an alert, a form's row, a list's row) grows from nothing and closes before it
+   unmounts (a folding section below, or a list's rows in motion.tsx's Fades folds), so what's below follows it instead
+   of jumping. It clips only vertically, so a hover pill still reaches past its sides, and its inner box holds its
+   content's margins. */
 .collapsible {
   overflow-x: visible;
   overflow-y: clip;
@@ -12,37 +13,41 @@
   display: flow-root;
 }
 
-.grid-collapse {
-  display: grid;
-  /* One column the container's width: an auto column grows to nowrap content and pushes it past a phone. */
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: 1fr;
+/* A folding section is a stock Collapsible (collapsible.tsx) whose root lays out no box of its own, so a closed one
+   takes no gap. Its panel tweens Base UI's measured height on --motion-move with a fade, one motion each way, as a
+   Worklog's does (markdown.css); the panel's inner box holds its content's margins, so the height it measures has them. */
+.fold {
+  display: contents;
+}
+
+.fold > [data-slot="collapsible-content"] {
+  height: var(--collapsible-panel-height);
   transition:
-    grid-template-rows var(--motion-move) var(--ease),
+    height var(--motion-move) var(--ease),
     opacity var(--motion-quick) var(--ease);
 }
 
-@starting-style {
-  .grid-collapse:not([data-still]) {
-    grid-template-rows: 0fr;
-    opacity: 0;
-  }
-}
-
-.grid-collapse[data-closing] {
-  grid-template-rows: 0fr;
+.fold > [data-slot="collapsible-content"]:is([data-starting-style], [data-ending-style]) {
+  height: 0;
   opacity: 0;
 }
 
-.grid-collapse > div {
-  min-height: 0;
-  overflow-x: visible;
-  overflow-y: clip;
+/* Registered so slide() in motion.tsx interpolates them; 1, shown, until a panel first slides. */
+@property --sidebar-shown {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
 }
 
-/* Desktop: the docked sidebar slides in from its edge and back out, drawer-swipe.ts springing --sidebar-shown from 0
+@property --profile-shown {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+
+/* Desktop: the docked sidebar slides in from its edge and back out, drawer-swipe.ts sliding --sidebar-shown from 0
    to 1, while the chat stage beside it takes the rest of the row, so words never stretch (the Agent Profile's own,
-   agent-profile.css). Its seam lies outside its width. Until the spring binds, the margin is invalid and so 0: shown. */
+   agent-profile.css). Its seam lies outside its width. */
 @media (min-width: 641px) {
   .sidebar-expanded {
     --docked-travel: calc(var(--docked-width) + 1px);

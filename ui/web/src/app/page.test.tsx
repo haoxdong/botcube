@@ -67,7 +67,6 @@ vi.mock('./kept-chat', async (importOriginal) => {
 });
 
 vi.mock('@copilotkit/react-core/v2', async () => {
-  const { Streamdown } = await import('streamdown');
   const copilotkit = { stopAgent: () => copilot.stopAgent(), runAgent: (options: { agent: HttpAgent | undefined; forwardedProps?: Record<string, unknown> }) =>
     options.forwardedProps?.opening === true ? copilot.openingTurn(options) : copilot.runAgent(options) };
   // Like CopilotChatMessageView: an assistant message slot renders its markdown. It virtualizes a long chat's rows
@@ -89,14 +88,9 @@ vi.mock('@copilotkit/react-core/v2', async () => {
     { MessageRenderer: UserMessageRenderer },
   );
   type MessageViewParts = { messageElements: ReactNode[]; messages: Message[]; isRunning: boolean; interruptElement: ReactNode };
-  type AssistantProps = { message: Message; markdownRenderer?: ComponentType<{ content: string }> };
-  const CopilotChatAssistantMessage = Object.assign(
-    ({ message, markdownRenderer: Renderer }: AssistantProps) =>
-      Renderer ? <Renderer content={message.content as string} /> : <Streamdown>{message.content as string}</Streamdown>,
-    { MarkdownRenderer: ({ content, ...props }: { content: string }) => <Streamdown {...props}>{content}</Streamdown> },
-  );
+  type AssistantProps = { message: Message };
   const CopilotChatMessageView = Object.assign(
-    ({ assistantMessage, userMessage, children }: { assistantMessage?: Partial<AssistantProps> | ComponentType<AssistantProps>; userMessage?: Partial<UserProps> | ComponentType<UserProps>; children?: (parts: MessageViewParts) => ReactNode }) => {
+    ({ assistantMessage: Assistant = () => null, userMessage, children }: { assistantMessage?: ComponentType<AssistantProps>; userMessage?: Partial<UserProps> | ComponentType<UserProps>; children?: (parts: MessageViewParts) => ReactNode }) => {
       const agentMessages = copilot.kits.at(-1)?.selfManagedAgents['research-agent']?.messages ?? [];
       const User = typeof userMessage === 'function' ? userMessage : (props: UserProps) => <CopilotChatUserMessage {...props} {...userMessage} />;
       const rows = copilot.rows
@@ -107,8 +101,7 @@ vi.mock('@copilotkit/react-core/v2', async () => {
             return copilot.slots ? [<Fragment key={`${message.id}-custom-before`} />, ...row, <Fragment key={`${message.id}-custom-after`} />] : row;
           })
         : [];
-      // Like its slots: a component renders the message, or an object gives the default one its props.
-      const Assistant = typeof assistantMessage === 'function' ? assistantMessage : (props: AssistantProps) => <CopilotChatAssistantMessage {...props} {...assistantMessage} />;
+      // Like its assistant slot: the chat's component renders the reply.
       const messageElements = copilot.reply === '' ? rows : [...rows, <Assistant key="reply" message={{ id: 'reply', role: 'assistant', content: copilot.reply }} />];
       const messages = copilot.rows ? agentMessages : copilot.messages;
       if (children) return <>{children({ messageElements, messages, isRunning: copilot.running, interruptElement: null })}</>;
@@ -235,7 +228,7 @@ vi.mock('@copilotkit/react-core/v2', async () => {
         </div>
       );
     },
-    CopilotChatAssistantMessage,
+    CopilotChatToolCallsView: () => null,
     CopilotChatUserMessage,
     CopilotChatInput,
     CopilotChatMessageView,
@@ -529,6 +522,26 @@ const openModelList = async () => {
   const popup = await openPicker();
   if (screen.queryByRole('listbox') === null) await userEvent.click(within(popup).getByRole('combobox', { name: /^Model / }));
   return screen.findByRole('listbox');
+};
+/** Picks a choice from a stock Select, by the trigger its label names. */
+const choose = async (trigger: HTMLElement, option: string) => {
+  await userEvent.click(trigger);
+  await userEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: option }));
+  await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+};
+/** The choice a stock Select shows, as a screen reader reads it: without its chevron. */
+const shownChoice = (trigger: HTMLElement) => {
+  const read = trigger.cloneNode(true) as HTMLElement;
+  read.querySelectorAll('[aria-hidden="true"]').forEach((hidden) => hidden.remove());
+  return read.textContent;
+};
+/** A stock Select's choices, read by opening it, which then closes again. */
+const choicesOf = async (trigger: HTMLElement) => {
+  await userEvent.click(trigger);
+  const choices = within(await screen.findByRole('listbox')).getAllByRole('option').map((option) => option.textContent);
+  await userEvent.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+  return choices;
 };
 /** Each offered model's name, its description after it. */
 const modelOptions = async () => [...(await openModelList()).querySelectorAll('[role="option"]')].map((option) => option.textContent);
@@ -1521,8 +1534,8 @@ describe('Main Chat kept in this browser', () => {
       present(held[0], 'the Main Chat load')(answer(200, { id: 'main-1', provider: 'openai', messages: [...earlier, restored] }));
     });
     const row = () => document.querySelector<HTMLElement>('[data-message-row="reconciled-question"] .chat-message');
-    await waitFor(() => expect(row()?.style.opacity).toBe('1'));
-    expect(row()?.style.transform).toBe('none');
+    await waitFor(() => expect(row()).not.toBeNull());
+    expect(row()?.getAnimations()).toEqual([]);
   });
 
   // The copy reconciled history but discarded the server Turn and its failure.
@@ -2093,7 +2106,7 @@ describe('the kept Main Chat over the chat as it opens', () => {
     await renderPage(auth({ accountId: 'acct-first' }));
     layOut(() => 200, () => 0);
     const reply = document.createElement('div');
-    reply.className = 'copilotKitAssistantMessage';
+    reply.className = 'chat-message is-assistant';
     const spinner = document.createElement('span');
     spinner.className = 'animate-spin';
     reply.append(spinner);
@@ -2518,15 +2531,14 @@ describe('Main Chat', () => {
       onTestFinished(() => { document.documentElement.style.removeProperty('--motion-move'); });
       const row = (id: string) => document.querySelector<HTMLElement>(`[data-message-row="${id}"] :is(.copilotKitMessage, .chat-message)`);
       await renderPage();
-      await waitFor(() => expect(row('m86')?.style.opacity).toBe('1'));
-      expect(row('m86')?.style.transform).toBe('none');
+      await waitFor(() => expect(row('m86')).not.toBeNull());
+      expect(row('m86')?.getAnimations()).toEqual([]);
       layOut();
       await scrollToTop();
-      await waitFor(() => expect(row('m80')?.style.opacity).toBe('1'));
-      expect(row('m80')?.style.transform).toBe('none');
+      await waitFor(() => expect(row('m80')).not.toBeNull());
+      expect(row('m80')?.getAnimations()).toEqual([]);
       await agentAddsMessage({ id: 'm87', role: 'user', content: 'Next question' });
-      expect(row('m87')?.style.opacity).not.toBe('');
-      expect(Number(row('m87')?.style.opacity)).toBeLessThan(1);
+      expect(row('m87')?.getAnimations()).toHaveLength(1);
     });
 
     // CopilotKit lays out custom-message slots around each message's row, so 4 elements held barely 2 messages.
@@ -5066,7 +5078,9 @@ describe('sidebar', () => {
     await openSidebar();
 
     expect(document.querySelector('.user-menu .sidebar-nav-label')).toHaveTextContent(/^Research Account$/);
-    expect(screen.getByLabelText('Account')).not.toHaveAttribute('data-tooltip');
+    // With no user to name, the account's tooltip stays shut: the name shows once, as the label.
+    await userEvent.hover(screen.getByLabelText('Account'));
+    expect(screen.getAllByText('Research Account')).toHaveLength(1);
   });
 
   it('marks only the active conversation', async () => {
@@ -5319,13 +5333,13 @@ describe('account menu', () => {
   it('shows a signed-in user and lets them relink or sign out', async () => {
     const state = auth({ user: { name: 'Ada Lovelace' } });
     await renderPage(state);
-    expect(trigger()).toHaveAttribute('data-tooltip', 'Ada Lovelace');
-    expect(trigger()).toHaveClass('user-menu-trigger');
-    expect(trigger()).not.toHaveClass('menu-open');
+    await userEvent.hover(trigger());
+    expect(await screen.findByText('Ada Lovelace')).toBeInTheDocument();
+    expect(trigger()).toHaveAttribute('aria-expanded', 'false');
     expect(menu()).toBeNull();
 
     await userEvent.click(trigger());
-    expect(trigger()).toHaveClass('user-menu-trigger', 'menu-open');
+    expect(trigger()).toHaveAttribute('aria-expanded', 'true');
     expect(menu()?.querySelector('.user-menu-header')).toHaveTextContent(/^AAda Lovelace$/);
     await userEvent.click(within(openMenu()).getByText('Relink account'));
     expect(state.relink).toHaveBeenCalledOnce();
@@ -5357,7 +5371,7 @@ describe('account menu', () => {
 
     expect(menu()).toBeNull();
     expect(trigger()).toHaveFocus();
-    expect(trigger()).not.toHaveClass('menu-open');
+    expect(trigger()).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('shows a signed-in user without details as the bot account and its initial', async () => {
@@ -5421,6 +5435,19 @@ describe('account menu', () => {
     await userEvent.click(form.getByRole('button', { name: 'Save' }));
 
     expect(state.editProfile).toHaveBeenLastCalledWith({ name: 'Ada Lovelace', photo: null });
+  });
+
+  it("keeps the keys typed in Edit profile in its fields, out of the menu's", async () => {
+    const state = auth({ user: { name: 'Ada Lovelace' }, editProfile: vi.fn(async () => undefined) });
+    const form = await editProfile(state);
+    const field = form.getByLabelText('Display name');
+    field.focus();
+
+    await userEvent.keyboard('{ArrowDown}{ArrowUp}{End} K');
+
+    expect(field).toHaveFocus();
+    expect(field).toHaveValue('Ada Lovelace K');
+    expect(menu()).not.toBeNull();
   });
 
   it('says why a save failed and keeps the edit open', async () => {
@@ -5493,26 +5520,29 @@ describe('account menu', () => {
 
     await userEvent.click(trigger());
     await userEvent.click(trigger());
-    expect(menu()).toBeNull();
+    expect(trigger()).toHaveAttribute('aria-expanded', 'false');
+    await waitFor(() => expect(menu()).toBeNull());
 
     await userEvent.click(trigger());
     await userEvent.click(present(openMenu().querySelector('.user-menu-header'), 'the menu header'));
-    expect(menu()).not.toBeNull();
+    expect(trigger()).toHaveAttribute('aria-expanded', 'true');
     await userEvent.click(present(document.querySelector('.sidebar-recents'), 'the recents'));
-    expect(menu()).toBeNull();
+    expect(trigger()).toHaveAttribute('aria-expanded', 'false');
+    await waitFor(() => expect(menu()).toBeNull());
   });
 
   it('shows an unlinked user their profile to edit, and offers to sign in', async () => {
     const state = auth({ status: 'unauthed', user: { name: 'Ada Lovelace', photo: PICTURE }, editProfile: vi.fn(async () => undefined) });
     await renderPage(state);
-    expect(trigger()).toHaveAttribute('data-tooltip', 'Ada Lovelace');
+    await userEvent.hover(trigger());
+    expect(await screen.findByText('Ada Lovelace')).toBeInTheDocument();
 
     await userEvent.click(trigger());
 
     const header = present(openMenu().querySelector('.user-menu-header'), 'the menu header');
     expect(header).toHaveTextContent(/^Ada Lovelace$/);
     expect(pictureIn(header)).toBe(PICTURE);
-    expect(within(openMenu()).getAllByRole('button').map((button) => button.textContent)).toEqual(['Edit profile', 'Sign in']);
+    expect(within(openMenu()).getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Edit profile', 'Sign in']);
     await userEvent.click(within(openMenu()).getByText('Sign in'));
     expect(state.login).toHaveBeenCalledOnce();
   });
@@ -5533,9 +5563,9 @@ describe('account menu', () => {
     await renderPage(state);
 
     await userEvent.click(trigger());
-    const signIn = within(openMenu()).getByRole('button');
+    const signIn = within(openMenu()).getByRole('menuitem');
     expect(signIn).toHaveTextContent(/^Sign in$/);
-    expect(signIn).toBeEnabled();
+    expect(signIn).not.toHaveAttribute('aria-disabled');
     await userEvent.click(signIn);
 
     expect(state.login).toHaveBeenCalledOnce();
@@ -5548,7 +5578,7 @@ describe('account menu', () => {
     await userEvent.click(trigger());
 
     expect(within(openMenu()).getByRole('note')).toHaveTextContent(/^Your work lives in this browser until you save it\. Sign in to save it\.$/);
-    expect(within(openMenu()).getByRole('button')).toHaveTextContent(/^Sign in$/);
+    expect(within(openMenu()).getByRole('menuitem')).toHaveTextContent(/^Sign in$/);
   });
 
   it('shows the sign-in in progress', async () => {
@@ -5556,8 +5586,8 @@ describe('account menu', () => {
 
     await userEvent.click(trigger());
 
-    expect(within(openMenu()).getByRole('button')).toHaveTextContent(/^Connecting\.\.\.$/);
-    expect(within(openMenu()).getByRole('button')).toBeDisabled();
+    expect(within(openMenu()).getByRole('menuitem')).toHaveTextContent(/^Connecting\.\.\.$/);
+    expect(within(openMenu()).getByRole('menuitem')).toHaveAttribute('aria-disabled', 'true');
   });
 
   it("says why the account's state could not load, with Retry in place of signing in", async () => {
@@ -5676,6 +5706,10 @@ describe('agent profile', () => {
       await userEvent.click(avatar());
       expect(close()).toHaveFocus();
       within(openProfile()).getByRole('tab', { name: 'Scheduled' }).focus();
+      // The focused tab names itself in the stock Tooltip, which the first Escape dismisses; the next closes the profile.
+      expect(await screen.findByText('Scheduled', { selector: '[data-slot="tooltip-content"]' })).toBeInTheDocument();
+      await userEvent.keyboard('{Escape}');
+      expect(openProfile()).toBeInTheDocument();
       await userEvent.keyboard('{Escape}');
       expect(avatar()).toHaveFocus();
 
@@ -5705,7 +5739,8 @@ describe('agent profile', () => {
     expect(avatar().querySelector('.avatar-laptop')).toBeNull();
     expect(avatar().closest('main .artifact-chat-column > header')).not.toBeNull();
     // A tooltip names what the avatar opens.
-    expect(avatar()).toHaveAttribute('title', 'Agent profile');
+    await userEvent.hover(avatar());
+    expect(await screen.findByText('Agent profile')).toBeInTheDocument();
     expect(profile()).toBeNull();
 
     await userEvent.click(avatar());
@@ -5813,10 +5848,10 @@ describe('agent profile', () => {
     const title = present(task.querySelector('.scheduled-task-title'), "the task's title").textContent;
     return within(openProfile()).findByRole('dialog', { name: title });
   };
-  /** Deletes the sheet's task: Delete, then the Delete task it asks to confirm with. */
+  /** Deletes the sheet's task: Delete, then the Delete task its alert dialog asks to confirm with. */
   const deleteTask = async (sheet: HTMLElement) => {
     await userEvent.click(within(sheet).getByRole('button', { name: 'Delete' }));
-    await userEvent.click(within(sheet).getByRole('button', { name: 'Delete task' }));
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete task' }));
   };
   const closeTask = async (sheet: HTMLElement) => {
     await userEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
@@ -6001,7 +6036,7 @@ describe('agent profile', () => {
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
 
     // Every minute is an Interval of 1 minute, the count in the stock field.
-    expect(inSheet.getByLabelText('Repeat')).toHaveDisplayValue('Interval');
+    expect(shownChoice(inSheet.getByLabelText('Repeat'))).toBe('Interval');
     expect(inSheet.getByLabelText('Every')).toHaveValue('1');
     // Title, the instructions and Every are the stock Input and Textarea.
     expect(['Title', 'Prompt', 'Every'].map((label) => inSheet.getByLabelText(label).dataset.slot)).toEqual(['input', 'textarea', 'input']);
@@ -6015,8 +6050,8 @@ describe('agent profile', () => {
     expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-06T15:02');
     expect(inSheet.getByText('Tue, Oct 6, 3:02 PM ET')).toBeInTheDocument();
     // One Ends row, Never or a date and time: a counted task's is its last run.
-    expect(within(inSheet.getByLabelText('Ends')).getAllByRole('option').map((option) => option.textContent)).toEqual(['Never', 'On a date…']);
-    expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Tue, Oct 6, 3:04 PM ET');
+    expect(await choicesOf(inSheet.getByLabelText('Ends'))).toEqual(['Never', 'On a date…']);
+    expect(shownChoice(inSheet.getByLabelText('Ends'))).toBe('Tue, Oct 6, 3:04 PM ET');
     expect(inSheet.getByLabelText('End date')).toHaveValue('2026-10-06T15:04');
     expect(inSheet.queryByLabelText('Runs')).toBeNull();
     expect(inSheet.queryByLabelText('Time zone')).toBeNull();
@@ -6123,8 +6158,8 @@ describe('agent profile', () => {
     await more(inSheet);
     // A daily task's Starts is its first run, at the time of day it runs.
     expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-13T09:00');
-    expect(inSheet.getByLabelText('Repeat')).toHaveDisplayValue('Daily');
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), 'Interval');
+    expect(shownChoice(inSheet.getByLabelText('Repeat'))).toBe('Daily');
+    await choose(inSheet.getByLabelText('Repeat'), 'Interval');
     await every(inSheet, '2');
     expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-13T09:00');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
@@ -6143,8 +6178,8 @@ describe('agent profile', () => {
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     await more(inSheet);
-    await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'Never');
-    expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Never');
+    await choose(inSheet.getByLabelText('Ends'), 'Never');
+    expect(shownChoice(inSheet.getByLabelText('Ends'))).toBe('Never');
     expect(inSheet.getByLabelText('End date')).toHaveValue('');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(await detail(sheet, 'Ends')).toBe('Never');
@@ -6153,25 +6188,25 @@ describe('agent profile', () => {
     await more(inSheet);
     // Where the browser can't open its picker when asked (Safari before 16.4), On a date… focuses the picker, which then
     // takes the row's taps.
-    await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'On a date…');
+    await choose(inSheet.getByLabelText('Ends'), 'On a date…');
     expect(inSheet.getByLabelText('End date')).toHaveFocus();
     expect(inSheet.getByLabelText('End date').closest('.settings-row')).toHaveClass('settings-ends-direct');
     // Elsewhere On a date… opens the native picker, and the row stays Never until it picks a date.
     const showPicker = vi.fn();
     Object.defineProperty(HTMLInputElement.prototype, 'showPicker', { configurable: true, value: showPicker });
-    await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'On a date…');
+    await choose(inSheet.getByLabelText('Ends'), 'On a date…');
     Reflect.deleteProperty(HTMLInputElement.prototype, 'showPicker');
     expect(showPicker.mock.contexts).toEqual([inSheet.getByLabelText('End date')]);
-    expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Never');
+    expect(shownChoice(inSheet.getByLabelText('Ends'))).toBe('Never');
     await userEvent.type(inSheet.getByLabelText('End date'), '2099-06-30T18:00');
-    expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Tue, Jun 30, 6:00 PM ET');
+    expect(shownChoice(inSheet.getByLabelText('Ends'))).toBe('Tue, Jun 30, 6:00 PM ET');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(await detail(sheet, 'Ends')).toBe('Tue, Jun 30, 6:00 PM ET');
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     await more(inSheet);
     // Never, then the same date again, is the ending Edit opened with: Save leaves it alone.
-    await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'Never');
+    await choose(inSheet.getByLabelText('Ends'), 'Never');
     await userEvent.type(inSheet.getByLabelText('End date'), '2099-06-30T18:00');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
@@ -6229,7 +6264,7 @@ describe('agent profile', () => {
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     await more(inSheet);
     // Read in the task's own time zone.
-    expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Wed, Jan 1, 12:00 AM ET');
+    expect(shownChoice(inSheet.getByLabelText('Ends'))).toBe('Wed, Jan 1, 12:00 AM ET');
     expect(inSheet.getByLabelText('End date')).toHaveValue('2020-01-01T00:00');
     await userEvent.clear(inSheet.getByLabelText('End date'));
     await userEvent.type(inSheet.getByLabelText('End date'), '2099-06-30T18:00');
@@ -6241,8 +6276,8 @@ describe('agent profile', () => {
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     await more(inSheet);
-    await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'Never');
-    expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Never');
+    await choose(inSheet.getByLabelText('Ends'), 'Never');
+    expect(shownChoice(inSheet.getByLabelText('Ends'))).toBe('Never');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
     expect(sent('PATCH', '/scheduled-tasks/task-1').at(-1)).toEqual({ title: 'Morning brief', prompt: 'Brief me on rates', endDate: null });
@@ -6256,7 +6291,7 @@ describe('agent profile', () => {
     const inSheet = within(sheet);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), 'Once');
+    await choose(inSheet.getByLabelText('Repeat'), 'Once');
     // A task that runs once ends after it runs: its Time is its only run, and More holds only the model.
     await more(inSheet);
     expect(rows(sheet)).toEqual(['Repeat', 'Time', 'Model']);
@@ -6408,7 +6443,7 @@ describe('agent profile', () => {
 
   /** The Edit form's settings rows, by their labels. */
   const rows = (sheet: HTMLElement) => [...sheet.querySelectorAll('.scheduled-edit .settings-row')].map((row) => row.firstElementChild?.textContent);
-  const choices = (sheet: HTMLElement) => within(within(sheet).getByLabelText('Repeat')).getAllByRole('option').map((option) => option.textContent);
+  const choices = (sheet: HTMLElement) => choicesOf(within(sheet).getByLabelText('Repeat'));
 
   it('keeps a schedule as written when an edit leaves its controls alone', async () => {
     beforeCountedRuns();
@@ -6419,8 +6454,8 @@ describe('agent profile', () => {
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     // Weekly on two days is none of Repeat's choices: it is Custom, in its own words. With no start, Starts is today.
-    expect(inSheet.getByLabelText('Repeat')).toHaveDisplayValue('Custom');
-    expect(choices(sheet)).toEqual(['Interval', 'Daily', 'Weekdays', 'Weekly', 'Once', 'Custom']);
+    expect(shownChoice(inSheet.getByLabelText('Repeat'))).toBe('Custom');
+    expect(await choices(sheet)).toEqual(['Interval', 'Daily', 'Weekdays', 'Weekly', 'Once', 'Custom']);
     expect(rows(sheet)).toEqual(['Repeat', 'Schedule']);
     expect(inSheet.getByText('Weekly on Monday and Thursday at 8:08 AM')).toBeInTheDocument();
     await more(inSheet);
@@ -6441,7 +6476,7 @@ describe('agent profile', () => {
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     expect(inSheet.queryByLabelText('Schedule')).toBeNull();
-    expect(inSheet.getByLabelText('Repeat')).toHaveDisplayValue('Weekdays');
+    expect(shownChoice(inSheet.getByLabelText('Repeat'))).toBe('Weekdays');
     // A task from before tasks kept their first run starts at its next one; Time is the time of day it runs.
     expect(inSheet.getByLabelText('Time')).toHaveValue('08:00');
     expect(inSheet.getByText('8:00 AM ET')).toBeInTheDocument();
@@ -6472,9 +6507,9 @@ describe('agent profile', () => {
     expect((await details(sheet)).slice(0, 2)).toEqual([['Repeat', 'Custom'], ['Schedule', 'Every 24 hours']]);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    expect(inSheet.getByLabelText('Repeat')).toHaveDisplayValue('Custom');
+    expect(shownChoice(inSheet.getByLabelText('Repeat'))).toBe('Custom');
     expect(inSheet.getByText('Every 24 hours')).toBeInTheDocument();
-    expect(choices(sheet)).toEqual(['Interval', 'Daily', 'Weekdays', 'Weekly', 'Once', 'Custom']);
+    expect(await choices(sheet)).toEqual(['Interval', 'Daily', 'Weekdays', 'Weekly', 'Once', 'Custom']);
     expect(inSheet.getByRole('button', { name: 'More' })).toHaveAttribute('aria-expanded', 'false');
     const shut = {
       Interval: ['Repeat', 'Every'], Daily: ['Repeat', 'Time'], Weekdays: ['Repeat', 'Time'], Weekly: ['Repeat', 'Day', 'Time'], Once: ['Repeat', 'Time'],
@@ -6482,19 +6517,19 @@ describe('agent profile', () => {
     };
     for (const [choice, labels] of Object.entries(shut)) {
       // eslint-disable-next-line no-await-in-loop -- one choice at a time
-      await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), choice);
+      await choose(inSheet.getByLabelText('Repeat'), choice);
       expect(rows(sheet)).toEqual(labels);
       expect(inSheet.queryByRole('status')).toBeNull();
     }
     // Weekly runs on Starts' weekday, a Tuesday, until Day picks another.
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), 'Weekly');
-    expect(inSheet.getByLabelText('Day')).toHaveDisplayValue('Tuesday');
+    await choose(inSheet.getByLabelText('Repeat'), 'Weekly');
+    expect(shownChoice(inSheet.getByLabelText('Day'))).toBe('Tuesday');
     expect(inSheet.getByText('7:15 AM ET')).toBeInTheDocument();
     // Interval counts minutes, from 30.
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), 'Interval');
+    await choose(inSheet.getByLabelText('Repeat'), 'Interval');
     expect(inSheet.getByLabelText('Every')).toHaveValue('30');
     expect(inSheet.getByText('minutes')).toBeInTheDocument();
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), 'Custom');
+    await choose(inSheet.getByLabelText('Repeat'), 'Custom');
     await more(inSheet);
     expect(inSheet.getByRole('button', { name: 'More' })).toHaveAttribute('aria-expanded', 'true');
     expect(rows(sheet)).toEqual(['Repeat', 'Schedule', 'Starts', 'Ends', 'Model']);
@@ -6515,7 +6550,7 @@ describe('agent profile', () => {
     const fields = { title: 'Morning brief', prompt: 'Brief me on rates' };
     const edit = async (choice: string, pick?: () => Promise<void>) => {
       await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-      await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), choice);
+      await choose(inSheet.getByLabelText('Repeat'), choice);
       await pick?.();
       await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     };
@@ -6523,7 +6558,7 @@ describe('agent profile', () => {
 
     await edit('Interval', () => every(inSheet, '5'));
     expect((await details(sheet)).slice(0, 2)).toEqual([['Repeat', 'Interval'], ['Every', '5 minutes']]);
-    await edit('Weekly', () => userEvent.selectOptions(inSheet.getByLabelText('Day'), 'Thursday'));
+    await edit('Weekly', () => choose(inSheet.getByLabelText('Day'), 'Thursday'));
     expect((await details(sheet)).slice(0, 3)).toEqual([['Repeat', 'Weekly'], ['Day', 'Thursday'], ['Time', '7:30 AM ET']]);
     // Thursday 8 October.
     await edit('Once', async () => {
@@ -6598,14 +6633,14 @@ describe('agent profile', () => {
     expect((await details(sheet)).slice(0, 2)).toEqual([['Repeat', 'Custom'], ['Schedule', words]]);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    expect(inSheet.getByLabelText('Repeat')).toHaveDisplayValue('Custom');
+    expect(shownChoice(inSheet.getByLabelText('Repeat'))).toBe('Custom');
     expect(rows(sheet)).toEqual(['Repeat', 'Schedule']);
     expect(inSheet.getByText(words)).toBeInTheDocument();
     expect(inSheet.queryByLabelText('Every')).toBeNull();
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(service.scheduled[0]?.schedule).toBe(schedule);
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), 'Interval');
+    await choose(inSheet.getByLabelText('Repeat'), 'Interval');
     await every(inSheet, '4');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
@@ -6620,11 +6655,11 @@ describe('agent profile', () => {
     const inSheet = within(sheet);
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
 
-    expect(inSheet.getByLabelText('Repeat')).toHaveDisplayValue('Custom');
+    expect(shownChoice(inSheet.getByLabelText('Repeat'))).toBe('Custom');
     expect(rows(sheet)).toEqual(['Repeat', 'Schedule']);
     expect(inSheet.getByText('At 8:00 AM, on day 1 of the month')).toBeInTheDocument();
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), 'Daily');
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), 'Custom');
+    await choose(inSheet.getByLabelText('Repeat'), 'Daily');
+    await choose(inSheet.getByLabelText('Repeat'), 'Custom');
     await userEvent.clear(inSheet.getByLabelText('Prompt'));
     await userEvent.type(inSheet.getByLabelText('Prompt'), 'Brief me on FX');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
@@ -6644,18 +6679,18 @@ describe('agent profile', () => {
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     await more(inSheet);
-    expect(inSheet.getByLabelText('Model')).toHaveValue('plan');
+    expect(shownChoice(inSheet.getByLabelText('Model'))).toBe('GPT');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     await more(inSheet);
-    await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Sonnet');
+    await choose(inSheet.getByLabelText('Model'), 'Sonnet');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     await more(inSheet);
 
     const fields = { title: 'Morning brief', prompt: 'Brief me on rates' };
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([fields, { ...fields, model: 'sonnet' }]);
-    expect(inSheet.getByLabelText('Model')).toHaveValue('sonnet');
+    expect(shownChoice(inSheet.getByLabelText('Model'))).toBe('Sonnet');
   });
 
   it('shows a model the account no longer has as unavailable, not as its default', async () => {
@@ -6671,8 +6706,9 @@ describe('agent profile', () => {
     await more(inSheet);
 
     const model = inSheet.getByLabelText('Model');
-    expect(model).toHaveValue('retired');
-    expect(within(model).getByRole('option', { name: 'retired (unavailable)' })).toBeDisabled();
+    expect(shownChoice(model)).toBe('retired (unavailable)');
+    await userEvent.click(model);
+    expect(within(await screen.findByRole('listbox')).getByRole('option', { name: 'retired (unavailable)' })).toHaveAttribute('aria-disabled', 'true');
   });
 
   it.each([undefined, 'plan', 'sonnet'])('keeps scheduled prompt edits available after the model catalog fails with model %s', async (model) => {
@@ -6693,8 +6729,7 @@ describe('agent profile', () => {
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     await more(inSheet);
     expect(inSheet.getByLabelText('Model')).toBeDisabled();
-    expect(inSheet.getByLabelText('Model')).toHaveValue(model ?? '');
-    expect(inSheet.getByLabelText('Model')).toHaveDisplayValue(words);
+    expect(shownChoice(inSheet.getByLabelText('Model'))).toBe(words);
     await userEvent.clear(inSheet.getByLabelText('Prompt'));
     await userEvent.type(inSheet.getByLabelText('Prompt'), 'Brief me on FX');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
@@ -6723,17 +6758,17 @@ describe('agent profile', () => {
     await more(inSheet);
     const chooser = inSheet.getByLabelText('Model');
     expect(chooser).toBeEnabled();
-    expect(chooser).toHaveValue(model ?? '');
-    expect(within(chooser).queryByRole('option', { name: 'GPT' })).not.toBeInTheDocument();
+    expect(shownChoice(chooser)).toBe(model === undefined ? 'Account default (models unavailable)' : model === 'plan' ? 'plan (models unavailable)' : 'Sonnet');
+    expect(await choicesOf(chooser)).not.toContain('GPT');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(sent('PATCH', '/scheduled-tasks/task-1')[0]).not.toHaveProperty('model');
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     await more(inSheet);
-    await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Sonnet');
+    await choose(inSheet.getByLabelText('Model'), 'Sonnet');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     await more(inSheet);
-    expect(inSheet.getByLabelText('Model')).toHaveValue('sonnet');
+    expect(shownChoice(inSheet.getByLabelText('Model'))).toBe('Sonnet');
     if (model !== 'sonnet') expect(sent('PATCH', '/scheduled-tasks/task-1')[1]).toHaveProperty('model', 'sonnet');
     expect(panel.getByText('Failed to load the models: 503: Plan Usage was revoked')).toBeInTheDocument();
   });
@@ -6752,9 +6787,9 @@ describe('agent profile', () => {
     const inSheet = within(await openTask(task));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     await more(inSheet);
-    await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Sonnet');
-    await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Account default (models unavailable)');
-    expect(inSheet.getByLabelText('Model')).toHaveValue('');
+    await choose(inSheet.getByLabelText('Model'), 'Sonnet');
+    await choose(inSheet.getByLabelText('Model'), 'Account default (models unavailable)');
+    expect(shownChoice(inSheet.getByLabelText('Model'))).toBe('Account default (models unavailable)');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(sent('PATCH', '/scheduled-tasks/task-1')[0]).not.toHaveProperty('model');
   });
@@ -6814,9 +6849,11 @@ describe('agent profile', () => {
 
     await userEvent.click(within(sheet).getByRole('button', { name: 'Delete' }));
 
-    expect(within(sheet).getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent)).toEqual(['Close', 'More', 'Delete task', 'Cancel']);
-    expect(within(sheet).getByRole('button', { name: 'Delete task' })).toHaveClass('text-destructive', 'rounded-full');
-    await userEvent.click(within(sheet).getByRole('button', { name: 'Cancel' }));
+    // The stock alert dialog asks, naming the task, with Cancel before Delete task.
+    const ask = await screen.findByRole('alertdialog', { name: 'Delete Morning brief?' });
+    expect(within(ask).getAllByRole('button').map((button) => button.textContent)).toEqual(['Cancel', 'Delete task']);
+    await userEvent.click(within(ask).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(within(sheet).getByRole('button', { name: 'Delete' })).toBeEnabled();
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toEqual([]);
     // The tab, under the open sheet, is hidden from assistive tech.
@@ -9535,8 +9572,8 @@ describe('attaching files', () => {
       { id: 'submitted', role: 'user', content: 'Summarise these\n\nAttached files:\n- /report.csv\n- /notes (1).md' },
     ]);
     expect(chips()).toEqual([]);
-    const sent = present(document.querySelector('.chat-message.is-user'), 'the sent message');
-    expect([...sent.querySelectorAll('.sent-file')].map((card) => card.textContent)).toEqual(['csvreport.csvCSV', 'mdnotes (1).mdMD']);
+    const sent = present(document.querySelector<HTMLElement>('.chat-message.is-user'), 'the sent message');
+    expect(within(within(sent).getByRole('list', { name: 'Attached files' })).getAllByRole('listitem').map((card) => card.textContent)).toEqual(['csvreport.csvCSV', 'mdnotes (1).mdMD']);
     expect(sent.querySelector('.chat-bubble')).toHaveTextContent(/^Summarise these$/);
   });
 

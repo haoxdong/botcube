@@ -10,6 +10,7 @@
     "./worklog-clock": "./src/app/worklog-clock.ts",
     "./latency": "./src/app/latency.ts",
     "./load-state": "./src/app/load-state.tsx",
+    "./alert-line": "./src/app/alert-line.tsx",
     "./bot-settings": "./src/bot-settings.ts",
     "./sign-ins": "./src/app/sign-ins.tsx",
     "./ui": "./src/components/ui/index.ts",

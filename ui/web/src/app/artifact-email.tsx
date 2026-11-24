@@ -4,17 +4,18 @@ import { EditorContent, generateJSON, generateText, useEditor } from "@tiptap/re
 import StarterKit from "@tiptap/starter-kit";
 import { readDraft, type EmailDraft } from "botcube-artifact-check/email-schema";
 import type { Imported } from "botcube-artifact-check/record";
-import { m as motionElement } from "motion/react";
+import { Fades } from "./motion";
 import { MailIcon, PaperclipIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
+import { CouldntOpen, EditFailures, NewerVersion } from "./alert-line";
 import { artifactVersions } from "./artifact-versions";
 import { baseOf, filesPath } from "./files-path";
 import {
   pdfOf, saveFile, storedVersion, type ArtifactEdit, type ArtifactVersion, type Export, type ExportTarget, type ViewerProps,
 } from "./artifact-viewer";
-import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
 import { Button } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 
 /**
@@ -126,11 +127,11 @@ export function EditableEmail({ artifact: newest, read, save, shows }: ViewerPro
   };
   return (
     <>
-      <Presence>{loaded !== null && "error" in loaded && (
-        <motionElement.p {...presenceMotion} role="alert" className="artifact-refused">Couldn&apos;t open {shown.title}: {loaded.error}</motionElement.p>
-      )}</Presence>
-      <Presence>{loaded !== null && "draft" in loaded && (
-        <motionElement.div {...presenceMotion} className="artifact-email">
+      <Fades>{loaded !== null && "error" in loaded && (
+        <CouldntOpen title={shown.title} why={loaded.error} />
+      )}</Fades>
+      <Fades>{loaded !== null && "draft" in loaded && (
+        <div className="artifact-email">
           <DraftForm key={`${shown.path}#${opened}`} version={shown} newest={newest} loaded={loaded.draft} close={close}
             edits={(now) => {
               setEdited(now);
@@ -140,8 +141,8 @@ export function EditableEmail({ artifact: newest, read, save, shows }: ViewerPro
               await save(edit);
               close();
             }} />
-        </motionElement.div>
-      )}</Presence>
+        </div>
+      )}</Fades>
     </>
   );
 }
@@ -158,6 +159,7 @@ function DraftForm({ version, newest, loaded, edits, close, save }: {
     const { to, cc, bcc } = loaded;
     return { to: to?.join(", ") ?? "", cc: cc?.join(", ") ?? "", bcc: bcc?.join(", ") ?? "" };
   });
+  const id = useId();
   const [subject, setSubject] = useState(loaded.subject ?? "");
   const [html, setHtml] = useState<string | null>(null);
   const [failures, setFailures] = useState<string[]>([]);
@@ -194,27 +196,22 @@ function DraftForm({ version, newest, loaded, edits, close, save }: {
         <Button type="button" variant="ghost" size="sm" disabled={!edited || busy} onClick={() => void submit()}>Save</Button>
         <Button type="button" variant="ghost" size="sm" disabled={!edited || busy} onClick={close}>Cancel</Button>
       </div>
-      <Presence>{edited && !busy && newest.version > version.version && (
-        <motionElement.div {...presenceMotion} role="status" className="artifact-edit-newer">
-          <span>Version {newest.version} arrived while you edited version {version.version}. Your edits are kept.</span>
-          <Button type="button" variant="ghost" size="sm" onClick={close}>Discard edits and open version {newest.version}</Button>
-        </motionElement.div>
-      )}</Presence>
-      <Presence>{failures.map((failure) => (
-        <motionElement.p key={failure} {...presenceMotion} role="alert" className="artifact-refused artifact-edit-failure">{failure}</motionElement.p>
-      ))}</Presence>
+      <Fades>{edited && !busy && newest.version > version.version && (
+        <NewerVersion newest={newest.version} edited={version.version} onDiscard={close} />
+      )}</Fades>
+      <EditFailures failures={failures} />
       <div className="artifact-email-fields">
         {RECIPIENTS.map((field) => (
-          <label key={field} className="artifact-email-field">
-            <span>{LABELS[field]}</span>
-            <Input type="text" aria-label={LABELS[field]} value={recipients[field]}
+          <Field key={field} orientation="horizontal" className="artifact-email-field">
+            <FieldLabel htmlFor={`${id}-${field}`}>{LABELS[field]}</FieldLabel>
+            <Input id={`${id}-${field}`} type="text" value={recipients[field]}
               onChange={(event) => setRecipients((current) => ({ ...current, [field]: event.target.value }))} />
-          </label>
+          </Field>
         ))}
-        <label className="artifact-email-field">
-          <span>Subject</span>
-          <Input type="text" aria-label="Subject" value={subject} onChange={(event) => setSubject(event.target.value)} />
-        </label>
+        <Field orientation="horizontal" className="artifact-email-field">
+          <FieldLabel htmlFor={`${id}-subject`}>Subject</FieldLabel>
+          <Input id={`${id}-subject`} type="text" value={subject} onChange={(event) => setSubject(event.target.value)} />
+        </Field>
       </div>
       <EditorContent editor={editor} className="artifact-email-editor" />
       <ul aria-label="Attachments" className="artifact-email-attachments" hidden={!loaded.attachments?.length}>

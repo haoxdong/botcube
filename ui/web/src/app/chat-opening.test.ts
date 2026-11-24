@@ -44,7 +44,7 @@ it('opens only once the latest message has held still since the frame before', (
 // its 1s wait for a rendered chat counted from the mount, before the scroll view had kept to the grown reply.
 it('waits for the latest message to hold still after a reply renders late', () => {
   let bottom = 757;
-  const wrapper = chat('<div class="copilotKitMessage copilotKitAssistantMessage"><div data-streamdown="mermaid-block"></div></div>', () => bottom);
+  const wrapper = chat('<div class="chat-message is-assistant"><div data-streamdown="mermaid-block"></div></div>', () => bottom);
   const opened = vi.fn();
   vi.spyOn(performance, 'now').mockReturnValue(0);
   watchOpening(() => wrapper, opened);
@@ -66,7 +66,7 @@ it('waits for the latest message to hold still after a reply renders late', () =
 // A reply's file link shows "(loading)" on one line, then its file's state: a download link, or a "could not download"
 // alert of up to three lines. Opened while it loaded, the chat at its end moved 44px when the link resolved.
 it('waits for a reply file link to resolve before opening', () => {
-  const wrapper = chat('<div class="copilotKitMessage copilotKitAssistantMessage"><span data-reply-file-loading>[1] (loading)</span></div>');
+  const wrapper = chat('<div class="chat-message is-assistant"><span data-reply-file-loading>[1] (loading)</span></div>');
   const opened = vi.fn();
   vi.spyOn(performance, 'now').mockReturnValue(0);
   watchOpening(() => wrapper, opened);
@@ -96,7 +96,7 @@ it('marks the messages a chat holds as it opens, so its history shows without th
 });
 
 it('waits for a reply image to load before opening', () => {
-  const wrapper = chat('<div class="copilotKitMessage copilotKitAssistantMessage"><div class="reply-image"><img></div></div>');
+  const wrapper = chat('<div class="chat-message is-assistant"><div class="reply-image"><img></div></div>');
   const opened = vi.fn();
   watchOpening(() => wrapper, opened);
 

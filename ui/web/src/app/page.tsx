@@ -1,6 +1,7 @@
 "use client";
 
 import "@copilotkit/react-core/v2/styles.css";
+import { Arrives } from "./motion";
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { flushSync } from "react-dom";
@@ -15,7 +16,6 @@ import { keepFileDropsInPage } from "./keep-file-drops";
 import { KeptChat, preloadKeptChat, prepareKeptChat } from "./kept-chat";
 import { SessionGate } from "./session-gate";
 import { LoadingSkeleton } from "./load-state";
-import { Swap } from "./collapse";
 
 const App = lazy(async () => {
   if (typeof window !== "undefined" && openingMainChat().copy !== null) {
@@ -40,9 +40,9 @@ function OpeningChat({ opening, latestShown, moment }: { opening: StoredMainChat
     return () => cancelAnimationFrame(frame);
   }, [opening, moment]);
   return <SessionGate title={UI_CONFIG.title} agentName={UI_CONFIG.agentName} status="loading" loadFailure={undefined} chatServiceUrl={CHAT_SERVICE_URL}>
-    <Swap state={opening?.accountId ?? "empty"} className="app-chat app-chat-opening">{opening === null ? <LoadingSkeleton label="Main Chat" /> : <div className="kept-chat" role="status" aria-label="Loading chat controls">
+    <Arrives state={opening?.accountId ?? "empty"} className="app-chat app-chat-opening">{opening === null ? <LoadingSkeleton label="Main Chat" /> : <div className="kept-chat" role="status" aria-label="Loading chat controls">
       <KeptChat messages={opening.copy.messages} running={opening.copy.running === true} disclaimer={UI_CONFIG.disclaimer} latestShown={latestShown} />
-    </div>}</Swap>
+    </div>}</Arrives>
   </SessionGate>;
 }
 

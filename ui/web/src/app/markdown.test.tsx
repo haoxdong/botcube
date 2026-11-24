@@ -1,4 +1,4 @@
-import { CopilotChatAssistantMessage } from '@copilotkit/react-core/v2';
+import { MessageResponse, type MessageResponseProps } from '@/components/ui/message';
 import { render, waitFor } from '@testing-library/react';
 import { Streamdown } from 'streamdown';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -9,7 +9,8 @@ import MarkdownRenderer from './markdown-renderer';
 import { REPLY_MARKDOWN } from './reply-markdown';
 import { ReplyTurnRunning } from './reply-turn';
 
-const Renderer = CopilotChatAssistantMessage.MarkdownRenderer;
+/** The one reply part, given a reply's words as CopilotKit's renderer once was. */
+const Renderer = ({ content, ...props }: MessageResponseProps & { content: string }) => <MessageResponse {...props}>{content}</MessageResponse>;
 
 const tables = [
   {

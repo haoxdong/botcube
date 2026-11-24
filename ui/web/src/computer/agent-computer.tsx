@@ -1,7 +1,5 @@
 
 
-import { domMax, LazyMotion, m as motionElement } from "motion/react";
-import { Presence, presenceMotion, zoomMotion } from "../app/collapse";
 import { ClipboardPaste, Copy, Folder, Keyboard, Laptop, MousePointer2, X, type LucideIcon } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Button } from "@/components/ui/button";
@@ -10,11 +8,8 @@ import { useCallback, useLayoutEffect, useRef, useState, type FormEvent, type Re
 import { BrowserLiveFrame, type LiveViewConnection, type BrowserLiveFrameProps } from './browser-live-frame';
 import { failureDetail } from './failure-detail';
 import { FOLDER_ICON } from './files-app';
-import { motionTokens } from '../app/motion-tokens';
-import { useAfterMove } from '../app/motion';
+import { Fades, Glides, useAfterMove } from '../app/motion';
 import { Terminal, type ShellCommand } from './terminal';
-
-const MotionButton = motionElement.create(Button);
 
 
 /**
@@ -203,8 +198,6 @@ export function AgentComputer({
   const connection = settled ? live.connection : null;
   const covered = app === 'Chrome' && !settled;
   const waited = useAfterMove(covered);
-  const { move } = motionTokens();
-  const ride = { layout: true, transition: { layout: move } } as const;
   const title = `${agentName}'s computer`;
   const host = chatId.replaceAll('-', '').slice(0, 12);
   const handBack = (sessionId: string) => {
@@ -225,24 +218,24 @@ export function AgentComputer({
       }}
     >
       {/* Beside this size container, not in it, so it still covers the screen as the desktop springs back. */}
-      {layer !== null && createPortal(<Presence>{sheet && <motionElement.div {...presenceMotion} className="agent-computer-sheet-backdrop" />}</Presence>, layer)}
-      <Presence>{sheet && (
-        <motionElement.div {...presenceMotion} className="agent-computer-sheet-head">
+      {layer !== null && createPortal(<Fades>{sheet && <div className="agent-computer-sheet-backdrop" />}</Fades>, layer)}
+      <Fades>{sheet && (
+        <div className="agent-computer-sheet-head">
           <Button variant="ghost" size="icon" className="agent-computer-sheet-close" aria-label="Close computer" title="Close computer" onClick={() => zoom(false)}>
             <X aria-hidden="true" />
           </Button>
           <span className="agent-computer-sheet-title"><Laptop aria-hidden="true" />{title}</span>
-        </motionElement.div>
-      )}</Presence>
+        </div>
+      )}</Fades>
       {/* Only a zoom springs the desktop between its place and the full-screen sheet. */}
-      <LazyMotion features={domMax} strict><motionElement.div layout layoutDependency={sheet} transition={{ layout: move }} className="agent-computer-desktop">
+      <Glides on dependency={sheet} scales className="agent-computer-desktop">
         <div className="agent-computer-window">
           {/* Every app draws on the agent's 16:9 screen. The live view stays connected under Terminal and Files, so
               going back to Chrome shows the browser at once. Until it shows the browser, its last screen stands in,
               dimmed, over the desktop: never a black frame. */}
           <div className={covered ? 'agent-computer-screen agent-computer-screen-covered' : 'agent-computer-screen'}>
-            <Presence>{hasViewer && (
-              <motionElement.div {...zoomMotion} key={`${browserSessionId}:${generation}`} className="agent-computer-live"><BrowserFrame
+            <Fades>{hasViewer && (
+              <div key={`${browserSessionId}:${generation}`} className="agent-computer-live"><BrowserFrame
                 sessionId={browserSessionId}
                 expanded={sheet}
                 interactive={active && sheet && control === 'user' && !busy && app === 'Chrome'}
@@ -264,28 +257,28 @@ export function AgentComputer({
                   setLive(null);
                   onLiveEnded?.();
                 }}
-              /></motionElement.div>
-            )}</Presence>
+              /></div>
+            )}</Fades>
             {covered && (
-              <motionElement.div {...ride} className="agent-computer-cover">
-                <Presence>{computer.screenshot !== null && (
-                  <motionElement.img {...presenceMotion} className="agent-computer-screenshot" src={computer.screenshot} alt="The last screen" />
-                )}</Presence>
+              <div className="agent-computer-cover">
+                <Fades>{computer.screenshot !== null && (
+                  <img className="agent-computer-screenshot" src={computer.screenshot} alt="The last screen" />
+                )}</Fades>
                 {waited && !liveViewExhausted && !off && (starting || browserSessionId !== null) && <p className="agent-computer-starting" role="status">{computer.state === 'awake' ? 'Connecting…' : 'Starting…'}</p>}
-                <Presence>{coverNotice && <motionElement.p {...presenceMotion} className="agent-computer-notice" role="status">{coverNotice}</motionElement.p>}</Presence>
-              </motionElement.div>
+                <Fades>{coverNotice && <p className="agent-computer-notice" role="status">{coverNotice}</p>}</Fades>
+              </div>
             )}
             {/* Terminal and Files fill Chrome's window; the dock switches apps. */}
             {app === 'Terminal' && (
-              <motionElement.section {...ride} className="agent-computer-app" aria-label="Terminal">
+              <section className="agent-computer-app" aria-label="Terminal">
                 <div className="agent-computer-terminal-bar">
                   <Folder aria-hidden="true" />
                   <span>workspace — zsh</span>
                 </div>
                 <Terminal commands={commands} error={terminalError} prompt={`agent@${host} workspace %`} />
-              </motionElement.section>
+              </section>
             )}
-            {app === 'Files' && <motionElement.section {...ride} className="agent-computer-app" aria-label="Files">{files}</motionElement.section>}
+            {app === 'Files' && <section className="agent-computer-app" aria-label="Files">{files}</section>}
             {!sheet && app === 'Chrome' && <Button variant="link" className="agent-computer-screen-open" aria-label="View computer" disabled={!active} onClick={() => zoom(true)} />}
           </div>
         </div>
@@ -306,11 +299,11 @@ export function AgentComputer({
               </button>
           ))}
         </nav>
-      </motionElement.div></LazyMotion>
+      </Glides>
       {/* Who drives, attached under the desktop as in dots. */}
       <div className="agent-computer-bar">
-        <Presence>{browserSessionId !== null && (
-          <motionElement.span {...presenceMotion} className="agent-computer-pill">
+        <Fades>{browserSessionId !== null && (
+          <span className="agent-computer-pill">
             {control === 'agent' ? `${agentName} has control` : 'You have control'}
             <span aria-hidden="true"> · </span>
             <Button size="sm" disabled={busy || !active} onClick={() => {
@@ -321,14 +314,14 @@ export function AgentComputer({
               }}>
               {control === 'agent' ? 'Take over' : 'Return control'}
             </Button>
-          </motionElement.span>
-        )}</Presence>
-        <Presence>{running && <MotionButton {...presenceMotion} variant="outline" size="sm" disabled={!active || onStop === null} onClick={onStop ?? undefined}>Stop</MotionButton>}</Presence>
+          </span>
+        )}</Fades>
+        <Fades>{running && <Button variant="outline" size="sm" disabled={!active || onStop === null} onClick={onStop ?? undefined}>Stop</Button>}</Fades>
       </div>
-      <Presence>{active && sheet && browserSessionId !== null && control === 'user' && (
-        <motionElement.div {...presenceMotion} className="agent-computer-touch-slot"><TouchToolbar connection={connection} busy={busy} /></motionElement.div>
-      )}</Presence>
-      <Presence>{error && <motionElement.p {...presenceMotion} className="agent-computer-error" role="alert">{error}</motionElement.p>}</Presence>
+      <Fades>{active && sheet && browserSessionId !== null && control === 'user' && (
+        <div className="agent-computer-touch-slot"><TouchToolbar connection={connection} busy={busy} /></div>
+      )}</Fades>
+      <Fades>{error && <p className="agent-computer-error" role="alert">{error}</p>}</Fades>
     </div>
   );
 }
@@ -442,7 +435,7 @@ function TouchToolbar({ connection, busy }: { connection: LiveViewConnection | n
         disabled={connecting}
         onInput={type}
       />
-      <Presence>{error && <motionElement.p {...presenceMotion} className="agent-computer-error" role="alert">{error}</motionElement.p>}</Presence>
+      <Fades>{error && <p className="agent-computer-error" role="alert">{error}</p>}</Fades>
     </div>
   );
 }

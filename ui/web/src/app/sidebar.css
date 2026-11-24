@@ -22,7 +22,7 @@
 
   .app-layout:has(> .sidebar-expanded) .app-shell {
     transform: translateX(80vw);
-    z-index: 91;
+    z-index: calc(var(--layer-sidebar) + 1);
     overflow: hidden;
     border-radius: var(--radius-screen);
     box-shadow: var(--shadow-float);
@@ -66,7 +66,7 @@
     content: "";
     position: absolute;
     inset: 0;
-    z-index: 400;
+    z-index: var(--layer-screen);
     background: var(--frost);
   }
 
@@ -154,7 +154,7 @@
     display: block;
     position: fixed;
     inset: 0 0 0 80%;
-    z-index: 92;
+    z-index: var(--layer-raised);
     border: none;
     padding: 0;
     background: none;

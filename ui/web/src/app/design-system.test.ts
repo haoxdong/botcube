@@ -31,9 +31,9 @@ describe('tokens', () => {
     expect(tokens.filter((t) => t.startsWith('--tracking-'))).toEqual(['--tracking-caps']);
   });
 
-  it('defines six radii and two shadows', () => {
+  it('defines six radii and three shadows', () => {
     expect(tokens.filter((t) => t.startsWith('--radius-'))).toEqual(RADII.map((r) => `--radius-${r}`));
-    expect(tokens.filter((t) => t.startsWith('--shadow-'))).toEqual(['--shadow-rest', '--shadow-float']);
+    expect(tokens.filter((t) => t.startsWith('--shadow-'))).toEqual(['--shadow-rest', '--shadow-float', '--shadow-thumb']);
   });
 
   it('defines two durations, one curve and one loop', () => {
@@ -84,10 +84,11 @@ it("colours text from the tokens, or a code block's tokens with Shiki's colours"
 });
 
 it('keeps raw colours out of components', () => {
-  // Marq's avatar is an illustration; Chrome's dock icon is Google's own logo; a Sheet's standard colors are its
-  // cells' own, as the Sheet format names them, not the app's.
+  // Marq's hat, eyes, monocle and laptop are an illustration's greys (his own blues are the agent tokens); Chrome's
+  // dock icon is Google's own logo; a Sheet's standard colors are its cells' own, as the Sheet format names them, not
+  // the app's.
   const exempt = {
-    'app/avatar.tsx': /#[0-9a-f]{6}/i,
+    'app/avatar.tsx': /#(18191b|6b6f77|202124|d4d6da|0d0f12|4a4d55|6b7480|c9d0d9|8e98a6|bfc7d1|d3d9e0)\b/i,
     'app/sheet-model.ts': /#[0-9a-f]{6}/i,
     'computer/agent-computer.tsx': /#(1a73e8|4285f4|8ab4f8|ffffff)\b/i,
   };

@@ -2,7 +2,7 @@ import { act, render, renderHook, screen, waitFor } from '@testing-library/react
 import { expect, it, onTestFinished, vi } from 'vitest';
 
 import { HeaderName, useHeaderWorking } from './chat-header';
-import { Presence } from './collapse';
+import { Fades } from './motion';
 
 const tokens = () => {
   const sheet = document.head.appendChild(document.createElement('style'));
@@ -61,6 +61,6 @@ it('shows a resting chat at rest at once, though the chat left a moment ago was 
 
 it('keeps the header usable inside the application presence owner', () => {
   tokens();
-  const view = render(<Presence><HeaderName name="Marq" working /></Presence>);
+  const view = render(<Fades><HeaderName name="Marq" working /></Fades>);
   expect(view.getByText('is working')).toBeInTheDocument();
 });

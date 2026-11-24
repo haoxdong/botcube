@@ -1,14 +1,13 @@
 "use client";
 
-import { Presence, presenceMotion } from "./collapse";
 
-import { m as motionElement } from "motion/react";
+import { Fades } from "./motion";
 
 import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type Key, type ReactElement, type ComponentProps, type ReactNode, type Ref, type RefObject } from "react";
 import { CopilotKit, useCopilotKit } from "@copilotkit/react-core/v2";
 import {
   CopilotChat,
-  CopilotChatAssistantMessage,
+  type CopilotChatAssistantMessage,
   CopilotChatInput,
   CopilotChatMessageView,
   type CopilotChatReasoningMessage,
@@ -44,8 +43,7 @@ import { WaitingMessages } from "./waiting-steering";
 import { MessageEntranceRow, MessageEntranceHistory, type MessageEntrances } from "./message-entrance";
 import { useTurn, type Turn } from "./turn";
 import { ThreadScrollView } from "./conversation-thread";
-
-const MotionButton = motionElement.create(Button);
+import { AlertLine } from "./alert-line";
 
 const UI_CONFIG = webUiPlugin.config;
 const AGENT_ID = UI_CONFIG.agentId;
@@ -57,7 +55,7 @@ function WelcomeScreen({ userName }: { userName?: string | undefined }) {
   return (
     <div className="welcome-screen">
       <h1 className="welcome-title">{firstName ? `Hi ${firstName}, how can I help you?` : UI_CONFIG.title}</h1>
-      <Presence>{!firstName && <motionElement.p {...presenceMotion} className="welcome-desc">{UI_CONFIG.subtitle}</motionElement.p>}</Presence>
+      <Fades>{!firstName && <p className="welcome-desc">{UI_CONFIG.subtitle}</p>}</Fades>
     </div>
   );
 }
@@ -199,11 +197,11 @@ function ComposerInput(props: CopilotChatInputProps) {
   return (
     <>
       {attached && <ComposerFilePicker picker={picker} add={attached.add} />}
-      <Presence>{accessory && (
-        <motionElement.div {...presenceMotion} className="cpk:max-w-3xl cpk:mx-auto cpk:px-4 cpk:@3xl:px-0">
+      <Fades>{accessory && (
+        <div className="cpk:max-w-3xl cpk:mx-auto cpk:px-4 cpk:@3xl:px-0">
           <div className="composer-accessory">{accessory}</div>
-        </motionElement.div>
-      )}</Presence>
+        </div>
+      )}</Fades>
       <Composer
         value={value}
         onChange={onChange}
@@ -323,9 +321,9 @@ function MessageRows({ rows, messages, loadOlder }: { rows: ReactElement[]; mess
   return (
     <>
       {(first > 0 || hasOlder) && <div ref={earlier} data-chat-earlier aria-hidden />}
-      <Presence>{first === 0 && loadOlder && (
-        <MotionButton {...presenceMotion} type="button" className="mx-auto block" onClick={() => void loadOlder()}>Load older messages</MotionButton>
-      )}</Presence>
+      <Fades>{first === 0 && loadOlder && (
+        <Button type="button" className="mx-auto block" onClick={() => void loadOlder()}>Load older messages</Button>
+      )}</Fades>
       {rows.slice(first).map((row) => <MessageEntranceRow key={row.key} id={String(row.key)}>{row}</MessageEntranceRow>)}
     </>
   );
@@ -360,7 +358,7 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
                 <MessageRows rows={worklogRows(messageElements, messages, replying || phase === "onServer", { started: phase === "started" || phase === "onServer" })} messages={messages} loadOlder={loadOlder} />
               </ReplyTurnRunning.Provider>
               {interruptElement}
-              <Presence>{phase === "opening" && last?.role !== "reasoning" && (last?.role ?? "user") === "user" && <motionElement.div {...presenceMotion} className="chat-pending-cursor"><CopilotChatMessageView.Cursor /></motionElement.div>}</Presence>
+              <Fades>{phase === "opening" && last?.role !== "reasoning" && (last?.role ?? "user") === "user" && <div className="chat-pending-cursor"><CopilotChatMessageView.Cursor /></div>}</Fades>
               {replying && last?.role !== "reasoning" && <MomentEnds moment="send-acknowledged" />}
               <ThreadWaiting />
 
@@ -368,27 +366,27 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
           );
         }}
       </CopilotChatMessageView>
-      <Presence>{runError !== null && (
-        <motionElement.p {...presenceMotion} className="chat-run-error" role="alert">{runError.message}</motionElement.p>
-      )}</Presence>
-      <Presence>{runError?.question && (
-        <motionElement.div {...presenceMotion} className="chat-failed-question">
+      <Fades>{runError !== null && (
+        <AlertLine className="chat-run-error">{runError.message}</AlertLine>
+      )}</Fades>
+      <Fades>{runError?.question && (
+        <div className="chat-failed-question">
           <p>Your question</p>
           <p style={{ whiteSpace: "pre-wrap" }}>{runError.question}</p>
-        </motionElement.div>
-      )}</Presence>
-      <Presence>{runError?.retry && (
-        <MotionButton {...presenceMotion} type="button" className="chat-turn-retry" onClick={runError.retry}>
+        </div>
+      )}</Fades>
+      <Fades>{runError?.retry && (
+        <Button type="button" className="chat-turn-retry" onClick={runError.retry}>
           Retry
-        </MotionButton>
-      )}</Presence>
+        </Button>
+      )}</Fades>
     </>
   );
 }
 
 function ReadOnlyBar({ startNewChat }: { startNewChat: () => void }) {
   return (
-    <div data-copilotkit className="cpk:pointer-events-none cpk:relative cpk:z-20" style={{ paddingBottom: "var(--copilotkit-license-banner-offset, 0px)" }}>
+    <div data-copilotkit className="cpk:pointer-events-none cpk:relative z-(--layer-bar)" style={{ paddingBottom: "var(--copilotkit-license-banner-offset, 0px)" }}>
       <div className="cpk:max-w-3xl cpk:mx-auto cpk:py-0 cpk:px-4 cpk:@3xl:px-0 cpk:pointer-events-auto">
         <div className="composer-read-only">
           <p>This chat is read-only.</p>
@@ -595,11 +593,10 @@ function ChatThread({
   const composerStop = useRef<(() => void) | null>(null);
   const waitingComposer = useRef<LentComposer | null>(null);
 
-
   return (
     <div className="chat-wrapper" ref={wrapperRef} onKeyDown={stopOnEscapeNoMenuTook(composerStop)} {...fileDrop.handlers}>
       <FileDropOverlay open={fileDrop.over} />
-      <Presence>{replayLoaded && showWelcome && !running && !openingAttempted.current && <motionElement.div {...presenceMotion} className="chat-welcome"><WelcomeScreen userName={userName} /></motionElement.div>}</Presence>
+      <Fades>{replayLoaded && showWelcome && !running && !openingAttempted.current && <div className="chat-welcome"><WelcomeScreen userName={userName} /></div>}</Fades>
       <ToolCallRenderer agent={agent} />
       <SubmitTurn.Provider value={submitTurn}>
       <ComposerSubmit.Provider value={composerSubmit}>

@@ -1,11 +1,11 @@
 "use client";
 
 import { FileCodeIcon } from "lucide-react";
-import { m as motionElement } from "motion/react";
+import { Fades } from "./motion";
 import { useEffect, useRef, useState, type RefObject } from "react";
 
+import { CouldntOpen } from "./alert-line";
 import { PDF, saveFile, storedVersion, type Export, type ViewerProps } from "./artifact-viewer";
-import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
 
 const SANDBOX_PAGE = "/artifact-sandbox/index.html";
@@ -52,9 +52,9 @@ export function VersionFrame({ artifact, read, frame, shows }: ViewerProps) {
   const failure = page !== null && "error" in page ? page.error : null;
   return (
     <>
-      <Presence>{failure !== null && (
-        <motionElement.p {...presenceMotion} role="alert" className="artifact-refused">Couldn&apos;t open {artifact.title}: {failure}</motionElement.p>
-      )}</Presence>
+      <Fades>{failure !== null && (
+        <CouldntOpen title={artifact.title} why={failure} />
+      )}</Fades>
       <SandboxFrame key={artifact.path} position={position} title={artifact.title} html={page !== null && "html" in page ? page.html : null} frame={frame} />
     </>
   );

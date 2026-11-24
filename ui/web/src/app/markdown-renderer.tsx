@@ -1,5 +1,4 @@
 import "katex/dist/katex.min.css";
-import { CopilotChatAssistantMessage } from "@copilotkit/react-core/v2";
 import { MessageResponse } from "@/components/ui/message";
 import { useContext } from "react";
 
@@ -14,28 +13,15 @@ const REPLY_REHYPE_PLUGINS = MARKDOWN_RENDERER.rehypePlugins.toSpliced(-1, 0, re
 /** While a Turn runs, a table arriving holds back until its delimiter row completes it. */
 const STREAMING_REPAIRS = { handlers: [tableInProgress] };
 
-function useReplyMarkdown(content: string) {
-  const running = useContext(ReplyTurnRunning);
-  return {
-    fence: running ? openFence(content) : null,
-    props: {
-      ...MARKDOWN_RENDERER,
-      className: "chat-markdown",
-      remarkPlugins: [...MARKDOWN_RENDERER.remarkPlugins, [remarkRepairedBracketMath, content]] as typeof MARKDOWN_RENDERER.remarkPlugins,
-      rehypePlugins: REPLY_REHYPE_PLUGINS,
-      ...(running ? { remend: STREAMING_REPAIRS } : {}),
-    },
-  };
-}
-
-/** A reply CopilotKit still renders (one that calls tools or publishes Artifacts): its renderer, whose prose classes its styles read. */
+/** A reply's words, through the one reply part: AI Elements' MessageResponse. */
 export default function MarkdownRenderer({ content }: { content: string }) {
-  const { fence, props } = useReplyMarkdown(content);
-  return <OpenFence.Provider value={fence}><CopilotChatAssistantMessage.MarkdownRenderer {...props} content={content} /></OpenFence.Provider>;
-}
-
-/** A reply in the stock bubble: AI Elements' MessageResponse. */
-export function StockMarkdownRenderer({ content }: { content: string }) {
-  const { fence, props } = useReplyMarkdown(content);
-  return <OpenFence.Provider value={fence}><MessageResponse {...props}>{content}</MessageResponse></OpenFence.Provider>;
+  const running = useContext(ReplyTurnRunning);
+  const props = {
+    ...MARKDOWN_RENDERER,
+    className: "chat-markdown",
+    remarkPlugins: [...MARKDOWN_RENDERER.remarkPlugins, [remarkRepairedBracketMath, content]] as typeof MARKDOWN_RENDERER.remarkPlugins,
+    rehypePlugins: REPLY_REHYPE_PLUGINS,
+    ...(running ? { remend: STREAMING_REPAIRS } : {}),
+  };
+  return <OpenFence.Provider value={running ? openFence(content) : null}><MessageResponse {...props}>{content}</MessageResponse></OpenFence.Provider>;
 }

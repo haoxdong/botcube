@@ -2,8 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefO
 import { useDrawerSwipe } from "./drawer-swipe";
 import { withStorage } from "./main-chat-copy";
 import { MenuButton } from "./menu-icon";
+import { viewport } from "@/design-system/viewport";
 import { Arriving } from "./motion";
-import { isPhoneNow } from "./phone-query";
 
 const KEY = 'botcube.sidebar-expanded';
 const DRAWER_REACH = 62;
@@ -13,7 +13,7 @@ export function useSidebar(layoutRef: RefObject<HTMLDivElement | null>, isPhone:
   const drawerRef = useRef<HTMLElement>(null);
   const swipe = useDrawerSwipe({ layoutRef, drawerRef, side: "left", name: "sidebar", enabled: isPhone, docked: !isPhone, expanded, onExpandedChange: setExpanded });
   useEffect(() => {
-    if (!isPhoneNow() && withStorage(() => localStorage.getItem(KEY)) === 'true') setExpanded(true);
+    if (viewport() !== 'phone' && withStorage(() => localStorage.getItem(KEY)) === 'true') setExpanded(true);
   }, []);
   useLayoutEffect(() => {
     const layout = layoutRef.current;

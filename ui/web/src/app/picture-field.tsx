@@ -1,14 +1,10 @@
 "use client";
 
-import { m as motionElement } from "motion/react";
-import { Presence, presenceMotion } from "./collapse";
+import { Fades } from "./motion";
 
-import { Button } from "../components/pill-button";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, pillButtonVariants } from "../components/pill-button";
 import { Input } from "@/components/ui/input";
 import { Avatar, resizedPicture } from "./avatar";
-
-const MotionButton = motionElement.create(Button);
 
 /**
  * A picture being edited: the avatar, Upload (resized before `onChange`) and, while there is one,
@@ -46,15 +42,15 @@ export function PictureField({
   return (
     <div className="picture-field">
       <Avatar picture={picture} emoji={emoji} name={name} agent={agent} size={size} />
-      <label className={buttonVariants({ variant: "secondary", className: "pill-button picture-upload rounded-full has-focus-visible:border-ring has-focus-visible:ring-3 has-focus-visible:ring-ring/50" })}>
+      <label className={pillButtonVariants({ className: "picture-upload has-focus-visible:border-(--color-blue) has-focus-visible:ring-3 has-focus-visible:ring-(--color-blue)/50" })}>
         Upload {noun}
         <Input type="file" accept="image/*" onChange={(event) => void choose(event.target.files?.[0])} />
       </label>
-      <Presence>{picture && (
-        <MotionButton {...presenceMotion} type="button" onClick={() => onChange(null)}>
+      <Fades>{picture && (
+        <Button type="button" onClick={() => onChange(null)}>
           Remove {noun}
-        </MotionButton>
-      )}</Presence>
+        </Button>
+      )}</Fades>
     </div>
   );
 }

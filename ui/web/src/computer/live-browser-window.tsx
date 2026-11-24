@@ -1,10 +1,10 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
+import { Arrives } from '../app/motion';
 
 import { chatServiceUrl } from '../plugin/chat-service-url';
 import { liveViewUrl } from './screenshots';
-import { Swap } from '../app/collapse';
 import { Screen } from './screen';
 
 const CHAT_SERVICE_URL = chatServiceUrl();
@@ -39,13 +39,13 @@ export function LiveBrowserWindow({ agentName }: { agentName: string }) {
         url={url}
         title={`${agentName}'s computer`}
         cover={
-          <Swap state={problem === null ? 'connecting' : 'failed'} className="computer-screen-cover">
+          <Arrives state={problem === null ? 'connecting' : 'failed'} className="computer-screen-cover">
             {problem === null ? (
               <p className="computer-screen-cover-detail" role="status">Connecting…</p>
             ) : (
               <p className="computer-screen-error" role="alert">{problem}</p>
             )}
-          </Swap>
+          </Arrives>
         }
         onAsleep={() => {
           setUrl(null);

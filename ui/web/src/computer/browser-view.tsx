@@ -1,8 +1,8 @@
 "use client";
 
-import { Swap } from "../app/collapse";
 
 import { useEffect, useState } from 'react';
+import { Arrives } from '../app/motion';
 
 import { BrowserLiveFrame } from './browser-live-frame';
 
@@ -17,7 +17,7 @@ export default function BrowserViewPage() {
 
   return (
     <main className="browser-view-page">
-      <Swap className="browser-view-content" state={sessionId ?? "missing"}>{sessionId ? (
+      <Arrives className="browser-view-content" state={sessionId ?? "missing"}>{sessionId ? (
         <BrowserLiveFrame
           key={`${sessionId}:${streamGeneration}`}
           sessionId={sessionId}
@@ -25,7 +25,7 @@ export default function BrowserViewPage() {
         />
       ) : (
         <div className="browser-view-status browser-view-error">Missing browser session.</div>
-      )}</Swap>
+      )}</Arrives>
     </main>
   );
 }

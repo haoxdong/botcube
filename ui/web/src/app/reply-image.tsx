@@ -1,7 +1,7 @@
 "use client";
 
-import { m as motionElement } from "motion/react";
-import { Presence, presenceMotion } from "./collapse";
+import { Fades } from "./motion";
+
 import { useState, type ComponentProps, type SyntheticEvent } from 'react';
 import { DownloadIcon } from 'lucide-react';
 import { agentFiles } from './agent-files';
@@ -11,6 +11,8 @@ import { keepSize, sizeOf, type Size } from './late-boxes';
 import { linkedPath } from './files-path';
 import { useReplyFile } from './use-reply-file';
 import { Button } from "@/components/ui/button";
+import { AlertLine } from "./alert-line";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /** An image's box before its size is known: the bubble's width at 16:9, a chart's usual shape. */
 const UNSIZED: Size = { width: 1600, height: 900 };
@@ -65,9 +67,9 @@ export function ReplyImage({ src, alt, title }: ComponentProps<'img'>) {
         data-streamdown="image-wrapper"
         style={{ width: `${box.width}px`, aspectRatio: `${box.width} / ${box.height}` }}
       >
-        <Presence>{shown?.status === 'ready' && (
+        <Fades>{shown?.status === 'ready' && (
           <>
-            <motionElement.img {...presenceMotion} key="0"
+            <img key="0"
               alt={alt}
               data-loaded={loaded ? '' : undefined}
               data-streamdown="image"
@@ -81,29 +83,26 @@ export function ReplyImage({ src, alt, title }: ComponentProps<'img'>) {
               src={shown.url}
               title={title}
             />
-            <motionElement.div {...presenceMotion} key="1" className="pointer-events-none absolute inset-0 hidden group-hover:block">
+            <div key="1" className="pointer-events-none absolute inset-0 hidden group-hover:block">
               <div data-testid="reply-image-scrim" className="h-full rounded-lg bg-(--scrim) opacity-30" />
-            </motionElement.div>
-            <motionElement.div {...presenceMotion} key="2" className="absolute right-2 bottom-2">
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={download}
-                title="Download image"
-                type="button"
-              >
-                <DownloadIcon size={14} />
-              </Button>
-            </motionElement.div>
+            </div>
+            <div key="2" className="absolute right-2 bottom-2">
+              <Tooltip>
+                <TooltipTrigger render={<Button variant="outline" size="icon" onClick={download} aria-label="Download image" type="button" />}>
+                  <DownloadIcon size={14} />
+                </TooltipTrigger>
+                <TooltipContent>Download image</TooltipContent>
+              </Tooltip>
+            </div>
           </>
-        )}</Presence>
-        <Presence>{shown !== null && shown.status !== 'ready' && (
-          <motionElement.span {...presenceMotion} className="reply-image-error" role="alert">{`${alt || path} could not load: ${shown.reason}`}</motionElement.span>
-        )}</Presence>
+        )}</Fades>
+        <Fades>{shown !== null && shown.status !== 'ready' && (
+          <AlertLine className="reply-image-error">{`${alt || path} could not load: ${shown.reason}`}</AlertLine>
+        )}</Fades>
       </div>
-      <Presence>{downloadError && (
-        <motionElement.span {...presenceMotion} role="alert">{`${alt || 'The image'} could not download: ${downloadError}`}</motionElement.span>
-      )}</Presence>
+      <Fades>{downloadError && (
+        <AlertLine className="inline">{`${alt || 'The image'} could not download: ${downloadError}`}</AlertLine>
+      )}</Fades>
     </>
   );
 }

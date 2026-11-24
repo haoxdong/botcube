@@ -63,7 +63,7 @@ describe('SignInsList', () => {
     expect(html).toContain('<div class="sign-in-username">ann@example.com</div>');
     expect(badgeClasses(html, 'Linked')).toEqual(expect.arrayContaining(['bg-secondary', 'sign-in-status']));
     expect(buttons(html)).toEqual(['Sign out']);
-    expect(html).not.toContain('sign-in-error');
+    expect(html).not.toContain('role="alert"');
   });
 
   it('offers Re-link and Sign out when the site needs re-linking', () => {
@@ -85,13 +85,13 @@ describe('SignInsList', () => {
     const html = render({ signIns: [site('linked', 'ann@example.com')], busy: true, error: 'Sign-out failed: 500' });
 
     expect(html).toMatch(/<button type="button"[^>]* disabled=""[^>]*>Sign out<\/button>/);
-    expect(html).toContain('<p class="sign-in-error" role="alert">Sign-out failed: 500</p>');
+    expect(html).toMatch(/role="alert"[^>]*>Sign-out failed: 500</);
   });
 
   // The profile's one loading state, in the shape of what loads, not a line of text.
   it('shows the loading skeleton until the Sign-ins arrive', () => {
     const html = render({ signIns: null });
-    expect(html).toContain('<div class="load-skeleton" role="status" aria-label="Loading Sign-ins">');
+    expect(html).toMatch(/<div [^>]*role="status" aria-label="Loading Sign-ins">(<div data-slot="skeleton"[^>]*><\/div>){3}<\/div>/);
     expect(html).not.toContain('Loading Sign-ins…');
   });
 });

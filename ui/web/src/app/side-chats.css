@@ -1,15 +1,15 @@
+/* The list fills the column below its toggle; shut, it has no height. Folds (motion.tsx) moves its height between the
+   two on --motion-move as the toggle opens or shuts it. */
 .side-chats-body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-rows: 1fr;
-  transition:
-    grid-template-rows var(--motion-move) var(--ease),
-    opacity var(--motion-quick) var(--ease);
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .side-chats-body[aria-hidden="true"] {
-  grid-template-rows: 0fr;
+  flex: none;
+  height: 0;
 }
 
 .side-chats-body > .sidebar-list {

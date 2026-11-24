@@ -24,8 +24,8 @@ const codeOf = (children: CodeProps["children"]): string =>
 /** streamdown 2.7.0's mermaid block, empty while its fence streams: Mermaid draws once it closes. */
 function PendingDiagram() {
   return (
-    <div className="my-4 flex w-full flex-col rounded-xl border border-border" data-streamdown="mermaid-block" data-pending="">
-      <div className="flex items-center text-muted-foreground text-xs"><span className="ml-1 font-mono lowercase">mermaid</span></div>
+    <div className="my-4 flex w-full flex-col rounded-xl border border-(--color-line)" data-streamdown="mermaid-block" data-pending="">
+      <div className="flex items-center text-(--color-text-muted) text-xs"><span className="ml-1 font-mono lowercase">mermaid</span></div>
       <div />
     </div>
   );
@@ -47,7 +47,7 @@ function DiagramCode(props: CodeProps) {
           <Maximize2 size={14} aria-hidden />
         </DialogTrigger>
       </div>
-      <DialogContent className="diagram-fullscreen-popup standard-popup h-[calc(100%-2rem)] sm:max-w-[calc(100%-2rem)]" aria-label="View fullscreen" data-streamdown="mermaid-fullscreen">
+      <DialogContent className="diagram-fullscreen-popup h-[calc(100%-2rem)] sm:max-w-[calc(100%-2rem)]" aria-label="View fullscreen" data-streamdown="mermaid-fullscreen">
         {diagram}
       </DialogContent>
     </Dialog>

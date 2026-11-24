@@ -34,7 +34,7 @@ function hasComposerRoom(wrapper: Element | null): boolean {
  * it has loaded or failed.
  */
 function hasRenderedReplies(wrapper: Element | null): boolean {
-  if (wrapper?.querySelector(':is(.copilotKitAssistantMessage, .chat-message.is-assistant) :is([class~="animate-spin"], [class~="cpk:animate-spin"], [data-reply-file-loading])')) return false;
+  if (wrapper?.querySelector('.chat-message.is-assistant :is([class~="animate-spin"], [class~="cpk:animate-spin"], [data-reply-file-loading])')) return false;
   if ([...(wrapper?.querySelectorAll<HTMLImageElement>('.reply-image > img:not([data-loaded])') ?? [])].some((image) => !image.complete)) return false;
   return [...(wrapper?.querySelectorAll('[data-streamdown="mermaid-block"]') ?? [])].every((block) =>
     (block.querySelector('[data-streamdown="mermaid"]')?.getBoundingClientRect().height ?? 0) > 0);

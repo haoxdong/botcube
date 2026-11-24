@@ -1,14 +1,15 @@
 "use client";
 
 import { DownloadIcon } from "lucide-react";
-import { m as motionElement } from "motion/react";
+import { Fades } from "./motion";
 import { useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
+import { AlertLine } from "./alert-line";
 import { type ArtifactVersion, type Export, type ExportTarget, type OnScreen } from "./artifact-viewer";
-import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
 
 /**
@@ -33,15 +34,18 @@ export function useExports(exports: readonly Export[], { newest, ...artifact }: 
   return {
     menu: (
       <>
-        <Presence>{onScreen?.unsaved === true && stored.length > 0 && (
-          <motionElement.span {...presenceMotion} role="note" className="artifact-export-note">
+        <Fades>{onScreen?.unsaved === true && stored.length > 0 && (
+          <AlertLine tone="notice" role="note" className="artifact-export-note">
             {capitalized(stored.join(" and "))} {stored.length > 1 ? "are" : "is"} version {onScreen.version.version}, without your unsaved edits
-          </motionElement.span>
-        )}</Presence>
+          </AlertLine>
+        )}</Fades>
         <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-lg" aria-label="Download" title="Download" />}>
-            <DownloadIcon aria-hidden />
-          </DropdownMenuTrigger>
+          <Tooltip>
+            <TooltipTrigger render={<DropdownMenuTrigger render={<Button variant="ghost" size="icon-lg" aria-label="Download" />} />}>
+              <DownloadIcon aria-hidden />
+            </TooltipTrigger>
+            <TooltipContent>Download</TooltipContent>
+          </Tooltip>
           <DropdownMenuContent align="end" className="artifact-download-menu w-auto">
             {exports.map((exported) => (
               <DropdownMenuItem key={exported.label} onClick={() => download(exported)}><exported.Icon aria-hidden />{exported.label}</DropdownMenuItem>
@@ -64,8 +68,8 @@ const capitalized = (text: string) => text.charAt(0).toUpperCase() + text.slice(
 /** Why the panel refused something, faded in and out; `keyed` replays the fade when the message changes. */
 export function Refusal({ message, keyed = false, children }: { message: string | null; keyed?: boolean; children?: ReactNode }) {
   return (
-    <Presence>{message !== null && (
-      <motionElement.p key={keyed ? message : undefined} {...presenceMotion} role="alert" className="artifact-refused">{message}{children}</motionElement.p>
-    )}</Presence>
+    <Fades>{message !== null && (
+      <AlertLine key={keyed ? message : undefined} className="artifact-refused">{message}{children}</AlertLine>
+    )}</Fades>
   );
 }

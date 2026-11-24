@@ -1,14 +1,14 @@
 "use client";
 
 import type { Sheet } from "botcube-artifact-check/sheet";
-import { m as motionElement } from "motion/react";
+import { Fades } from "./motion";
 import { SheetIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { CouldntOpen, EditFailures, NewerVersion } from "./alert-line";
 import { artifactVersions } from "./artifact-versions";
 import { baseOf } from "./files-path";
 import { saveFile, storedVersion, type ArtifactVersion, type Export, type ViewerProps } from "./artifact-viewer";
-import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
 import type { Grid, GridPosition } from "./sheet-grid";
 import { readImports } from "./sheet-import";
@@ -150,22 +150,17 @@ export function SheetVersion({ artifact: newest, read, readBytes, save, shows }:
   const failure = loaded !== null && "error" in loaded ? loaded.error : null;
   return (
     <>
-      <Presence>{failure !== null && (
-        <motionElement.p {...presenceMotion} role="alert" className="artifact-refused">Couldn&apos;t open {shownVersion.title}: {failure}</motionElement.p>
-      )}</Presence>
+      <Fades>{failure !== null && (
+        <CouldntOpen title={shownVersion.title} why={failure} />
+      )}</Fades>
       <div className="artifact-edit-bar">
         <Button type="button" variant="ghost" size="sm" disabled={!changed || busy} onClick={() => void submit()}>Save</Button>
         <Button type="button" variant="ghost" size="sm" disabled={!changed || busy} onClick={drop}>Cancel</Button>
       </div>
-      <Presence>{held !== null && !busy && newest.version > held.version && (
-        <motionElement.div {...presenceMotion} role="status" className="artifact-edit-newer">
-          <span>Version {newest.version} arrived while you edited version {held.version}. Your edits are kept.</span>
-          <Button type="button" variant="ghost" size="sm" onClick={drop}>Discard edits and open version {newest.version}</Button>
-        </motionElement.div>
-      )}</Presence>
-      <Presence>{failures.map((text) => (
-        <motionElement.p key={text} {...presenceMotion} role="alert" className="artifact-refused artifact-edit-failure">{text}</motionElement.p>
-      ))}</Presence>
+      <Fades>{held !== null && !busy && newest.version > held.version && (
+        <NewerVersion newest={newest.version} edited={held.version} onDiscard={drop} />
+      )}</Fades>
+      <EditFailures failures={failures} />
       <div ref={host} aria-busy={!rendered} data-sheet-cells className="artifact-cells" />
     </>
   );

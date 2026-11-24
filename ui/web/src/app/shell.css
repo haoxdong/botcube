@@ -133,7 +133,7 @@
   position: fixed;
   top: 0;
   left: 0;
-  z-index: 90;
+  z-index: var(--layer-sidebar);
   height: 100dvh;
   background: var(--color-white);
   display: flex;
@@ -217,14 +217,15 @@
   overflow: hidden;
 }
 
-/* The stock ghost Button centres its content and sets h-8; the row keeps its left edge and 40px height. */
-.sidebar-nav-item[data-slot="button"] {
+/* The stock ghost Button centres its content and sets h-8; the row keeps its left edge and 40px height. `[data-slot]`:
+   under the stock Tooltip its trigger takes the slot. */
+.sidebar-nav-item[data-slot] {
   height: 40px;
   justify-content: flex-start;
 }
 
 /* The header's agent on the stock ghost Button keeps its text and spacing. */
-.chat-header-agent[data-slot="button"] {
+.chat-header-agent[data-slot] {
   gap: 0;
   font-size: inherit;
   font-weight: inherit;
@@ -383,7 +384,7 @@
 .app-stage > .app-plugins {
   position: absolute;
   inset: 0;
-  z-index: 40;
+  z-index: var(--layer-cover);
 }
 
 @media (max-width: 640px) {
@@ -414,7 +415,7 @@
     position: fixed;
     inset: 0 0 auto;
     height: var(--app-safe-top);
-    z-index: 1000;
+    z-index: var(--layer-clock);
     pointer-events: none;
     backdrop-filter: blur(4px);
   }

@@ -3,10 +3,11 @@
 import { useSheetHeight } from "./sheet-height"
 
 import { Drawer } from "@base-ui/react/drawer"
-import { X } from "lucide-react"
+import { XIcon } from "lucide-react"
 import type { ReactNode, RefObject } from "react"
 
 import { cn } from "../../lib/utils"
+import { Button } from "./button"
 
 function Sheet({
   open,
@@ -49,8 +50,12 @@ function Sheet({
             <Drawer.Content ref={content} className="sheet-content">
               <div className="sheet-grabber" aria-hidden />
               <div className="sheet-head">
-                <Drawer.Close className="header-btn sheet-close" aria-label="Close">
-                  <X size={20} aria-hidden />
+                <Drawer.Close
+                  data-slot="sheet-close"
+                  render={<Button variant="ghost" className="sheet-close" size="icon-sm" />}
+                >
+                  <XIcon />
+                  <span className="sr-only">Close</span>
                 </Drawer.Close>
                 <Drawer.Title className="sheet-title">{title}</Drawer.Title>
               </div>

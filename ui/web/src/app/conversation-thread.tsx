@@ -5,7 +5,7 @@ import { CopilotChatView } from "@copilotkit/react-core/v2";
 import type { StickToBottomContext } from "use-stick-to-bottom";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ui/conversation";
 import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
-import { useIsPhone } from "./phone-query";
+import { useViewport } from "@/design-system/viewport";
 
 const ROTATION_HOLD_MS = 400;
 // A reader's scroll starts with one of these; a flick's momentum runs on for a couple of seconds after its touch.
@@ -20,7 +20,7 @@ const boxOf = (contentRef: StickToBottomContext["contentRef"]) => {
 
 function PageScroll({ stick }: { stick: StickToBottomContext }) {
   const { scrollRef, contentRef } = stick;
-  // The phone CSS lets the page scroll instead of the box. Rotating past PHONE_QUERY changes which one scrolls in the
+  // The phone CSS lets the page scroll instead of the box. Rotating past the phone breakpoint (viewport.ts) changes which one scrolls in the
   // resize frame, a frame before React hears of it, so the swap happens in the resize event: the library's
   // ResizeObserver runs later that frame and would otherwise find the page unscrollable, so "at the bottom".
   // Document scroll events target Document, and the library listens on its scroll element.
@@ -275,7 +275,7 @@ function wholePixelEnd(children: ReactNode) {
 }
 
 export function ThreadScrollView({ children, inputContainerHeight = 0, opensAt }: ComponentProps<typeof CopilotChatView.ScrollView> & { opensAt: string | null }) {
-  const phone = useIsPhone();
+  const phone = useViewport() === "phone";
   return (
     <ConversationThread page opensAt={opensAt} room={inputContainerHeight} overlay={(stick) => (
       // Placed above the composer; the library's instant scroll waits for a frame, which WebKit paints first.

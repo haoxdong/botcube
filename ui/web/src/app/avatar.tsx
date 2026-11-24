@@ -1,9 +1,10 @@
 "use client";
 
-import { m as motionElement } from "motion/react";
-import { Presence, presenceMotion } from "./collapse";
+import { Fades } from "./motion";
+import { useState, type ComponentProps } from "react";
 
-import { useState } from "react";
+import { Avatar as StockAvatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+
 
 const PERSON = (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -11,6 +12,9 @@ const PERSON = (
     <path d="M20 21a8 8 0 0 0-16 0" />
   </svg>
 );
+
+/** The light on his body: his body's colour a third of the way to white. */
+const BODY_LIGHT = "color-mix(in srgb, var(--agent-body) 65%, white)";
 
 /** Below this size the monocle's chain blurs away, so it is dropped and the ring drawn thicker. */
 const MONOCLE_CHAIN_MIN_SIZE = 40;
@@ -42,8 +46,8 @@ function AgentMark({ size, working }: { size: number; working: boolean }) {
   return (
     <svg width={size} height={size} viewBox="0 0 120 120" aria-hidden="true">
       <g className="avatar-figure" style={working ? { transform: `scale(${WORKING_SCALE})` } : undefined}>
-        <path d="M60 46c24 0 40 14 40 33 0 19-16 31-40 31S20 98 20 79c0-19 16-33 40-33z" fill="#aec6e3" stroke="#6f93bf" strokeWidth="2.4" />
-        <path d="M27 72c3-11 13-18 24-19-9 4-16 11-19 20z" fill="#c9daee" />
+        <path d="M60 46c24 0 40 14 40 33 0 19-16 31-40 31S20 98 20 79c0-19 16-33 40-33z" strokeWidth="2.4" style={{ fill: "var(--agent-body)", stroke: "var(--agent-outline)" }} />
+        <path d="M27 72c3-11 13-18 24-19-9 4-16 11-19 20z" style={{ fill: BODY_LIGHT }} />
         <ellipse cx="60" cy="47" rx="30" ry="7" fill="#18191b" stroke="#6b6f77" strokeWidth="2.4" />
         <path d="M40 47c0-19 8-30 20-30s20 11 20 30c-6 2-13 3-20 3s-14-1-20-3z" fill="#202124" stroke="#6b6f77" strokeWidth="2.4" strokeLinejoin="round" />
         <path d="M40.4 40.6c5.9 1.9 12.6 2.9 19.6 2.9s13.7-1 19.6-2.9l.4 5.8c-6 2-13 3-20 3s-14-1-20-3z" fill="#d4d6da" />
@@ -51,16 +55,17 @@ function AgentMark({ size, working }: { size: number; working: boolean }) {
         <ellipse cx="50" cy="78" rx="3.6" ry="5" fill="#202124" />
         <ellipse cx="70" cy="78" rx="3.6" ry="5" fill="#202124" />
         <circle className="avatar-monocle" cx="70" cy="78" r="8.5" fill="none" stroke="#4a4d55" strokeWidth={chain ? 2.2 : 3.4} />
-        <Presence>{chain && <motionElement.path {...presenceMotion} className="avatar-monocle-chain" d="M77 83q3 8 0 16" stroke="#4a4d55" strokeWidth="1.2" fill="none" />}</Presence>
+        <Fades>{chain && <path className="avatar-monocle-chain" d="M77 83q3 8 0 16" stroke="#4a4d55" strokeWidth="1.2" fill="none" />}</Fades>
       </g>
-      <Presence>{working && <motionElement.g {...presenceMotion}><Laptop /></motionElement.g>}</Presence>
+      <Fades>{working && <g><Laptop /></g>}</Fades>
     </svg>
   );
 }
 
 /**
- * A round avatar: the picture, else the emoji, else the agent's own avatar for the agent, else the
- * name's initial, else a generic person. A picture that fails to load falls back too.
+ * A round avatar, the stock Avatar: the picture, else the emoji, else the agent's own avatar for the agent, else the
+ * name's initial, else a generic person. A picture that fails to load falls back too. What it holds (the Agent
+ * Profile's edit button) sits over it.
  */
 export function Avatar({
   picture,
@@ -70,7 +75,11 @@ export function Avatar({
   working = false,
   blank = false,
   size,
-}: {
+  className,
+  style,
+  children,
+  ...props
+}: Omit<ComponentProps<typeof StockAvatar>, "size"> & {
   picture?: string | undefined;
   emoji?: string | undefined;
   name?: string | undefined;
@@ -86,15 +95,22 @@ export function Avatar({
   const showMark = agent && !showPicture && !emoji;
   return (
     // An initial or emoji sits at 7/16 of the avatar: 14px in the 32px chat avatar.
-    <span className={showMark ? "avatar avatar-agent" : "avatar"} style={{ width: size, height: size, fontSize: (size * 7) / 16 }}>
-      <Presence>{showPicture ? (
-        <motionElement.img {...presenceMotion} key={picture} src={picture} alt="" onError={() => setBroken(picture)} />
+    <StockAvatar
+      {...props}
+      className={[showMark ? "avatar avatar-agent" : "avatar", className].filter(Boolean).join(" ")}
+      style={{ ...style, width: size, height: size, fontSize: (size * 7) / 16 }}
+    >
+      <Fades>{showPicture ? (
+        // Kept mounted, so the picture shows on the circle while it loads rather than its fallback; one that fails to
+        // load gives way to the fallback.
+        <AvatarImage key={picture} keepMounted src={picture} alt="" onError={() => setBroken(picture)} />
       ) : showMark ? (
-        <motionElement.span {...presenceMotion} key="agent"><AgentMark size={size} working={working} /></motionElement.span>
+        <AvatarFallback key="agent"><AgentMark size={size} working={working} /></AvatarFallback>
       ) : blank ? null : (
-        <motionElement.span {...presenceMotion} key="initial">{emoji || name?.charAt(0) || PERSON}</motionElement.span>
-      )}</Presence>
-    </span>
+        <AvatarFallback key="initial">{emoji || name?.charAt(0) || PERSON}</AvatarFallback>
+      )}</Fades>
+      {children}
+    </StockAvatar>
   );
 }
 

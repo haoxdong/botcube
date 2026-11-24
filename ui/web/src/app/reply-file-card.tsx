@@ -1,17 +1,17 @@
 "use client";
 
-import { Swap, Presence, presenceMotion } from "./collapse";
 
-import { m as motionElement } from "motion/react";
+import { Arrives, Fades } from "./motion";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { PDFDocumentLoadingTask } from 'pdfjs-dist';
 import { fileExtension, isImageName } from '../components/file-type-icon';
 import { isFigureName } from '../components/plotly-figure';
-import { FileFace, reason } from './composer-files';
+import { reason, SentFile } from './composer-files';
 import { ReplyChart } from './reply-chart';
 import { ReplyImage } from './reply-image';
 import { useReplyFile } from './use-reply-file';
+import { AlertLine } from './alert-line';
 import { baseOf, type FilesPath } from './files-path';
 
 export const ReplyFileSlot = createContext<HTMLElement | null | undefined>(undefined);
@@ -81,27 +81,30 @@ function FileCard({
     <>
       <a
         aria-label={label}
-        className="sent-file reply-file"
+        className="reply-file"
         data-preview={pdf ? '' : undefined}
         href={url ?? undefined}
         onClick={download}
       >
-        <Presence>{pdf && (
-          <motionElement.span {...presenceMotion} className="reply-file-preview">
-            <Swap as="span" state={pageFailure === null ? "preview" : "failed"}>{pageFailure === null ? (
-              <PdfFirstPage url={url} onFailed={setPreviewError} />
-            ) : (
-              <span className="reply-file-preview-error" role="alert">
-                {pageFailure}
+        <SentFile
+          name={name}
+          className={pdf ? 'flex-wrap gap-y-2 overflow-hidden' : undefined}
+          top={
+            <Fades>{pdf && (
+              <span className="reply-file-preview">
+                <Arrives as="span" state={pageFailure === null ? "preview" : "failed"}>{pageFailure === null ? (
+                  <PdfFirstPage url={url} onFailed={setPreviewError} />
+                ) : (
+                  <AlertLine className="reply-file-preview-error">{pageFailure}</AlertLine>
+                )}</Arrives>
               </span>
-            )}</Swap>
-          </motionElement.span>
-        )}</Presence>
-        <FileFace name={name} />
+            )}</Fades>
+          }
+        />
       </a>
-      <Presence>{shownBelow !== null && (
-        <motionElement.p {...presenceMotion} role="alert">{`${name} could not download: ${shownBelow}`}</motionElement.p>
-      )}</Presence>
+      <Fades>{shownBelow !== null && (
+        <AlertLine>{`${name} could not download: ${shownBelow}`}</AlertLine>
+      )}</Fades>
     </>
   );
 }

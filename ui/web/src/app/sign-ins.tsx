@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { failureDetail } from '../computer/failure-detail';
-import { Collapse, Swap } from './collapse';
+import { AlertLine } from './alert-line';
 import { LoadingSkeleton } from './load-state';
-import { Arrives, Shows } from './motion';
+import { Arrives, Fold, Shows } from './motion';
 import { Button } from '../components/pill-button';
 import { Badge } from '../components/ui/badge';
 import type { SignIn, SignInsControl } from '../plugin/types';
@@ -36,6 +36,9 @@ interface SignInsListProps {
 
 /** The Agent Profile's Sign-ins tab: each site the agent can sign in to, its status, and what the user can do. */
 export function SignInsList({ signIns, error, busy, ...actions }: SignInsListProps) {
+  // The last error stays in its fold as it closes, so it folds away rather than emptying first.
+  const [shownError, setShownError] = useState(error);
+  if (error !== null && error !== shownError) setShownError(error);
   return (
     <div className="sign-ins">
       <Arrives state={signIns === null ? 'loading' : 'loaded'} waiting={signIns === null}>
@@ -48,7 +51,7 @@ export function SignInsList({ signIns, error, busy, ...actions }: SignInsListPro
               <span className="sign-in-name">{signIn.name}</span>
               <Shows when={signIn.username != null} className="sign-in-username">{signIn.username}</Shows>
               <Badge variant={STATUS_VARIANTS[signIn.status]} className="sign-in-status">{STATUS_LABELS[signIn.status]}</Badge>
-              <Swap state={signIn.status} className="sign-in-actions">
+              <Arrives state={signIn.status} className="sign-in-actions">
                 {signIn.status === 'not_linked' ? (
                   <Button type="button" disabled={busy} onClick={actions.onSignIn}>Sign in</Button>
                 ) : (
@@ -59,13 +62,13 @@ export function SignInsList({ signIns, error, busy, ...actions }: SignInsListPro
                     <Button type="button" disabled={busy} onClick={actions.onSignOut}>Sign out</Button>
                   </>
                 )}
-              </Swap>
+              </Arrives>
             </li>
           ))}
         </ul>
       )}
       </Arrives>
-      <Collapse open={error !== null}>{error !== null && <p className="sign-in-error" role="alert">{error}</p>}</Collapse>
+      <Fold open={error !== null}>{shownError !== null && <AlertLine>{shownError}</AlertLine>}</Fold>
     </div>
   );
 }

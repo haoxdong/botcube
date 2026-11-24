@@ -180,6 +180,16 @@ describe('an Email in the panel', () => {
     expect((await openDownloads(panel)).map(({ textContent }) => textContent)).toEqual(['.eml']);
   });
 
+  it('names each header field by the label it shows', async () => {
+    draftInFiles();
+    const { panel } = await openDraft();
+
+    for (const name of ['To', 'Cc', 'Bcc', 'Subject']) {
+      const label = within(panel).getByText(name, { selector: 'label' });
+      expect(within(panel).getByRole('textbox', { name })).toHaveAttribute('id', label.getAttribute('for'));
+    }
+  });
+
   it('saves an edited recipient and body as the next version, saved by you', async () => {
     const { saves } = draftInFiles();
     const { panel } = await openDraft();

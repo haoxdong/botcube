@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { parseFigure, type Figure } from './plotly-figure';
+import { AlertLine } from '../app/alert-line';
 
 /** The slice of plotly.js a chart uses, from its prebuilt bundle of every trace type. */
 interface Plotly {
@@ -116,7 +117,7 @@ export function PlotlyChart({ text, title, drawWidth }: { text: string; title: s
   if (failure !== null)
     return (
       <span className="plotly-chart-failed">
-        <span role="alert">{`${title} could not draw: ${failure}`}</span>
+        <AlertLine>{`${title} could not draw: ${failure}`}</AlertLine>
         <pre><code>{text.length > 4000 ? `${text.slice(0, 4000)}…` : text}</code></pre>
       </span>
     );

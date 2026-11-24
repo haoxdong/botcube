@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "../components/pill-button";
+import { AlertLine } from "./alert-line";
 import { LoadFailed } from "./load-state";
 import { minutesLeft, untilLive, wake, wakeLapsed, type WakeState } from "./wake-up";
 
@@ -43,7 +44,7 @@ export function WakeUpButton({ title, chatServiceUrl }: { title: string; chatSer
     const minutes = shown.state === "live" ? 1 : minutesLeft(shown.since, now);
     return <p className="welcome-desc" role="status">Waking up, about {minutes} {minutes === 1 ? "minute" : "minutes"}</p>;
   }
-  if (shown.state === "limit") return <p className="welcome-error">{title} has been woken {shown.limit} times today. Try again tomorrow.</p>;
+  if (shown.state === "limit") return <AlertLine className="text-center">{title} has been woken {shown.limit} times today. Try again tomorrow.</AlertLine>;
   if (shown.state === "failed") return <LoadFailed error={`Couldn't wake ${title}: ${shown.error}`} onRetry={press} action="Wake up" />;
   return <Button type="button" onClick={press}>Wake up</Button>;
 }

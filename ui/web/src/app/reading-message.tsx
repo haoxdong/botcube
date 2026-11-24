@@ -1,11 +1,10 @@
 "use client";
 
 import { CopilotChatUserMessage, type CopilotChatAssistantMessageProps, type CopilotChatUserMessageProps } from "@copilotkit/react-core/v2";
-import { AnimatePresence, domAnimation, LazyMotion, m as motionElement } from "motion/react";
 import { Message, MessageContent } from "@/components/ui/message";
 import { agentFiles } from "./agent-files";
 import { SentFileCards, sentFilesOf } from "./composer-files";
-import { Presence, presenceMotion } from "./collapse";
+import { Fades, Rises } from "./motion";
 import { useMessageEntrance } from "./message-entrance";
 import { ArtifactMessage } from "./artifact-message";
 import MarkdownRenderer from "./markdown-renderer";
@@ -17,19 +16,16 @@ export function AssistantMessage(props: CopilotChatAssistantMessageProps) {
   return <ArtifactMessage {...props} />;
 }
 
-
-const MotionMessage = motionElement.create(Message);
-const MotionContent = motionElement.create(MessageContent);
 const textOf = (content: CopilotChatUserMessageProps["message"]["content"]) =>
   typeof content === "string" ? content : content.map((part) => (part.type === "text" ? part.text : "")).join("");
 
 function UserMessage(props: CopilotChatUserMessageProps) {
   const entrance = useMessageEntrance(props.message.id);
   const { text, paths } = sentFilesOf(textOf(props.message.content));
-  return <LazyMotion features={domAnimation} strict><AnimatePresence><MotionMessage from="user" className="chat-message" data-message-id={props.message.id} {...entrance}>
+  return <Rises {...entrance}><Message from="user" className="chat-message" data-message-id={props.message.id}>
     <SentFileCards paths={paths} fileUrl={agentFiles.url} />
-    <Presence>{text && <MotionContent {...presenceMotion} className="chat-bubble whitespace-pre-wrap">{text}</MotionContent>}</Presence>
-  </MotionMessage></AnimatePresence></LazyMotion>;
+    <Fades>{text && <MessageContent className="chat-bubble whitespace-pre-wrap">{text}</MessageContent>}</Fades>
+  </Message></Rises>;
 }
 
 export const USER_MESSAGE = Object.assign(UserMessage, CopilotChatUserMessage);

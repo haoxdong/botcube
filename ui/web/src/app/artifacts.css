@@ -24,31 +24,54 @@
   outline: 2px solid var(--color-blue);
 }
 
-.artifact-card {
+/* The button that opens an Artifact from its stock Attachment card in a reply: no box of its own, the card's width and
+   corners, so its focus ring follows the card. */
+.artifact-open {
+  display: flex;
   width: 280px;
   max-width: 100%;
   margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: none;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.artifact-card[data-open] {
-  border-color: var(--color-blue);
+/* An Artifact's title over its Type, or its versions, in the panel's head and the library's rows. */
+.artifact-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.artifact-title-name {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-body);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.artifact-title-kind {
+  color: var(--color-text-muted);
+  font-size: var(--font-small);
 }
 
 .artifact-status,
 .artifact-refused {
   margin: 0 0 var(--space-16);
-  font-size: var(--font-small);
 }
 
 .artifact-status {
+  font-size: var(--font-small);
   color: var(--color-text-muted);
 }
 
 .artifact-refused {
-  color: var(--color-red);
   overflow-wrap: anywhere;
 }
 
@@ -70,7 +93,7 @@
 .artifact-panel[data-full] {
   position: fixed;
   inset: 0;
-  z-index: 400;
+  z-index: var(--layer-screen);
 }
 
 .artifact-panel-head {
@@ -87,7 +110,7 @@
 /* The title centres in the head, as in the Sheet's `.sheet-head`: a spacer before it mirrors the actions on the right,
    which also clears the collapsed sidebar's menu chip when the panel is on the left. The spacer shrinks while the panel
    glides open narrower than both, so the actions stay inside it. */
-.artifact-panel-head:has(> .sent-file-text)::before {
+.artifact-panel-head:has(> .artifact-title)::before {
   flex: 0 1 calc(var(--artifact-actions) + var(--space-4) - var(--space-12));
   content: "";
 }
@@ -98,13 +121,13 @@
   padding-block: 0;
 }
 
-.artifact-panel-head > .sent-file-text {
+.artifact-panel-head > .artifact-title {
   flex: 1;
   align-items: stretch;
   text-align: center;
 }
 
-.artifact-panel-head > .sent-file-text > * {
+.artifact-panel-head > .artifact-title > * {
   flex-shrink: 0;
 }
 
@@ -114,14 +137,9 @@
   margin-left: auto;
 }
 
-/* The Download and version menus open from the phone's Artifact sheet, which sits at 500 over the page, so their
-   positioners (the stock part's 50) rise above it. */
-:has(> .artifact-download-menu, > .artifact-history-menu) {
-  z-index: 501;
-}
-
-/* A version's avatar keeps its own size: the stock item sizes every icon inside it to 16px. */
-.artifact-history-menu .avatar svg {
+/* The agent's figure keeps its avatar's size, where the stock item sizes every icon inside it to 16px; a person's
+   glyph stays at that 16px on the disc. */
+.artifact-history-menu .avatar-agent svg {
   width: 100%;
   height: 100%;
 }
@@ -129,8 +147,6 @@
 .artifact-export-note {
   align-self: center;
   margin-right: var(--space-8);
-  color: var(--color-text-muted);
-  font-size: var(--font-small);
 }
 
 .artifact-frame {
@@ -191,8 +207,6 @@
   gap: var(--space-4) var(--space-8);
   padding: var(--space-8) var(--space-16);
   border-bottom: 1px solid var(--color-line);
-  color: var(--color-text-muted);
-  font-size: var(--font-small);
 }
 
 .artifact-edit {
@@ -347,8 +361,11 @@
   min-width: 0;
 }
 
-.artifact-email-field span {
+/* The stock label, read as the header's muted 56px column. */
+.artifact-email-field [data-slot="field-label"] {
   flex: 0 0 56px;
+  font-weight: inherit;
+  line-height: inherit;
   color: var(--color-text-muted);
   font-size: var(--font-small);
 }
@@ -419,7 +436,7 @@
   height: 28px;
 }
 
-.artifact-row .sent-file-name {
+.artifact-row .artifact-title-name {
   white-space: normal;
 }
 

@@ -2,13 +2,13 @@
 
 import { EditorContent, Extension, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { m as motionElement } from "motion/react";
+import { Arrives, Fades } from "./motion";
 import { PencilIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { EditFailures, NewerVersion } from "./alert-line";
 import { useVersionFiles, VersionDeck, type DeckFile } from "./artifact-slides";
 import type { ArtifactVersion, ViewerProps } from "./artifact-viewer";
-import { Presence, presenceMotion, Swap } from "./collapse";
 import { reason } from "./composer-files";
 import { filesPath, underOf, type FilesPath } from "./files-path";
 import { Button } from "@/components/ui/button";
@@ -110,7 +110,7 @@ export function EditableDeck({ artifact: newest, read, save, frame, shows }: Vie
 
   return (
     <>
-      <Swap state={edit === null ? "reading" : "editing"} className="artifact-edit-bar">
+      <Arrives state={edit === null ? "reading" : "editing"} className="artifact-edit-bar">
         {edit === null ? (
           <Button type="button" variant="ghost" size="sm" disabled={files.length === 0} onClick={() => setEdit({ version: newest, drafts: {} })}>
             <PencilIcon aria-hidden />Edit text
@@ -121,27 +121,20 @@ export function EditableDeck({ artifact: newest, read, save, frame, shows }: Vie
             <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={stop}>Cancel</Button>
           </>
         )}
-      </Swap>
-      <Presence>{edit !== null && !saving && newest.version > edit.version.version && (
-        <motionElement.div {...presenceMotion} role="status" className="artifact-edit-newer">
-          <span>Version {newest.version} arrived while you edited version {edit.version.version}. Your edits are kept.</span>
-          <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={stop}>
-            Discard edits and open version {newest.version}
-          </Button>
-        </motionElement.div>
-      )}</Presence>
-      <Presence>{failures.map((failure) => (
-        <motionElement.p key={failure} {...presenceMotion} role="alert" className="artifact-refused artifact-edit-failure">{failure}</motionElement.p>
-      ))}</Presence>
+      </Arrives>
+      <Fades>{edit !== null && !saving && newest.version > edit.version.version && (
+        <NewerVersion newest={newest.version} edited={edit.version.version} onDiscard={stop} disabled={saving} />
+      )}</Fades>
+      <EditFailures failures={failures} />
       <VersionDeck title={deck.title} path={deck.path} files={"error" in loaded ? loaded : shown} frame={frame} />
-      <Presence>{edit !== null && (
-        <motionElement.div {...presenceMotion} className="artifact-edit">
+      <Fades>{edit !== null && (
+        <div className="artifact-edit">
           {slidesOf(deck.path, files).map(({ name, id, text }, index) => (
             <SlideTextEditor key={name} label={`Slide ${index + 1}: ${id}`} file={text}
               onChange={(next) => setEdit((current) => current && { ...current, drafts: { ...current.drafts, [name]: next } })} />
           ))}
-        </motionElement.div>
-      )}</Presence>
+        </div>
+      )}</Fades>
     </>
   );
 }

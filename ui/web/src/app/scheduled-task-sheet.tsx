@@ -1,21 +1,22 @@
 "use client";
 
-import { m as motionElement } from "motion/react";
-import { Presence, presenceMotion, Collapse, Swap } from "./collapse";
+import { Arrives, Fades, Fold } from "./motion";
 
 import { ChevronDown } from "lucide-react";
-import { useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Button } from "../components/pill-button";
 import { Badge } from "../components/ui/badge";
 import type { AgentModel } from "./conversations";
 import { DAY_NAMES, WEEKDAYS, clock, dayName, dayTime, stopInstant, unitOf, wallWords, zoneName, type Weekday } from "./schedule";
 import { RUN_STATUS, type ScheduledTask, type TaskChanges } from "./scheduled-task";
 import { ownWords, pickedSchedule, draftOf, endingOf, edited, modelChoices, countedWall, type Repeat, type Frequency, type Ends, type Draft } from "./scheduled-task-draft";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Button as StockButton } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-
-const MotionButton = motionElement.create(Button);
 
 function Detail({ term, title, children, ...row }: { term: string; title?: string; children: ReactNode } & ComponentProps<"div">) {
   return (
@@ -25,8 +26,6 @@ function Detail({ term, title, children, ...row }: { term: string; title?: strin
     </div>
   );
 }
-
-const MotionDetail = motionElement.create(Detail);
 
 function nextRun(task: ScheduledTask): ReactNode {
   if (task.ended) return <Detail term="Next run">Ended</Detail>;
@@ -57,26 +56,26 @@ function TaskDetails({ task, models, modelsFailed, runsOn }: {
           </Detail>
         ))}
       </dl>
-      <Presence>{(next || last) && (
-        <motionElement.dl {...presenceMotion} className="settings-group">
+      <Fades>{(next || last) && (
+        <dl className="settings-group">
           {next}
-          <Presence>{last && (
-            <MotionDetail {...presenceMotion} term="Last run">
+          <Fades>{last && (
+            <Detail term="Last run">
               <Badge variant={RUN_STATUS[last.status].variant}>{RUN_STATUS[last.status].label}</Badge>
               {dayTime(last.at, task.timezone)}
-            </MotionDetail>
-          )}</Presence>
-        </motionElement.dl>
-      )}</Presence>
+            </Detail>
+          )}</Fades>
+        </dl>
+      )}</Fades>
       <More open={more} onToggle={() => setMore(!more)}>
         <dl className="settings-group">
-          <Presence>{draft.repeat.frequency !== "once" && (
+          <Fades>{draft.repeat.frequency !== "once" && (
             <>
-              <MotionDetail {...presenceMotion} key="starts" term="Starts">{whenWords(draft.starts, task.timezone, false)}</MotionDetail>
+              <Detail key="starts" term="Starts">{whenWords(draft.starts, task.timezone, false)}</Detail>
               {/* A stop time in the past reads as its time: Next run alone says Ended. */}
-              <MotionDetail {...presenceMotion} key="ends" term="Ends">{endsWords(draft.ends, countedWall(ending, task.timezone), task.timezone)}</MotionDetail>
+              <Detail key="ends" term="Ends">{endsWords(draft.ends, countedWall(ending, task.timezone), task.timezone)}</Detail>
             </>
-          )}</Presence>
+          )}</Fades>
           {/* Edit's select names the model while the catalog loads; the sheet says only that it loads. */}
           <Detail term="Model">
             {models === null && !modelsFailed ? "Loading…" : modelChoices(task, models, modelsFailed, runsOn).find(({ value }) => value === model)?.label}
@@ -89,13 +88,9 @@ function TaskDetails({ task, models, modelsFailed, runsOn }: {
 
 function More({ open, onToggle, children }: { open: boolean; onToggle: () => void; children: ReactNode }) {
   return (
-    <>
-      <StockButton type="button" variant="ghost" className="settings-more" aria-expanded={open} onClick={onToggle}>
-        More
-        <ChevronDown size={16} aria-hidden />
-      </StockButton>
-      <Collapse open={open}>{children}</Collapse>
-    </>
+    <Fold open={open} onOpenChange={onToggle} trigger={<CollapsibleTrigger render={<StockButton type="button" variant="ghost" className="settings-more" />}>More<ChevronDown size={16} aria-hidden /></CollapsibleTrigger>}>
+      {children}
+    </Fold>
   );
 }
 
@@ -103,23 +98,32 @@ const FREQUENCY_NAMES: Record<Frequency, string> = {
   interval: "Interval", daily: "Daily", weekdays: "Weekdays", weekly: "Weekly", once: "Once", custom: "Custom",
 };
 
-function SelectRow({ label, value, disabled, onChange, children }: {
+type Choice = { value: string; label: string; disabled?: boolean };
+
+function SelectRow({ label, value, disabled, onChange, choices }: {
   label: string;
   value: string;
   disabled: boolean;
   onChange: (value: string) => void;
-  children: ReactNode;
+  choices: Choice[];
 }) {
+  const id = useId();
   return (
-    <label className="settings-row">
-      <span>{label}</span>
+    <Field orientation="horizontal" className="settings-row">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <span className="settings-select">
-        <select disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)}>
-          {children}
-        </select>
-        <ChevronDown size={16} aria-hidden />
+        <Select value={value} disabled={disabled} onValueChange={(chosen: string | null) => { if (chosen !== null) onChange(chosen); }}>
+          <SelectTrigger id={id}>{choices.find((choice) => choice.value === value)?.label}</SelectTrigger>
+          <SelectContent>
+            {choices.map((choice) => (
+              <SelectItem key={choice.value} value={choice.value} label={choice.label} disabled={choice.disabled}>
+                {choice.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </span>
-    </label>
+    </Field>
   );
 }
 
@@ -141,17 +145,18 @@ function WhenRow({ label, value, time = false, timezone, disabled, onChange }: {
   disabled: boolean;
   onChange: (value: string) => void;
 }) {
+  const id = useId();
   return (
-    <div className="settings-row settings-when">
-      <span>{label}</span>
+    <Field orientation="horizontal" className="settings-row settings-when">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <span className="settings-select" aria-hidden>
         <span>{whenWords(value, timezone, time)}</span>
         <ChevronDown size={16} />
       </span>
       <Input
+        id={id}
         className="settings-picker"
         type={time ? "time" : "datetime-local"}
-        aria-label={label}
         disabled={disabled}
         value={time ? value.slice(11) : value}
         // A desktop browser opens its picker only from its own calendar icon, hidden here, unless asked; Safari before 16.4 can't be.
@@ -163,31 +168,32 @@ function WhenRow({ label, value, time = false, timezone, disabled, onChange }: {
           else if (target.value) onChange(`${value.slice(0, 10)}T${target.value}`);
         }}
       />
-    </div>
+    </Field>
   );
 }
 
 function RepeatRow({ value, disabled, onChange }: { value: Repeat; disabled: boolean; onChange: (value: Repeat) => void }) {
   return (
-    <SelectRow label="Repeat" value={value.frequency} disabled={disabled} onChange={(frequency) => onChange({ ...value, frequency: frequency as Frequency })}>
-      {Object.entries(FREQUENCY_NAMES)
+    <SelectRow
+      label="Repeat"
+      value={value.frequency}
+      disabled={disabled}
+      onChange={(frequency) => onChange({ ...value, frequency: frequency as Frequency })}
+      choices={Object.entries(FREQUENCY_NAMES)
         .filter(([frequency]) => frequency !== "custom" || value.own)
-        .map(([frequency, name]) => (
-          <option key={frequency} value={frequency}>
-            {name}
-          </option>
-        ))}
-    </SelectRow>
+        .map(([frequency, name]) => ({ value: frequency, label: name }))}
+    />
   );
 }
 
 function EveryRow({ value, disabled, onChange }: { value: Repeat; disabled: boolean; onChange: (value: Repeat) => void }) {
+  const id = useId();
   return (
-    <label className="settings-row">
-      <span>Every</span>
+    <Field orientation="horizontal" className="settings-row">
+      <FieldLabel htmlFor={id}>Every</FieldLabel>
       <span className="settings-every">
         <Input
-          aria-label="Every"
+          id={id}
           inputMode="numeric"
           disabled={disabled}
           value={value.every}
@@ -197,7 +203,7 @@ function EveryRow({ value, disabled, onChange }: { value: Repeat; disabled: bool
         />
         <span>{unitOf("minute", Number(value.every))}</span>
       </span>
-    </label>
+    </Field>
   );
 }
 
@@ -239,38 +245,45 @@ function EndsRow({ value, counted, timezone, disabled, onChange }: {
   const picker = useRef<HTMLInputElement>(null);
   // Where the browser can't open a picker when asked (Safari before 16.4), the picker takes the row's taps instead.
   const [direct, setDirect] = useState(false);
+  const focusPicker = useRef(false);
   const on = endsOn(value, counted);
   const never: Ends = { choice: "never", on: "", count: null };
+  const id = useId();
   return (
-    <div className={direct ? "settings-row settings-ends settings-ends-direct" : "settings-row settings-ends"}>
-      <span>Ends</span>
+    <Field orientation="horizontal" className={direct ? "settings-row settings-ends settings-ends-direct" : "settings-row settings-ends"}>
+      <FieldLabel htmlFor={id}>Ends</FieldLabel>
       <span className="settings-select">
-        {/* The row's value is a hidden choice, so picking either option, even On a date… again, is a change. */}
-        <select
-          aria-label="Ends"
+        {/* The row's value is no choice, so picking either one, even On a date… again, is a change. */}
+        <Select
+          value={null}
           disabled={disabled}
-          value=""
-          onChange={(event) => {
+          onValueChange={(chosen: string | null) => {
             const input = picker.current;
-            if (event.target.value === "never") onChange(never);
-            else if (input !== null) {
+            if (chosen === "never") onChange(never);
+            else if (chosen === "on" && input !== null) {
               // lib.dom gives every input showPicker, which Safari before 16.4 lacks.
               if (typeof (input as { showPicker?: unknown }).showPicker === "function") input.showPicker();
               else {
                 setDirect(true);
-                input.focus();
+                focusPicker.current = true;
                 input.click();
               }
             }
           }}
         >
-          <option value="" hidden>
-            {endsWords(value, counted, timezone)}
-          </option>
-          <option value="never">Never</option>
-          <option value="on">On a date…</option>
-        </select>
-        <ChevronDown size={16} aria-hidden />
+          <SelectTrigger id={id}>{endsWords(value, counted, timezone)}</SelectTrigger>
+          {/* Once the menu shuts, focus goes where On a date… sent it: the picker, where it couldn't open. */}
+          <SelectContent
+            finalFocus={() => {
+              if (!focusPicker.current) return true;
+              focusPicker.current = false;
+              return picker.current;
+            }}
+          >
+            <SelectItem value="never">Never</SelectItem>
+            <SelectItem value="on">On a date…</SelectItem>
+          </SelectContent>
+        </Select>
       </span>
       <Input
         className="settings-picker"
@@ -282,7 +295,7 @@ function EndsRow({ value, counted, timezone, disabled, onChange }: {
         value={on}
         onChange={(event) => onChange(event.target.value ? { choice: "on", on: event.target.value, count: null } : never)}
       />
-    </div>
+    </Field>
   );
 }
 
@@ -302,6 +315,7 @@ function TaskEditForm({ task, models, modelsFailed, runsOn, notices, onChange, o
   const set = (changes: Partial<Draft>) => setDraft({ ...draft, ...changes });
   const save = edited(draft, task, model);
   const { frequency } = draft.repeat;
+  const timed = ["daily", "weekdays", "weekly", "once"].includes(frequency);
   return (
     <div className="scheduled-sheet-body scheduled-edit">
       <Input aria-label="Title" placeholder="Title" disabled={saving} value={draft.title} onChange={(event) => set({ title: event.target.value })} />
@@ -315,46 +329,34 @@ function TaskEditForm({ task, models, modelsFailed, runsOn, notices, onChange, o
       />
       <div className="settings-group">
         <RepeatRow value={draft.repeat} disabled={saving} onChange={(repeat) => set({ repeat })} />
-        <Collapse open={frequency === "interval"} appear={false}><EveryRow value={draft.repeat} disabled={saving} onChange={(repeat) => set({ repeat })} /></Collapse>
-        <Collapse open={frequency === "weekly"} appear={false}>
-          <SelectRow label="Day" value={draft.repeat.day} disabled={saving} onChange={(day) => set({ repeat: { ...draft.repeat, day: day as Weekday } })}>
-            {WEEKDAYS.map((day, index) => (
-              <option key={day} value={day}>
-                {DAY_NAMES[index]}
-              </option>
-            ))}
-          </SelectRow>
-        </Collapse>
-        <Collapse open={["daily", "weekdays", "weekly", "once"].includes(frequency)} appear={false}><WhenRow label="Time" time={frequency !== "once"} value={draft.starts} timezone={task.timezone} disabled={saving} onChange={(starts) => set({ starts })} /></Collapse>
-        <Presence>{frequency === "custom" && (
-          <motionElement.div {...presenceMotion} className="settings-row">
+        <Fold open={frequency === "interval"}><EveryRow value={draft.repeat} disabled={saving} onChange={(repeat) => set({ repeat })} /></Fold>
+        <Fold open={frequency === "weekly"}>
+          <SelectRow label="Day" value={draft.repeat.day} disabled={saving} onChange={(day) => set({ repeat: { ...draft.repeat, day: day as Weekday } })}
+            choices={WEEKDAYS.map((day, index) => ({ value: day, label: DAY_NAMES[index] ?? day }))} />
+        </Fold>
+        <Fold open={timed}><WhenRow label="Time" time={frequency !== "once"} value={draft.starts} timezone={task.timezone} disabled={saving} onChange={(starts) => set({ starts })} /></Fold>
+        <Fades>{frequency === "custom" && (
+          <div className="settings-row">
             <span>Schedule</span>
             <span>{ownWords(draft.repeat.own, draft.starts)}</span>
-          </motionElement.div>
-        )}</Presence>
+          </div>
+        )}</Fades>
       </div>
       <More open={draft.more} onToggle={() => set({ more: !draft.more })}>
         <div className="settings-group">
-          <Collapse open={frequency !== "once"} appear={false}>
-            <>
-              <WhenRow label="Starts" value={draft.starts} timezone={task.timezone} disabled={saving} onChange={(starts) => set({ starts })} />
-              <EndsRow value={draft.ends} counted={countedWall("ending" in save ? save.ending : undefined, task.timezone)} timezone={task.timezone} disabled={saving} onChange={(ends) => set({ ends })} />
-            </>
-          </Collapse>
-          <SelectRow label="Model" value={draft.model} disabled={saving || models === null} onChange={(model) => set({ model })}>
-            {modelChoices(task, models, modelsFailed, runsOn).map((choice) => (
-              <option key={choice.value} value={choice.value} disabled={choice.disabled}>
-                {choice.label}
-              </option>
-            ))}
-          </SelectRow>
+          <Fold open={frequency !== "once"}>
+            <WhenRow label="Starts" value={draft.starts} timezone={task.timezone} disabled={saving} onChange={(starts) => set({ starts })} />
+            <EndsRow value={draft.ends} counted={countedWall("ending" in save ? save.ending : undefined, task.timezone)} timezone={task.timezone} disabled={saving} onChange={(ends) => set({ ends })} />
+          </Fold>
+          <SelectRow label="Model" value={draft.model} disabled={saving || models === null} onChange={(model) => set({ model })}
+            choices={modelChoices(task, models, modelsFailed, runsOn)} />
         </div>
       </More>
-      <Presence>{"why" in save && (
-        <motionElement.p {...presenceMotion} className="scheduled-task-hint" role="status">
+      <Fades>{"why" in save && (
+        <p className="scheduled-task-hint" role="status">
           {save.why}
-        </motionElement.p>
-      )}</Presence>
+        </p>
+      )}</Fades>
       {notices}
       <div className="scheduled-edit-actions">
         <Button disabled={saving} onClick={onDone}>Cancel</Button>
@@ -402,12 +404,12 @@ export function ScheduledTaskSheet({
   /** Opens the task's Side Chat, whose ID is the task's. */
   onOpenChat: () => void;
 }) {
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [asking, setAsking] = useState(false);
   // The model its runs use: the one it names, else the account's default; unknown until the models load.
   const runsOn = modelsFailed ? task.model : models === null ? undefined : (task.model ?? models[0]?.key);
 
   return (
-    <Swap state={editing ? "edit" : "view"}>
+    <Arrives state={editing ? "edit" : "view"}>
       {editing ? (
         <TaskEditForm
           task={task}
@@ -424,35 +426,27 @@ export function ScheduledTaskSheet({
           <TaskDetails task={task} models={models} modelsFailed={modelsFailed} runsOn={runsOn} />
           {notices}
           <div>
-            <Collapse open={confirmingDelete} appear={false}>
-              <div className="scheduled-sheet-actions">
-                <Button
-                  variant="destructive"
-                  onClick={() => {
-                    setConfirmingDelete(false);
-                    onDelete();
-                  }}
-                >
-                  Delete task
-                </Button>
-                <Button onClick={() => setConfirmingDelete(false)}>Cancel</Button>
-              </div>
-            </Collapse>
-            <Collapse open={!confirmingDelete} appear={false}>
-              <div className="scheduled-sheet-actions">
-                <Presence>{task.sideChat && <MotionButton {...presenceMotion} onClick={onOpenChat}>Open chat</MotionButton>}</Presence>
-                <Presence>{!task.ended && <MotionButton {...presenceMotion} onClick={() => void onChange({ paused: !task.paused })}>{task.paused ? "Resume" : "Pause"}</MotionButton>}</Presence>
-                <Button disabled={runsOn === undefined && !modelsFailed} onClick={() => onEditing(true)}>
-                  Edit
-                </Button>
-                <Button variant="destructive" onClick={() => setConfirmingDelete(true)}>
-                  Delete
-                </Button>
-              </div>
-            </Collapse>
+            <div className="scheduled-sheet-actions">
+              <Fades>{task.sideChat && <Button onClick={onOpenChat}>Open chat</Button>}</Fades>
+              <Fades>{!task.ended && <Button onClick={() => void onChange({ paused: !task.paused })}>{task.paused ? "Resume" : "Pause"}</Button>}</Fades>
+              <Button disabled={runsOn === undefined && !modelsFailed} onClick={() => onEditing(true)}>Edit</Button>
+              <AlertDialog open={asking} onOpenChange={setAsking}>
+                <AlertDialogTrigger render={<Button variant="destructive" />}>Delete</AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete {task.title}?</AlertDialogTitle>
+                    <AlertDialogDescription>It won&apos;t run again.</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction variant="destructive" onClick={() => { setAsking(false); onDelete(); }}>Delete task</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
           </div>
         </div>
       )}
-    </Swap>
+    </Arrives>
   );
 }

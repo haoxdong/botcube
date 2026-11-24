@@ -29,7 +29,7 @@
   }
 }
 
-/* A load in flight: grey bars in the shape of text, pulsing (load-state.tsx). */
+/* A load in flight: the stock Skeleton's bars in the shape of text (load-state.tsx). */
 .load-skeleton {
   display: flex;
   flex-direction: column;
@@ -42,11 +42,7 @@
 }
 
 .load-skeleton-line {
-  display: block;
   height: 14px;
-  border-radius: var(--radius-pill);
-  background: var(--color-line);
-  animation: loadPulse var(--motion-loop) ease-in-out infinite;
 }
 
 .load-skeleton-line:nth-child(2) {
@@ -67,12 +63,6 @@
   text-align: center;
 }
 
-.load-failed-error {
-  margin: 0;
-  font-size: var(--font-small);
-  color: var(--color-red);
-}
-
 /* Below the last message, in the messages' column (`.copilotKitMessages`: 720px at most, 1.5rem side padding). */
 .chat-run-error,
 .chat-failed-question {
@@ -86,7 +76,6 @@
 .chat-run-error {
   padding: var(--space-8) var(--space-12);
   border-radius: var(--radius-lg);
-  color: var(--color-red);
 }
 
 .chat-run-error:has(+ .chat-failed-question) {
@@ -121,7 +110,7 @@
   /* Centered in the chat below the agent's header, which floats over it. */
   top: var(--chat-header-height);
   bottom: 80px;
-  z-index: 10;
+  z-index: var(--layer-chat);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -145,12 +134,6 @@
   margin: 0;
   line-height: var(--leading-loose);
   max-width: 360px;
-}
-
-.welcome-error {
-  font-size: var(--font-small);
-  color: var(--color-red);
-  margin: 0;
 }
 
 /* ── Chat wrapper ── */
@@ -209,33 +192,6 @@
   }
 }
 
-/* Styled tooltip on avatar hover */
-.user-menu-trigger[data-tooltip]::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: calc(100% + 8px);
-  bottom: 4px;
-  background: var(--color-text);
-  color: var(--color-white);
-  font-size: var(--font-small);
-  padding: 6px var(--space-12);
-  border-radius: var(--radius-md);
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity var(--motion-quick) var(--ease);
-  z-index: 100;
-}
-@media (hover: hover) {
-    .user-menu-trigger[data-tooltip]:hover::after {
-      opacity: 1;
-    }
-}
-/* The tooltip fades out as the menu opens, and back in as it closes under the pointer. */
-.user-menu-trigger[data-tooltip].menu-open::after {
-  opacity: 0;
-}
-
 /* A grey disc dark enough for its white initial (5.3:1) */
 .user-menu .avatar {
   background: var(--color-text-muted);
@@ -247,22 +203,18 @@
   height: 14px;
 }
 
+/* The stock dropdown menu's own surface; one width for the menu and Edit profile, so the editor replaces the menu in place. */
 .user-menu-dropdown {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  background: var(--color-white);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-lg);
   padding: var(--space-4) 0;
-  display: block;
-  font-size: inherit;
-  line-height: inherit;
-  /* One width for the menu and Edit profile, so the editor replaces the menu in place */
   width: 260px;
-  box-shadow: var(--shadow-float);
-  z-index: 300;
-  overflow: hidden;
+  max-width: var(--available-width);
+}
+
+/* Its rows as the header: 16px in, a 12px gap to their icons, square to the menu's edges. */
+.user-menu-dropdown [data-slot="dropdown-menu-item"] {
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  border-radius: 0;
 }
 
 .user-menu-header {
@@ -278,49 +230,10 @@
   color: var(--color-text);
 }
 
-.user-menu-sep {
-  height: 1px;
-  background: var(--color-line);
-  margin: var(--space-4) 0;
-}
-
 .user-menu-note {
   margin: 0;
   padding: var(--space-12) var(--space-16) var(--space-4);
   font-size: var(--font-small);
-  color: var(--color-text-muted);
-}
-
-.user-menu-item {
-  appearance: none;
-  background: none;
-  border: none;
-  font-family: inherit;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: var(--space-12);
-  padding: var(--space-12) var(--space-16);
-  font-size: var(--font-body);
-  color: var(--color-text);
-  cursor: pointer;
-  transition: background var(--motion-quick) var(--ease);
-  text-align: left;
-}
-
-@media (hover: hover) {
-    .user-menu-item:hover {
-      background: var(--color-fill);
-    }
-}
-
-.user-menu-item:disabled {
-  opacity: 0.6;
-  cursor: wait;
-}
-
-.user-menu-item svg {
-  flex-shrink: 0;
   color: var(--color-text-muted);
 }
 
@@ -341,49 +254,6 @@
   gap: var(--space-8);
 }
 
-
-
-/* Menus, the Delete question and the fullscreen diagram open over the phone drawer, the profile sheet and the chat's
-   menu button, as the account menu does. */
-[data-side]:has(> .user-menu-dropdown, > .add-menu, > .side-chat-menu, > [data-slot="context-menu-content"]),
-[data-slot="alert-dialog-overlay"],
-[data-slot="alert-dialog-content"],
-[data-slot="dialog-overlay"]:has(+ .diagram-fullscreen-popup),
-.diagram-fullscreen-popup {
-  z-index: 300;
-}
-
-.standard-popup {
-  opacity: 1;
-  transition: opacity var(--motion-quick) var(--ease);
-}
-
-.user-menu-dropdown.standard-popup {
-  position: relative;
-  inset: auto;
-  max-width: var(--available-width);
-  max-height: var(--available-height);
-  overflow: auto;
-  opacity: 1;
-  transition: opacity var(--motion-quick) var(--ease);
-}
-
-.standard-popup[data-starting-style],
-.standard-popup[data-ending-style] {
-  opacity: 0;
-}
-
-/* The stock overlays have no class prop; they fade with their dialog. */
-[data-slot="alert-dialog-overlay"],
-[data-slot="dialog-overlay"]:has(+ .diagram-fullscreen-popup) {
-  transition: opacity var(--motion-quick) var(--ease);
-}
-
-[data-slot="alert-dialog-overlay"]:is([data-starting-style], [data-ending-style]),
-[data-slot="dialog-overlay"]:has(+ .diagram-fullscreen-popup):is([data-starting-style], [data-ending-style]) {
-  opacity: 0;
-}
-
 /* No coloured ring on focus in the model and effort card: its Reset, model and effort thumb read `--ring`, clear here.
    A focused Reset or model takes its stock hover look (their focus-visible classes); the focused thumb floats. */
 .model-card {
@@ -394,52 +264,6 @@
   box-shadow: var(--shadow-float);
 }
 
-
-/* Tailwind's theme, for its classes and copied-in shadcn components, read from our tokens: shadcn's color names (mapped
-   once, near the top), the type sizes and weights, and its default transition and spin (streamdown's toolbar and
-   diagram spinner). --color-border is our token too: the :root one, unlayered, outranks this layer. */
-@theme inline {
-  --font-sans: var(--font-sans);
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --text-title: var(--font-title);
-  --text-body: var(--font-body);
-  --text-small: var(--font-small);
-  --text-label: var(--font-label);
-  --font-weight-normal: var(--weight-regular);
-  --font-weight-semibold: var(--weight-semibold);
-  --default-transition-duration: var(--motion-quick);
-  --default-transition-timing-function: var(--ease);
-  --animate-spin: spin var(--motion-loop) linear infinite;
-}
-
-@layer base {
-  * {
-    @apply border-border outline-ring/50;
-  }
-  body {
-    @apply bg-background text-foreground;
-  }
-  html {
-    @apply font-sans;
-  }
-}
 
 .load-state {
   width: 100%;

@@ -128,7 +128,7 @@
   position: fixed;
   right: calc(24px + var(--shell-right));
   bottom: calc(120px + var(--shell-bottom));
-  z-index: 20;
+  z-index: var(--layer-bar);
   width: 288px;
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-float);

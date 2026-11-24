@@ -1,7 +1,6 @@
-import { m as motionElement } from "motion/react";
+import { Fades } from "../app/motion";
 import { Fragment } from 'react';
 import { Conversation, ConversationContent } from "../components/ui/conversation";
-import { Presence, presenceMotion } from "../app/collapse";
 
 export interface ShellCommand {
   command: string;
@@ -18,8 +17,8 @@ export function Terminal({ commands, error, prompt }: { commands: readonly Shell
   return (
     <Conversation className="agent-computer-terminal" initial="instant" resize="instant" aria-label="Terminal">
       <ConversationContent className="agent-computer-terminal-content block gap-0 p-0">
-        <Presence>{commands.length === 0 ? (
-          <motionElement.div {...presenceMotion} className="agent-computer-terminal-empty">No commands yet</motionElement.div>
+        <Fades>{commands.length === 0 ? (
+          <div className="agent-computer-terminal-empty">No commands yet</div>
         ) : (
           commands.map(({ command, output }, index) => (
             <Fragment key={index}>
@@ -27,7 +26,7 @@ export function Terminal({ commands, error, prompt }: { commands: readonly Shell
               <div className="agent-computer-terminal-output">{output}</div>
             </Fragment>
           ))
-        )}</Presence>
+        )}</Fades>
       </ConversationContent>
     </Conversation>
   );

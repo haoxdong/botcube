@@ -6,14 +6,14 @@ import { TableKit } from "@tiptap/extension-table";
 import { Markdown } from "@tiptap/markdown";
 import { Editor, EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { m as motionElement } from "motion/react";
+import { Fades } from "./motion";
 import { FileTextIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import {
   pdfOf, saveFile, storedVersion, type ArtifactVersion, type Export, type ExportTarget, type ViewerProps,
 } from "./artifact-viewer";
-import { Presence, presenceMotion } from "./collapse";
+import { CouldntOpen, EditFailures, NewerVersion } from "./alert-line";
 import { reason } from "./composer-files";
 import { baseOf, type FilesPath } from "./files-path";
 import { Button } from "@/components/ui/button";
@@ -93,22 +93,17 @@ export function EditableDoc({ artifact: newest, read, save, shows }: ViewerProps
   };
 
   if (loaded === null) return <p className="artifact-status">Opening {doc.title}…</p>;
-  if ("error" in loaded) return <p role="alert" className="artifact-refused">Couldn&apos;t open {doc.title}: {loaded.error}</p>;
+  if ("error" in loaded) return <CouldntOpen title={doc.title} why={loaded.error} />;
   return (
     <>
       <div className="artifact-edit-bar">
         <Button type="button" variant="ghost" size="sm" disabled={edit === null || saving} onClick={() => void submit()}>Save</Button>
         <Button type="button" variant="ghost" size="sm" disabled={edit === null || saving} onClick={stop}>Discard</Button>
       </div>
-      <Presence>{edit !== null && !saving && newest.version > edit.version.version && (
-        <motionElement.div {...presenceMotion} role="status" className="artifact-edit-newer">
-          <span>Version {newest.version} arrived while you edited version {edit.version.version}. Your edits are kept.</span>
-          <Button type="button" variant="ghost" size="sm" onClick={stop}>Discard edits and open version {newest.version}</Button>
-        </motionElement.div>
-      )}</Presence>
-      <Presence>{failures.map((failure) => (
-        <motionElement.p key={failure} {...presenceMotion} role="alert" className="artifact-refused artifact-edit-failure">{failure}</motionElement.p>
-      ))}</Presence>
+      <Fades>{edit !== null && !saving && newest.version > edit.version.version && (
+        <NewerVersion newest={newest.version} edited={edit.version.version} onDiscard={stop} />
+      )}</Fades>
+      <EditFailures failures={failures} />
       <div className="artifact-doc-page"><DocEditor key={`${doc.path}:${opened}`} title={doc.title} markdown={loaded.markdown}
         onEdit={(markdown) => setEdit({ version: doc, markdown })} /></div>
     </>
@@ -146,7 +141,6 @@ const WORD: Export = {
     saveFile(await wordOf(htmlOf(markdown), target.title), `${target.title}.docx`);
   },
 };
-
 
 export const DOC_EXPORTS = [WORD, DOC_PDF] as const;
 

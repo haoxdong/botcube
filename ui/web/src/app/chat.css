@@ -73,7 +73,6 @@
    `table[data-streamdown="table"]` in a card (`div[data-streamdown="table-wrapper"]`) holding its copy, download and
    fullscreen controls, then the scroll box; the card's padding, border and fill, and the table's own border, are
    dropped. Tailwind compiles only this app's classes, so streamdown's layout classes are spelled out here. */
-.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"],
 .chat-message.is-assistant > .chat-bubble [data-streamdown="table-wrapper"] {
   position: relative;
   display: flex;
@@ -103,7 +102,6 @@
   initial-value: 0px;
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:last-child,
 .chat-message.is-assistant > .chat-bubble [data-streamdown="table-wrapper"] > div:last-child {
   margin: 0;
   max-width: 100%;
@@ -114,7 +112,6 @@
 }
 
 @supports (animation-timeline: scroll(self inline)) {
-  .copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:last-child,
   .chat-message.is-assistant > .chat-bubble [data-streamdown="table-wrapper"] > div:last-child {
     mask-image: linear-gradient(to right, transparent, var(--color-white) var(--table-fade-start), var(--color-white) calc(100% - var(--table-fade-end)), transparent);
     animation: tableEdgeFade linear both;
@@ -126,7 +123,6 @@
    empty bands in the bubble. A table is as wide as its content, each column its widest line, and one too wide for the
    bubble scrolls: at the bubble's width, a column of prose would wrap a word to a line, its row an empty band beside
    its other cells. */
-.copilotKitAssistantMessage [class*="cpk:prose"] table[data-streamdown="table"],
 .chat-message.is-assistant > .chat-bubble table[data-streamdown="table"] {
   width: max-content;
   margin: 0;
@@ -136,12 +132,10 @@
   line-height: var(--leading);
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="table-header"], [data-streamdown="table-body"]),
 .chat-message.is-assistant > .chat-bubble :is([data-streamdown="table-header"], [data-streamdown="table-body"]) {
   background: none;
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] :is(th, td),
 .chat-message.is-assistant > .chat-bubble :is(th, td) {
   padding: var(--space-8) var(--space-12);
   font-size: inherit;
@@ -151,17 +145,14 @@
 }
 
 /* The first and last columns line up with the reply's text. Their pseudo-classes outrank the phone's cell padding. */
-.copilotKitAssistantMessage [class*="cpk:prose"] :is(th, td):first-child,
 .chat-message.is-assistant > .chat-bubble :is(th, td):first-child {
   padding-left: 0;
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] :is(th, td):last-child,
 .chat-message.is-assistant > .chat-bubble :is(th, td):last-child {
   padding-right: 0;
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] th,
 .chat-message.is-assistant > .chat-bubble th {
   border-bottom: 1px solid var(--color-line);
   font-weight: var(--weight-semibold);
@@ -169,13 +160,11 @@
   white-space: nowrap;
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] tr,
 .chat-message.is-assistant > .chat-bubble tr {
   border: 0;
   border-bottom: 1px solid var(--color-line);
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] :is(thead, tbody) > tr:last-child,
 .chat-message.is-assistant > .chat-bubble :is(thead, tbody) > tr:last-child {
   border-bottom: 0;
 }
@@ -183,25 +172,21 @@
 /* A phone's body role (17px) pushed a 5-column table past 390px: there the table takes the small role and 6px cells,
    on the query the type tokens switch on. */
 @media (max-width: 640px) {
-  .copilotKitAssistantMessage [class*="cpk:prose"] table[data-streamdown="table"],
   .chat-message.is-assistant > .chat-bubble table[data-streamdown="table"] {
     font-size: var(--font-small);
   }
 
-  .copilotKitAssistantMessage [class*="cpk:prose"] :is(th, td),
   .chat-message.is-assistant > .chat-bubble :is(th, td) {
     padding-inline: 6px;
   }
 }
 
 /* Math at its text's size, not KaTeX's default 1.21 times it, which at a phone's width split formulas over lines. */
-.copilotKitAssistantMessage [class*="cpk:prose"] .katex,
 .chat-message.is-assistant > .chat-bubble .katex {
   font-size: inherit;
 }
 
 /* GFM `---:` reaches the cell as an inline `text-align: right`; such columns are figures, kept on one line. */
-.copilotKitAssistantMessage [class*="cpk:prose"] :is(th, td):is([style*="text-align: right"], [style*="text-align:right"], [align="right"]),
 .chat-message.is-assistant > .chat-bubble :is(th, td):is([style*="text-align: right"], [style*="text-align:right"], [align="right"]) {
   text-align: right;
   white-space: nowrap;
@@ -209,7 +194,6 @@
 
 /* The table's controls sit small in a row under the table on every device: there they cover no header or cell, and
    nothing below moves when they show. With a pointer, only over the table or with focus. */
-.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:first-child:not(:last-child),
 .chat-message.is-assistant > .chat-bubble [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) {
   display: flex;
   order: 2;
@@ -221,17 +205,16 @@
 }
 
 @media (hover: hover) {
-  :is(.copilotKitAssistantMessage [class*="cpk:prose"], .chat-message.is-assistant > .chat-bubble) [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) {
+  .chat-message.is-assistant > .chat-bubble [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) {
     opacity: 0;
     transition: opacity var(--motion-quick) var(--ease);
   }
 
-  :is(.copilotKitAssistantMessage [class*="cpk:prose"], .chat-message.is-assistant > .chat-bubble) [data-streamdown="table-wrapper"]:is(:hover, :focus-within) > div:first-child:not(:last-child) {
+  .chat-message.is-assistant > .chat-bubble [data-streamdown="table-wrapper"]:is(:hover, :focus-within) > div:first-child:not(:last-child) {
     opacity: 1;
   }
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="table-wrapper"] > div:first-child:not(:last-child), [data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"]) button,
 .chat-message.is-assistant > .chat-bubble :is([data-streamdown="table-wrapper"] > div:first-child:not(:last-child), [data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"]) button {
   padding: var(--space-4);
   border-radius: var(--radius-sm);
@@ -240,7 +223,6 @@
 }
 
 @media (hover: hover) {
-  .copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="table-wrapper"] > div:first-child:not(:last-child), [data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"]) button:hover,
   .chat-message.is-assistant > .chat-bubble :is([data-streamdown="table-wrapper"] > div:first-child:not(:last-child), [data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"]) button:hover {
     color: var(--color-text);
     background: var(--color-fill);
@@ -268,9 +250,7 @@
 
 /* A follow-up held until the running Turn ends: the user's bubble, faded, with when it goes and a Cancel. */
 /* ── Assistant messages ── */
-/* The body role on the page's line, over CopilotKit's `leading-relaxed`; the Worklog's notes take the loose one. */
-.copilotKitAssistantMessage,
-.copilotKitAssistantMessage [class*="cpk:prose"],
+/* The body role on the page's line; the Worklog's notes take the loose one. */
 .chat-message.is-assistant > .chat-bubble {
   font-size: var(--font-body) !important;
   line-height: var(--leading) !important;
@@ -279,27 +259,14 @@
   padding: 0 !important;
 }
 
-.copilotKitAssistantMessage > [class*="cpk:prose"] > div:not(:empty) {
-  width: fit-content;
-  max-width: 90%;
-  background-color: var(--color-white);
-  box-shadow: var(--shadow-rest);
-  color: var(--color-text);
-  border-radius: var(--radius-xl);
-  padding: var(--space-16);
-  margin-block: var(--space-4);
-}
-
 /* A bubble holding a chart is as wide as its cap from its first frame, so the chart's box is there at the reply's width
    while plotly.js loads, and nothing jumps when it draws. */
-.copilotKitAssistantMessage > [class*="cpk:prose"] > div:has(.reply-chart),
 .conversation-thread .chat-message.is-assistant > .chat-bubble:has(.reply-chart) {
   width: 100%;
 }
 
 /* Rhythm: blocks space by a 12px bottom margin, which collapses into a heading's 20px above and 8px below; a table or
    code block stands 16px clear. The first and last block meet the bubble's padding. */
-.copilotKitAssistantMessage [class*="cpk:prose"] :is(h1, h2, h3, h4),
 .chat-message.is-assistant > .chat-bubble :is(h1, h2, h3, h4) {
   margin: var(--space-20) 0 var(--space-8) !important;
 }
@@ -315,19 +282,14 @@
   font-size: var(--font-body);
 }
 
-.copilotKitAssistantMessage > [class*="cpk:prose"] > div > :is([data-streamdown="table-wrapper"], [data-streamdown="code-block"], [data-streamdown="mermaid-block"], pre),
 .chat-message.is-assistant > .chat-bubble > .chat-markdown > :is([data-streamdown="table-wrapper"], [data-streamdown="code-block"], [data-streamdown="mermaid-block"], pre) {
   margin: var(--space-16) 0 !important;
 }
 
-.copilotKitAssistantMessage > [class*="cpk:prose"] > div > :first-child,
-.copilotKitAssistantMessage > [class*="cpk:prose"] > .artifact-reply-bubble > .chat-markdown > :first-child,
 .chat-message.is-assistant > .chat-bubble > .chat-markdown > :first-child {
   margin-top: 0 !important;
 }
 
-.copilotKitAssistantMessage > [class*="cpk:prose"] > div > :last-child,
-.copilotKitAssistantMessage > [class*="cpk:prose"] > .artifact-reply-bubble > .chat-markdown > :last-child,
 .chat-message.is-assistant > .chat-bubble > .chat-markdown > :last-child {
   margin-bottom: 0 !important;
 }
@@ -344,8 +306,8 @@
 /* A Turn starts well clear of the last, by relation: any user message after a reply or Worklog, whatever sits between
    (DESIGN.md spacing rule 4); bubbles grouped with the one above override it below. Its answer sits under the question,
    or under the Turn's Worklog. */
-:is(.copilotKitAssistantMessage, .worklog) ~ .copilotKitUserMessage,
-:is(.copilotKitAssistantMessage, .worklog) ~ .chat-message.is-user,
+.worklog ~ .copilotKitUserMessage,
+.worklog ~ .chat-message.is-user,
 .chat-message.is-assistant ~ .copilotKitUserMessage,
 .chat-message.is-assistant ~ .chat-message.is-user {
   margin-top: var(--space-32);
@@ -358,9 +320,7 @@
   margin-top: 0;
 }
 
-.copilotKitUserMessage + .copilotKitAssistantMessage,
 .copilotKitUserMessage + .chat-message.is-assistant,
-.chat-message.is-user + .copilotKitAssistantMessage,
 .chat-message.is-user + .chat-message.is-assistant {
   margin-top: var(--space-12);
 }
@@ -369,14 +329,11 @@
    their corners on the sender's side tighten. Marq's row ends at its bubble when only its hidden toolbar, no tool row,
    follows it (data-bubble-ends, set in render by artifact-message.tsx); the user's row starts at
    its bubble when no file card comes first. */
-.copilotKitMessages > [data-bubble-ends] + .copilotKitAssistantMessage > .cpk\:prose > .chat-markdown:not(:empty),
 .copilotKitMessages > [data-bubble-ends] + .chat-message.is-assistant > .chat-bubble:has(> .chat-markdown:not(:empty)) {
   margin-top: 0;
   border-top-left-radius: var(--radius-sm);
 }
 
-.copilotKitMessages > .copilotKitAssistantMessage:has(> .cpk\:prose:last-child, > .cpk\:prose + .cpk\:bg-transparent:last-child):has(+ .copilotKitAssistantMessage > .cpk\:prose > .chat-markdown:not(:empty))
-  > .cpk\:prose > .chat-markdown:not(:empty),
 .copilotKitMessages > .chat-message.is-assistant[data-bubble-ends]:has(+ .chat-message.is-assistant > .chat-bubble > .chat-markdown:not(:empty)) > .chat-bubble {
   border-bottom-left-radius: var(--radius-sm);
 }
@@ -447,7 +404,7 @@
   background-color: var(--color-bubble);
 }
 
-.conversation-thread .chat-message.is-assistant > .chat-bubble:has(> .chat-markdown:not(:empty)) {
+.conversation-thread .chat-message.is-assistant > .chat-bubble:is(:has(> .chat-markdown:not(:empty)), .artifact-reply-bubble) {
   background-color: var(--color-white);
   box-shadow: var(--shadow-rest);
   padding: var(--space-16) !important;
@@ -456,7 +413,7 @@
 
 /* It fades in, and can only vanish when it leaves: the stock button unmounts at the bottom. */
 .chat-scroll-button {
-  z-index: 30;
+  z-index: var(--layer-header);
   transition: opacity var(--motion-quick) var(--ease);
   @starting-style {
     opacity: 0;

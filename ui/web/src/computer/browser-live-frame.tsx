@@ -1,7 +1,6 @@
 "use client";
 
-import { m as motionElement } from "motion/react";
-import { Presence, presenceMotion } from "../app/collapse";
+import { Fades } from "../app/motion";
 
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -105,7 +104,7 @@ function BrowserLiveFrameSession(props: BrowserLiveFrameProps) {
   }, []);
   if (phase === 'released') return (
     <div className="browser-live-host browser-live-released">
-      <Presence>{props.lastScreen && <motionElement.img {...presenceMotion} className="agent-computer-screenshot" src={props.lastScreen} alt="The last screen" />}</Presence>
+      <Fades>{props.lastScreen && <img className="agent-computer-screenshot" src={props.lastScreen} alt="The last screen" />}</Fades>
       <Button type="button" variant="secondary" className="browser-live-watch" onClick={() => {
         if (document.hidden) return;
         active.current = true;

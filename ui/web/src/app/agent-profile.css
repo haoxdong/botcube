@@ -71,8 +71,6 @@
   margin: 0 auto var(--space-4);
   width: min(640px, calc(100% - 32px));
   text-align: center;
-  font-size: var(--font-small);
-  color: var(--color-red);
 }
 
 /* A phone's chat scrolls the page: the alerts stay on screen just under the fixed header, on the page's
@@ -81,7 +79,7 @@
   .chat-alerts {
     position: sticky;
     top: var(--chat-header-height);
-    z-index: 20;
+    z-index: var(--layer-bar);
     display: flow-root;
     background: var(--color-white);
   }
@@ -126,8 +124,8 @@
   margin: calc(-1 * var(--space-12)) var(--space-16) var(--space-16);
 }
 
+/* The avatar, its edit button on its edge (the stock Avatar places what it holds). */
 .agent-profile-avatar {
-  position: relative;
   margin-bottom: var(--space-8);
 }
 
@@ -183,12 +181,6 @@
   background: var(--color-green);
   color: var(--color-white);
   fill: currentColor;
-}
-
-.agent-profile-error,
-.profile-editor-error {
-  font-size: var(--font-small);
-  color: var(--color-red);
 }
 
 /* Close is a 44px filled circle at the top left, level with the avatar's top, on the tab bar's gutter (Muse Figs 13-16). */
@@ -248,11 +240,6 @@
   flex: 1;
   overflow: auto;
   padding: var(--space-20) var(--space-16);
-}
-
-.agent-profile-empty {
-  font-size: var(--font-small);
-  color: var(--color-text-muted);
 }
 
 .agent-files {
@@ -377,7 +364,9 @@
   border: none;
   border-radius: var(--radius-xl);
   background: var(--file-tint);
-  box-shadow: var(--shadow-rest);
+  /* The resting shadow, under the stock Item's focus ring (Tailwind's ring variables). */
+  /* stylelint-disable-next-line declaration-property-value-allowed-list -- composes stock's ring with the resting shadow, so focus keeps both */
+  box-shadow: var(--tw-ring-offset-shadow, 0 0), var(--tw-ring-shadow, 0 0), var(--shadow-rest);
   color: var(--color-white);
   font: inherit;
   text-align: left;
@@ -390,7 +379,7 @@
   content: "";
   position: absolute;
   inset: 0;
-  z-index: -1;
+  z-index: var(--layer-behind);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.9 -0.35'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
   opacity: 0.4;
   mix-blend-mode: overlay;
@@ -399,13 +388,9 @@
 
 @media (hover: hover) {
     .agent-file-card:hover {
-      box-shadow: var(--shadow-float);
+      /* stylelint-disable-next-line declaration-property-value-allowed-list -- composes stock's ring with the floating shadow, as at rest */
+      box-shadow: var(--tw-ring-offset-shadow, 0 0), var(--tw-ring-shadow, 0 0), var(--shadow-float);
     }
-}
-
-.agent-file-card:focus-visible {
-  outline: 2px solid var(--color-text);
-  outline-offset: 2px;
 }
 
 .agent-file-card-title {
@@ -530,7 +515,6 @@
 .sign-in-status { align-self: start; grid-area: status; }
 .sign-in-actions { display: flex; gap: var(--space-8); grid-area: actions; margin-top: var(--space-8); }
 .sign-in-actions button:disabled { opacity: 0.5; cursor: default; }
-.sign-in-error { margin: 0; color: var(--color-red); font-size: var(--font-small); }
 
 @media (min-width: 641px) {
   .agent-profile {
@@ -544,7 +528,7 @@
     top: 0;
     right: 0;
     bottom: 0;
-    z-index: 100;
+    z-index: var(--layer-profile);
     box-shadow: var(--shadow-float);
   }
 }
@@ -584,7 +568,7 @@
     content: "";
     position: absolute;
     inset: 0;
-    z-index: 400;
+    z-index: var(--layer-screen);
     background: var(--frost);
     opacity: var(--profile-drag-progress);
   }

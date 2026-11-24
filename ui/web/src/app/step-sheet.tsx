@@ -1,20 +1,21 @@
 "use client";
 
-import { Swap, Presence, presenceMotion } from "./collapse";
 
-import { m as motionElement } from "motion/react";
+
+import { Arrives, Fades } from "./motion";
 
 import type { HighlightResult } from "@streamdown/code";
-import { CheckIcon, CopyIcon, X } from "lucide-react";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState, type CSSProperties } from "react";
 
-import { Dialog, DialogClose, DialogContent, DialogTitle } from "../components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Sheet } from "../components/ui/sheet";
 import { CodeWords } from "./code-words";
 import KeptMarkdown from "./kept-markdown";
-import { useIsPhone } from "./phone-query";
+import { useViewport } from "@/design-system/viewport";
 import { SHIKI_THEMES } from "./shiki-themes";
 import { Button } from "@/components/ui/button";
+import { AlertLine } from "./alert-line";
 
 type Section = { label: string; text: string; look: "prose" | "markdown" | "shell" | "code"; heading?: string | undefined; badge?: string | undefined };
 
@@ -47,7 +48,7 @@ type StepSheetProps = (StepData | { summary: string; heading: string | undefined
 
 export function StepSheet(props: StepSheetProps) {
   const { open, onClose, title } = props;
-  const phone = useIsPhone();
+  const phone = useViewport() === "phone";
   const sections: Section[] = "summary" in props ? [{ label: "Reasoning", text: props.summary, look: "markdown", heading: props.heading }] : sectionsOf(props);
   const body = (
     <div className="step-sheet-body">
@@ -59,13 +60,10 @@ export function StepSheet(props: StepSheetProps) {
   }
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent className="step-popup" showCloseButton={false}>
-        <div className="sheet-head">
-          <DialogClose className="header-btn sheet-close" aria-label="Close">
-            <X size={20} aria-hidden />
-          </DialogClose>
-          <DialogTitle className="sheet-title">{title}</DialogTitle>
-        </div>
+      <DialogContent className="step-popup flex max-h-[80vh] flex-col sm:max-w-[640px]">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
         {body}
       </DialogContent>
     </Dialog>
@@ -77,21 +75,21 @@ function StepSection({ label, text, look, heading, badge }: Section) {
     <section className="step-section">
       <div className="step-section-head">
         <h3 className="step-section-label">{label}</h3>
-        <Presence>{badge && <motionElement.span {...presenceMotion} className="step-section-exit">{badge}</motionElement.span>}</Presence>
+        <Fades>{badge && <span className="step-section-exit">{badge}</span>}</Fades>
         <Copy label={label} text={text} />
       </div>
-      <Swap state={look}>{look === "markdown" ? (
+      <Arrives state={look}>{look === "markdown" ? (
         <div className="step-section-text" data-prose>
-          <Swap state={heading ?? ""}>{heading === undefined ? <KeptMarkdown text={text} /> : (
+          <Arrives state={heading ?? ""}>{heading === undefined ? <KeptMarkdown text={text} /> : (
             <div className="space-y-4 whitespace-normal">
               <p><strong className="font-semibold">{heading}</strong></p>
               <KeptMarkdown text={text.slice(heading.length + 4)} />
             </div>
-          )}</Swap>
+          )}</Arrives>
         </div>
       ) : (
-        <pre className="step-section-text" data-prose={look === "prose" || undefined}><Swap as="span" state={look}>{look === "prose" ? text : look === "shell" ? <Shell text={text} /> : <CodeWords text={text} />}</Swap></pre>
-      )}</Swap>
+        <pre className="step-section-text" data-prose={look === "prose" || undefined}><Arrives as="span" state={look}>{look === "prose" ? text : look === "shell" ? <Shell text={text} /> : <CodeWords text={text} />}</Arrives></pre>
+      )}</Arrives>
     </section>
   );
 }
@@ -112,7 +110,7 @@ function Copy({ label, text }: { label: string; text: string }) {
       )}>
         <Icon size={14} aria-hidden />
       </Button>
-      <Presence>{state.status === "failed" && <motionElement.span {...presenceMotion} className="step-copy-error" role="alert">Copy failed. Select the text to copy it manually, or try again.</motionElement.span>}</Presence>
+      <Fades>{state.status === "failed" && <AlertLine className="step-copy-error">Copy failed. Select the text to copy it manually, or try again.</AlertLine>}</Fades>
     </>
   );
 }

@@ -1,9 +1,8 @@
 'use client';
 import { Button } from "@/components/ui/button";
 
-import { m as motionElement } from 'motion/react';
+import { Arrives, Fades } from "../app/motion";
 import { useEffect, useState } from 'react';
-import { Presence, presenceMotion, Swap } from '../app/collapse';
 import { PlotlyChart } from '../components/plotly-chart';
 import { isFigureName } from '../components/plotly-figure';
 
@@ -18,11 +17,11 @@ export function FilesChart({ file, fileUrl, onDownload, onClose }: {
   onClose: () => void;
 }) {
   return (
-    <Presence>{file !== null && (
-      <motionElement.section {...presenceMotion} key={file.path} className="agent-computer-files-chart" aria-label={file.name}>
+    <Fades>{file !== null && (
+      <section key={file.path} className="agent-computer-files-chart" aria-label={file.name}>
         <ChartFile path={file.path} name={file.name} fileUrl={fileUrl} onDownload={() => onDownload(file.path)} onClose={onClose} />
-      </motionElement.section>
-    )}</Presence>
+      </section>
+    )}</Fades>
   );
 }
 
@@ -58,13 +57,13 @@ function ChartFile({ path, name, fileUrl, onDownload, onClose }: {
         <Button type="button" variant="ghost" size="sm" onClick={onDownload}>Download</Button>
         <Button type="button" variant="ghost" size="sm" onClick={onClose}>Close</Button>
       </div>
-      <Swap state={shown === null ? 'loading' : 'text' in shown ? 'chart' : 'failed'} className="agent-computer-files-chart-body">
+      <Arrives state={shown === null ? 'loading' : 'text' in shown ? 'chart' : 'failed'} className="agent-computer-files-chart-body">
         {shown === null ? null : 'text' in shown ? (
           <PlotlyChart text={shown.text} title={name} />
         ) : (
           <p className="agent-computer-error" role="alert">{`${name} could not load: ${shown.failure}`}</p>
         )}
-      </Swap>
+      </Arrives>
     </>
   );
 }

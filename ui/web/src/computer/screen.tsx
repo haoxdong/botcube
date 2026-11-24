@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useEffect, useState, type ReactNode } from 'react';
+import { Arrives } from '../app/motion';
 
-import { Swap } from '../app/collapse';
 import { ComputerAsleep, screenFrame } from './screenshots';
 
 /** How long the screen waits after a frame before it asks for the next. */
@@ -71,9 +71,9 @@ export function Screen({
         {actions}
       </figcaption>
       <div className="computer-screen-glass">
-        <Swap state={live ? 'live' : 'cover'} className="computer-screen-face">
+        <Arrives state={live ? 'live' : 'cover'} className="computer-screen-face">
           {live ? <img className="computer-screen-image" src={frame} alt={`${title}'s screen`} /> : cover}
-        </Swap>
+        </Arrives>
       </div>
     </figure>
   );

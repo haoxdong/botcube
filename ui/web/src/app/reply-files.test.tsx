@@ -62,7 +62,7 @@ it('downloads a successful external image response', async () => {
   });
   try {
     const view = render(<ReplyImage src="https://images.test/chart.png" alt="Chart" />);
-    await act(async () => fireEvent.click(view.getByTitle('Download image')));
+    await act(async () => fireEvent.click(view.getByRole('button', { name: 'Download image' })));
 
     expect(saved).toHaveBeenCalledOnce();
     expect(saved.mock.contexts[0]).toEqual(expect.objectContaining({ download: 'chart.png' }));
@@ -83,7 +83,7 @@ it('reports an external image HTTP failure instead of downloading its error body
   });
   try {
     const view = render(<ReplyImage src="https://images.test/chart.png" alt="Chart" />);
-    await act(async () => fireEvent.click(view.getByTitle('Download image')));
+    await act(async () => fireEvent.click(view.getByRole('button', { name: 'Download image' })));
 
     expect(saved).not.toHaveBeenCalled();
     expect(view.getByRole('alert')).toHaveTextContent('could not download');

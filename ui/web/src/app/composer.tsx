@@ -1,14 +1,13 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
+import { Arrives } from "./motion";
 import { ArrowUp, Square } from "lucide-react";
-import { Swap } from "./collapse";
 import { submitOnEnter } from "./composer-keys";
+import { viewport } from "@/design-system/viewport";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group";
 
 type Layout = "compact" | "expanded";
-
-const PHONE = "(max-width: 767px)";
 
 const measure = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
 
@@ -27,7 +26,7 @@ function layoutFor(text: HTMLTextAreaElement, hasFiles: boolean): Layout {
   if (!box || !start || !end || !measure || text.value === "") return "compact";
   const style = getComputedStyle(box);
   const picker = end.querySelector(".chat-model-picker");
-  const pickerInPill = picker !== null && !matchMedia(PHONE).matches;
+  const pickerInPill = picker !== null && viewport() !== "phone";
   const endStyle = getComputedStyle(end);
   const controls = [...end.children].filter((child) => child !== picker || pickerInPill);
   const ends = controls.reduce((sum, child) => sum + outerWidth(child), 0) + px(endStyle.columnGap) * Math.max(controls.length - 1, 0)
@@ -90,7 +89,7 @@ export function Composer({
   }, [autoFocus]);
   const stoppable = running && onStop !== undefined;
   return (
-    <div data-copilotkit className="cpk:pointer-events-none cpk:relative cpk:z-20" style={{ paddingBottom: "var(--copilotkit-license-banner-offset, 0px)" }}>
+    <div data-copilotkit className="cpk:pointer-events-none cpk:relative z-(--layer-bar)" style={{ paddingBottom: "var(--copilotkit-license-banner-offset, 0px)" }}>
       <div className="cpk:max-w-3xl cpk:mx-auto cpk:py-0 cpk:px-4 cpk:@3xl:px-0 cpk:pointer-events-auto">
         <form
           className={className ? `w-full chat-composer ${className}` : "w-full chat-composer"}
@@ -122,7 +121,7 @@ export function Composer({
             <InputGroupAddon align="inline-end" className="composer-end">
               {picker}
               <InputGroupButton
-                className="composer-send rounded-full focus-visible:bg-primary/80"
+                className="composer-send rounded-full focus-visible:bg-(--color-text)/80"
                 size="icon-sm"
                 variant="default"
                 data-testid="copilot-send-button"
@@ -130,7 +129,7 @@ export function Composer({
                 disabled={running ? !stoppable : !canSend}
                 {...(running ? { type: "button" as const, onClick: () => onStop?.() } : { type: "submit" as const })}
               >
-                <Swap as="span" state={running ? "stop" : "send"}>{running ? <Square className="size-3 fill-current" aria-hidden /> : <ArrowUp aria-hidden />}</Swap>
+                <Arrives as="span" state={running ? "stop" : "send"}>{running ? <Square className="size-3 fill-current" aria-hidden /> : <ArrowUp aria-hidden />}</Arrives>
               </InputGroupButton>
             </InputGroupAddon>
           </InputGroup>

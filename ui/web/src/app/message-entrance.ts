@@ -1,5 +1,4 @@
 import { createContext, createElement, useContext, useLayoutEffect, useState, type ReactNode } from "react";
-import { useAnimationControls } from "motion/react";
 import { motionTokens } from "./motion-tokens";
 
 type Entrance = "history" | "arrival";
@@ -51,30 +50,19 @@ export class MessageEntrances {
 
 export const MessageEntranceHistory = createContext<MessageEntrances | null>(null);
 const MessageEntrance = createContext<Entrance>("arrival");
-const AT_REST = { opacity: 1, y: 0 };
-const ARRIVING = { opacity: 0, y: 6 };
 
+/** Whether message `id` rises in as it mounts (Rises, motion.tsx), and whether it replaced an answer and so stands at once. */
 export function useMessageEntrance(id: string, { artifacts = [], answer = false, hasContent = true }: { artifacts?: readonly string[]; answer?: boolean; hasContent?: boolean } = {}) {
   const history = useContext(MessageEntranceHistory);
   const entrance = useContext(MessageEntrance);
   const [root] = useState(() => Symbol());
-  const replacement = answer && history?.replaces(artifacts, root) === true;
-  const [arrives] = useState(() => entrance === "arrival" && history?.messageEntrance(id) !== "history" && !replacement && motionTokens().move.visualDuration > 0);
-  const controls = useAnimationControls();
+  const replaced = answer && history?.replaces(artifacts, root) === true;
+  const [arrives] = useState(() => entrance === "arrival" && history?.messageEntrance(id) !== "history" && !replaced && motionTokens().move.visualDuration > 0);
   useLayoutEffect(() => {
-    if (arrives) void controls.start({ ...AT_REST, transitionEnd: AT_REST }, motionTokens().move);
-    else controls.set(AT_REST);
-  }, [arrives, controls]);
-  useLayoutEffect(() => {
-    if (replacement) {
-      controls.stop();
-      controls.set(AT_REST);
-    }
     if (hasContent) history?.presentedMessage(id);
     history?.presentedArtifacts(artifacts, root);
   });
-  const initial: false | typeof ARRIVING = arrives ? ARRIVING : false;
-  return { initial, animate: controls };
+  return { arrives, replaced };
 }
 
 export function MessageEntranceRow({ id, children }: { id: string; children: ReactNode }) {

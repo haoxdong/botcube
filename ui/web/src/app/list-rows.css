@@ -118,19 +118,25 @@
   color: var(--color-text-muted);
 }
 
-.settings-select select {
+/* A row's label is the stock Field's, read as the row's text. */
+.settings-row > [data-slot="field-label"] {
+  flex: 0 1 auto;
+  font: inherit;
+}
+
+/* The stock Select's trigger, bare: its value, then its 16px chevron at the right. */
+.settings-select [data-slot="select-trigger"] {
   max-width: 100%;
   min-width: 0;
+  height: auto;
   padding: 0 var(--space-24) 0 0;
   border: none;
   font: inherit;
   font-size: var(--font-body);
   text-align: right;
-  text-align-last: right;
   color: var(--color-text-muted);
   background: none;
   cursor: pointer;
-  appearance: none;
 }
 
 .settings-select svg {
@@ -156,12 +162,12 @@
 
 /* More's section spans the sheet as the card above it does, and takes its 16px gap inside its collapse, so the gap
    grows with it rather than ahead of it. */
-.scheduled-sheet-body > .collapsible {
+.scheduled-sheet-body > .fold > .collapsible {
   align-self: stretch;
   margin-top: calc(-1 * var(--space-16));
 }
 
-.scheduled-sheet-body > .collapsible > div {
+.scheduled-sheet-body > .fold > .collapsible > div {
   padding-top: var(--space-16);
 }
 
@@ -226,7 +232,6 @@
 }
 
 /* The assistant message gives its paragraphs prose margins; the card spaces its lines by its gap. */
-.copilotKitAssistantMessage .scheduled-proposal p,
 .chat-message.is-assistant .scheduled-proposal p {
   margin: 0 !important;
 }

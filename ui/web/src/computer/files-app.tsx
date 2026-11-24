@@ -1,9 +1,6 @@
 "use client";
 
-import { Presence, presenceMotion } from "../app/collapse";
-import { Arrives } from "../app/motion";
-
-import { m as motionElement } from "motion/react";
+import { Arrives, Fades } from "../app/motion";
 
 import { ChevronLeft, ChevronRight, Clock, Folder } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type ReactElement, type MouseEvent } from 'react';
@@ -20,9 +17,6 @@ import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Input } from "@/components/ui/input";
-
-const MotionClock = motionElement.create(Clock);
-const MotionFolder = motionElement.create(Folder);
 
 /** An item of the open folder: a file, with its size, or a folder holding files further down. */
 type FilesItem = {
@@ -242,24 +236,24 @@ export function FilesWindow({
           </Button>
           {/* The location field: the open place, its folders from workspace down, the leading ones giving way first. */}
           <nav className="agent-computer-files-path" aria-label="Path">
-            <Presence>{place === null ? <MotionClock {...presenceMotion} key="0" aria-hidden="true" /> : <MotionFolder {...presenceMotion} key="1" aria-hidden="true" />}</Presence>
+            <Fades>{place === null ? <Clock key="0" aria-hidden="true" /> : <Folder key="1" aria-hidden="true" />}</Fades>
             <span className="agent-computer-files-crumbs">
-              <Presence>{place === null ? (
-                <motionElement.span {...presenceMotion} aria-current="true">Recents</motionElement.span>
+              <Fades>{place === null ? (
+                <span aria-current="true">Recents</span>
               ) : (
                 crumbs.map(({ name, path }, index) => (
                   <Fragment key={path}>
-                    <Presence>{index > 0 && <motionElement.span {...presenceMotion} aria-hidden="true">›</motionElement.span>}</Presence>
+                    <Fades>{index > 0 && <span aria-hidden="true">›</span>}</Fades>
                     <button type="button" aria-current={path === place ? 'true' : undefined} onClick={() => go(path)}>{name}</button>
                   </Fragment>
                 ))
-              )}</Presence>
+              )}</Fades>
             </span>
           </nav>
         </div>
   
         <AlertDialog open={deleting?.open === true} onOpenChange={(open) => { if (!open) closeSheet(); }} onOpenChangeComplete={(open) => { if (!open) setDeleting(null); }}>
-          <AlertDialogContent size="sm" className="standard-popup" finalFocus={() => {
+          <AlertDialogContent size="sm" finalFocus={() => {
             const target = deleteFocus.current;
             if (target?.opener.isConnected) return target.opener;
             return [...(view.current?.querySelectorAll<HTMLElement>(".agent-computer-file") ?? [])].find((row) => row.dataset.filePath === target?.path) ?? view.current;
@@ -279,15 +273,15 @@ export function FilesWindow({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-        <Presence>{error && <motionElement.p {...presenceMotion} className="agent-computer-error" role="alert">{error}</motionElement.p>}</Presence>
+        <Fades>{error && <p className="agent-computer-error" role="alert">{error}</p>}</Fades>
         {brokenPictures.map((message, index) => <p key={index} className="agent-computer-error" role="alert">{message}</p>)}
         <Arrives state={files === null ? 'loading' : 'loaded'} waiting={files === null} className="agent-computer-files-body">{files === null ? error === null && <LoadingSkeleton label="Files" /> : <>
         {files.length === 0 && <p className="agent-computer-files-empty">No files yet. Files the agent downloads appear here within a minute or two.</p>}
         <FilesChart file={viewing} fileUrl={thumbnailUrl} onDownload={onDownload} onClose={() => setViewing(null)} />
-        <Presence>{viewing === null && (
-          <motionElement.div {...presenceMotion} className="agent-computer-files-grid" role="listbox" aria-label={place === null ? 'Recents' : 'Folder contents'}>
-            {items.map((item) => <FileMenu key={item.path} row={item} actions={menuItems} onOpen={() => setSelected(item.path)}><Presence>{item.path === renaming?.path ? (
-              <motionElement.div {...presenceMotion} key={item.path} role="option" aria-selected={item.path === selected} className="agent-computer-file" data-file-path={item.path} data-kind={kindOf(item)}>
+        <Fades>{viewing === null && (
+          <div className="agent-computer-files-grid" role="listbox" aria-label={place === null ? 'Recents' : 'Folder contents'}>
+            {items.map((item) => <FileMenu key={item.path} row={item} actions={menuItems} onOpen={() => setSelected(item.path)}><Fades>{item.path === renaming?.path ? (
+              <div key={item.path} role="option" aria-selected={item.path === selected} className="agent-computer-file" data-file-path={item.path} data-kind={kindOf(item)}>
                 {icon(item)}
                 <Input
                   ref={nameField}
@@ -303,9 +297,9 @@ export function FilesWindow({
                   }}
                   onBlur={(event) => endRename(event.currentTarget.value)}
                 />
-              </motionElement.div>
+              </div>
             ) : (
-              <motionElement.button {...presenceMotion} key="1"
+              <button key="1"
                 type="button"
                 role="option"
                 aria-selected={item.path === selected}
@@ -321,10 +315,10 @@ export function FilesWindow({
               >
                 {icon(item)}
                 <FileName name={item.name} />
-              </motionElement.button>
-            )}</Presence></FileMenu>)}
-          </motionElement.div>
-        )}</Presence>
+              </button>
+            )}</Fades></FileMenu>)}
+          </div>
+        )}</Fades>
         {files.length > 0 && <p className="agent-computer-files-status" role="status">{status}</p>}
         </>}</Arrives>
       </div>
@@ -431,7 +425,7 @@ function FileMenu({ row, actions, onOpen, children }: {
   return (
     <ContextMenu actionsRef={menuActions} onOpenChange={(open) => { if (open) { restoreFocus.current = true; onOpen(); } }}>
       <ContextMenuTrigger ref={opener} className="agent-computer-file-trigger" tabIndex={-1} onKeyDown={(event) => { keyboard.current = contextMenuKey(event); }}>{children}</ContextMenuTrigger>
-      <ContextMenuContent className="standard-popup" onKeyDown={(event) => { if (event.key === "Tab") menuActions.current?.close(); }} aria-label={row.name} onFocus={(event) => { if (keyboard.current && event.target === event.currentTarget) { keyboard.current = false; firstItem.current?.focus(); } }} finalFocus={() => restoreFocus.current ? opener.current?.querySelector("button, input") ?? opener.current : false}>
+      <ContextMenuContent onKeyDown={(event) => { if (event.key === "Tab") menuActions.current?.close(); }} aria-label={row.name} onFocus={(event) => { if (keyboard.current && event.target === event.currentTarget) { keyboard.current = false; firstItem.current?.focus(); } }} finalFocus={() => restoreFocus.current ? opener.current?.querySelector("button, input") ?? opener.current : false}>
         {actions.map(({ label, act }, index) => (
           <ContextMenuItem key={label} ref={index === 0 ? firstItem : undefined} nativeButton render={<button type="button" />} onClick={() => {
             if (opener.current === null) throw new Error("The file menu has no opener");

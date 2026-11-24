@@ -3,7 +3,7 @@ import { measureRichInlineStats, prepareRichInline, type RichInlineBox, type Ric
 
 import { zoomOf } from "@/lib/utils";
 
-export const USER_MESSAGE_CLASS = "cpk:prose cpk:dark:prose-invert cpk:bg-muted cpk:relative cpk:max-w-[80%] cpk:rounded-[18px] cpk:px-4 cpk:py-1.5 cpk:data-[multiline]:py-3 cpk:inline-block cpk:whitespace-pre-wrap";
+export const USER_MESSAGE_CLASS = "cpk:prose cpk:dark:prose-invert cpk:relative cpk:max-w-[80%] cpk:px-4 cpk:py-1.5 cpk:data-[multiline]:py-3 cpk:inline-block cpk:whitespace-pre-wrap";
 
 /** A run of inline content between two breaks its block forces (a `<br>`, a nested block), laid out as one paragraph. */
 export type Paragraph = { items: (RichInlineItem | RichInlineBox)[]; options: RichInlineOptions };
@@ -160,14 +160,15 @@ export function bubbleFlow(bubble: HTMLElement): Flow | string {
 
 const widestLine = ({ items, options }: Paragraph, width: number) => measureRichInlineStats(prepareRichInline(items, options), width).maxLineWidth;
 
-/** A row's bubble: the user's, or Marq's prose. A Worklog's notes are no row's, and wear none. */
-const ROW_BUBBLES = ':scope.copilotKitUserMessage > div:first-of-type, :scope.copilotKitAssistantMessage > [class*="cpk:prose"] > div:not(:empty), :scope.chat-message > .chat-bubble';
+/** A row's bubble: the user's, or Marq's prose; not one holding Artifact cards. A Worklog's notes are no row's, and wear none. */
+const ROW_BUBBLES = ':scope.copilotKitUserMessage > div:first-of-type, :scope.chat-message > .chat-bubble:not(.artifact-reply-bubble)';
 
 /**
  * A bubble holding code, a diagram or a table keeps its CSS width, fit to its content up to its cap (globals.css); one
  * holding a chart keeps its full cap (chat.css), from before the chart draws.
  */
-const COLUMN_WIDE = ':has(> :is([data-streamdown="code-block"], [data-streamdown="mermaid-block"], [data-streamdown="table-wrapper"])), :has(.reply-chart)';
+const WIDE_BLOCK = ':is([data-streamdown="code-block"], [data-streamdown="mermaid-block"], [data-streamdown="table-wrapper"])';
+const COLUMN_WIDE = `:has(> ${WIDE_BLOCK}), :has(> .chat-markdown > ${WIDE_BLOCK}), :has(.reply-chart)`;
 
 const bubblesOf = (row: Node) => (row instanceof HTMLElement ? [...row.querySelectorAll<HTMLElement>(ROW_BUBBLES)] : []);
 

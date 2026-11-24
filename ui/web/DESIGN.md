@@ -17,7 +17,7 @@ dark theme.
 | Type    | 4     | `title` 18, `body` 14, `small` 13, `label` 12 (desktop px)                                |
 | Weight  | 2     | `regular` 400, `semibold` 600                                                             |
 | Leading | 2     | `--leading` 1.3, `--leading-loose` 1.5                                                    |
-| Shadow  | 2     | `rest`, `float`                                                                           |
+| Shadow  | 3     | `rest`, `float`, `thumb`                                                                  |
 | Radius  | 6     | `sm` 4, `md` 8, `lg` 12, `xl` 20, `screen` 64, `pill`                                     |
 | Motion  | 4     | `--motion-quick` 150ms, `--motion-move` 300ms, `--ease`, `--motion-loop` 1.6s             |
 | Spacing | 7     | `--space-4` to `--space-32` on a 4px grid                                                 |
@@ -97,10 +97,10 @@ size is its desktop size in `:root` and iOS's text style in the 640px query; nam
 ## Shape
 
 - **Shadow:** `rest` for a white surface on the page (the composer, a file card); `float` for what floats over it
-  (menus, sheets, the focused composer, the phone's chat card).
-- **Radius:** `sm` inline code and small marks; `md` icon buttons, menu items; `lg` fields, menus, grouped lists;
-  `xl` bubbles, the composer, sheets, file cards; `screen` a panel that reaches an iPhone's screen corner; `pill`
-  buttons, pills, tabs.
+  (menus, sheets, the focused composer, the phone's chat card); `thumb` a slider's thumb.
+- **Radius:** `sm` inline code, small marks; `md` icon buttons, menu items; `lg` fields, menus, grouped lists;
+  `xl` bubbles, the composer, sheets, file cards; `screen` a panel at an iPhone's screen corner; `pill` buttons,
+  pills, tabs.
 
 ## Components
 

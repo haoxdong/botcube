@@ -1,4 +1,4 @@
-// The design system is locked (DESIGN.md): ten colours, four sizes, two weights, two line-heights, six radii, two
+// The design system is locked (DESIGN.md): ten colours, four sizes, two weights, two line-heights, seven radii, three
 // shadows, two durations, one curve, one loop and seven spacing steps. These checks find what strays from it; each
 // UI's own test runs them over its stylesheets and components.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -7,7 +7,7 @@ import postcss from 'postcss';
 
 export const COLOURS = ['text', 'text-muted', 'fill', 'line', 'white', 'canvas', 'blue', 'bubble', 'red', 'green'];
 export const AGENT = ['body', 'outline', 'deep', 'deepest'];
-export const LIGHT = ['--scrim', '--frost', '--shadow-rest', '--shadow-float'];
+export const LIGHT = ['--scrim', '--frost', '--shadow-rest', '--shadow-float', '--shadow-thumb'];
 export const SIZES = ['title', 'body', 'small', 'label'];
 export const RADII = ['sm', 'md', 'lg', 'xl', 'screen', 'pill'];
 export const MOTION = ['--motion-quick', '--motion-move', '--motion-loop', '--ease'];

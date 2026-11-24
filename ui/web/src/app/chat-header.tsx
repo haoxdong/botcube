@@ -1,11 +1,11 @@
 "use client";
 
-import { m as motionElement } from "motion/react";
+import { Fades } from "./motion";
 import { useEffect, useState, type RefObject } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Avatar } from "./avatar";
-import { Presence, presenceMotion } from "./collapse";
 import { BOT_SETTINGS } from "../bot-settings";
 import { preloadComputerView } from "../computer/agent-computer-view";
 
@@ -31,7 +31,7 @@ export function HeaderName({ name, working }: { name: string; working: boolean }
     <span className="chat-header-name">
       <span className="chat-header-label">
         {name}
-        <Presence>{working && <motionElement.span {...presenceMotion} className="chat-header-status">is working</motionElement.span>}</Presence>
+        <Fades>{working && <span className="chat-header-status">is working</span>}</Fades>
       </span>
     </span>
   );
@@ -52,10 +52,13 @@ export function ChatHeader({ opener, working, ready, chatId, open, picture, emoj
   }, [ready]);
   return (
     <header className="chat-header">
-      <Button ref={opener} variant="ghost" className="chat-header-agent" data-working={working || undefined} disabled={!ready || chatId === null} onClick={open} aria-label="Agent profile" title="Agent profile">
-        <Avatar picture={picture ?? undefined} emoji={emoji} name={name} agent working={working} size={72} />
-        <HeaderName name={name} working={working} />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger render={<Button ref={opener} variant="ghost" className="chat-header-agent" data-working={working || undefined} disabled={!ready || chatId === null} onClick={open} aria-label="Agent profile" />}>
+          <Avatar picture={picture ?? undefined} emoji={emoji} name={name} agent working={working} size={72} />
+          <HeaderName name={name} working={working} />
+        </TooltipTrigger>
+        <TooltipContent>Agent profile</TooltipContent>
+      </Tooltip>
     </header>
   );
 }

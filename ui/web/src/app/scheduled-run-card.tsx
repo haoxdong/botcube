@@ -1,7 +1,6 @@
 "use client";
 
-import { m as motionElement } from "motion/react";
-import { Presence, presenceMotion } from "./collapse";
+import { Fades } from "./motion";
 
 import { Clock } from "lucide-react";
 import { createContext, useContext, type ReactNode } from "react";
@@ -9,8 +8,6 @@ import { createContext, useContext, type ReactNode } from "react";
 import { Button } from "../components/pill-button";
 import { RUN_STATUS, type ScheduledRun } from "./scheduled-task";
 import { Badge } from "../components/ui/badge";
-
-const MotionButton = motionElement.create(Button);
 
 /** A run that reached its Side Chat, so Open has somewhere to go. */
 export type ReachedScheduledRun = ScheduledRun & { sideChat: string; messageId: string };
@@ -49,11 +46,11 @@ export function ScheduledRunCard({ run, children }: { run: ScheduledRun; childre
       <div className="scheduled-run-text">
         {children}
       </div>
-      <Presence>{open && reached(run) && (
-        <MotionButton {...presenceMotion} className="scheduled-run-open" onClick={() => open(run)}>
+      <Fades>{open && reached(run) && (
+        <Button className="scheduled-run-open" onClick={() => open(run)}>
           Open
-        </MotionButton>
-      )}</Presence>
+        </Button>
+      )}</Fades>
     </div>
   );
 }

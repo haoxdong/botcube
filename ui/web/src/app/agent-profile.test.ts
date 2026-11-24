@@ -17,7 +17,7 @@ const mount = (props: Parameters<typeof AgentProfile>[0]) => {
 };
 
 describe('AgentProfile', () => {
-  it('shows the four tabs as labelled icons with tooltips, opening on the Computer', () => {
+  it('shows the four tabs as labelled icons, with no browser tooltip, opening on the Computer', () => {
     const profile = mount({
       profile: { name: 'Ada Bot', avatar: '', picture: null, status: 'online' },
       error: null,
@@ -31,7 +31,7 @@ describe('AgentProfile', () => {
     for (const tab of tabs) {
       expect(tab).toHaveTextContent(/^$/);
       expect(tab.querySelector('svg')).not.toBeNull();
-      expect(tab.getAttribute('title')).toBe(tab.getAttribute('aria-label'));
+      expect(tab).not.toHaveAttribute('title');
     }
     expect(tabs.map((tab) => tab.getAttribute('aria-selected'))).toEqual(['false', 'true', 'false', 'false']);
   });

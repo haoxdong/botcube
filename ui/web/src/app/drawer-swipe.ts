@@ -1,8 +1,8 @@
 import { useDrag } from '@use-gesture/react';
-import { styleEffect, useSpring } from 'motion/react';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 
-import { motionTokens, moveMs } from './motion-tokens';
+import { slide } from './motion';
+import { moveMs } from './motion-tokens';
 
 type DragSession =
   | { phase: 'idle' }
@@ -181,29 +181,25 @@ export function useDrawerSwipe({ layoutRef, drawerRef, side, name, enabled, dock
     [`--${name}-drag-offset`]: `${pixels}px`,
     [`--${name}-drag-progress`]: width ? pixels / width : 0,
   } : {};
-  // A docked panel's `--<name>-shown` springs from 0, out past its edge, to 1, in place (motion.css), carrying its speed
-  // when a toggle turns it back; `leaving` keeps the panel shown until it is out.
-  const [move] = useState(() => motionTokens().move);
-  const shown = useSpring(expanded ? 1 : 0, move);
+  // A docked panel's `--<name>-shown` slides from 0, out past its edge, to 1, in place (motion.css), turning back
+  // from where it is when a toggle turns it back; `leaving` keeps the panel shown until it is out.
   const docking = useRef(false);
   const [leaving, setLeaving] = useState(false);
-  useEffect(() => shown.on('animationComplete', () => {
-    docking.current = false;
-    setLeaving(false);
-  }), [shown]);
   useLayoutEffect(() => {
-    if (!docking.current) shown.jump(expanded ? 1 : 0);
-  }, [expanded, shown]);
-  useLayoutEffect(() => {
-    const layout = layoutRef.current;
-    return layout === null ? undefined : styleEffect(layout, { [`--${name}-shown`]: shown });
-  }, [layoutRef, name, shown]);
+    if (!docking.current) layoutRef.current?.style.setProperty(`--${name}-shown`, expanded ? '1' : '0');
+  }, [expanded, layoutRef, name]);
   const dock = (to: boolean) => {
     if (to === expanded && !docking.current) return;
     docking.current = true;
     setLeaving(!to);
     onExpandedChange(to);
-    shown.set(to ? 1 : 0);
+    const layout = layoutRef.current;
+    const done = () => {
+      docking.current = false;
+      setLeaving(false);
+    };
+    if (layout === null) done();
+    else slide(layout, `--${name}-shown`, to ? 1 : 0, done);
   };
   /** Opens the panel: on a phone it settles in as a released swipe does; docked, it slides in. */
   const open = () => {

@@ -67,9 +67,9 @@ it("shows the user's questions as they are and the replies formatted, and no too
   const list = view.container.querySelector('.copilotKitMessages');
   if (list === null) throw new Error('no message list');
 
-  expect([...list.children].map((row) => row.className.split(' ').slice(0, 2).join(' '))).toEqual([
+  expect([...list.children].map((row) => (row.matches('.chat-message.is-assistant') ? 'reply' : row.className.split(' ').slice(0, 2).join(' ')))).toEqual([
     'copilotKitMessage copilotKitUserMessage',
-    'copilotKitMessage copilotKitAssistantMessage',
+    'reply',
   ]);
   expect(list.children[0]).toHaveTextContent('Where did rates close?');
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Rates recap' })).toBeInTheDocument());
@@ -92,7 +92,7 @@ it('shows only recent history while the interactive chat loads', () => {
 
 const tenTurns = turns(20);
 const rowsTall = (rowHeight: number, scrollerHeight: () => number) => {
-  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => document.querySelectorAll('.copilotKitMessage').length * rowHeight);
+  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => document.querySelectorAll(':is(.copilotKitMessage, .chat-message)').length * rowHeight);
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(scrollerHeight);
 };
 
@@ -147,7 +147,7 @@ it('keeps a recent answer and its Worklog when the render window starts inside i
 
   expect(screen.queryByText('Read the close.')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Worked' })).toHaveAttribute('aria-expanded', 'false');
-  await waitFor(() => expect(view.container.querySelector('.copilotKitAssistantMessage [data-streamdown="strong"]')).toHaveTextContent('4.12%'));
+  await waitFor(() => expect(view.container.querySelector('.chat-message.is-assistant [data-streamdown="strong"]')).toHaveTextContent('4.12%'));
   expect(view.container).not.toHaveTextContent('Reading the close.');
   expect(view.container).not.toHaveTextContent('{"close":4.12}');
 });
@@ -198,7 +198,7 @@ it("keeps the composer's room while it resizes after another saved chat unmounts
   expect(content.style.paddingBottom).toBe('152px');
 
   height.mockReturnValue(160);
-  const composer = [...observed.keys()].find((element) => element.classList.contains('cpk:z-20'));
+  const composer = [...observed.keys()].find((element) => !element.contains(content) && within(element as HTMLElement).queryByRole('button', { name: 'Add photos & files', hidden: true }));
   if (composer === undefined) throw new Error('the composer is not observed');
   resize(composer);
 
@@ -279,8 +279,8 @@ it('keeps a completed saved math reply visible on cold open without changing the
   ];
   const view = render(<KeptChat messages={saved} disclaimer="" />);
   expect(view.container.querySelector('.copilotKitUserMessage')).toHaveTextContent(question);
-  expect(view.container.querySelector('.copilotKitAssistantMessage')).toHaveTextContent('2870');
-  expect(view.container.querySelector('.copilotKitAssistantMessage')).not.toHaveTextContent('streamdown:incomplete-link');
+  expect(view.container.querySelector('.chat-message.is-assistant')).toHaveTextContent('2870');
+  expect(view.container.querySelector('.chat-message.is-assistant')).not.toHaveTextContent('streamdown:incomplete-link');
   expect(view.container.querySelector('.katex')).toBeNull();
 });
 
@@ -302,11 +302,11 @@ it("folds a Turn's work into its Worklog, as the chat surface will, so its answe
   const view = render(<KeptChat messages={turn} disclaimer="Check important info." />);
   const list = view.container.querySelector('.copilotKitMessages');
 
-  const roles = ['copilotKitUserMessage', 'worklog', 'copilotKitAssistantMessage'];
+  const roles = ['copilotKitUserMessage', 'worklog', 'is-assistant'];
   expect([...(list?.children ?? [])].map((row) => roles.find((name) => row.classList.contains(name)))).toEqual([
     'copilotKitUserMessage',
     'worklog',
-    'copilotKitAssistantMessage',
+    'is-assistant',
   ]);
   expect(screen.getByRole('button', { name: 'Worked for 9s' })).toHaveAttribute('aria-expanded', 'false');
   expect(list).not.toHaveTextContent("I'll read the close.");
@@ -322,7 +322,7 @@ it("shows a reply's links as the chat surface will: a citation as its pill, a li
       disclaimer=""
     />,
   );
-  const [citation, link] = view.container.querySelectorAll('.copilotKitAssistantMessage a');
+  const [citation, link] = view.container.querySelectorAll('.chat-message.is-assistant a');
 
   expect(citation).toHaveAttribute('data-citation');
   expect(citation).toHaveTextContent(/^\[1\]$/);
@@ -345,7 +345,7 @@ it('shows a file a reply links to on a line of its own as its card, as the chat 
       disclaimer=""
     />,
   );
-  const card = view.container.querySelector('.copilotKitAssistantMessage .reply-file');
+  const card = view.container.querySelector('.chat-message.is-assistant .reply-file');
 
   expect(card).toHaveTextContent('q3-board-deck.pptxPPTX');
   expect(card?.closest('p')).toBeNull();
@@ -377,8 +377,8 @@ it.each([
   'One  two   three.',
 ])('keeps the Markdown renderer\'s paragraph markup for plain prose: %s', (text) => {
   const view = render(<KeptChat messages={[{ id: 'plain', role: 'assistant', content: text }]} disclaimer="" />);
-  const markdown = render(<Streamdown>{text}</Streamdown>);
-  expect(view.container.querySelector('.copilotKitAssistantMessage > div')?.innerHTML).toBe(markdown.container.innerHTML);
+  const markdown = render(<Streamdown className="chat-markdown">{text}</Streamdown>);
+  expect(view.container.querySelector('.chat-message.is-assistant > .chat-bubble')?.innerHTML).toBe(markdown.container.innerHTML);
 });
 
 it.each([
@@ -397,7 +397,7 @@ it('keeps numbered prose as an ordered list', () => {
 
 it('preserves the Markdown repair of unfinished display math', () => {
   const view = render(<KeptChat messages={[{ id: 'math', role: 'assistant', content: '$$x' }]} disclaimer="" />);
-  expect(view.container.querySelector('.copilotKitAssistantMessage')).toHaveTextContent('$$x$$');
+  expect(view.container.querySelector('.chat-message.is-assistant')).toHaveTextContent('$$x$$');
 });
 
 it('shows saved running history with mixed card calls before CopilotKit mounts', () => {

@@ -1,20 +1,20 @@
 "use client";
 
-import { m as motionElement } from "motion/react";
-import { Presence, presenceMotion } from "./collapse";
+import { Fades } from "./motion";
 import type { ComponentProps } from 'react';
 import { defaultComponents } from 'streamdown';
+import { InlineAlertLine } from './alert-line';
 import { ReplyFileCard } from './reply-file-card';
 import { linkedPath, type FilesPath } from './files-path';
 import { useReplyFile } from './use-reply-file';
 
 type LinkProps = ComponentProps<typeof defaultComponents.a>;
 
-const MotionFileAnchor = motionElement.create(function FileAnchor({ link, style, ...props }: {
+function FileAnchor({ link, style, ...props }: {
   link: LinkProps;
 } & ComponentProps<"a">) {
   return <defaultComponents.a {...link} {...props} style={{ ...link.style, ...style }}>{link.children}</defaultComponents.a>;
-});
+}
 
 const CITATION = /^\[(\d+)\]$/;
 
@@ -43,20 +43,20 @@ function FileLink({ path, ...props }: LinkProps & { path: FilesPath }) {
   if (file === null) return <span data-reply-file-loading="">{props.children} (loading)</span>;
   return (
     <>
-      <Presence>{file.status === 'ready' && (
-        <MotionFileAnchor {...presenceMotion}
+      <Fades>{file.status === 'ready' && (
+        <FileAnchor
           link={props}
           ref={props.ref}
           inert={props.inert}
           href={file.url}
           onClick={download}
         />
-      )}</Presence>
-      <Presence>{downloadFailure !== null && (
-        <motionElement.span {...presenceMotion} role="alert">
+      )}</Fades>
+      <Fades>{downloadFailure !== null && (
+        <InlineAlertLine>
           {props.children} could not download: {downloadFailure}
-        </motionElement.span>
-      )}</Presence>
+        </InlineAlertLine>
+      )}</Fades>
     </>
   );
 }

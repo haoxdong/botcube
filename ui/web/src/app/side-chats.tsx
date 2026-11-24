@@ -1,8 +1,7 @@
 "use client";
 
-import { Swap, Presence, presenceMotion, Collapse } from "./collapse";
 
-import { m as motionElement } from "motion/react";
+import { Arrives, Fades, Fold, Folds } from "./motion";
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { contextMenuKey } from "./context-menu-key";
 import { ChevronDown, ChevronRight, Clock, Ellipsis, Pencil, Plus, Trash2 } from "lucide-react";
@@ -10,19 +9,19 @@ import { isUnread, type ConversationEntry } from "./conversations";
 import { withStorage } from "./main-chat-copy";
 import { SideChatNameField } from "./side-chat-name-field";
 import { UnreadDot } from "./unread-dot";
+import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import type { AuthUiState } from "../plugin/index.js";
 import type { useSessionNavigation } from "./session-navigation";
 import { Button } from "@/components/ui/button";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Item } from "@/components/ui/item";
+import { AlertLine } from "./alert-line";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const NATIVE_SIDE_CHAT_BODY = process.env.NEXT_PUBLIC_NATIVE_SIDE_CHAT_BODY === "1";
-const SideChatsBody = NATIVE_SIDE_CHAT_BODY ? "div" : motionElement.div;
-const BodyPresence = NATIVE_SIDE_CHAT_BODY ? Fragment : Presence;
+const BodyPresence = NATIVE_SIDE_CHAT_BODY ? Fragment : Fades;
 
-const MotionClock = motionElement.create(Clock);
-const MotionChevronRight = motionElement.create(ChevronRight);
-const MotionChevronDown = motionElement.create(ChevronDown);
 type Navigation = ReturnType<typeof useSessionNavigation>;
 const SIDE_CHATS_BATCH = 5;
 export function SideChats({ accountId, activeId, pluginsOpen, visible, entries: sideChats, listed, error: sideChatsError, rename: renameSideChat, remove: handleDeleteConversation, select: handleSelectConversation, create: handleNewConversation, showChat }: {
@@ -61,8 +60,9 @@ export function SideChats({ accountId, activeId, pluginsOpen, visible, entries: 
   const [moreBatches, setMoreBatches] = useState(0);
   const firstShown = Math.max(SIDE_CHATS_BATCH, sideChats.findIndex(c => c.id === activeId) + 1);
   const shownSideChats = sideChats.slice(0, firstShown + moreBatches * SIDE_CHATS_BATCH);
-  const more = Array.from({ length: moreBatches }, (_, index) =>
-    shownSideChats.slice(firstShown + index * SIDE_CHATS_BATCH, firstShown + (index + 1) * SIDE_CHATS_BATCH));
+  // Each batch Show more reveals, and the next one, held closed so that its reveal is an open the fold grows for.
+  const more = Array.from({ length: moreBatches + 1 }, (_, index) =>
+    sideChats.slice(firstShown + index * SIDE_CHATS_BATCH, firstShown + (index + 1) * SIDE_CHATS_BATCH)).filter((batch) => batch.length > 0);
   const [lastError, setLastError] = useState(sideChatsError);
   if (sideChatsError !== null && sideChatsError !== lastError) setLastError(sideChatsError);
   // Show more can reveal the last batch and unmount itself, so focus moves to the first row it revealed.
@@ -76,41 +76,39 @@ export function SideChats({ accountId, activeId, pluginsOpen, visible, entries: 
     <SideChatRow key={c.id} title={c.title}
       className={["sidebar-item", !pluginsOpen && c.id === activeId && "sidebar-item-active"].filter(Boolean).join(" ")}
       rename={() => setRenamingId(c.id)} remove={() => { void handleDeleteConversation(c); }}>
-      <Swap state={renamingId === c.id ? "editing" : "name"} className="sidebar-item-content">{renamingId === c.id ? (
+      <Arrives state={renamingId === c.id ? "editing" : "name"} className="sidebar-item-content">{renamingId === c.id ? (
         <SideChatNameField title={c.title} onDone={(name) => finishRename(c, name)} />
       ) : (
-        <button className="sidebar-item-btn" data-testid={`side-chat-${c.id}`}
+        <Item render={<button type="button" />} className="sidebar-item-btn flex-nowrap gap-0 rounded-(--radius-md) text-[length:inherit]" data-testid={`side-chat-${c.id}`}
           ref={(button) => { if (button && c.id === revealedSideChat.current) { revealedSideChat.current = null; button.focus(); } }}
           onClick={() => { showChat(); void handleSelectConversation(c); }}>
-          <Presence>{c.scheduled && <MotionClock {...presenceMotion} className="sidebar-item-icon" role="img" aria-label="Scheduled" aria-hidden={false} />}</Presence>
+          <Fades>{c.scheduled && <Clock className="sidebar-item-icon" role="img" aria-label="Scheduled" aria-hidden={false} />}</Fades>
           <span className="sidebar-item-title">{c.title}</span>
           <UnreadDot unread={isUnread(c)} />
-        </button>
-      )}</Swap>
+        </Item>
+      )}</Arrives>
     </SideChatRow>
   );
 
   const body = sideChatsPreference !== null && (
-    <SideChatsBody {...(NATIVE_SIDE_CHAT_BODY ? {} : presenceMotion)} data-native-entry={NATIVE_SIDE_CHAT_BODY || undefined} className="side-chats-body" aria-hidden={sideChatsCollapsed} inert={sideChatsCollapsed}>
+    <Folds open={!sideChatsCollapsed} data-native-entry={NATIVE_SIDE_CHAT_BODY || undefined} className="side-chats-body">
       <div className="sidebar-list" id={sideChatsListId}>
-        <Presence>{listed && sideChats.length === 0 && sideChatsError === null && (
-          <motionElement.div {...presenceMotion} className="sidebar-empty">
+        <Fades>{listed && sideChats.length === 0 && sideChatsError === null && (
+          <Empty className="sidebar-empty">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
               <path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1" />
             </svg>
-            <strong className="sidebar-empty-title">Start a side chat</strong>
-            <span>Side chats are an optional way to organize your conversations by topic.</span>
-          </motionElement.div>
-        )}</Presence>
+            <EmptyTitle className="sidebar-empty-title">Start a side chat</EmptyTitle>
+            <EmptyDescription>Side chats are an optional way to organize your conversations by topic.</EmptyDescription>
+          </Empty>
+        )}</Fades>
         {shownSideChats.slice(0, firstShown).map(row)}
         {more.map((batch, index) => (
-          <Collapse key={index} open>
-            {batch.map(row)}
-          </Collapse>
+          <Fold key={index} open={index < moreBatches}>{batch.map(row)}</Fold>
         ))}
-        <Presence>{shownSideChats.length < sideChats.length && (
-          <motionElement.button {...presenceMotion}
+        <Fades>{shownSideChats.length < sideChats.length && (
+          <button
             className="sidebar-show-more"
             onClick={() => {
               revealedSideChat.current = sideChats[shownSideChats.length]?.id ?? null;
@@ -118,10 +116,10 @@ export function SideChats({ accountId, activeId, pluginsOpen, visible, entries: 
             }}
           >
             Show more
-          </motionElement.button>
-        )}</Presence>
+          </button>
+        )}</Fades>
       </div>
-    </SideChatsBody>
+    </Folds>
   );
 
   return (
@@ -129,15 +127,16 @@ export function SideChats({ accountId, activeId, pluginsOpen, visible, entries: 
           <div className="sidebar-section-header">
             <button className="sidebar-side-chats-toggle" onClick={toggleSideChats} aria-expanded={!sideChatsCollapsed} aria-controls={sideChatsListId}>
               <span>Side chats</span>
-              <Presence>{sideChatsCollapsed ? <MotionChevronRight {...presenceMotion} key="0" aria-hidden /> : <MotionChevronDown {...presenceMotion} key="1" aria-hidden />}</Presence>
+              <Fades>{sideChatsCollapsed ? <ChevronRight key="0" aria-hidden /> : <ChevronDown key="1" aria-hidden />}</Fades>
             </button>
-            <Button type="button" variant="ghost" size="icon-lg" className="sidebar-new-chat" onClick={() => { showChat(); void handleNewConversation(); }} aria-label="New side chat" title="New side chat">
-              <Plus aria-hidden />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger render={<Button type="button" variant="ghost" size="icon-lg" className="sidebar-new-chat" onClick={() => { showChat(); void handleNewConversation(); }} aria-label="New side chat" />}>
+                <Plus aria-hidden />
+              </TooltipTrigger>
+              <TooltipContent>New side chat</TooltipContent>
+            </Tooltip>
           </div>
-          <Collapse open={sideChatsError !== null}>
-            <div className="sidebar-error" role="alert" hidden={!visible}>{lastError}</div>
-          </Collapse>
+          <Fold open={sideChatsError !== null}><AlertLine className="sidebar-error" hidden={!visible}>{lastError}</AlertLine></Fold>
           <BodyPresence>{body}</BodyPresence>
 
         </div>
@@ -152,7 +151,7 @@ function SideChatRow({ title, className, children, rename, remove }: {
 }) {
   const restoreFocus = useRef(true);
   const opened = (open: boolean) => { if (open) restoreFocus.current = true; };
-  const popup = { className: "side-chat-menu standard-popup", "aria-label": title, "aria-labelledby": "", finalFocus: () => restoreFocus.current };
+  const popup = { className: "side-chat-menu", "aria-label": title, "aria-labelledby": "", finalFocus: () => restoreFocus.current };
   const onRename = () => { restoreFocus.current = false; rename(); };
   const onRemove = () => { restoreFocus.current = false; remove(); };
   return (
@@ -160,9 +159,12 @@ function SideChatRow({ title, className, children, rename, remove }: {
       <ContextMenuTrigger className={className} onKeyDown={contextMenuKey}>
         {children}
         <DropdownMenu onOpenChange={opened}>
-          <DropdownMenuTrigger className="sidebar-item-more" aria-label="Side chat actions" title="More">
-            <Ellipsis size={16} aria-hidden />
-          </DropdownMenuTrigger>
+          <Tooltip>
+            <TooltipTrigger render={<DropdownMenuTrigger className="sidebar-item-more" aria-label="Side chat actions" />}>
+              <Ellipsis size={16} aria-hidden />
+            </TooltipTrigger>
+            <TooltipContent>More</TooltipContent>
+          </Tooltip>
           <DropdownMenuContent {...popup}>
             <DropdownMenuItem onClick={onRename}><Pencil aria-hidden />Rename</DropdownMenuItem>
             <DropdownMenuItem variant="destructive" onClick={onRemove}><Trash2 aria-hidden />Delete</DropdownMenuItem>

@@ -119,7 +119,7 @@
 }
 
 /* Send is stock InputGroupButton's default, black from `--primary`. Disabled, it is a grey circle with a muted arrow
-   at full strength, over stock's `disabled:opacity-50`. Its arrow and Stop's square crossfade in place (Swap). */
+   at full strength, over stock's `disabled:opacity-50`. Its arrow and Stop's square swap in place, the new one fading in (Arrives). */
 .composer-send {
   position: relative;
 }
@@ -133,7 +133,7 @@
 /* A phone: 44px targets, text 16px inside the box's outer edge (15px here plus its 1px border), no picker in the pill.
    The + and Send keep stock's 32px, centred in a 44px footprint by a 6px margin; a clear 6px ring round each takes the
    taps there. */
-@media (max-width: 767px) {
+@media (max-width: 640px) {
   .chat-composer > .composer-box {
     align-items: flex-end;
     column-gap: 0;
@@ -232,11 +232,6 @@
   gap: var(--space-8);
 }
 
-.guest-notice {
-  margin: 0;
-  font-size: var(--font-small);
-  color: var(--color-text-muted);
-}
 
 /* The files attached with the +: stock Attachments inside the composer's box, above its text. */
 .composer-files {
@@ -267,13 +262,13 @@
 
 /* ── Hide CopilotKit's built-in message action buttons (copy, etc.) ──
    The user's toolbar is invisible until hover but still holds ~40px under every question, which put each answer
-   farther from its question than from the next one. CopilotKit gives that toolbar no class, only this test id. */
-.copilotKitAssistantMessage > div.cpk\:bg-transparent,
-[data-testid="copilot-user-toolbar"] {
+   farther from its question than from the next one. CopilotKit gives that toolbar no class, only this test id.
+   The app's replies have no toolbar; a story that renders CopilotKit's own reply hides its toolbar the same way. */
+:is([data-testid="copilot-user-toolbar"], [data-testid="copilot-assistant-toolbar"]) {
   display: none !important;
 }
 
-@media (max-width: 767px) {
+@media (max-width: 640px) {
   /* No disclaimer under a phone's composer; it keeps the 12px it stands from the screen's sides below it too. */
   .chat-disclaimer {
     display: none;
@@ -283,19 +278,12 @@
     margin-bottom: var(--space-12);
   }
 
-  .composer-read-only {
-    min-height: 46px;
-    margin-bottom: var(--space-12);
-    padding: 0 1px 0 calc(var(--space-16) - 1px);
-  }
-}
-
-/* As wide as a phone's composer (plugins.css). */
-@media (max-width: 639.98px) {
+  /* As wide as a phone's composer (plugins.css). */
   .composer-read-only {
     width: calc(100% + 8px);
-    margin-right: calc(-1 * var(--space-4));
-    margin-left: calc(-1 * var(--space-4));
+    min-height: 46px;
+    margin: 0 calc(-1 * var(--space-4)) var(--space-12);
+    padding: 0 1px 0 calc(var(--space-16) - 1px);
   }
 }
 
@@ -323,7 +311,7 @@ cpk-web-inspector,
    what it writes into; the text keeps its measure. Below it, from its middle down, the canvas is opaque behind
    the disclaimer, so a scrolled reply never shows under the composer. A composer that grows with its text grows up,
    its lower half stays over the band. A phone's composer stays as it is. */
-@media (min-width: 768px) {
+@media (min-width: 641px) {
   .chat-composer,
   .composer-accessory {
     width: calc(min(720px, 100%) - 1.5rem) !important;
@@ -336,13 +324,13 @@ cpk-web-inspector,
   .app-chat .chat-disclaimer {
     position: relative;
     background: var(--color-canvas);
-    z-index: -1;
+    z-index: var(--layer-behind);
   }
 
   .app-chat .chat-disclaimer::before {
     content: '';
     position: absolute;
-    z-index: -1;
+    z-index: var(--layer-behind);
     inset: -26px 0 100%;
     background: var(--color-canvas);
     pointer-events: none;

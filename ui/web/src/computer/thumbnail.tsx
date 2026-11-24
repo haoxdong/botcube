@@ -1,5 +1,4 @@
-import { m as motionElement } from "motion/react";
-import { Presence, presenceMotion } from "../app/collapse";
+import { Fades } from "../app/motion";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileTypeIcon } from '../components/file-type-icon';
 
@@ -38,9 +37,9 @@ export function Thumbnail({ path, name, thumbnailUrl, onFailure }: {
   const ready = url !== null && loaded === url;
   return (
     <span className="file-thumbnail" aria-hidden="true">
-      <Presence>{!ready && <motionElement.span {...presenceMotion} key="icon"><FileTypeIcon name={name} /></motionElement.span>}</Presence>
-      <Presence>{url !== null && (
-      <motionElement.img {...presenceMotion} key={url} animate={{ opacity: ready ? 1 : 0 }}
+      <Fades>{!ready && <span key="icon"><FileTypeIcon name={name} /></span>}</Fades>
+      <Fades>{url !== null && (
+      <img key={url}
         src={url}
         alt=""
         loading="lazy"
@@ -49,7 +48,7 @@ export function Thumbnail({ path, name, thumbnailUrl, onFailure }: {
         onLoad={() => setLoaded(url)}
         onError={() => fail('the browser could not show it')}
       />
-      )}</Presence>
+      )}</Fades>
     </span>
   );
 }

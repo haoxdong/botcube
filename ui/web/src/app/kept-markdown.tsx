@@ -55,7 +55,7 @@ export function prepareKeptMarkdown(texts: string[]): Promise<void> | null {
 
 export default function KeptMarkdown({ text }: { text: string }) {
   const content = paragraphs(text);
-  if (content !== null) return <div className="space-y-4 whitespace-normal [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{content}</div>;
+  if (content !== null) return <div className="space-y-4 whitespace-normal [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 chat-markdown">{content}</div>;
   if (full === undefined) throw loadFullMarkdown();
   if (full.status === "error") throw full.error;
   const Renderer = full.Renderer;

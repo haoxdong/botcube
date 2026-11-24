@@ -1,9 +1,6 @@
 "use client";
 
-import { Swap, Presence, presenceMotion, CollapseItem, CollapseList } from "./collapse";
 
-
-import { m as motionElement } from "motion/react";
 
 import { CalendarClock } from "lucide-react";
 import { useCallback, useEffect, useId, useState } from "react";
@@ -11,15 +8,15 @@ import { Button } from "../components/pill-button";
 import { Item, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "../components/ui/item";
 import { Sheet } from "../components/ui/sheet";
 import { Badge } from "../components/ui/badge";
+import { Empty, EmptyDescription } from "../components/ui/empty";
 import { fetchAgentModels, ModelCatalogError, type AgentModel } from "./conversations";
+import { AlertLine } from "./alert-line";
 import { LoadingSkeleton } from "./load-state";
-import { Arrives } from "./motion";
+import { Arrives, Fades } from "./motion";
 import { fromExpression, listing, runs, stopInstant, summary, toExpression, unitOf, type Cadence, type Ending } from "./schedule";
 import { listTasks, sendTask, type ScheduledTask, type TaskChanges } from "./scheduled-task";
 import { afterRuns } from "./scheduled-task-draft";
 import { ScheduledTaskSheet } from "./scheduled-task-sheet";
-
-const MotionButton = motionElement.create(Button);
 
 /** The agent's proposal, including obsolete count fields retained in saved chats. */
 export type ScheduledTaskProposal = { title: string; prompt: string; timezone?: string | null; starts?: string | null; ends?: string | null; count?: number | null } & (Cadence | { schedule: string });
@@ -117,24 +114,24 @@ export function ScheduledTaskProposalCard({
     <div className="scheduled-proposal">
       <p className="scheduled-task-title">{proposal.title}</p>
       <p className="scheduled-task-prompt">{proposal.prompt}</p>
-      <Swap state={schedule ?? "invalid"}>{schedule === null ? (
-        <motionElement.p {...presenceMotion} key="0" className="agent-profile-error">{unscheduled}</motionElement.p>
+      <Arrives state={schedule ?? "invalid"}>{schedule === null ? (
+        <AlertLine key="0" className="agent-profile-error">{unscheduled}</AlertLine>
       ) : (
         <>
-          <motionElement.p {...presenceMotion} key="1" className="scheduled-task-schedule">{proposalSummary(schedule, timezone, endDate, proposal.count, startDate)}</motionElement.p>
-          <Swap state={`${state === "scheduled"}:${passed(schedule, timezone)}`}>{state === "scheduled" ? (
-            <motionElement.p {...presenceMotion} key="0" className="scheduled-proposal-done">Scheduled. Manage it in the Scheduled tab.</motionElement.p>
+          <p key="1" className="scheduled-task-schedule">{proposalSummary(schedule, timezone, endDate, proposal.count, startDate)}</p>
+          <Arrives state={`${state === "scheduled"}:${passed(schedule, timezone)}`}>{state === "scheduled" ? (
+            <p key="0" className="scheduled-proposal-done">Scheduled. Manage it in the Scheduled tab.</p>
           ) : passed(schedule, timezone) ? (
             // A one-off task leaves the account once it has run: its card offers no second run.
-            <motionElement.p {...presenceMotion} key="1" className="scheduled-proposal-done">Its time has passed.</motionElement.p>
+            <p key="1" className="scheduled-proposal-done">Its time has passed.</p>
           ) : (
-            <MotionButton {...presenceMotion} key="2" variant="primary" className="scheduled-proposal-confirm" disabled={state === "busy"} onClick={() => void confirm(schedule)}>
+            <Button key="2" variant="primary" className="scheduled-proposal-confirm" disabled={state === "busy"} onClick={() => void confirm(schedule)}>
               Confirm
-            </MotionButton>
-          )}</Swap>
+            </Button>
+          )}</Arrives>
         </>
-      )}</Swap>
-      <Presence>{error && <motionElement.p {...presenceMotion} className="agent-profile-error">{error}</motionElement.p>}</Presence>
+      )}</Arrives>
+      <Fades>{error && <AlertLine className="agent-profile-error">{error}</AlertLine>}</Fades>
     </div>
   );
 }
@@ -160,24 +157,22 @@ function ScheduledTaskRow({ task, onOpen }: { task: ScheduledTask; onOpen: () =>
   const paused = task.paused || task.ended;
   const labelledBy = [`${id}-title`, ...(paused ? [`${id}-status`] : []), `${id}-detail`].join(" ");
   return (
-    <CollapseItem as="li">
-      <Item className={paused ? "scheduled-task scheduled-task-paused" : "scheduled-task"} data-paused={paused || undefined}>
-        <ItemMedia variant="icon" aria-hidden="true">
-          <CalendarClock />
-        </ItemMedia>
-        <ItemContent>
-          <div className="scheduled-task-heading">
-            <ItemTitle className="scheduled-task-title">
-              <button type="button" id={`${id}-title`} className="scheduled-task-open" aria-haspopup="dialog" aria-labelledby={labelledBy} onClick={onOpen}>
-                {task.title}
-              </button>
-            </ItemTitle>
-            <TaskStatus task={task} id={`${id}-status`} />
-          </div>
-          <ItemDescription id={`${id}-detail`} className="scheduled-task-detail">{time === undefined ? task.prompt : `${time} · ${task.prompt}`}</ItemDescription>
-        </ItemContent>
-      </Item>
-    </CollapseItem>
+    <Item className={paused ? "scheduled-task scheduled-task-paused" : "scheduled-task"} data-paused={paused || undefined}>
+      <ItemMedia variant="icon" aria-hidden="true">
+        <CalendarClock />
+      </ItemMedia>
+      <ItemContent>
+        <div className="scheduled-task-heading">
+          <ItemTitle className="scheduled-task-title">
+            <button type="button" id={`${id}-title`} className="scheduled-task-open" aria-haspopup="dialog" aria-labelledby={labelledBy} onClick={onOpen}>
+              {task.title}
+            </button>
+          </ItemTitle>
+          <TaskStatus task={task} id={`${id}-status`} />
+        </div>
+        <ItemDescription id={`${id}-detail`} className="scheduled-task-detail">{time === undefined ? task.prompt : `${time} · ${task.prompt}`}</ItemDescription>
+      </ItemContent>
+    </Item>
   );
 }
 
@@ -246,8 +241,8 @@ export function ScheduledPanel({
 
   const notices = (
     <>
-      <Presence>{error && <motionElement.p {...presenceMotion} className="agent-profile-error">{error}</motionElement.p>}</Presence>
-      <Presence>{modelsError && <motionElement.p {...presenceMotion} className="agent-profile-error">{modelsError}</motionElement.p>}</Presence>
+      <Fades>{error && <AlertLine className="agent-profile-error">{error}</AlertLine>}</Fades>
+      <Fades>{modelsError && <AlertLine className="agent-profile-error">{modelsError}</AlertLine>}</Fades>
     </>
   );
   const groups = byFrequency(tasks ?? []);
@@ -256,30 +251,31 @@ export function ScheduledPanel({
       {!sheet?.open && notices}
       <Arrives state={tasks === null ? "loading" : "loaded"} waiting={tasks === null}>{tasks === null ? error === null && <LoadingSkeleton label="Scheduled tasks" /> : (
         <div className="scheduled-tasks">
-          {tasks.length === 0 && <p className="agent-profile-empty">No scheduled tasks yet.</p>}
-          <CollapseList>
+          {tasks.length === 0 && <Empty><EmptyDescription>No scheduled tasks yet.</EmptyDescription></Empty>}
+          <Fades folds>
             {groups.map(({ label, tasks: grouped }) => (
-              <CollapseItem key={label}>
+              <div key={label} className="collapsible"><div>
                 <section aria-label={label}>
                   <h3 className="list-group-heading">{label}</h3>
                   <ul className="scheduled-task-list">
-                    <CollapseList>
+                    <Fades folds>
                       {grouped.map((task) => (
-                        <ScheduledTaskRow
-                          key={task.id}
-                          task={task}
-                          onOpen={() => {
-                            setError(null);
-                            setSheet({ task, open: true, editing: false });
-                          }}
-                        />
+                        <li key={task.id} className="collapsible"><div>
+                          <ScheduledTaskRow
+                            task={task}
+                            onOpen={() => {
+                              setError(null);
+                              setSheet({ task, open: true, editing: false });
+                            }}
+                          />
+                        </div></li>
                       ))}
-                    </CollapseList>
+                    </Fades>
                   </ul>
                 </section>
-              </CollapseItem>
+              </div></div>
             ))}
-          </CollapseList>
+          </Fades>
         </div>
       )}</Arrives>
       {/* Mounted closed, so that opening is a change it rises for, as it slides away on closing. */}
@@ -290,7 +286,7 @@ export function ScheduledPanel({
         container={profile}
         className="scheduled-sheet"
       >
-        <Swap state={sheet?.task.id ?? "none"}>{sheet && (
+        <Arrives state={sheet?.task.id ?? "none"}>{sheet && (
           <ScheduledTaskSheet
             key={sheet.task.id}
             task={sheet.task}
@@ -303,7 +299,7 @@ export function ScheduledPanel({
             onDelete={() => void remove(sheet.task)}
             onOpenChat={() => { if (sheet.task.sideChat !== null) onOpenChat(sheet.task.sideChat, sheet.task.title); }}
           />
-        )}</Swap>
+        )}</Arrives>
       </Sheet>
     </div>
   );

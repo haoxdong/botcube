@@ -9,7 +9,7 @@ import { ArtifactLayout } from './artifact-panel';
 import { publishedOf } from './artifact-published';
 import recorded from './artifact-live-fill.stream.json';
 import MarkdownRenderer from './markdown-renderer';
-import { PHONE_QUERY } from './phone-query';
+import { PHONE_QUERY } from '../design-system/viewport';
 
 const PAGE = '<!doctype html><html><head><title>Q3 revenue</title></head><body><h1>Q3</h1></body></html>';
 const PUBLISHED = {

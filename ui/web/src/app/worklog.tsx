@@ -1,10 +1,8 @@
 "use client";
 
-
-import { m as motionElement } from "motion/react";
+import { Fades, Shows } from "./motion";
 import { useRenderToolCall } from "@copilotkit/react-core/v2/headless";
 import { partialJSONParse } from "@copilotkit/shared";
-import { Fade, Presence, presenceMotion } from "./collapse";
 import { Trace, TraceCollapsible, TraceCollapsibleContent, TraceCollapsibleTrigger, TraceDescription, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace";
 
 import { createContext, lazy, Suspense, useContext, useEffect, useState, type ReactElement, type ReactNode } from "react";
@@ -43,7 +41,6 @@ const CardOnly = createContext(false);
 const FAILED_COMMAND = /\n\[Command failed with exit code (\d+)\](\n\[Output was truncated due to size limits\])?$/;
 
 const text = (message: TurnMessage) => (typeof message.content === "string" ? message.content.trim() : "");
-
 
 /**
  * The message a row lays out. CopilotKit passes each of its rows, custom-message slots included, its message, and keys
@@ -211,17 +208,17 @@ export function Worklog({ id, turn, question, running, asked, children, advanceC
       <TraceCollapsibleTrigger className="worklog-head">{title}</TraceCollapsibleTrigger>
       <TraceCollapsibleContent className="worklog-body">
         <StepTimes.Provider value={{ each, arriving: advanceClock }}>
-          <Presence>{start && (
-            <motionElement.div {...presenceMotion} key="start">
+          <Fades>{start && (
+            <div key="start">
               <Step diagnosticId={`${start.id}:${diagnosticView}`} kind="start" state="done" icon="start" label={<span className="worklog-step-verb">Started up</span>} time={start.time} />
-            </motionElement.div>
-          )}</Presence>
+            </div>
+          )}</Fades>
           {children}
-          <Presence>{answer && (
-            <motionElement.div {...presenceMotion} key="answer">
+          <Fades>{answer && (
+            <div key="answer">
               <Step diagnosticId={`${answer.id}:${diagnosticView}`} kind="answer" state={running ? "live" : "done"} icon="answer" label={<span className="worklog-step-verb">{running ? "Answering" : "Answered"}</span>} time={answer.time} />
-            </motionElement.div>
-          )}</Presence>
+            </div>
+          )}</Fades>
         </StepTimes.Provider>
       </TraceCollapsibleContent>
     </TraceCollapsible>
@@ -268,7 +265,7 @@ function Step({ id, diagnosticId = id, kind, state, icon, label, time, sheet }: 
       </Head>
     </Trace>
   );
-  return fades ? <Fade open className="worklog-step-arrival">{step}</Fade> : step;
+  return fades ? <Shows appear when className="worklog-step-arrival">{step}</Shows> : step;
 }
 
 /** The whole seconds of step `id` in its Worklog's timeline, spoken; outside one, none. */
@@ -315,11 +312,11 @@ function TimedToolStep({ id, name, params, status: reported, output: result }: T
       {status === "stopped" && "Stopped · "}
       <span className="worklog-step-verb">{status === "running" ? running : done}</span>
       {argument && " "}
-      <Presence>{argument && (
-        <motionElement.span {...presenceMotion} className="worklog-step-object">
+      <Fades>{argument && (
+        <span className="worklog-step-object">
           {argument}
-        </motionElement.span>
-      )}</Presence>
+        </span>
+      )}</Fades>
     </>
   );
   const state = exit ? "failed" : status === "running" ? "live" : status === "stopped" ? "stopped" : "done";
@@ -348,7 +345,7 @@ export function ThoughtStep({ message, isRunning, isLatest }: { message: TurnMes
     <>
       <span className="worklog-step-verb">{live ? "Thinking" : "Thought"}</span>
       {title && " · "}
-      <Presence>{title && <motionElement.span {...presenceMotion} className="worklog-step-title">{title}</motionElement.span>}</Presence>
+      <Fades>{title && <span className="worklog-step-title">{title}</span>}</Fades>
     </>
   );
   const sheet = words ? { open, show: () => { preloadStepSheet(); setOpened(true); setOpen(true); } } : undefined;

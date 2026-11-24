@@ -1,0 +1,40 @@
+/* The popup surface (design-system registry): every stock menu, picker, popover and dialog keeps its stock surface and
+   fades in and out with one motion, its dialog's backdrop with it. No popup takes a class of its own for this. */
+:is(
+  [data-slot="popover-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="hover-card-content"],
+  [data-slot="dialog-content"],
+  [data-slot="dialog-overlay"],
+  [data-slot="alert-dialog-content"],
+  [data-slot="alert-dialog-overlay"]
+) {
+  opacity: 1;
+  transition: opacity var(--motion-quick) var(--ease);
+}
+
+:is(
+  [data-slot="popover-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="hover-card-content"],
+  [data-slot="dialog-content"],
+  [data-slot="dialog-overlay"],
+  [data-slot="alert-dialog-content"],
+  [data-slot="alert-dialog-overlay"]
+):is([data-starting-style], [data-ending-style]) {
+  opacity: 0;
+}
+
+/* Every dialog dims the page with the one scrim (DESIGN.md), without stock's blur, which costs frames without a GPU. */
+:is([data-slot="dialog-overlay"], [data-slot="alert-dialog-overlay"]) {
+  background: var(--scrim);
+  backdrop-filter: none;
+}

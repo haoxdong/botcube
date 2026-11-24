@@ -1,12 +1,12 @@
 "use client";
 
-import { m as motionElement, resize } from "motion/react";
-import { Presence, presenceMotion } from "./collapse";
+import { resize } from "motion/react";
+import { Fades } from "./motion";
 
 import { useLayoutEffect, useRef, useState, type ComponentType, type ReactElement, type ReactNode, type RefObject } from "react";
 import { contentToText, type Message } from "@ag-ui/client";
-import { Plus } from "lucide-react";
-import { InputGroupButton } from "@/components/ui/input-group";
+import { AddButton } from "./composer-attach";
+import { Message as ReplyMessage, MessageContent } from "@/components/ui/message";
 import { Composer } from "./composer";
 import { SentFileCards, sentFilesOf } from "./composer-files";
 import { ThoughtStep, worklogRows } from "./worklog";
@@ -39,7 +39,6 @@ function needsMarkdown(messages: readonly Message[]) {
   return messages.some((message) => message.role === "assistant" && !isPlainAsciiParagraph(scheduledRunOf(message)?.text ?? contentToText(message.content)));
 }
 
-
 type KeptScrollerProps = { children: ReactNode; scroller: RefObject<HTMLElement | null> };
 
 function KeptThread({ children, scroller }: KeptScrollerProps) {
@@ -64,7 +63,7 @@ export function prepareKeptChat(messages: readonly Message[]): Promise<void> | n
 }
 
 function KeptReply({ text }: { text: string }) {
-  if (isPlainAsciiParagraph(text)) return <div className="space-y-4 whitespace-normal [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"><p>{text}</p></div>;
+  if (isPlainAsciiParagraph(text)) return <div className="space-y-4 whitespace-normal [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 chat-markdown"><p>{text}</p></div>;
   const Formatted = readMarkdown().Renderer;
   return <Formatted text={text} />;
 }
@@ -79,11 +78,11 @@ function keptRow(message: Message, running: boolean, latest: boolean): ReactElem
       return (
         <div data-copilotkit className="copilotKitMessage copilotKitUserMessage cpk:flex cpk:flex-col cpk:items-end cpk:group cpk:pt-10" key={message.id}>
           <SentFileCards paths={paths} />
-          <Presence>{text && (
-            <motionElement.div {...presenceMotion} className={USER_MESSAGE_CLASS}>
+          <Fades>{text && (
+            <div className={USER_MESSAGE_CLASS}>
               {text}
-            </motionElement.div>
-          )}</Presence>
+            </div>
+          )}</Fades>
         </div>
       );
     }
@@ -97,11 +96,11 @@ function keptRow(message: Message, running: boolean, latest: boolean): ReactElem
         </div>
       );
       return (
-        <div data-copilotkit className="copilotKitMessage copilotKitAssistantMessage" key={message.id}>
-          <div className="cpk:prose cpk:max-w-full cpk:break-words cpk:dark:prose-invert">
+        <ReplyMessage from="assistant" className="chat-message" key={message.id}>
+          <MessageContent className="chat-bubble">
             <KeptReply text={contentToText(message.content)} />
-          </div>
-        </div>
+          </MessageContent>
+        </ReplyMessage>
       );
     }
     case "reasoning":
@@ -182,12 +181,12 @@ export function KeptChat({ messages, running = false, disclaimer, composerAccess
     <div className="chat-wrapper">
       <div data-copilotkit className="copilotKitChat cpk:@container cpk:relative cpk:h-full cpk:flex cpk:flex-col chat-full-height">
         <KeptThread scroller={scroller}>{column}</KeptThread>
-        <div ref={composer} className="kept-chat-composer cpk:absolute cpk:bottom-0 cpk:left-0 cpk:right-0 cpk:z-20 cpk:pointer-events-none">
-          <Presence>{composerAccessory && (
-            <motionElement.div {...presenceMotion} className="cpk:max-w-3xl cpk:mx-auto cpk:px-4 cpk:@3xl:px-0">
+        <div ref={composer} className="kept-chat-composer cpk:absolute cpk:bottom-0 cpk:left-0 cpk:right-0 z-(--layer-bar) cpk:pointer-events-none">
+          <Fades>{composerAccessory && (
+            <div className="cpk:max-w-3xl cpk:mx-auto cpk:px-4 cpk:@3xl:px-0">
               <div className="composer-accessory">{composerAccessory}</div>
-            </motionElement.div>
-          )}</Presence>
+            </div>
+          )}</Fades>
           <div inert aria-hidden>
             <Composer
               value=""
@@ -197,7 +196,7 @@ export function KeptChat({ messages, running = false, disclaimer, composerAccess
               running={false}
               canSend={false}
               hasFiles={false}
-              addMenu={<InputGroupButton size="icon-sm" className="composer-add" data-testid="copilot-add-menu-button" aria-label="Add photos & files"><Plus aria-hidden /></InputGroupButton>}
+              addMenu={<AddButton />}
               disclaimer={disclaimer}
               replica
             />

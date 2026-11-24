@@ -75,12 +75,36 @@ body {
   --shadow-rest: 0 1px 3px rgb(0 0 0 / 0.08), 0 4px 16px rgb(0 0 0 / 0.08);
   /* What floats over the page: menus, sheets, the profile and the phone's chat card beside the drawer. */
   --shadow-float: 0 4px 20px rgb(0 0 0 / 0.15);
+  /* A slider's thumb, as iOS lifts it off its track. */
+  --shadow-thumb: 0 1px 4px rgb(0 0 0 / 0.18), 0 0 0 0.5px rgb(0 0 0 / 0.06);
 
   /* Motion (DESIGN.md): two durations, one curve, one loop. */
   --motion-quick: 150ms;
   --motion-move: 300ms;
   --motion-loop: 1.6s;
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* Layers, lowest first: every z-index names one (the one-source check). The stock parts' popups, menus, dialogs and
+     tooltips sit at Tailwind's z-50, their own and unedited, so everything of ours that covers the page lies under
+     them and a menu opens over any sheet; only the blur under the clock lies over them. */
+  /* Within a part, under or over the rest of it. */
+  --layer-behind: -1;
+  --layer-raised: 1;
+  /* Over the chat's messages: the welcome; then its bars: the composer, the alerts and the live browser; then its header
+     and what floats with it, the scroll button; then what covers the whole chat: a file drop and the apps. */
+  --layer-chat: 10;
+  --layer-bar: 20;
+  --layer-header: 30;
+  --layer-cover: 40;
+  /* The sidebar, the chat's card one over it while the phone drawer is open; the Agent Profile over the chat's edge. */
+  --layer-sidebar: 42;
+  --layer-profile: 44;
+  /* What covers the screen: a full-screen artifact, the computer and a screen's sheet; the frost over a swiped chat. */
+  --layer-screen: 46;
+  /* The stock parts' layer (z-50). */
+  --layer-popup: 50;
+  /* The light blur under the clock, over everything. */
+  --layer-clock: 60;
 
   /* Spacing (DESIGN.md): seven steps of a 4px grid, each with its jobs there. */
   --space-4: 4px;
@@ -128,6 +152,54 @@ body {
   --cpk-default-transition-timing-function: var(--ease);
   --cpk-animate-pulse-cursor: pulse-cursor var(--motion-loop) ease-in-out infinite;
   --cpk-animate-spin: spin var(--motion-loop) linear infinite;
+}
+
+/* Tailwind's theme, for its classes and copied-in shadcn components, read from our tokens: shadcn's colour names (mapped
+   once, above), the type sizes and weights, and its default transition, spin (streamdown's toolbar and diagram
+   spinner) and pulse (the stock Skeleton). --color-border is our token too: the :root one, unlayered, outranks this
+   layer. */
+@theme inline {
+  --font-sans: var(--font-sans);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --text-title: var(--font-title);
+  --text-body: var(--font-body);
+  --text-small: var(--font-small);
+  --text-label: var(--font-label);
+  --font-weight-normal: var(--weight-regular);
+  --font-weight-semibold: var(--weight-semibold);
+  --default-transition-duration: var(--motion-quick);
+  --default-transition-timing-function: var(--ease);
+  --animate-spin: spin var(--motion-loop) linear infinite;
+  --animate-pulse: loadPulse var(--motion-loop) ease-in-out infinite;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
 }
 
 /* Every scrollbar's thumb is `control`, inherited from the root; CopilotKit's elements, which set their own, are set

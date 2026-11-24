@@ -14,22 +14,13 @@
   --button-height: 2rem;
 }
 
-[data-slot="field"] select {
-  padding: var(--space-12);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-lg);
-  font-size: var(--font-body);
-  color: var(--color-text);
-  background: var(--color-white);
-}
-
 /* A sheet (iOS's): it rises from the bottom of what it covers, over a dimmed backdrop that lightens as a finger swipes
    it down, with `radius-xl` top corners, a grabber, and the phone Edit profile sheet's title bar (its close at the
    left, the title centred). Desktops, which close it from its title bar or outside it, show no grabber. */
 .sheet-backdrop {
   position: absolute;
   inset: 0;
-  z-index: 10;
+  z-index: var(--layer-raised);
   background: var(--scrim);
   opacity: calc(1 - var(--drawer-swipe-progress, 0));
   transition: opacity var(--motion-move) var(--ease);
@@ -38,7 +29,7 @@
 .sheet-viewport {
   position: absolute;
   inset: 0;
-  z-index: 11;
+  z-index: var(--layer-raised);
   display: flex;
   align-items: flex-end;
 }
@@ -52,7 +43,7 @@
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   background: var(--color-white);
   box-shadow: var(--shadow-float);
-  /* Focus falls back to the sheet when the action pressed gives way (Delete to its confirm); it shows no ring. */
+  /* Focus falls back to the sheet when the action pressed gives way (Edit to its form); it shows no ring. */
   outline: 0;
   transform: translateY(calc(var(--drawer-snap-point-offset, 0px) + var(--drawer-swipe-movement-y, 0px)));
   transition: transform var(--motion-move) var(--ease);
@@ -61,7 +52,7 @@
 .sheet-backdrop[data-screen],
 .sheet-viewport[data-screen] {
   position: fixed;
-  z-index: 500;
+  z-index: var(--layer-screen);
 }
 
 /* Base UI fades the backdrop with the swipe from the top snap point down to the lower one, where it would vanish. */
@@ -125,10 +116,26 @@
   padding: 0 calc(var(--space-24) * 2);
 }
 
+/* The stock close button, at the title bar's left: a round 32px button with a 20px icon, a finger's 44px on a phone. */
 .sheet-close {
   position: absolute;
   left: -6px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
   color: var(--color-text);
+}
+
+.sheet-close svg {
+  width: 20px;
+  height: 20px;
+}
+
+@media (max-width: 640px) {
+  .sheet-close {
+    width: 44px;
+    height: 44px;
+  }
 }
 
 .sheet-title {
@@ -177,8 +184,6 @@
 
 .sidebar-error {
   padding: var(--space-8) var(--space-12);
-  font-size: var(--font-small);
-  color: var(--color-red);
 }
 
 /*
@@ -337,4 +342,25 @@
   .sidebar-show-more:hover {
     color: var(--color-text);
   }
+}
+
+/* The account menu and file cards size their text in Tailwind's desktop text-sm and text-xs; here those are DESIGN.md's
+   body and small, so a phone's 17 and 15 reach them. A file about to be sent keeps the composer's desktop sizes. */
+:is(.user-menu-dropdown, .file-attachment:not(.composer-files *)) {
+  --text-sm: var(--font-body);
+  --text-sm--line-height: var(--leading);
+  --text-xs: var(--font-small);
+  --text-xs--line-height: var(--leading);
+}
+
+/* Stock Empty: its title in body, its line under it in small, both on the one line-height. */
+[data-slot="empty-title"] {
+  font-size: var(--font-body);
+  line-height: var(--leading);
+  letter-spacing: normal;
+}
+
+[data-slot="empty-description"] {
+  font-size: var(--font-small);
+  line-height: var(--leading);
 }

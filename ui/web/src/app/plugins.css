@@ -36,8 +36,8 @@
 }
 
 /* Phones: CopilotKit's own 1rem side padding is the chat's gutter (dots Fig 7), so the messages'
-   column adds none. Its min-width breakpoint (sm, 40rem) drops that padding at 640px itself. */
-@media (max-width: 639.98px) {
+   column adds none. */
+@media (max-width: 640px) {
   .copilotKitMessages {
     padding-left: 0;
     padding-right: 0;
@@ -104,11 +104,11 @@
   }
 }
 
+/* The stock Badge as a dot: no text, so no padding. */
 .chat-unread-dot {
-  display: inline-block;
   width: 6px;
   height: 6px;
-  flex-shrink: 0;
+  padding: 0;
   border-radius: var(--radius-pill);
   background: var(--color-blue);
 }

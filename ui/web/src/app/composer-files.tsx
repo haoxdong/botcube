@@ -1,15 +1,15 @@
 "use client";
 
-import { m as motionElement } from "motion/react";
-import { Presence, presenceMotion, CollapseList, FadeItem, useInstant } from "./collapse";
+import { Fades } from "./motion";
 
-import { useEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type HTMLAttributes, type ReactNode, type RefObject } from "react";
 import { cn } from "cn";
-import { Attachment, AttachmentHoverCard, AttachmentHoverCardContent, AttachmentHoverCardTrigger, AttachmentInfo, AttachmentPreview, AttachmentRemove, Attachments, type AttachmentData } from "@/components/ui/attachments";
+import { Attachment, AttachmentHoverCard, AttachmentHoverCardContent, AttachmentHoverCardTrigger, AttachmentInfo, AttachmentPreview, AttachmentRemove, Attachments, type AttachmentData, type AttachmentProps } from "@/components/ui/attachments";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { fileExtension, FileTypeIcon, isImageName } from "../components/file-type-icon";
 import { attachmentAccountEpoch, subscribeAttachmentAccount } from "../plugin/file-account";
+import { AlertLine } from "./alert-line";
 import { baseOf, filesPath, type FilesPath } from "./files-path";
 
 interface AttachmentStore {
@@ -189,16 +189,33 @@ function FileIconBox({ name }: { name: string }) {
   );
 }
 
-export function FileFace({ name }: { name: string }) {
+/** A card's second line, muted: a file's kind, or its upload's progress. */
+export const QuietLine = (props: HTMLAttributes<HTMLSpanElement>) => <span className="block truncate text-(--color-text-muted) text-xs" {...props} />;
+
+/**
+ * A file as stock's list card, the same about to be sent, once sent, in a reply and as an Artifact's card: `icon`, then
+ * its name, in full on hover unless `untitled`, over `second`; `top` across the card above them, and `children` after them.
+ */
+export function FileAttachment({ name, icon, second, top, data, untitled = false, className, children, ...props }: Omit<AttachmentProps, "data"> & { name: string; icon: ReactNode; second: ReactNode; top?: ReactNode; data?: AttachmentData; untitled?: boolean }) {
   return (
-    <>
-      <FileIconBox name={name} />
-      <span className="sent-file-text">
-        <span className="sent-file-name" title={name}>{name}</span>
-        <span className="sent-file-kind">{kindOf(name)}</span>
-      </span>
-    </>
+    <Attachments variant="list" className="contents">
+      <Attachment data={data ?? { id: name, type: "file", filename: name, mediaType: "", url: "" }} className={cn("file-attachment p-2.5 text-sm", className)} {...props}>
+        {top}
+        <AttachmentPreview fallbackIcon={icon} className="size-10 bg-transparent" />
+        <div className="min-w-0 flex-1">
+          <AttachmentInfo title={untitled ? undefined : name} />
+          {second}
+        </div>
+        {children}
+      </Attachment>
+    </Attachments>
   );
+}
+
+/** A file sent, or a reply's, as its card: its type's icon, name and kind; or, in red, `failure`. */
+export function SentFile({ name, failure, ...props }: Omit<AttachmentProps, "data"> & { name: string; failure?: string; top?: ReactNode }) {
+  const second = failure === undefined ? <QuietLine>{kindOf(name)}</QuietLine> : <AlertLine className="[overflow-wrap:anywhere]">{failure}</AlertLine>;
+  return <FileAttachment name={name} icon={<FileIconBox name={name} />} second={second} {...props} />;
 }
 
 /**
@@ -222,15 +239,14 @@ function SentImage({ path, name, fileUrl }: { path: FilesPath; name: string; fil
   const now = shown?.path === path ? shown : null;
   if (now && "error" in now) {
     return (
-      <li className="sent-file">
-        <FileIconBox name={name} />
-        <span className="sent-file-error" role="alert">{`${name} could not load: ${now.error}`}</span>
+      <li>
+        <SentFile name={name} failure={`${name} could not load: ${now.error}`} />
       </li>
     );
   }
   return (
     <li className="image-thumb" title={name} aria-label={name}>
-      <Presence>{now && <motionElement.img {...presenceMotion} src={now.url} alt={name} onError={() => setShown({ path, error: "the browser could not show it" })} />}</Presence>
+      <Fades>{now && <img src={now.url} alt={name} onError={() => setShown({ path, error: "the browser could not show it" })} />}</Fades>
     </li>
   );
 }
@@ -241,7 +257,7 @@ export function SentFileCards({ paths, fileUrl }: { paths: FilesPath[]; fileUrl?
     <ul className="sent-files" aria-label="Attached files">
       {paths.map((path) => {
         const name = baseOf(path);
-        return isImageName(name) ? <SentImage key={path} path={path} name={name} fileUrl={fileUrl} /> : <li key={path} className="sent-file"><FileFace name={name} /></li>;
+        return isImageName(name) ? <SentImage key={path} path={path} name={name} fileUrl={fileUrl} /> : <li key={path}><SentFile name={name} /></li>;
       })}
     </ul>
   );
@@ -289,30 +305,28 @@ const attachmentOf = (id: string, name: string, file: File, url: string | null):
 function ImageTile({ id, file, state, name, onRemove, onBroken }: Omit<ChipProps, "onRetry"> & { onBroken: () => void }) {
   const url = useObjectUrl(file);
   return (
-    <FadeItem className="composer-image" data-status={state.status} title={name}>
-      <Attachments variant="grid" className="contents">
-        <Attachment data={attachmentOf(id, name, file, url)} onRemove={() => onRemove(id)} onError={onBroken} className={cn("size-14", state.status === "uploading" && "opacity-50")}>
-          <AttachmentPreview />
-          <span className="sr-only" {...(state.status === "uploading" ? uploading(name, state.progress) : {})} />
-          <AttachmentRemove label={`Remove ${name}`} className={REVEAL_REMOVE} />
-        </Attachment>
-      </Attachments>
-    </FadeItem>
+    <Attachments variant="grid" className="contents">
+      <Attachment data={attachmentOf(id, name, file, url)} onRemove={() => onRemove(id)} onError={onBroken} className={cn("size-14", state.status === "uploading" && "opacity-50")}>
+        <AttachmentPreview />
+        <span className="sr-only" {...(state.status === "uploading" ? uploading(name, state.progress) : {})} />
+        <AttachmentRemove label={`Remove ${name}`} className={REVEAL_REMOVE} />
+      </Attachment>
+    </Attachments>
   );
 }
 
 /** A card's second line: its kind, its upload's progress, or, in red, why it failed, with Retry where Retry helps. */
 function SecondLine({ id, state, name, onRetry }: Omit<ChipProps, "file" | "onRemove">) {
   if (state.status === "uploading") {
-    return <span className="block truncate text-muted-foreground text-xs" {...uploading(name, state.progress)}>{`Uploading… ${Math.round(state.progress * 100)}%`}</span>;
+    return <QuietLine {...uploading(name, state.progress)}>{`Uploading… ${Math.round(state.progress * 100)}%`}</QuietLine>;
   }
-  if (state.status === "uploaded") return <span className="block truncate text-muted-foreground text-xs">{kindOf(name)}</span>;
+  if (state.status === "uploaded") return <QuietLine>{kindOf(name)}</QuietLine>;
   const said = state.hidden ? "Hidden file: rename it" : state.undeletedPath === undefined ? "Upload failed" : "Remove failed";
   return (
-    <span className="flex min-w-0 text-destructive text-xs">
-      {/* The full reason: in stock's hover card on hover, and in the alert for a screen reader. Only it ellipsizes; Retry stays whole. */}
+    <div className="flex min-w-0 text-(--color-red) text-xs">
+      {/* The full reason: in stock's hover card on hover, and in the error line for a screen reader. Only it ellipsizes; Retry stays whole. */}
       <AttachmentHoverCard>
-        <AttachmentHoverCardTrigger render={<span role="alert" className="min-w-0 truncate" />}>
+        <AttachmentHoverCardTrigger render={<AlertLine className="min-w-0 truncate text-xs" />}>
           {said}
           <span className="sr-only">{`: ${state.error}`}</span>
         </AttachmentHoverCardTrigger>
@@ -321,28 +335,27 @@ function SecondLine({ id, state, name, onRetry }: Omit<ChipProps, "file" | "onRe
       {/* A hidden file needs renaming, not Retry. */}
       <span className="shrink-0 whitespace-pre" hidden={state.hidden}>
         {" · "}
-        <Button type="button" variant="link" size="xs" className="h-auto p-0 text-destructive underline" onClick={() => onRetry(id)}>Retry</Button>
+        <Button type="button" variant="link" size="xs" className="h-auto p-0 text-(--color-red) underline" onClick={() => onRetry(id)}>Retry</Button>
       </span>
-    </span>
+    </div>
   );
 }
 
-/** An attached file, as stock's list card: our type icon, or a failed image's picture, then its name over its second line. */
+/** An attached file, as a FileAttachment: our type icon, or a failed image's picture. */
 function FileCard({ id, file, state, name, picture, onRetry, onRemove, onBroken }: ChipProps & { picture: boolean; onBroken: () => void }) {
   const url = useObjectUrl(picture ? file : null);
   return (
-    <FadeItem className="composer-file" data-status={state.status}>
-      <Attachments variant="list" className="contents">
-        <Attachment data={attachmentOf(id, name, file, url)} onRemove={() => onRemove(id)} onError={onBroken} className={cn("p-2.5 text-sm", state.status === "failed" && "border-destructive", state.status === "uploading" && "opacity-50")}>
-          <AttachmentPreview fallbackIcon={<FileIconBox name={name} />} className="size-10 bg-transparent" />
-          <div className="min-w-0 flex-1">
-            <AttachmentInfo title={name} />
-            <SecondLine id={id} state={state} name={name} onRetry={onRetry} />
-          </div>
-          <AttachmentRemove label={`Remove ${name}`} className={REVEAL_REMOVE} />
-        </Attachment>
-      </Attachments>
-    </FadeItem>
+    <FileAttachment
+      name={name}
+      data={attachmentOf(id, name, file, url)}
+      icon={<FileIconBox name={name} />}
+      second={<SecondLine id={id} state={state} name={name} onRetry={onRetry} />}
+      onRemove={() => onRemove(id)}
+      onError={onBroken}
+      className={cn(state.status === "failed" && "border-(--color-red)", state.status === "uploading" && "opacity-50")}
+    >
+      <AttachmentRemove label={`Remove ${name}`} className={REVEAL_REMOVE} />
+    </FileAttachment>
   );
 }
 
@@ -359,24 +372,24 @@ export function ComposerFileChips({ files, onRetry, onRemove }: { files: Compose
     return { ...entry, name, picture: isImageName(entry.file.name) && !broken.has(entry.id) };
   });
   // The list outlives its last chip while that chip fades out, then leaves, and the composer shrinks after it.
-  const instant = useInstant();
   const [listed, setListed] = useState(false);
   if (files.length > 0 && !listed) setListed(true);
-  const shown = files.length > 0 || (listed && !instant);
+  const shown = files.length > 0 || listed;
   return (
-    <Presence>{shown && <motionElement.ul {...presenceMotion} className="composer-files" aria-label="Attached files">
+    <Fades>{shown && <ul className="composer-files" aria-label="Attached files">
       {/* The list mounts with its first chip, which fades in as any later one does. */}
-      <CollapseList initial onExitComplete={() => setListed(false)}>
+      <Fades appear onExitComplete={() => setListed(false)}>
         {named.map(({ picture, ...entry }) => {
           const onBroken = () => setBroken((current) => new Set(current).add(entry.id));
-          return picture && entry.state.status !== "failed" ? (
-            <ImageTile key={entry.id} {...entry} onRemove={onRemove} onBroken={onBroken} />
-          ) : (
-            <FileCard key={entry.id} {...entry} picture={picture} onRetry={onRetry} onRemove={onRemove} onBroken={onBroken} />
+          const tile = picture && entry.state.status !== "failed";
+          return (
+            <li key={entry.id} className={tile ? "composer-image" : "composer-file"} data-status={entry.state.status} title={tile ? entry.name : undefined}>
+              {tile ? <ImageTile {...entry} onRemove={onRemove} onBroken={onBroken} /> : <FileCard {...entry} picture={picture} onRetry={onRetry} onRemove={onRemove} onBroken={onBroken} />}
+            </li>
           );
         })}
-      </CollapseList>
-    </motionElement.ul>}</Presence>
+      </Fades>
+    </ul>}</Fades>
   );
 }
 

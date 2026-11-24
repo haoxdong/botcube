@@ -1,28 +1,28 @@
 "use client";
 
-import { Swap, Presence, presenceMotion } from "./collapse";
-
-import { m as motionElement } from "motion/react";
-import { useRef, useState } from "react";
+import { Arrives, Fades } from "./motion";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { Pencil } from "lucide-react";
-import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { webUiPlugin } from "@bot-ui";
 import type { AuthUiState } from "../plugin/index.js";
 import { Avatar } from "./avatar";
 import { ProfileEditor } from "./profile-editor";
+import { AlertLine } from "./alert-line";
 import { LoadFailed } from "./load-state";
-import { useIsPhone } from "./phone-query";
+import { useViewport } from "@/design-system/viewport";
 import { Sheet } from "../components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 const UI_CONFIG = webUiPlugin.config;
 const GUEST_NOTE = "Your work lives in this browser until you save it.";
 
 export function GuestNotice({ onSignIn }: { onSignIn: () => void }) {
   return (
-    <p className="guest-notice" role="note">
+    <AlertLine tone="notice" role="note" className="guest-notice">
       {GUEST_NOTE}{" "}
       <Button type="button" variant="link" size="sm" onClick={onSignIn}>{UI_CONFIG.loginLabel}</Button>
-    </p>
+    </AlertLine>
   );
 }
 
@@ -41,7 +41,7 @@ export function UserMenu({ expanded, auth, onLogout }: {
   const { user: userInfo, userLoading, editProfile: onEditProfile } = auth;
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
-  const isPhone = useIsPhone();
+  const isPhone = useViewport() === "phone";
   const { name, firstName } = accountNames(auth);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const editor = onEditProfile && (
@@ -57,20 +57,18 @@ export function UserMenu({ expanded, auth, onLogout }: {
   );
 
   return (
-    <Popover open={open} onOpenChange={(next) => { setOpen(next); if (next) setEditing(false); }}>
+    <DropdownMenu open={open} onOpenChange={(next) => { setOpen(next); if (next) setEditing(false); }}>
     <div className="user-menu">
-      <PopoverTrigger
-        ref={triggerRef}
-        className={`user-menu-trigger${open ? " menu-open" : ""}`}
-        aria-label="Account"
-        data-tooltip={userInfo?.name}
-      >
-        <Avatar picture={userInfo?.photo} name={name} blank={userLoading} size={isPhone && expanded ? 29 : 28} />
-        <Presence>{expanded && <motionElement.span {...presenceMotion} className="sidebar-nav-label">{firstName}</motionElement.span>}</Presence>
-      </PopoverTrigger>
-      <PopoverContent side="top" align="start" sideOffset={8} className="user-menu-dropdown standard-popup" finalFocus={editing && isPhone ? false : triggerRef}>
-        <Swap state={editing && editor && !isPhone ? "editing" : "account"}>{editing && editor && !isPhone ? (
-          editor
+      <Tooltip disabled={!userInfo?.name}>
+        <TooltipTrigger render={<DropdownMenuTrigger ref={triggerRef} className="user-menu-trigger" aria-label="Account" />}>
+          <Avatar picture={userInfo?.photo} name={name} blank={userLoading} size={isPhone && expanded ? 29 : 28} />
+          <Fades>{expanded && <span className="sidebar-nav-label">{firstName}</span>}</Fades>
+        </TooltipTrigger>
+        <TooltipContent side="right">{userInfo?.name}</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent side="top" align="start" sideOffset={8} className="user-menu-dropdown" finalFocus={editing && isPhone ? false : triggerRef}>
+        <Arrives state={editing && editor && !isPhone ? "editing" : "account"}>{editing && editor && !isPhone ? (
+          <div onKeyDown={keepKeysInEditor}>{editor}</div>
         ) : (
           <AccountItems
             auth={auth}
@@ -80,50 +78,55 @@ export function UserMenu({ expanded, auth, onLogout }: {
               setOpen(!isPhone);
             }}
             onLogout={onLogout}
-            close={() => setOpen(false)}
           />
-        )}</Swap>
-      </PopoverContent>
+        )}</Arrives>
+      </DropdownMenuContent>
       {isPhone && editor && (
         <Sheet open={editing} onClose={() => setEditing(false)} title="Edit profile" container={null} finalFocus={triggerRef}>
           {editor}
         </Sheet>
       )}
     </div>
-    </Popover>
+    </DropdownMenu>
   );
 }
 
-function AccountItems({ auth, name, onEdit, onLogout, close }: {
+/** Keys typed in Edit profile stay its fields', out of the menu's arrow keys and typeahead; Escape still closes it. */
+function keepKeysInEditor(event: KeyboardEvent) {
+  if (event.key !== "Escape") event.stopPropagation();
+}
+
+function AccountItems({ auth, name, onEdit, onLogout }: {
   auth: AuthUiState;
   name: string;
   onEdit: () => void;
   onLogout: () => void;
-  close: () => void;
 }) {
   const { status: authStatus, loadFailure, user: userInfo, userLoading, editProfile: onEditProfile, login: onLogin, relink: onRelink } = auth;
   return (
     <>
-      <Presence>{(authStatus === "authed" || userInfo) && (
+      <Fades>{(authStatus === "authed" || userInfo) && (
         <>
-          <motionElement.div {...presenceMotion} key="0" className="user-menu-header">
+          <div key="0" className="user-menu-header">
             <Avatar picture={userInfo?.photo} name={name} blank={userLoading} size={32} />
             <div className="user-menu-name">{name}</div>
-          </motionElement.div>
-          <motionElement.div {...presenceMotion} key="1" className="user-menu-sep" />
+          </div>
+          <div key="1"><DropdownMenuSeparator /></div>
         </>
-      )}</Presence>
-      <Presence>{onEditProfile && (
-        <motionElement.button {...presenceMotion} className="user-menu-item" onClick={onEdit}>
-          <Pencil size={16} aria-hidden />
-          <span>Edit profile</span>
-        </motionElement.button>
-      )}</Presence>
-      <Swap state={loadFailure ? "failed" : authStatus}>{loadFailure ? (
+      )}</Fades>
+      <Fades>{onEditProfile && (
+        <div>
+          <DropdownMenuItem closeOnClick={false} onClick={onEdit}>
+            <Pencil size={16} aria-hidden />
+            <span>Edit profile</span>
+          </DropdownMenuItem>
+        </div>
+      )}</Fades>
+      <Arrives state={loadFailure ? "failed" : authStatus}>{loadFailure ? (
         <LoadFailed error={loadFailure.error} onRetry={loadFailure.retry} />
       ) : authStatus === "authed" ? (
         <>
-          <button className="user-menu-item" onClick={() => { onRelink(); close(); }}>
+          <DropdownMenuItem onClick={() => onRelink()}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
               <path d="M21 3v5h-5" />
@@ -131,35 +134,31 @@ function AccountItems({ auth, name, onEdit, onLogout, close }: {
               <path d="M3 21v-5h5" />
             </svg>
             <span>{UI_CONFIG.relinkLabel}</span>
-          </button>
-          <button className="user-menu-item" onClick={() => { onLogout(); close(); }}>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onLogout()}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
               <polyline points="16 17 21 12 16 7" />
               <line x1="21" y1="12" x2="9" y2="12" />
             </svg>
             <span>{UI_CONFIG.logoutLabel ?? "Log out"}</span>
-          </button>
+          </DropdownMenuItem>
         </>
       ) : (
         <>
         {auth.guest === true && (
           <p className="user-menu-note" role="note">{GUEST_NOTE} Sign in to save it.</p>
         )}
-        <button
-          className="user-menu-item"
-          onClick={() => { onLogin(); close(); }}
-          disabled={authStatus === "loading"}
-        >
+        <DropdownMenuItem onClick={() => onLogin()} disabled={authStatus === "loading"}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
             <polyline points="10 17 15 12 10 7" />
             <line x1="15" y1="12" x2="3" y2="12" />
           </svg>
           <span>{authStatus === "loading" ? "Connecting..." : UI_CONFIG.loginLabel}</span>
-        </button>
+        </DropdownMenuItem>
         </>
-      )}</Swap>
+      )}</Arrives>
     </>
   );
 }

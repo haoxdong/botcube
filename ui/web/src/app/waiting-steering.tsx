@@ -1,11 +1,9 @@
 "use client";
 
-import { useContext, useEffect, useLayoutEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { LazyMotion, domMax, m } from "motion/react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Pencil, X } from "lucide-react";
 import { USER_MESSAGE_CLASS } from "./bubble-width";
-import { Fade, Collapse, useInstant } from "./collapse";
-import { motionTokens } from "./motion-tokens";
+import { Fold, foldAway, Shows } from "./motion";
 import { sentFilesOf } from "./composer-files";
 import { MessageEntranceHistory } from "./message-entrance";
 import type { PendingMessage, Withdrawal } from "./steering";
@@ -56,19 +54,22 @@ function WaitingMessage({ message, shown, last, onClosed, open, onToggle, onSend
 }) {
   const text = textOf(message.content);
   const sent = outcome === "taken" || message.now === true;
-  const instant = useInstant();
-  const { move, quick } = motionTokens();
   const [hovered, setHovered] = useState(false);
-  useEffect(() => {
-    if (!shown && instant) onClosed();
-  }, [shown, instant, onClosed]);
+  const row = useRef<HTMLDivElement>(null);
   // A closing row gives up one gap (--space-24, waiting-steering.css) as it folds: one before the last cancels the next
   // row's with its bottom margin; the last folds its own top margin away.
-  const closed = () => last
-    ? { height: 0, opacity: 0, marginTop: 0 }
-    : { height: 0, opacity: 0, marginBottom: -parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--space-24")) };
+  const closed = useRef(onClosed);
+  useLayoutEffect(() => {
+    closed.current = onClosed;
+  });
+  useLayoutEffect(() => {
+    if (shown || row.current === null) return;
+    const gap = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--space-24")) || 0;
+    foldAway(row.current, () => closed.current(), last ? { marginTop: "0px" } : { marginBottom: `${-gap}px` });
+  }, [shown, last]);
   return (
-    <m.div
+    <div
+      ref={row}
       data-copilotkit
       className="copilotKitMessage copilotKitUserMessage cpk:flex cpk:flex-col cpk:items-end cpk:group cpk:pt-10 waiting-message"
       data-waiting-id={message.id}
@@ -76,17 +77,12 @@ function WaitingMessage({ message, shown, last, onClosed, open, onToggle, onSend
       onPointerLeave={() => setHovered(false)}
       inert={shown ? undefined : true}
       style={{ overflow: shown ? undefined : "hidden" }}
-      initial={false}
-      animate={shown || instant ? { opacity: 1 } : closed()}
-      transition={{ height: move, marginTop: move, marginBottom: move, opacity: quick }}
-      {...(shown || instant ? {} : { onAnimationComplete: onClosed })}
     >
       <div className={`${USER_MESSAGE_CLASS} waiting-message-bubble`} onPointerEnter={(event: ReactPointerEvent<HTMLDivElement>) => setHovered(event.pointerType === "mouse")} onClick={sent ? undefined : () => { if (!matchMedia("(hover: hover)").matches) onToggle(); }}>{text}</div>
-      <Collapse open={!sent} appear={false}>
-        <div className="waiting-message-actions">
-          <Fade open={message.missed === true || outcome === "failed"} className="waiting-message-note" role="status">
+      <Fold open={!sent}><div className="waiting-message-actions">
+          <Shows appear when={message.missed === true || outcome === "failed"} className="waiting-message-note" role="status">
             {message.missed ? "Waiting for the next Turn" : "Your message is still waiting."}
-          </Fade>
+          </Shows>
           <span className="waiting-message-swap">
             <Button type="button" variant="ghost" size="sm" className="waiting-message-send-now" onClick={onSendNow}>Send now</Button>
             <span className="waiting-message-icons">
@@ -94,9 +90,8 @@ function WaitingMessage({ message, shown, last, onClosed, open, onToggle, onSend
               <Button type="button" variant="ghost" size="icon-sm" className="waiting-message-icon" aria-label={`Cancel ${text}`} onClick={onCancel}><X aria-hidden="true" /></Button>
             </span>
           </span>
-        </div>
-      </Collapse>
-    </m.div>
+        </div></Fold>
+    </div>
   );
 }
 
@@ -128,7 +123,7 @@ export function WaitingMessages({ waiting, withdraw, sendNow, onEdit }: {
     return next;
   });
   return (
-    <LazyMotion features={domMax} strict>
+    <>
       {rows.map(({ message, shown }, index) => (
           <WaitingMessage
             key={message.id}
@@ -144,6 +139,6 @@ export function WaitingMessages({ waiting, withdraw, sendNow, onEdit }: {
             outcome={outcomes.get(message.id)}
           />
       ))}
-    </LazyMotion>
+    </>
   );
 }

@@ -1,17 +1,26 @@
 "use client";
 
 import { carriesFiles } from "./keep-file-drops";
+import { Shows } from "./motion";
 
-import { useEffect, useRef, useState, type DragEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, type ComponentProps, type DragEvent, type RefObject } from "react";
 import { FilePlusCorner, Paperclip, Plus } from "lucide-react";
-import { zoomOf } from "@/lib/utils";
+import { cn, zoomOf } from "@/lib/utils";
 import { InputGroupButton } from "@/components/ui/input-group";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { composerEdges } from "./composer-edges";
 import type { ComposerFiles } from "./composer-files";
-import { Fade } from "./collapse";
 
 // The ways files reach the composer besides pasting into its text: its + menu, and dropping them on the chat.
+
+/** The composer's +: the one face of its add button, on the live composer's menu and on a kept chat's still copy. */
+export function AddButton({ className, ...props }: ComponentProps<typeof InputGroupButton>) {
+  return (
+    <InputGroupButton size="icon-sm" data-testid="copilot-add-menu-button" aria-label="Add photos & files" {...props} className={cn("composer-add rounded-full focus-visible:bg-(--color-fill) focus-visible:text-(--color-text)", className)}>
+      <Plus aria-hidden />
+    </InputGroupButton>
+  );
+}
 
 /**
  * The composer's + and its stock menu, opening over the composer's left edge, whose items open the file
@@ -26,10 +35,8 @@ export function AddMenu({ picker }: { picker: RefObject<HTMLInputElement | null>
   };
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger ref={trigger} render={<InputGroupButton size="icon-sm" />} data-testid="copilot-add-menu-button" className="composer-add rounded-full focus-visible:bg-muted focus-visible:text-foreground" aria-label="Add photos & files">
-        <Plus aria-hidden />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent className="add-menu standard-popup" side="top" sideOffset={() => composerEdges(trigger.current).above + 8 * zoomOf(trigger.current)} alignOffset={() => -composerEdges(trigger.current).left}>
+      <DropdownMenuTrigger ref={trigger} render={<AddButton />} />
+      <DropdownMenuContent className="add-menu" side="top" sideOffset={() => composerEdges(trigger.current).above + 8 * zoomOf(trigger.current)} alignOffset={() => -composerEdges(trigger.current).left}>
         <DropdownMenuItem onClick={() => addFile("image/*")}>
           <Paperclip aria-hidden />
           Add photos
@@ -110,5 +117,5 @@ export function useFileDrop(add: ComposerFiles["add"]) {
 
 /** The quiet sheet over the chat while files are dragged over it, fading in and out. */
 export function FileDropOverlay({ open }: { open: boolean }) {
-  return <Fade open={open} className="file-drop">Drop files to attach</Fade>;
+  return <Shows appear when={open} className="file-drop">Drop files to attach</Shows>;
 }

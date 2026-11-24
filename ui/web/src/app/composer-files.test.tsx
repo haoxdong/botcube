@@ -53,7 +53,7 @@ describe('SentFileCards', () => {
     const cards = within(screen.getByRole('list', { name: 'Attached files' })).getAllByRole('listitem');
     // A name without an extension is a plain page, with no label.
     expect(cards.map((card) => card.textContent)).toEqual(['pdfAI_Trends_2026.pdfPDF', 'csvrates.csvCSV', 'MakefileFile']);
-    expect(within(cards[0] as HTMLElement).getByText('AI_Trends_2026.pdf')).toHaveAttribute('title', 'AI_Trends_2026.pdf');
+    expect(within(cards[0] as HTMLElement).getByText('AI_Trends_2026.pdf').parentElement).toHaveAttribute('title', 'AI_Trends_2026.pdf');
   });
 
   it('shows nothing for a message without files', () => {
@@ -341,7 +341,7 @@ describe('ComposerFileChips', () => {
     onTestFinished(() => sheet.remove());
     const one: ComposerFile[] = [{ id: '2', file: notes, state: { status: 'uploaded', path: filesPath('/notes.md') } }];
     const view = render(<ComposerFileChips files={one} onRetry={vi.fn()} onRemove={vi.fn()} />);
-    await waitFor(() => expect(chip('notes.md').style.opacity).toBe('1'));
+    expect(chip('notes.md')).toBeVisible();
 
     view.rerender(<ComposerFileChips files={[]} onRetry={vi.fn()} onRemove={vi.fn()} />);
 
@@ -447,7 +447,7 @@ describe('ComposerFileChips', () => {
     render(<ComposerFileChips files={[{ id: 'img', file: chart, state: { status: 'failed', error: 'Files are not configured' } }, files[2] as ComposerFile]} onRetry={onRetry} onRemove={vi.fn()} />);
 
     expect(within(chip('chart.png')).getByRole('img', { name: 'chart.png' })).toHaveAttribute('src', 'blob:test/1');
-    expect(chip('chart.png').querySelector('.group')).toHaveClass('border-destructive');
+    expect(chip('chart.png').querySelector('.group')).toHaveClass('border-(--color-red)');
     expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(['Upload failed: Files are not configured', 'Upload failed: A file named Makefile is already in Files']);
     await userEvent.click(within(chip('chart.png')).getByRole('button', { name: 'Retry' }));
     expect(onRetry).toHaveBeenCalledWith('img');

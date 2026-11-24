@@ -1,11 +1,12 @@
 "use client";
 
 import { useId, useState, type FormEvent } from "react";
+import { Shows } from "./motion";
 import type { AuthUiState, AuthUser } from "../plugin/index.js";
 import { Button } from "../components/pill-button";
 import { Field, FieldLabel } from "../components/ui/field";
 import { PictureField } from "./picture-field";
-import { Fade } from "./collapse";
+import { AlertLine } from "./alert-line";
 import { Input } from "@/components/ui/input";
 
 /** The user's display name and photo, edited in the account menu: `onSaved` after a save, `onCancel` without one. */
@@ -45,7 +46,7 @@ export function ProfileEditor({
         <FieldLabel htmlFor={nameId}>Display name</FieldLabel>
         <Input id={nameId} value={name} onChange={(event) => setName(event.target.value)} />
       </Field>
-      <Fade open={error !== null} className="profile-editor-error" role="alert">{error}</Fade>
+      <Shows appear when={error !== null}><AlertLine>{error}</AlertLine></Shows>
       <div className="profile-editor-actions">
         <Button type="button" onClick={onCancel}>
           Cancel

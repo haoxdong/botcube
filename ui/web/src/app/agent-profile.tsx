@@ -1,7 +1,6 @@
 "use client";
 
-import { m as motionElement } from "motion/react";
-import { Presence, presenceMotion } from "./collapse";
+import { Arriving, Fades, useAfterMove } from "./motion";
 
 import { Check, ChevronLeft, Clock, Fingerprint, Heart, IdCard, MessageSquare, Monitor, Pencil, ShieldCheck, X, Zap, type LucideIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type Ref } from "react";
@@ -10,17 +9,18 @@ import type { AgentProfileTab } from "../plugin/index.js";
 import type { SignInsControl } from "../plugin/types";
 import { SignInsTab } from "./sign-ins";
 import { Button } from "../components/pill-button";
+import { Empty, EmptyDescription } from "../components/ui/empty";
 import { Field, FieldLabel } from "../components/ui/field";
+import { AlertLine } from "./alert-line";
 import { Avatar } from "./avatar";
 import { LoadFailed, LoadingSkeleton, useLoad, type LoadState } from "./load-state";
-import { Arriving, useAfterMove } from "./motion";
 import { PictureField } from "./picture-field";
 import { throwIfRefused } from "./refusal";
 import { Input } from "@/components/ui/input";
+import { Item } from "@/components/ui/item";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-const MotionButton = motionElement.create(Button);
-const MotionField = motionElement.create(Field);
 const ScheduledPanel = lazy(() => import("./scheduled-tasks").then(({ ScheduledPanel }) => ({ default: ScheduledPanel })));
 
 /** The agent as the Chat Service's `GET /agent` describes it. */
@@ -164,9 +164,7 @@ function useChanges(before = () => {}, after = () => {}) {
     }
   };
   const alert = error && (
-    <p className="agent-profile-error" role="alert">
-      {error}
-    </p>
+    <AlertLine className="agent-profile-error">{error}</AlertLine>
   );
   return { setError, active, run, alert };
 }
@@ -217,34 +215,34 @@ function FileDocument({
           <Icon aria-hidden="true" />
         </span>
         <h3>{file}</h3>
-        <Presence>{saved && (
-          <motionElement.p {...presenceMotion} className="agent-file-saved" role="status">
+        <Fades>{saved && (
+          <p className="agent-file-saved" role="status">
             <Check aria-hidden="true" />
             Saved
-          </motionElement.p>
-        )}</Presence>
+          </p>
+        )}</Fades>
         {actions}
-        <Presence>{mode.kind === "editable" && (
-          <MotionButton {...presenceMotion} type="button" aria-label={`Edit ${file}`} onClick={mode.onEdit}>
+        <Fades>{mode.kind === "editable" && (
+          <Button type="button" aria-label={`Edit ${file}`} onClick={mode.onEdit}>
             Edit
-          </MotionButton>
-        )}</Presence>
-        <Presence>{mode.kind === "editing" && (
+          </Button>
+        )}</Fades>
+        <Fades>{mode.kind === "editing" && (
           <>
-            <MotionButton {...presenceMotion} key="0" type="button" aria-label={`Cancel editing ${file}`} disabled={mode.busy} onClick={mode.onCancel}>
+            <Button key="0" type="button" aria-label={`Cancel editing ${file}`} disabled={mode.busy} onClick={mode.onCancel}>
               Cancel
-            </MotionButton>
-            <MotionButton {...presenceMotion} key="1" type="submit" form={formId} variant="primary" disabled={mode.busy} aria-label={`Save ${file}`}>
+            </Button>
+            <Button key="1" type="submit" form={formId} variant="primary" disabled={mode.busy} aria-label={`Save ${file}`}>
               Save
-            </MotionButton>
+            </Button>
           </>
-        )}</Presence>
+        )}</Fades>
       </header>
       <section className="agent-file-about" aria-label={`About ${file}`}>
         <p>{ABOUT[file]}</p>
       </section>
-      <Presence>{mode.kind === "editing" ? (
-        <motionElement.form {...presenceMotion}
+      <Fades>{mode.kind === "editing" ? (
+        <form
           id={formId}
           className="agent-file-form"
           onSubmit={(event: FormEvent) => {
@@ -253,10 +251,10 @@ function FileDocument({
           }}
         >
           {children}
-        </motionElement.form>
+        </form>
       ) : (
         children
-      )}</Presence>
+      )}</Fades>
     </article>
   );
 }
@@ -349,14 +347,14 @@ function SoulFile({
       onBack={onBack}
       mode={draft === null ? { kind: "editable", onEdit: () => edit(soul) } : { kind: "editing", onSave: save, onCancel: cancel }}
     >
-      <Presence>{draft === null ? (
-        <motionElement.div {...presenceMotion} key="0" className="agent-file-group agent-file-text">{soul}</motionElement.div>
+      <Fades>{draft === null ? (
+        <div key="0" className="agent-file-group agent-file-text">{soul}</div>
       ) : (
-        <MotionField {...presenceMotion} key="1">
+        <Field key="1">
           <FieldLabel htmlFor={id}>Soul</FieldLabel>
           <Textarea id={id} rows={12} value={draft} onChange={(event) => setDraft(event.target.value)} />
-        </MotionField>
-      )}</Presence>
+        </Field>
+      )}</Fades>
     </FileDocument>
   );
 }
@@ -417,36 +415,41 @@ function MemoryFile({
         </Button>
       )}
     >
-      <Presence>{addition && (
-        <MotionField {...presenceMotion}>
+      <Fades>{addition && (
+        <Field>
           <FieldLabel htmlFor={additionId}>New Memory</FieldLabel>
           <Input id={additionId} autoFocus required value={addition.text} disabled={addition.saving}
             onChange={(event) => setAddition({ ...addition, text: event.target.value })} />
-        </MotionField>
-      )}</Presence>
-      <Presence>{draft === null && lines.length === 0 && <motionElement.p {...presenceMotion} className="agent-profile-empty">No memories yet.</motionElement.p>}</Presence>
-      <Presence>{draft === null && lines.length > 0 && (
-        <motionElement.ol {...presenceMotion} className="agent-file-group">
+        </Field>
+      )}</Fades>
+      <Fades>{draft === null && lines.length === 0 && <Empty><EmptyDescription>No memories yet.</EmptyDescription></Empty>}</Fades>
+      <Fades>{draft === null && lines.length > 0 && (
+        <ol className="agent-file-group">
           {lines.map((line) => (
             <li key={line.id} className="agent-file-row">
               {line.text}
             </li>
           ))}
-        </motionElement.ol>
-      )}</Presence>
-      <Presence>{draft && (
-        <motionElement.ol {...presenceMotion} className="agent-memory">
+        </ol>
+      )}</Fades>
+      <Fades>{draft && (
+        <ol className="agent-memory">
           {draft.map((line, index) => (
             <li key={line.id} className="agent-memory-line">
-              <Input
-                aria-label={`Memory line ${index + 1}`}
-                value={line.text}
-                disabled={line.id.startsWith("pending:")}
-                title={line.id.startsWith("pending:") ? "Available to edit after Memory extraction" : undefined}
-                onChange={(event) =>
-                  setDraft(draft.map((other) => (other.id === line.id ? { ...other, text: event.target.value } : other)))
-                }
-              />
+              {/* A disabled control takes no pointer: the tooltip's trigger is a box around it, as stock shows. */}
+              <Tooltip disabled={!line.id.startsWith("pending:")}>
+                <TooltipTrigger render={<span className="flex min-w-0 flex-1" />}>
+                  <Input
+                    aria-label={`Memory line ${index + 1}`}
+                    value={line.text}
+                    disabled={line.id.startsWith("pending:")}
+                    onChange={(event) =>
+                      setDraft(draft.map((other) => (other.id === line.id ? { ...other, text: event.target.value } : other)))
+                    }
+                  />
+                </TooltipTrigger>
+                <TooltipContent>Available to edit after Memory extraction</TooltipContent>
+              </Tooltip>
               <Button
                 type="button"
                 variant="destructive"
@@ -458,8 +461,8 @@ function MemoryFile({
               </Button>
             </li>
           ))}
-        </motionElement.ol>
-      )}</Presence>
+        </ol>
+      )}</Fades>
     </FileDocument>
   );
 }
@@ -625,12 +628,12 @@ function PersonalizationPanel({ chatServiceUrl, revision, onSaved, memory }: { c
           {(memory ? (["Soul", "Memory"] as const) : (["Soul"] as const)).map((file) => {
             const { tint, Icon } = FILE_LOOK[file];
             return (
-              <button key={file} type="button" className={`agent-file-card ${tint}`} aria-label={`Open ${file}`} onClick={() => show(file)}>
+              <Item key={file} render={<button type="button" />} className={`agent-file-card flex-nowrap items-stretch gap-0 ${tint}`} aria-label={`Open ${file}`} onClick={() => show(file)}>
                 <span className="agent-file-card-title">{file}</span>
                 <span className="agent-file-card-hint">{CARD_HINT[file]}</span>
                 <span className="agent-file-card-count">{count(file, soulFile.state, memoryFile.state)}</span>
                 <Icon className="agent-file-card-icon" fill="currentColor" aria-hidden="true" />
-              </button>
+              </Item>
             );
           })}
         </div>
@@ -712,7 +715,7 @@ export function AgentProfile({
     Personalization: <PersonalizationPanel chatServiceUrl={chatServiceUrl} revision={revision} onSaved={onSaved} memory={memory} />,
     ...(signIns ? { "Sign-ins": <SignInsTab chatServiceUrl={chatServiceUrl} control={signIns} /> } : {}),
   };
-  const panel = (name: AgentProfileTab) => builtIn[name] ?? <p className="agent-profile-empty">Nothing here yet.</p>;
+  const panel = (name: AgentProfileTab) => builtIn[name] ?? <Empty><EmptyDescription>Nothing here yet.</EmptyDescription></Empty>;
 
   return (
     <Arriving value={open && !settled}>
@@ -722,36 +725,40 @@ export function AgentProfile({
             <button ref={closeRef} className="header-btn agent-profile-close" onClick={onClose} aria-label="Close agent profile">
               <X size={20} aria-hidden />
             </button>
-            <Presence>
-              {profile && <motionElement.div {...presenceMotion} key="avatar" className="agent-profile-avatar">
-                <Avatar picture={profile.picture ?? undefined} emoji={profile.avatar} name={profile.name} agent size={96} />
+            <Fades>
+              {profile && <Avatar key="avatar" className="agent-profile-avatar" picture={profile.picture ?? undefined} emoji={profile.avatar} name={profile.name} agent size={96}>
                 <button className="agent-profile-edit" onClick={() => setEditing(true)} aria-label="Edit agent"><Pencil size={16} aria-hidden /></button>
-              </motionElement.div>}
-              {profile && <motionElement.h2 {...presenceMotion} key="name" className="agent-profile-name">{profile.name}</motionElement.h2>}
-              {profile && character && <motionElement.p {...presenceMotion} key="character" className="agent-profile-character">{character}</motionElement.p>}
-              {profile && <motionElement.p {...presenceMotion} key="status" className={`agent-profile-status agent-profile-status-${profile.status}`}>
+              </Avatar>}
+              {profile && <h2 key="name" className="agent-profile-name">{profile.name}</h2>}
+              {profile && character && <p key="character" className="agent-profile-character">{character}</p>}
+              {profile && <p key="status" className={`agent-profile-status agent-profile-status-${profile.status}`}>
                 <Zap size={14} aria-hidden />{profile.status === "online" ? "Connected" : "Not connected"}
-              </motionElement.p>}
-            </Presence>
+              </p>}
+            </Fades>
           </div>
-          <Presence>{error && <motionElement.p {...presenceMotion} className="agent-profile-error">{error}</motionElement.p>}</Presence>
+          <Fades>{error && <AlertLine className="agent-profile-error">{error}</AlertLine>}</Fades>
         </div>
         <div className="agent-profile-tabs" role="tablist">
           {TABS.map(([name, Icon]) => (
-            <button
-              key={name}
-              role="tab"
-              aria-selected={name === tab && !editor}
-              aria-label={name}
-              title={name}
-              className="agent-profile-tab"
-              onClick={() => {
-                setTab(name);
-                setEditing(false);
-              }}
-            >
-              <Icon size={20} aria-hidden />
-            </button>
+            <Tooltip key={name}>
+              <TooltipTrigger
+                render={
+                  <button
+                    role="tab"
+                    aria-selected={name === tab && !editor}
+                    aria-label={name}
+                    className="agent-profile-tab"
+                    onClick={() => {
+                      setTab(name);
+                      setEditing(false);
+                    }}
+                  />
+                }
+              >
+                <Icon size={20} aria-hidden />
+              </TooltipTrigger>
+              <TooltipContent>{name}</TooltipContent>
+            </Tooltip>
           ))}
         </div>
         <div className="agent-profile-panel" role="tabpanel" aria-label="Computer" hidden={!keptComputer}>

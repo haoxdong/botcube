@@ -136,7 +136,7 @@ it('names a length a page without layout leaves uncomputed, rather than throwing
 
 const listOf = (text: string) => {
   const list = document.createElement('div');
-  list.innerHTML = `<div class="copilotKitAssistantMessage"><div class="cpk:prose"><div style="width: 240px"><p>${text}</p></div></div></div>`;
+  list.innerHTML = `<div class="chat-message is-assistant"><div class="chat-bubble" style="width: 240px"><div class="chat-markdown"><p>${text}</p></div></div></div>`;
   document.body.append(list);
   return list;
 };
@@ -144,10 +144,10 @@ const listOf = (text: string) => {
 it('lets a hugged reply span the column once a code block joins it', async () => {
   const list = listOf('Here is the curve:');
   const stop = fitBubbles(list);
-  const bubble = list.querySelector<HTMLElement>('[class*="cpk:prose"] > div');
+  const bubble = list.querySelector<HTMLElement>('.chat-bubble');
   if (bubble === null) throw new Error('the bubble');
 
-  bubble.insertAdjacentHTML('beforeend', '<div data-streamdown="code-block"><pre>curve = 2s10s</pre></div>');
+  bubble.querySelector('.chat-markdown')?.insertAdjacentHTML('beforeend', '<div data-streamdown="code-block"><pre>curve = 2s10s</pre></div>');
   await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
   expect(bubble.style.width).toBe('');
@@ -158,7 +158,7 @@ it('lets a hugged reply span the column once a code block joins it', async () =>
 it('lets a reply span its cap once a chart joins it, before the chart draws', async () => {
   const list = listOf('Inflation eased.');
   const stop = fitBubbles(list);
-  const bubble = list.querySelector<HTMLElement>('[class*="cpk:prose"] > div');
+  const bubble = list.querySelector<HTMLElement>('.chat-bubble');
   if (bubble === null) throw new Error('the bubble');
 
   bubble.insertAdjacentHTML('beforeend', '<span class="reply-chart" data-loading=""></span>');
@@ -173,7 +173,7 @@ it('lets a reply span its cap once a chart joins it, before the chart draws', as
 it('fits a streamed word before it paints, not a frame later inside the width fit to the words before it', async () => {
   const list = listOf('Hi Hao, I can pull rates');
   const stop = fitBubbles(list);
-  const bubble = list.querySelector<HTMLElement>('[class*="cpk:prose"] > div');
+  const bubble = list.querySelector<HTMLElement>('.chat-bubble');
   if (bubble === null) throw new Error('the bubble');
   let frames = 0;
   const count = () => { frames += 1; };
@@ -195,7 +195,7 @@ it('fits the bubbles a list mounts with before it paints, not after its first re
   const stop = fitBubbles(list);
 
   // The kept chat mounts twice as a chat opens; each mount painted its replies unfitted, a line shorter.
-  expect(list.querySelector<HTMLElement>('[class*="cpk:prose"] > div')?.style.width).toBe('');
+  expect(list.querySelector<HTMLElement>('.chat-bubble')?.style.width).toBe('');
   stop?.();
   list.remove();
 });
@@ -203,7 +203,7 @@ it('fits the bubbles a list mounts with before it paints, not after its first re
 it('refits every bubble when a font loads, before the next frame', () => {
   const list = listOf('Hi Hao, I can pull rates');
   const stop = fitBubbles(list);
-  const bubble = list.querySelector<HTMLElement>('[class*="cpk:prose"] > div');
+  const bubble = list.querySelector<HTMLElement>('.chat-bubble');
   if (bubble === null) throw new Error('the bubble');
   // A width fit to the fallback font's lines.
   bubble.style.width = '123px';

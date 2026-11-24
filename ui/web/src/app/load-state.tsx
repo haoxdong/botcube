@@ -3,6 +3,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "../components/pill-button";
+import { AlertLine } from "./alert-line";
+import { Skeleton } from "../components/ui/skeleton";
 import { Arrives } from "./motion";
 
 /** A load from the Chat Service: in flight, answered, or failed with why. */
@@ -44,9 +46,9 @@ export function useLoad<T>(load: () => Promise<T>, key: unknown) {
 export function LoadingSkeleton({ label }: { label: string }) {
   return (
     <div className="load-skeleton" role="status" aria-label={`Loading ${label}`}>
-      <span className="load-skeleton-line" />
-      <span className="load-skeleton-line" />
-      <span className="load-skeleton-line" />
+      <Skeleton className="load-skeleton-line" />
+      <Skeleton className="load-skeleton-line" />
+      <Skeleton className="load-skeleton-line" />
     </div>
   );
 }
@@ -55,9 +57,7 @@ export function LoadingSkeleton({ label }: { label: string }) {
 export function LoadFailed({ error, onRetry, action = "Retry" }: { error: string; onRetry: () => void; action?: string }) {
   return (
     <div className="load-failed">
-      <p className="load-failed-error" role="alert">
-        {error}
-      </p>
+      <AlertLine className="text-center">{error}</AlertLine>
       <Button type="button" onClick={onRetry}>
         {action}
       </Button>

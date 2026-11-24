@@ -1,9 +1,9 @@
 "use client";
 
-import { m as motionElement } from "motion/react";
+import { Fades } from "./motion";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
-import { Presence, presenceMotion } from "./collapse";
+import { AlertLine, CouldntOpen } from "./alert-line";
 import { reason } from "./composer-files";
 import { sanitizeSlide, type CleanSlide, type Embed } from "./slide-sanitize";
 import { filesPath, type FilesPath } from "./files-path";
@@ -91,15 +91,15 @@ function DeckFrame({ title, folder, files, errors = [], runs, frame }: { title: 
 
   return (
     <>
-      <Presence>{errors.map((error) => (
-        <motionElement.p key={error} {...presenceMotion} role="alert" className="artifact-refused">{error}</motionElement.p>
-      ))}</Presence>
+      <Fades>{errors.map((error) => (
+        <AlertLine key={error} className="artifact-refused">{error}</AlertLine>
+      ))}</Fades>
       <iframe ref={frame} title={title} sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" src={SLIDES_PAGE} className="artifact-frame artifact-deck" />
-      <Presence>{deck.stripped.length > 0 && (
-        <motionElement.ul {...presenceMotion} aria-label="Not shown: outside the slide format" className="artifact-stripped">
+      <Fades>{deck.stripped.length > 0 && (
+        <ul aria-label="Not shown: outside the slide format" className="artifact-stripped">
           {deck.stripped.map((item) => <li key={item}>{item}</li>)}
-        </motionElement.ul>
-      )}</Presence>
+        </ul>
+      )}</Fades>
     </>
   );
 }
@@ -137,9 +137,9 @@ export function useVersionFiles(path: FilesPath, read: (path: FilesPath) => Prom
 export function VersionDeck({ title, path, files, frame }: { title: string; path: string; files: readonly DeckFile[] | { error: string }; frame: RefObject<HTMLIFrameElement | null> }) {
   return (
     <>
-      <Presence>{"error" in files && (
-        <motionElement.p {...presenceMotion} role="alert" className="artifact-refused">Couldn&apos;t open {title}: {files.error}</motionElement.p>
-      )}</Presence>
+      <Fades>{"error" in files && (
+        <CouldntOpen title={title} why={files.error} />
+      )}</Fades>
       <DeckFrame title={title} folder={path} files={"error" in files ? [] : files} runs frame={frame} />
     </>
   );

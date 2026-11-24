@@ -1,13 +1,13 @@
 "use client";
 
 import { ExternalLink, X } from 'lucide-react';
+import { Arrives } from '../app/motion';
 import React, { useState } from 'react';
 import type { AuxiliaryPanelHostProps } from '../plugin/index.js';
 import { chatServiceUrl } from '../plugin/chat-service-url';
 
 import { popOut, screenUrl } from './screenshots';
 import { useLiveViewEvents } from './live-view-events';
-import { Swap } from '../app/collapse';
 import { Screen } from './screen';
 import { Button } from "@/components/ui/button";
 
@@ -32,9 +32,9 @@ export function LiveBrowserPanel({ agentId, conversation }: AuxiliaryPanelHostPr
         url={error === null ? screenUrl(CHAT_SERVICE_URL, conversation.id) : null}
         title="Live browser"
         cover={
-          <Swap state={error === null ? 'connecting' : 'failed'} className="computer-screen-cover">
+          <Arrives state={error === null ? 'connecting' : 'failed'} className="computer-screen-cover">
             {error === null ? <span className="computer-screen-spinner" role="status" aria-label="Connecting" /> : <p className="computer-screen-error" role="alert">{error}</p>}
-          </Swap>
+          </Arrives>
         }
         actions={
           <span className="computer-screen-actions">

@@ -1,8 +1,7 @@
 "use client";
 
-import { Presence, presenceMotion } from "./collapse";
 
-import { m as motionElement } from "motion/react";
+import { Fades } from "./motion";
 
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -17,7 +16,7 @@ import { usePhoneProfileFocus } from "./phone-profile-focus";
 import { useDrawerSwipe } from "./drawer-swipe";
 import { Sidebar, useSidebar } from "./sidebar";
 import { usePhoneViewport } from "./phone-viewport";
-import { useIsPhone } from "./phone-query";
+import { useViewport } from "@/design-system/viewport";
 import { isUnread } from "./conversations";
 import {
   AGENT_DOCUMENT_EDITED,
@@ -39,6 +38,7 @@ import { LiveBrowserPanel } from "../computer/live-browser-panel";
 import type { AuthUiState } from "../plugin/index.js";
 import { chatServiceUrl } from "../plugin/chat-service-url";
 import { SidebarRow } from "./sidebar-row";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { ChatComputers } from "./chat-computers";
 import { SideChats } from "./side-chats";
@@ -59,7 +59,6 @@ const { config: UI_CONFIG } = webUiPlugin;
 const AGENT_ID = UI_CONFIG.agentId;
 const CHAT_SERVICE_URL = chatServiceUrl();
 
-
 export default function App({
   auth,
   opening,
@@ -71,7 +70,7 @@ export default function App({
   historyMoment: RefObject<HistoryMoment | null>;
   keptChatLatestShown: RefObject<number>;
 }) {
-  const isPhone = useIsPhone();
+  const isPhone = useViewport() === "phone";
   const viewport = usePhoneViewport();
   const viewportStyle = { "--keyboard-inset": `${viewport.inset}px`, "--viewport-top": `${viewport.top}px` };
   const [agentProfileOpen, setAgentProfileOpen] = useState(false);
@@ -212,13 +211,17 @@ export default function App({
   }[screen];
 
   return (
+    <TooltipProvider>
     <div ref={layoutRef} className="app-layout" data-sidebar-swiping={swipe.swiping || undefined} data-sidebar-dragging={swipe.dragging || undefined} data-profile-swiping={profileSwipe.swiping || undefined} data-profile-dragging={profileSwipe.dragging || undefined} style={{ ...AGENT_THEME, ...swipe.style, ...profileSwipe.style, ...viewportStyle }}>
       <Sidebar sidebar={swipe} inert={profileSwipe.open}>
         <div className="sidebar-top">
           <div className="sidebar-brand">
-            <MenuButton onClick={swipe.toggle} aria-expanded={swipe.expanded} title={swipe.expanded ? "Collapse sidebar" : "Expand sidebar"}>
-              <UnreadDot unread={isPhone && (mainChatUnread || sideChats.some(isUnread))} drawer />
-            </MenuButton>
+            <Tooltip>
+              <TooltipTrigger render={<MenuButton onClick={swipe.toggle} aria-expanded={swipe.expanded} />}>
+                <UnreadDot unread={isPhone && (mainChatUnread || sideChats.some(isUnread))} drawer />
+              </TooltipTrigger>
+              <TooltipContent>{swipe.expanded ? "Collapse sidebar" : "Expand sidebar"}</TooltipContent>
+            </Tooltip>
             <span className="sidebar-brand-text">{UI_CONFIG.title}</span>
           </div>
 
@@ -236,19 +239,20 @@ export default function App({
               <span className="sidebar-nav-label">Main chat</span>
               <UnreadDot unread={mainChatUnread} />
             </SidebarRow>
-            <SidebarRow
-              active={screen === 'apps'}
-              onClick={() => showMain('apps')}
-              aria-label="Apps"
-              title="Apps"
-            >
-              <Blocks className="sidebar-nav-icon" aria-hidden />
-              <span className="sidebar-nav-label">Apps</span>
-            </SidebarRow>
-            <SidebarRow active={screen === 'artifacts'} disabled={!ready} onClick={() => showMain('artifacts')} aria-label="Artifacts" title="Artifacts">
-              <PanelsTopLeftIcon className="sidebar-nav-icon" aria-hidden />
-              <span className="sidebar-nav-label">Artifacts</span>
-            </SidebarRow>
+            <Tooltip>
+              <TooltipTrigger render={<SidebarRow active={screen === 'apps'} onClick={() => showMain('apps')} aria-label="Apps" />}>
+                <Blocks className="sidebar-nav-icon" aria-hidden />
+                <span className="sidebar-nav-label">Apps</span>
+              </TooltipTrigger>
+              <TooltipContent>Apps</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger render={<SidebarRow active={screen === 'artifacts'} disabled={!ready} onClick={() => showMain('artifacts')} aria-label="Artifacts" />}>
+                <PanelsTopLeftIcon className="sidebar-nav-icon" aria-hidden />
+                <span className="sidebar-nav-label">Artifacts</span>
+              </TooltipTrigger>
+              <TooltipContent>Artifacts</TooltipContent>
+            </Tooltip>
           </nav>
         </div>
 
@@ -294,8 +298,8 @@ export default function App({
             {(ChatThread) => <>
             <ChatAlerts errors={activeId === null ? [] : [auth.error, mainChatRefreshError, olderError, stopError, choiceError, warmupError?.accountId === accountId ? warmupError?.message : null]} failure={activeId === null || mainChatError === null ? null : { error: mainChatError, retry: () => void openMainChat() }} />
             <ChatColumn agent={agent} profile={agentProfile} accountId={accountId} header={headerInPane ? chatHeader : undefined} request={artifactRequest}>
-            <Presence>{activeId === null ? noChat : (
-            <motionElement.div {...presenceMotion} className={covered ? "app-chat app-chat-opening" : "app-chat"}>
+            <Fades>{activeId === null ? noChat : (
+            <div className={covered ? "app-chat app-chat-opening" : "app-chat"}>
               <TurnStart.Provider value={runningSince}>
               <WorklogAgent.Provider value={agent}>
               <ChatThread
@@ -331,8 +335,8 @@ export default function App({
               </ChatThread>
               </WorklogAgent.Provider></TurnStart.Provider>
               {covered && keptChat}
-            </motionElement.div>
-            )}</Presence>
+            </div>
+            )}</Fades>
             </ChatColumn>
             {layoutElement !== null && activeId !== null && createPortal(<>
               <LiveBrowser agentId={AGENT_ID} conversation={{ id: activeId, service: "chat-service" }} />
@@ -381,5 +385,6 @@ export default function App({
         layoutElement,
       )}
     </div>
+    </TooltipProvider>
   );
 }
