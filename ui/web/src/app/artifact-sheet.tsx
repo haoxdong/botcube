@@ -5,7 +5,8 @@ import { m as motionElement } from "motion/react";
 import { SheetIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { recordOf } from "./artifact-newest";
+import { artifactVersions } from "./artifact-versions";
+import { baseOf } from "./files-path";
 import { saveFile, storedVersion, type ArtifactVersion, type Export, type ViewerProps } from "./artifact-viewer";
 import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
@@ -26,10 +27,10 @@ function sheetOf(text: string): Sheet {
 }
 
 /** A stored version's edits, with the sheets its import steps read from the store's copies of their Files. */
-async function openedAt(path: string, { read, readBytes }: Pick<ViewerProps, "read" | "readBytes">): Promise<Opened> {
+async function openedAt({ id, version, path }: ArtifactVersion, { read, readBytes }: Pick<ViewerProps, "read" | "readBytes">): Promise<Opened> {
   const sheet = sheetOf(await read(path));
   if (!sheet.edits.some(({ kind }) => kind === "importFile")) return { sheet, imported: new Map() };
-  const { imports = [] } = await recordOf(path, read);
+  const { imports = [] } = await artifactVersions(id, { read }).read(version);
   return { sheet, imported: await readImports(sheet, imports, readBytes) };
 }
 
@@ -45,7 +46,7 @@ export const EXCEL: Export = {
   run: async (target) => {
     const version = storedVersion(target, "the Sheet");
     const [opened, writer] = await Promise.all([
-      openedAt(version.path, target).catch((error: unknown) => {
+      openedAt(version, target).catch((error: unknown) => {
         throw new Error(`reading version ${version.version} failed: ${reason(error)}`);
       }),
       import("./sheet-excel").catch((error: unknown) => {
@@ -81,7 +82,7 @@ export function SheetVersion({ artifact: newest, read, readBytes, save, shows }:
 
   useEffect(() => {
     let current = true;
-    openedAt(shownVersion.path, { read, readBytes }).then((found) => {
+    openedAt(shownVersion, { read, readBytes }).then((found) => {
       if (current) setLoaded({ ...found, version: shownVersion });
     }).catch((error: unknown) => current && setLoaded({ error: reason(error) }));
     return () => {
@@ -136,7 +137,7 @@ export function SheetVersion({ artifact: newest, read, readBytes, save, shows }:
     setBusy(true);
     setFailures([]);
     try {
-      const name = shownVersion.id.slice(shownVersion.id.lastIndexOf("/") + 1);
+      const name = baseOf(shownVersion.id);
       await save({ id: shownVersion.id, version: shownVersion.version, files: { [name]: `${JSON.stringify(edited, null, 2)}\n` } });
       hold(null);
     } catch (error) {

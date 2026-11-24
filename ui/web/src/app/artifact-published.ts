@@ -1,13 +1,15 @@
 import { createContext } from "react";
 import { z } from "zod";
 
+import { filesPath } from "./files-path";
+
 export const Published = z.object({
-  id: z.string(),
+  id: z.string().transform(filesPath),
   type: z.enum(["slides", "doc", "sheet", "email"]).nullable(),
   title: z.string(),
   description: z.string(),
   version: z.number(),
-  path: z.string(),
+  path: z.string().transform(filesPath),
   author: z.enum(["agent", "user"]).optional(),
 });
 export type Published = z.infer<typeof Published>;

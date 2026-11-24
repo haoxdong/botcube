@@ -8,7 +8,7 @@ import { agentFiles } from './agent-files';
 import { reason } from './composer-files';
 
 import { keepSize, sizeOf, type Size } from './late-boxes';
-import { replyFilePath } from './reply-file-path';
+import { linkedPath } from './files-path';
 import { useReplyFile } from './use-reply-file';
 import { Button } from "@/components/ui/button";
 
@@ -37,7 +37,7 @@ async function saveImage(url: string) {
  * nothing above the row read moves; elsewhere it takes the image's own size as it loads.
  */
 export function ReplyImage({ src, alt, title }: ComponentProps<'img'>) {
-  const path = typeof src === 'string' ? replyFilePath(src) : null;
+  const path = typeof src === 'string' ? linkedPath(src) : null;
   const { file, imageFailed } = useReplyFile(path);
   const shown = path
     ? file

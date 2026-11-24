@@ -2,6 +2,7 @@ import type { Imported } from "botcube-artifact-check/record";
 import type { Sheet } from "botcube-artifact-check/sheet";
 import type { Cell as ExcelCell, Border, Worksheet } from "exceljs";
 
+import { baseOf, filesPath, type FilesPath } from "./files-path";
 import { emptySheet, LINE_COLOUR, type Cell, type ImportedSheets, type Line, type SheetModel } from "./sheet-model";
 
 /**
@@ -13,12 +14,12 @@ import { emptySheet, LINE_COLOUR, type Cell, type ImportedSheets, type Line, typ
  */
 
 /** Reads each import step's copy (its bytes, through `read`) into sheets. A step the version keeps no copy of fails. */
-export async function readImports(sheet: Sheet, imports: readonly Imported[], read: (path: string) => Promise<ArrayBuffer>): Promise<ImportedSheets> {
+export async function readImports(sheet: Sheet, imports: readonly Imported[], read: (path: FilesPath) => Promise<ArrayBuffer>): Promise<ImportedSheets> {
   const steps = sheet.edits.flatMap((edit, index) => edit.kind === "importFile" ? [{ index, asset: edit.asset }] : []);
   const loaded = await Promise.all(steps.map(async ({ index, asset }) => {
     const kept = imports.find((entry) => entry.edit === index);
     if (kept === undefined) throw new Error(`Edit ${index} imports ${asset}, and this version keeps no copy of it`);
-    const bytes = await read(kept.path);
+    const bytes = await read(filesPath(kept.path));
     return [index, /\.csv$/i.test(kept.path) ? await csvSheets(bytes, kept.from) : await xlsxSheets(bytes)] as const;
   }));
   return new Map(loaded);
@@ -29,7 +30,7 @@ async function csvSheets(bytes: ArrayBuffer, from: string): Promise<SheetModel[]
   const { default: Papa } = await import("papaparse");
   // dynamicTyping reads a number, true/false or an empty cell as such; anything else stays text.
   const parsed = Papa.parse<(string | number | boolean | null)[]>(new TextDecoder().decode(bytes), { dynamicTyping: true, skipEmptyLines: true });
-  const name = from.slice(from.lastIndexOf("/") + 1).replace(/\.csv$/i, "").replace(/[[\]:*?/\\]/g, " ").slice(0, 31) || "Sheet1";
+  const name = baseOf(filesPath(from)).replace(/\.csv$/i, "").replace(/[[\]:*?/\\]/g, " ").slice(0, 31) || "Sheet1";
   const sheet = emptySheet(name);
   parsed.data.forEach((row, r) => row.forEach((value, c) => {
     if (value === null || value === "") return;

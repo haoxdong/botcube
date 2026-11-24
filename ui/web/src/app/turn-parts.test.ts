@@ -4,7 +4,7 @@ import { partsOf, type TurnMessage } from './turn-parts';
 
 const publish = (id: string, file: string, version = 1): TurnMessage[] => [
   { id, role: 'assistant', content: '', toolCalls: [{ id: `${id}-call`, function: { name: 'Artifact', arguments: '{"action":"publish"}' } }] },
-  { id: `${id}-result`, role: 'tool', toolCallId: `${id}-call`, content: JSON.stringify({ id: file, type: null, title: file, description: '', version, path: `/artifacts/${file}.versions/${version}.html` }) },
+  { id: `${id}-result`, role: 'tool', toolCallId: `${id}-call`, content: JSON.stringify({ id: `/${file}`, type: null, title: file, description: '', version, path: `/artifacts/${file}.versions/${version}.html` }) },
 ];
 
 // A card shown while the Turn runs moves when the answer's words stream in above it.
@@ -28,8 +28,8 @@ it('keeps published Artifacts in the Worklog while the Turn runs, then shows the
 
   const answered = partsOf([...messages, answer], false);
   expect([...answered.cards]).toEqual([['answer', [
-    { id: 'one', type: null, title: 'one', description: '', version: 2, path: '/artifacts/one.versions/2.html' },
-    { id: 'two', type: null, title: 'two', description: '', version: 1, path: '/artifacts/two.versions/1.html' },
+    { id: '/one', type: null, title: 'one', description: '', version: 2, path: '/artifacts/one.versions/2.html' },
+    { id: '/two', type: null, title: 'two', description: '', version: 1, path: '/artifacts/two.versions/1.html' },
   ]]]);
   expect(['first', 'second', 'revision'].map((id) => answered.parts.get(id))).toEqual(['card', 'card', 'card']);
 
@@ -49,7 +49,7 @@ it('keeps refused and pending calls out of the published group without losing th
     { id: 'refused-result', role: 'tool', toolCallId: 'refused-call', content: 'Error: no file at /missing.html' },
   ];
   const ended = partsOf(messages, false);
-  expect(ended.cards.get('first')?.map(({ id }) => id)).toEqual(['one']);
+  expect(ended.cards.get('first')?.map(({ id }) => id)).toEqual(['/one']);
   expect(ended.parts.get('mixed')).toBe('shown');
   expect(ended.parts.get('refused-result')).toBe('work');
 });

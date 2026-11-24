@@ -6,10 +6,10 @@ import { useState } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { ArtifactLayout } from './artifact-panel';
-import type { Published } from './artifact-published';
+import { Published } from './artifact-published';
 import { useArtifactWorkspace, useChatSurfaceKey, type ArtifactRequest } from './artifact-request';
 
-const artifact: Published = { id: '/dashboard.html', type: null, title: 'Revenue dashboard', description: '', version: 1, path: '/artifacts/dashboard.html.versions/1.html' };
+const artifact = Published.parse({ id: '/dashboard.html', type: null, title: 'Revenue dashboard', description: '', version: 1, path: '/artifacts/dashboard.html.versions/1.html' });
 const agent = new HttpAgent({ url: 'https://chat.test/agent' });
 
 function LibraryLaunch({ accountId = 'hao' }: { accountId?: string }) {

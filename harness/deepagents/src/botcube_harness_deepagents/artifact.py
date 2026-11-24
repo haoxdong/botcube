@@ -27,7 +27,7 @@ from typing import Any
 from langchain_core.tools import BaseTool, StructuredTool
 
 from .agent import IMAGE_TOOL_SKILLS
-from .artifact_check import CHECKER
+from .artifact_check import CHECKER, VERSIONS
 from .artifact_types import NAMED, PUBLISHES, TYPES, ArtifactType
 from .files import ARTIFACTS_DIRECTORY, HARNESS_DIRECTORY, excluded_paths, is_files_path
 from .lazy_files import current_turn_files, finish_in_thread
@@ -214,7 +214,7 @@ def _refuse_unread(root: Path, versions: Path) -> int:
 
 
 def _unread(root: Path, versions: Path, read: int, saved: int) -> ValueError:
-    identity = str(root / versions.relative_to(root / ARTIFACTS_DIRECTORY).as_posix().removesuffix('.versions'))
+    identity = str(root / versions.relative_to(root / ARTIFACTS_DIRECTORY).as_posix().removesuffix(VERSIONS))
     since = f'Artifact Version {read}' if read else 'none'
     return ValueError(
         f'Refused: the User saved Artifact Version {saved} after your last read ({since}). '
@@ -266,8 +266,8 @@ def _list(root: Path) -> tuple[str, dict[str, Any]]:
     """Every Artifact in the account's Files, as its latest version describes it."""
     store = root / ARTIFACTS_DIRECTORY
     listed = {'artifacts': [
-        _summary(root, f"/{versions.relative_to(store).as_posix().removesuffix('.versions')}")
-        for versions in sorted(store.glob('**/*.versions')) if _numbers(versions)
+        _summary(root, f"/{versions.relative_to(store).as_posix().removesuffix(VERSIONS)}")
+        for versions in sorted(store.glob(f'**/*{VERSIONS}')) if _numbers(versions)
     ]}
     return json.dumps(listed), listed
 
@@ -309,7 +309,7 @@ def _file_in(root: Path, excluded: tuple[str, ...], file_path: str) -> Path | No
 
 
 def _versions(root: Path, identity: str) -> Path:
-    return root / ARTIFACTS_DIRECTORY / f"{identity.lstrip('/')}.versions"
+    return root / ARTIFACTS_DIRECTORY / f"{identity.lstrip('/')}{VERSIONS}"
 
 
 _VERSION = re.compile(r'(\d+)(.*)')

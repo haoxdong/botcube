@@ -10,16 +10,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { fileExtension, FileTypeIcon, isImageName } from "../components/file-type-icon";
 import { attachmentAccountEpoch, subscribeAttachmentAccount } from "../plugin/file-account";
+import { baseOf, filesPath, type FilesPath } from "./files-path";
 
 interface AttachmentStore {
-  upload: (file: File, options: { onProgress: (fraction: number) => void; signal: AbortSignal }) => Promise<string>;
-  discard: (path: string, epoch: string | null) => Promise<void>;
+  upload: (file: File, options: { onProgress: (fraction: number) => void; signal: AbortSignal }) => Promise<FilesPath>;
+  discard: (path: FilesPath, epoch: string | null) => Promise<void>;
 }
 
 type ComposerFileState =
   | { status: "uploading"; progress: number }
-  | { status: "uploaded"; path: string }
-  | { status: "failed"; error: string; hidden?: true; undeletedPath?: string };
+  | { status: "uploaded"; path: FilesPath }
+  | { status: "failed"; error: string; hidden?: true; undeletedPath?: FilesPath };
 
 export interface ComposerFile {
   id: string;
@@ -36,7 +37,6 @@ export interface ComposerFiles {
   sendable: boolean;
 }
 
-const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
 export const reason = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -89,11 +89,11 @@ export function useComposerFiles({ upload, discard }: AttachmentStore, accountId
     uploads.current.get(id)?.abort();
     uploads.current.delete(id);
   };
-  const deleteUpload = (id: string, file: File, path: string) => {
+  const deleteUpload = (id: string, file: File, path: FilesPath) => {
     const owner = { accountId: state.accountId, epoch: state.epoch };
     const deleting = typeof owner.epoch === "symbol" ? Promise.reject(new Error("Account storage is unavailable")) : discard(path, owner.epoch);
     deleting.catch((failure: unknown) => {
-      const error = `Couldn't remove ${basename(path)} from Files: ${reason(failure)}`;
+      const error = `Couldn't remove ${baseOf(path)} from Files: ${reason(failure)}`;
       const undeleted: ComposerFile = { id, file, state: { status: "failed", error, undeletedPath: path } };
       setState((current) => (current.accountId === owner.accountId && current.epoch === owner.epoch ? { ...current, files: [...current.files, undeleted] } : current));
     });
@@ -166,15 +166,15 @@ export function attachPastedImages(add: ComposerFiles["add"]) {
   };
 }
 
-export function messageWithFiles(text: string, paths: string[]): string {
+export function messageWithFiles(text: string, paths: readonly FilesPath[]): string {
   if (paths.length === 0) return text;
   return `${text}\n\nAttached files:\n${paths.map((path) => `- ${path}`).join("\n")}`;
 }
 
-export function sentFilesOf(message: string): { text: string; paths: string[] } {
+export function sentFilesOf(message: string): { text: string; paths: FilesPath[] } {
   const match = /^([\s\S]*)\n\nAttached files:\n(- .*(?:\n- .*)*)$/.exec(message);
   if (!match) return { text: message, paths: [] };
-  return { text: match[1] ?? "", paths: (match[2] ?? "").split("\n").map((line) => line.slice(2)) };
+  return { text: match[1] ?? "", paths: (match[2] ?? "").split("\n").map((line) => filesPath(line.slice(2))) };
 }
 
 function kindOf(name: string): string {
@@ -206,13 +206,12 @@ export function FileFace({ name }: { name: string }) {
  * that URL comes, and without `fileUrl`. One whose URL fails, or that the browser won't show, is named with why in its
  * place, as a reply's image is.
  */
-function SentImage({ path, name, fileUrl }: { path: string; name: string; fileUrl: ((path: string) => Promise<string>) | undefined }) {
+function SentImage({ path, name, fileUrl }: { path: FilesPath; name: string; fileUrl: ((path: FilesPath) => Promise<string>) | undefined }) {
   const [shown, setShown] = useState<{ path: string; url: string } | { path: string; error: string } | null>(null);
   useEffect(() => {
     if (!fileUrl) return;
     let current = true;
-    // `fileUrl` takes a path as a reply's markdown names it, percent-encoded.
-    fileUrl(encodeURI(path)).then(
+    fileUrl(path).then(
       (url) => current && setShown({ path, url }),
       (error: unknown) => current && setShown({ path, error: reason(error) }),
     );
@@ -236,12 +235,12 @@ function SentImage({ path, name, fileUrl }: { path: string; name: string; fileUr
   );
 }
 
-export function SentFileCards({ paths, fileUrl }: { paths: string[]; fileUrl?: ((path: string) => Promise<string>) | undefined }) {
+export function SentFileCards({ paths, fileUrl }: { paths: FilesPath[]; fileUrl?: ((path: FilesPath) => Promise<string>) | undefined }) {
   if (paths.length === 0) return null;
   return (
     <ul className="sent-files" aria-label="Attached files">
       {paths.map((path) => {
-        const name = basename(path);
+        const name = baseOf(path);
         return isImageName(name) ? <SentImage key={path} path={path} name={name} fileUrl={fileUrl} /> : <li key={path} className="sent-file"><FileFace name={name} /></li>;
       })}
     </ul>
@@ -356,7 +355,7 @@ export function ComposerFileChips({ files, onRetry, onRemove }: { files: Compose
   const [broken, setBroken] = useState<ReadonlySet<string>>(new Set());
   const named = files.map((entry) => {
     const path = entry.state.status === "uploaded" ? entry.state.path : entry.state.status === "failed" ? entry.state.undeletedPath : undefined;
-    const name = path === undefined ? entry.file.name : basename(path);
+    const name = path === undefined ? entry.file.name : baseOf(path);
     return { ...entry, name, picture: isImageName(entry.file.name) && !broken.has(entry.id) };
   });
   // The list outlives its last chip while that chip fades out, then leaves, and the composer shrinks after it.

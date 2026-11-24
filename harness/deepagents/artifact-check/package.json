@@ -31,6 +31,10 @@
     "./sheet": {
       "types": "./src/sheet.d.ts",
       "default": "./src/sheet.mjs"
+    },
+    "./versions": {
+      "types": "./src/versions.d.ts",
+      "default": "./src/versions.mjs"
     }
   },
   "dependencies": {

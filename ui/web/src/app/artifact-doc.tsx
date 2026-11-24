@@ -15,6 +15,7 @@ import {
 } from "./artifact-viewer";
 import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
+import { baseOf, type FilesPath } from "./files-path";
 import { Button } from "@/components/ui/button";
 
 const EXTENSIONS = [
@@ -47,7 +48,7 @@ export function DocFrame({ title, markdown }: { title: string; markdown: string 
   return <div className="artifact-doc-page"><EditorContent editor={editor} /></div>;
 }
 
-function useMarkdown(version: ArtifactVersion, read: (path: string) => Promise<string>) {
+function useMarkdown(version: ArtifactVersion, read: (path: FilesPath) => Promise<string>) {
   const [loaded, setLoaded] = useState<{ version: ArtifactVersion } & ({ markdown: string } | { error: string }) | null>(null);
   useEffect(() => {
     let current = true;
@@ -81,7 +82,7 @@ export function EditableDoc({ artifact: newest, read, save, shows }: ViewerProps
     setSaving(true);
     setFailures([]);
     try {
-      const name = edit.version.id.slice(edit.version.id.lastIndexOf("/") + 1);
+      const name = baseOf(edit.version.id);
       await save({ id: edit.version.id, version: edit.version.version, files: { [name]: edit.markdown } });
       setEdit(null);
     } catch (error) {

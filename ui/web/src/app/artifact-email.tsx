@@ -7,7 +7,8 @@ import type { Imported } from "botcube-artifact-check/record";
 import { m as motionElement } from "motion/react";
 import { MailIcon, PaperclipIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import { recordOf } from "./artifact-newest";
+import { artifactVersions } from "./artifact-versions";
+import { baseOf, filesPath } from "./files-path";
 import {
   pdfOf, saveFile, storedVersion, type ArtifactEdit, type ArtifactVersion, type Export, type ExportTarget, type ViewerProps,
 } from "./artifact-viewer";
@@ -39,7 +40,8 @@ type Recipients = Record<(typeof RECIPIENTS)[number], string>;
 const LABELS = { to: "To", cc: "Cc", bcc: "Bcc" } as const;
 
 const addresses = (text: string) => text.split(/[,;]/).map((address) => address.trim()).filter(Boolean);
-const nameOf = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+/** A File the draft names, by its own name. */
+const nameOf = (file: string) => baseOf(filesPath(file));
 /** The body's text, paragraphs apart by a blank line, as a plain-text email writes them. */
 const plainOf = (html: string) => generateText(generateJSON(html, EMAIL_EDITOR), EMAIL_EDITOR, { blockSeparator: "\n\n" });
 
@@ -73,7 +75,7 @@ export const EML: Export = {
   instead: EMAIL_PDF,
   run: async (target) => {
     const version = storedVersion(target, "the draft");
-    const [text, { imports = [] }] = await Promise.all([target.read(version.path), recordOf(version.path, target.read)]);
+    const [text, { imports = [] }] = await Promise.all([target.read(version.path), artifactVersions(version.id, { read: target.read }).read(version.version)]);
     const draft = readDraft(text);
     const [{ emlOf }, attached] = await Promise.all([
       import("./email-export"),
@@ -231,7 +233,7 @@ function DraftForm({ version, newest, loaded, edits, close, save }: {
 async function keptBytes({ readBytes }: ExportTarget, kept: Imported | undefined, file: string): Promise<Uint8Array> {
   if (kept === undefined) throw new Error(`this version keeps no copy of the attachment ${file}`);
   try {
-    return new Uint8Array(await readBytes(kept.path));
+    return new Uint8Array(await readBytes(filesPath(kept.path)));
   } catch (error) {
     throw new Error(`the attachment ${file} couldn't be read: ${reason(error)}`, { cause: error });
   }

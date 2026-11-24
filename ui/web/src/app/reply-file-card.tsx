@@ -12,6 +12,7 @@ import { FileFace, reason } from './composer-files';
 import { ReplyChart } from './reply-chart';
 import { ReplyImage } from './reply-image';
 import { useReplyFile } from './use-reply-file';
+import { baseOf, type FilesPath } from './files-path';
 
 export const ReplyFileSlot = createContext<HTMLElement | null | undefined>(undefined);
 
@@ -24,11 +25,11 @@ export function ReplyFileCard({
   path,
   children,
 }: {
-  path: string;
+  path: FilesPath;
   children: ReactNode;
 }) {
   const slot = useContext(ReplyFileSlot);
-  const name = decodeURIComponent(path.slice(path.lastIndexOf('/') + 1));
+  const name = baseOf(path);
   const label = typeof children === 'string' ? children : name;
   // A Plotly figure shows as the live chart itself, as an embedded one does.
   if (isFigureName(name))
@@ -58,7 +59,7 @@ function FileCard({
   name,
   label,
 }: {
-  path: string;
+  path: FilesPath;
   name: string;
   label: string;
 }) {

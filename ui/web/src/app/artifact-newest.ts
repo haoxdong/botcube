@@ -1,38 +1,24 @@
 "use client";
 
-import { readRecord, type VersionRecord } from "botcube-artifact-check/record";
 import { useEffect, useRef, useState } from "react";
 
-import { chatServiceUrl } from "../plugin/chat-service-url";
-import { listFiles } from "../computer/files-service";
+import { artifactVersions, type FilesReader } from "./artifact-versions";
 import { reason } from "./composer-files";
-
-/** The record of the version stored at `path`: `<n>.json` beside it. */
-export async function recordOf(path: string, read: (path: string) => Promise<string>): Promise<VersionRecord> {
-  const folder = path.slice(0, path.lastIndexOf("/") + 1);
-  const number = /^\d+/.exec(path.slice(folder.length))?.[0];
-  if (number === undefined) throw new Error(`${path} is not a stored version`);
-  return readRecord(await read(`${folder}${number}.json`));
-}
+import type { FilesPath } from "./files-path";
 
 /** An Artifact Version as the panel knows it: `path` is where Files stores it. */
-type Known = { id: string; version: number; path: string };
+type Known = { id: FilesPath; version: number; path: FilesPath };
 
 /**
  * The Artifact's newest version in Files, from a version the chat has seen: a User's save is no message, so a reloaded
- * chat knows only the versions published in it. A version counts once `stored`, the file under its path that its type
- * writes last, is there; its record is written before it.
+ * chat knows only the versions published in it.
  */
-export async function newestInFiles<T extends Known>(known: T, stored: string, read: (path: string) => Promise<string>): Promise<T> {
-  const folder = known.path.slice(0, known.path.lastIndexOf("/") + 1);
-  const suffix = known.path.slice(folder.length).replace(/^\d+/, "");
-  const files = new Set((await listFiles({ chatServiceUrl: chatServiceUrl() })).map(({ name }) => name));
-  let version = known.version;
-  while (files.has(`artifacts${known.id}.versions/${version + 1}${suffix}${stored}`)) version += 1;
-  if (version === known.version) return known;
-  const path = `${folder}${version}${suffix}`;
-  const { author, title, description } = await recordOf(path, read);
-  return { ...known, author, title, description, version, path };
+export async function newestInFiles<T extends Known>(known: T, files?: FilesReader): Promise<T> {
+  const versions = artifactVersions(known.id, files);
+  const newest = await versions.newest();
+  if (newest === undefined || newest.version <= known.version) return known;
+  const { author, title, description } = await versions.read(newest.version);
+  return { ...known, author, title, description, version: newest.version, path: newest.path };
 }
 
 /**

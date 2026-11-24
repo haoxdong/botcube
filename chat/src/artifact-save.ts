@@ -4,6 +4,7 @@ import { check, checked, describe, reads } from 'botcube-artifact-check';
 import { readDraft } from 'botcube-artifact-check/email-schema';
 import { readRecord, type VersionRecord } from 'botcube-artifact-check/record';
 import type { Sheet } from 'botcube-artifact-check/sheet';
+import { suffixOf, versionOf, versionsFolder } from 'botcube-artifact-check/versions';
 import { z } from 'zod';
 import { AccountTree, errorCode } from './account-tree.js';
 import { HttpError } from './http-error.js';
@@ -23,8 +24,8 @@ export const ArtifactRestore = ArtifactSave.pick({ id: true }).extend({
 export type ArtifactRestore = z.infer<typeof ArtifactRestore>;
 
 /**
- * Each Artifact Type as a save stores it, in the layout the harness's `Artifact` tool keeps: a version is
- * `<n><suffix>` beside its `<n>.json` record, a folder when `suffix` is empty and one file otherwise. `saves` names the
+ * Each Artifact Type as a save stores it, in the layout the harness's `Artifact` tool keeps (`botcube-artifact-check/versions`):
+ * a version is `<n><suffix>` beside its `<n>.json` record, a folder when `suffix` is empty and one file otherwise. `saves` names the
  * Source files a save may carry: in a folder, files the edited version already has; a one-file Source is keyed by its
  * own file name, the file the type's checker reads. A type with no `saves` is not edited in place. `keeps` names, in a
  * Source's text, what names the Files its version keeps a copy of (the harness's `keep`, kept_files.py): a save keeps
@@ -35,11 +36,11 @@ type SaveType = {
   keeps?: { what: string; named: (text: string) => string[] };
 };
 const TYPES: readonly SaveType[] = [
-  { name: 'page', suffix: '.html', saves: null },
-  { name: 'slides', suffix: '', saves: (file) => /^project\/slides\/[^/]+\.html$/.test(file) },
-  { name: 'doc', suffix: '.md', saves: (file) => reads('doc', file) },
-  { name: 'sheet', suffix: '.sheet.json', saves: (file) => reads('sheet', file), keeps: { what: 'import steps', named: importSteps } },
-  { name: 'email', suffix: '.email.json', saves: (file) => reads('email', file), keeps: { what: 'attachments', named: attachments } },
+  { name: 'page', suffix: suffixOf('page'), saves: null },
+  { name: 'slides', suffix: suffixOf('slides'), saves: (file) => /^project\/slides\/[^/]+\.html$/.test(file) },
+  { name: 'doc', suffix: suffixOf('doc'), saves: (file) => reads('doc', file) },
+  { name: 'sheet', suffix: suffixOf('sheet'), saves: (file) => reads('sheet', file), keeps: { what: 'import steps', named: importSteps } },
+  { name: 'email', suffix: suffixOf('email'), saves: (file) => reads('email', file), keeps: { what: 'attachments', named: attachments } },
 ];
 
 export interface SavedArtifact {
@@ -62,7 +63,7 @@ export async function saveArtifact(directory: string, { id, version, files }: Ar
   if (edits.length === 0) throw new HttpError(400, `A save of ${id} carries no edited file`);
   const source = sourceOf(id);
   const tree = await AccountTree.at(directory);
-  const versions = `artifacts/${source}.versions`;
+  const versions = versionsFolder(source);
   const type = newestType(await versionsIn(tree, versions), id, version, 'edit');
   const edit: Edit = { tree, id, source, versions, version, type, files, kept: [] };
   edit.kept = type.suffix === '' ? await tree.files(edited(edit)) : [];
@@ -82,7 +83,7 @@ export async function saveArtifact(directory: string, { id, version, files }: Ar
 export async function restoreArtifact(directory: string, { id, from, version }: ArtifactRestore): Promise<SavedArtifact> {
   const source = sourceOf(id);
   const tree = await AccountTree.at(directory);
-  const versions = `artifacts/${source}.versions`;
+  const versions = versionsFolder(source);
   const stored = await versionsIn(tree, versions);
   newestType(stored, id, version, 'restore');
   const type = stored.get(from);
@@ -243,9 +244,9 @@ function sourceOf(id: string): string {
 async function versionsIn(tree: AccountTree, folder: string): Promise<Map<number, SaveType>> {
   const found = new Map<number, SaveType>();
   for (const name of await tree.names(folder)) {
-    const [, number, suffix] = /^(\d+)(.*)$/.exec(name) ?? [];
-    const type = TYPES.find((candidate) => candidate.suffix === suffix);
-    if (number !== undefined && type !== undefined) found.set(Number(number), type);
+    const stored = versionOf(name);
+    const type = TYPES.find((candidate) => candidate.name === stored?.type);
+    if (stored !== null && type !== undefined) found.set(stored.version, type);
   }
   return found;
 }

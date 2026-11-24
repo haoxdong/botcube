@@ -12,14 +12,13 @@ import { z } from "zod";
 
 import { webUiPlugin } from "@bot-ui";
 
-import { listFiles } from "../computer/files-service";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../components/ui/resizable";
 import { Sheet } from "../components/ui/sheet";
-import { chatServiceUrl } from "../plugin/chat-service-url";
 import { agentFiles } from "./agent-files";
 import { Refusal, useExports } from "./artifact-exports";
 import { readBytes, readFile } from "./artifact-files";
 import { newestInFiles, useNewestInFiles } from "./artifact-newest";
+import { artifactVersions } from "./artifact-versions";
 import { ArtifactFace } from "./artifact-face";
 import { agoOf, byDay, historyOf, timeOf, type HistoryVersion } from "./artifact-history";
 import { AnswerCards, Published, publishedOf } from "./artifact-published";
@@ -91,7 +90,7 @@ function shownOf(opened: Opened | null, newest: Published | undefined): Shown | 
 }
 
 /** An Artifact's newest version in Files. */
-const newestOf = (known: Published) => newestInFiles(known, typeOf(known.type).stored, readFile);
+const newestOf = (known: Published) => newestInFiles(known);
 
 /** Whether the pane is still gliding to `isOpen`; it ends when the glide does. Motion off, it never starts. */
 function useSettling(isOpen: boolean) {
@@ -296,7 +295,7 @@ function useHistory({ id, version }: Published) {
   const of = `${id} ${version}`;
   useEffect(() => {
     let current = true;
-    listFiles({ chatServiceUrl: chatServiceUrl() }).then((files) => historyOf(id, version, files, readFile)).then(
+    historyOf(artifactVersions(id), version).then(
       (versions) => current && setHistory({ of, versions }),
       (error: unknown) => current && setHistory({ of, failure: `Couldn't list the versions: ${reason(error)}` }),
     );

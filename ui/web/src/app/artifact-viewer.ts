@@ -1,11 +1,13 @@
 import { PrinterIcon, type LucideIcon } from "lucide-react";
 import type { ComponentType, RefObject } from "react";
 
+import type { FilesPath } from "./files-path";
+
 /** An Artifact Version as the `Artifact` tool describes it. */
-export type ArtifactVersion = { id: string; title: string; version: number; path: string };
+export type ArtifactVersion = { id: FilesPath; title: string; version: number; path: FilesPath };
 
 /** A User's save as the Chat Service takes it: the edited files of `version`, by their path in the Source. */
-export type ArtifactEdit = { id: string; version: number; files: Record<string, string> };
+export type ArtifactEdit = { id: FilesPath; version: number; files: Record<string, string> };
 
 /** The stored version a Viewer shows, and whether the User has edits to it they have not saved. */
 export type OnScreen = { version: ArtifactVersion; unsaved: boolean };
@@ -17,8 +19,8 @@ export type OnScreen = { version: ArtifactVersion; unsaved: boolean };
  */
 export type ViewerProps = {
   artifact: ArtifactVersion;
-  read: (path: string) => Promise<string>;
-  readBytes: (path: string) => Promise<ArrayBuffer>;
+  read: (path: FilesPath) => Promise<string>;
+  readBytes: (path: FilesPath) => Promise<ArrayBuffer>;
   save: (edit: ArtifactEdit) => Promise<void>;
   frame: RefObject<HTMLIFrameElement | null>;
   shows: (onScreen: OnScreen) => void;
@@ -31,8 +33,8 @@ export type ViewerProps = {
 export type ExportTarget = {
   title: string;
   frame: RefObject<HTMLIFrameElement | null>;
-  read: (path: string) => Promise<string>;
-  readBytes: (path: string) => Promise<ArrayBuffer>;
+  read: (path: FilesPath) => Promise<string>;
+  readBytes: (path: FilesPath) => Promise<ArrayBuffer>;
   onScreen: OnScreen | null;
 };
 
@@ -90,6 +92,4 @@ export type ArtifactType = {
   /** Its Viewer, which edits it in place when the type is edited. */
   Viewer: ComponentType<ViewerProps>;
   exports: readonly Export[];
-  /** The file a stored version holds under its path (a one-file version is that file). */
-  stored: string;
 };

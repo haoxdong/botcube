@@ -13,6 +13,7 @@ import { FileTypeIcon, isImageName } from '../components/file-type-icon';
 import { FilesChart, opensAsChart } from './files-chart';
 import { Thumbnail } from './thumbnail';
 import { deleteFile, fileDownloadUrl, listFiles, renameFile, type FileEntry } from './files-service';
+import { baseOf, besideOf, filesPath, nameOf, underOf } from '../app/files-path';
 
 import { LoadingSkeleton } from 'botcube-ui-web/load-state';
 import { Button } from "@/components/ui/button";
@@ -35,8 +36,9 @@ function itemsIn(files: readonly FileEntry[], folder: string): FilesItem[] {
   // Keyed by path, so a file and a folder of the same name, which storage allows, both stay listed.
   const items = new Map<string, FilesItem>();
   for (const file of files) {
-    if (!file.name.startsWith(folder)) continue;
-    const [name = '', ...below] = file.name.slice(folder.length).split('/');
+    const inside = underOf(filesPath(folder), filesPath(file.name));
+    if (inside === null) continue;
+    const [name = '', ...below] = inside.split('/');
     const path = below.length === 0 ? file.name : `${folder}${name}/`;
     items.set(path, below.length === 0 ? { name, path, folder: false, size: file.size } : { name, path, folder: true });
   }
@@ -51,7 +53,7 @@ function recentsIn(files: readonly FileEntry[]): FilesItem[] {
   return [...files]
     .sort((a, b) => Date.parse(b.lastModified) - Date.parse(a.lastModified))
     .slice(0, RECENTS)
-    .map(({ name, size }) => ({ name: name.slice(name.lastIndexOf('/') + 1), path: name, folder: false, size }));
+    .map(({ name, size }) => ({ name: baseOf(filesPath(name)), path: name, folder: false, size }));
 }
 
 /** A light blue folder with its tab, as the dock's Files icon draws it. */
@@ -404,7 +406,7 @@ export function FilesApp({ chatServiceUrl, onLoad }: { chatServiceUrl: string; o
       onDelete={remove}
       onRename={(path, name) => {
         // The new name stays in the file's folder; the Chat Service refuses an empty name, `.` and `..`.
-        if (!name.includes('/')) return rename(path, `${path.slice(0, path.lastIndexOf('/') + 1)}${name}`);
+        if (!name.includes('/')) return rename(path, nameOf(besideOf(filesPath(path), name)));
         setError('A file name can’t contain “/”.');
         return null;
       }}

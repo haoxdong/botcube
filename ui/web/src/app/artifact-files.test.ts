@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { readBytes, readFile } from './artifact-files';
+import { filesPath } from './files-path';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -22,7 +23,7 @@ it('reads a file whose name has a space or a percent sign by that name, as text 
   const name = 'artifacts/notes/Q3 review 100%.md.versions/1.md';
   const asked = filesHolding({ [name]: '# Q3' });
 
-  expect(await readFile(`/${name}`)).toBe('# Q3');
-  expect(new TextDecoder().decode(await readBytes(`/${name}`))).toBe('# Q3');
+  expect(await readFile(filesPath(name))).toBe('# Q3');
+  expect(new TextDecoder().decode(await readBytes(filesPath(name)))).toBe('# Q3');
   expect(asked).toEqual([name, name]);
 });

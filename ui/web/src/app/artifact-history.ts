@@ -1,23 +1,12 @@
-import { readRecord } from "botcube-artifact-check/record";
+import type { ArtifactVersions } from "./artifact-versions";
 
-import type { FileEntry } from "../computer/files-service";
-
-/** One stored version of an Artifact: who made it and when its record was written. */
+/** One stored version of an Artifact: who made it and when Files wrote it. */
 export type HistoryVersion = { version: number; author: "agent" | "user"; at: Date };
 
-/**
- * Every stored version of the Artifact `id` up to `newest`, newest first: each `<n>.json` record beside its version
- * (`artifacts/<Source>.versions/<n>.json`, the harness's layout) names its author, and Files dates it.
- */
-export async function historyOf(id: string, newest: number, files: readonly FileEntry[], read: (path: string) => Promise<string>): Promise<HistoryVersion[]> {
-  const folder = `artifacts${id}.versions/`;
-  const records = files.flatMap(({ name, lastModified }) => {
-    if (!name.startsWith(folder)) return [];
-    const number = /^(\d+)\.json$/.exec(name.slice(folder.length))?.[1];
-    return number === undefined || Number(number) > newest ? [] : [{ name, version: Number(number), at: new Date(lastModified) }];
-  });
-  const history = await Promise.all(records.map(async ({ name, version, at }) => ({ version, at, author: readRecord(await read(`/${name}`)).author })));
-  return history.sort((a, b) => b.version - a.version);
+/** Every stored version of an Artifact up to `newest`, newest first, each with the author its record names. */
+export async function historyOf(versions: ArtifactVersions, newest: number): Promise<HistoryVersion[]> {
+  const stored = (await versions.list()).filter(({ version }) => version <= newest);
+  return Promise.all(stored.map(async ({ version, at }) => ({ version, at, author: (await versions.read(version)).author })));
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;

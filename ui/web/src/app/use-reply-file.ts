@@ -3,10 +3,11 @@
 import { useContext, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { attachmentAccountEpoch } from '../plugin/file-account';
 import { agentFiles } from './agent-files';
+import type { FilesPath } from './files-path';
 import { reason } from './composer-files';
 import { ReplyTurnRunning } from './reply-turn';
 
-type FileAttempt = { path: string } & (
+type FileAttempt = { path: FilesPath } & (
   | { status: 'ready'; url: string; recoverAfterTurn: boolean }
   | { status: 'error'; reason: string; recoverAfterTurn: boolean }
   | { status: 'refreshing'; reason: string }
@@ -18,7 +19,7 @@ type FileAttempt = { path: string } & (
  * link mounts showing it, and still asks again. An attempt is kept under the account epoch it was asked in, which
  * every account change rotates (`withUploadsSettled`), so another account never sees its URL.
  */
-const settled = new Map<string, { epoch: string | null; attempt: FileAttempt }>();
+const settled = new Map<FilesPath, { epoch: string | null; attempt: FileAttempt }>();
 /** The account epoch, null before the page's first account change; undefined when storage fails, which keeps nothing. */
 function accountEpoch(): string | null | undefined {
   try {
@@ -27,7 +28,7 @@ function accountEpoch(): string | null | undefined {
     return undefined;
   }
 }
-const lastSettled = (path: string) => {
+const lastSettled = (path: FilesPath) => {
   const kept = settled.get(path);
   const epoch = accountEpoch();
   return kept !== undefined && epoch !== undefined && kept.epoch === epoch ? kept.attempt : null;
@@ -36,7 +37,7 @@ function remember(epoch: string | null | undefined, attempt: FileAttempt) {
   if (epoch !== undefined) settled.set(attempt.path, { epoch, attempt });
 }
 
-function ask(path: string, recoverAfterTurn: boolean, setFile: (attempt: FileAttempt) => void) {
+function ask(path: FilesPath, recoverAfterTurn: boolean, setFile: (attempt: FileAttempt) => void) {
   let current = true;
   const epoch = accountEpoch();
   const settle = (attempt: FileAttempt) => {
@@ -52,7 +53,7 @@ function ask(path: string, recoverAfterTurn: boolean, setFile: (attempt: FileAtt
   };
 }
 
-export function useReplyFile(path: string | null) {
+export function useReplyFile(path: FilesPath | null) {
   const running = useContext(ReplyTurnRunning);
   const runningNow = useRef(running);
   runningNow.current = running;

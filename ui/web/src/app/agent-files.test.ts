@@ -3,6 +3,7 @@ import { afterAll, afterEach, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 
 import { FILE_ACCOUNT_LOCK } from '../plugin/file-account';
+import { filesPath } from './files-path';
 
 vi.stubEnv('NEXT_PUBLIC_CHAT_SERVICE_URL', 'http://chat.test');
 afterAll(() => {
@@ -16,11 +17,11 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("gives a reply's file path the download URL of the file it names in Files", async () => {
+it("gives a Files path the download URL of the file it names in Files", async () => {
   const fetchImpl = vi.fn(async () => Response.json({ url: 'https://s3.test/chart.svg?signed' }));
   vi.stubGlobal('fetch', fetchImpl);
 
-  expect(await agentFiles.url('/mnt/workspace/files/spx%20closes.svg')).toBe('https://s3.test/chart.svg?signed');
+  expect(await agentFiles.url(filesPath('/mnt/workspace/files/spx closes.svg'))).toBe('https://s3.test/chart.svg?signed');
   expect(fetchImpl).toHaveBeenCalledWith('http://chat.test/files/download-url?name=mnt%2Fworkspace%2Ffiles%2Fspx+closes.svg&reply=true', { method: 'GET', credentials: 'include' });
 });
 
@@ -37,7 +38,7 @@ it('deletes an attached file from Files by the path its upload resolved to', asy
   const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
   vi.stubGlobal('fetch', fetchImpl);
 
-  await agentFiles.discard('/report (2).csv', localStorage.getItem(FILE_ACCOUNT_LOCK));
+  await agentFiles.discard(filesPath('/report (2).csv'), localStorage.getItem(FILE_ACCOUNT_LOCK));
   expect(fetchImpl).toHaveBeenCalledWith('http://chat.test/files?name=report+%282%29.csv', { method: 'DELETE', credentials: 'include' });
 });
 
@@ -46,7 +47,7 @@ it("refuses to delete an attached file once another account has signed in, sendi
   vi.stubGlobal('fetch', fetchImpl);
   localStorage.setItem(FILE_ACCOUNT_LOCK, 'account-b');
 
-  await expect(agentFiles.discard('/report.csv', 'account-a')).rejects.toThrow('Your account changed since you attached it.');
+  await expect(agentFiles.discard(filesPath('/report.csv'), 'account-a')).rejects.toThrow('Your account changed since you attached it.');
   expect(fetchImpl).not.toHaveBeenCalled();
   localStorage.removeItem(FILE_ACCOUNT_LOCK);
 });
@@ -55,7 +56,7 @@ it("sends no DELETE when Remove is clicked on a chip another tab's sign-in left 
   const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
   vi.stubGlobal('fetch', fetchImpl);
   localStorage.setItem(FILE_ACCOUNT_LOCK, 'account-a');
-  const upload = vi.fn(async () => '/report.csv');
+  const upload = vi.fn(async () => filesPath('/report.csv'));
   const { result } = renderHook(() => useComposerFiles({ upload, discard: agentFiles.discard }, 'account-a'));
   await act(async () => result.current.add([new File(['date,close'], 'report.csv')]));
   localStorage.setItem(FILE_ACCOUNT_LOCK, 'account-b');

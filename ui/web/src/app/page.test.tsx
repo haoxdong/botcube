@@ -11,6 +11,7 @@ import { afterAll, afterEach, assert, beforeEach, describe, expect, it, onTestFi
 
 import type { AuthUiState, AuxiliaryPanelHostProps, ComputerViewProps, WebUiPlugin } from '../plugin/index.js';
 import { ChatServiceError, type ConversationEntry, type SavedTurnFailure } from './conversations';
+import { filesPath, type FilesPath } from './files-path';
 
 vi.mock('motion/react', async (importOriginal) => {
   const original = await importOriginal<typeof import('motion/react')>();
@@ -302,7 +303,7 @@ vi.mock('../computer/live-browser-panel', () => ({
 // The agent's Files: no `/missing.svg`, and an upload only a test that attaches answers.
 vi.mock('./agent-files', () => ({
   agentFiles: {
-    url: (path: string) => (path === '/missing.svg' ? Promise.reject(new Error('Files download failed: 404')) : Promise.resolve(`https://files.test${path}?signed`)),
+    url: (path: string) => (path === '/missing.svg' ? Promise.reject(new Error('Files download failed: 404')) : Promise.resolve(`https://files.test${encodeURI(path)}?signed`)),
     upload: () => Promise.reject(new Error('No upload in this test')),
   },
 }));
@@ -9413,7 +9414,7 @@ it('shows a kept markdown reply formatted, not as raw markdown, while the chat s
 
 // A + attaches files to the agent's Files, and the message names them for the agent.
 describe('attaching files', () => {
-  const uploads: { name: string; resolve: (path: string) => void; reject: (error: Error) => void }[] = [];
+  const uploads: { name: string; resolve: (path: FilesPath) => void; reject: (error: Error) => void }[] = [];
   beforeEach(async () => {
     uploads.length = 0;
     vi.spyOn(agentFiles, 'upload').mockImplementation((file) => new Promise((resolve, reject) => {
@@ -9430,7 +9431,7 @@ describe('attaching files', () => {
   it.each(['click', 'Enter'])('sends an uploaded image without filler text using %s', async (method) => {
     await renderPage();
     await attach('screenshot.png');
-    await act(async () => uploads[0]?.resolve('/screenshot.png'));
+    await act(async () => uploads[0]?.resolve(filesPath('/screenshot.png')));
     const input = screen.getByRole('textbox', { name: 'Message' });
     expect(input).toHaveValue('');
     if (method === 'click') await userEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -9443,7 +9444,7 @@ describe('attaching files', () => {
   it("does not send a path once another tab claims the attachment account, before its storage event arrives", async () => {
     await renderPage();
     await attach('report.csv');
-    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report.csv')));
     const before = agent().messages.length;
 
     localStorage.setItem(FILE_ACCOUNT_LOCK, 'another-tab-claim');
@@ -9504,7 +9505,7 @@ describe('attaching files', () => {
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
 
     await act(async () => {
-      uploads[0]?.resolve('/report.csv');
+      uploads[0]?.resolve(filesPath('/report.csv'));
       uploads[1]?.reject(new Error('Upload failed: 403'));
     });
     expect(chips()).toEqual(['csvreport.csvCSVRemove report.csv', 'mdnotes.mdUpload failed: Upload failed: 403 · RetryRemove notes.md']);
@@ -9512,7 +9513,7 @@ describe('attaching files', () => {
     expect(agent().messages).toEqual([]);
 
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await act(async () => uploads[2]?.resolve('/notes (1).md'));
+    await act(async () => uploads[2]?.resolve(filesPath('/notes (1).md')));
     expect(screen.getByRole('button', { name: 'Send' })).not.toBeDisabled();
     await sendMessage('Summarise these');
 
@@ -9539,7 +9540,7 @@ describe('attaching files', () => {
   it('keeps uploaded chips for an offline send, then clears them when Retry sends their paths', async () => {
     await renderPage();
     await attach('report.csv');
-    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report.csv')));
     const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
     await sendMessage('Summarise this');
     expect(chips()).toEqual(['csvreport.csvCSVRemove report.csv']);
@@ -9558,7 +9559,7 @@ describe('attaching files', () => {
     onTestFinished(() => models.resolve());
     await renderPage();
     await attach('report.csv');
-    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report.csv')));
 
     await sendMessage('Summarise this');
 
@@ -9581,7 +9582,7 @@ describe('attaching files', () => {
   it('leaves a removed upload out when an offline message is retried', async () => {
     await renderPage();
     await attach('report.csv');
-    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report.csv')));
     const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
     await sendMessage('Summarise this');
     await userEvent.click(screen.getByRole('button', { name: 'Remove report.csv' }));
@@ -9594,7 +9595,7 @@ describe('attaching files', () => {
   it('clears uploads when sign-in changes the account while the running chat remains mounted', async () => {
     const view = await renderPage(auth({ accountId: 'acct-anonymous' }));
     await attach('report.csv');
-    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report.csv')));
     const current = agent();
     copilot.running = true;
     current.isRunning = true;

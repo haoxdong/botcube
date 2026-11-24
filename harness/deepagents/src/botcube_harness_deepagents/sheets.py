@@ -20,7 +20,7 @@ from typing import Any
 
 from . import artifact_check, kept_files
 
-SUFFIX = '.sheet.json'
+SUFFIX = artifact_check.SUFFIXES['sheet']
 
 
 def sheet_file(source: Path) -> Path | None:
@@ -55,7 +55,7 @@ def keep(version: Path, versions: Path, root: Path, find: Callable[[str], Path |
     steps = [(index, edit['asset']) for index, edit in enumerate(edits) if edit['kind'] == 'importFile']
     imports, missing = kept_files.keep(steps, versions, root, find)
     if missing:
-        name = versions.name.removesuffix('.versions')
+        name = versions.name.removesuffix(artifact_check.VERSIONS)
         raise ValueError(
             'The Sheet imports a File that is not in Files, so nothing was published. Save it there, then publish again:\n'
             + '\n'.join(f"- {name} edit {index} (importFile) — asset: no File at /{asset.lstrip('/')}" for index, asset in missing),

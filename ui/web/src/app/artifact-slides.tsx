@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
 import { sanitizeSlide, type CleanSlide, type Embed } from "./slide-sanitize";
+import { filesPath, type FilesPath } from "./files-path";
 
 /** A deck's file as the agent last wrote it, partly while its write streams. */
 export type DeckFile = { path: string; text: string; complete: boolean };
@@ -104,20 +105,20 @@ function DeckFrame({ title, folder, files, errors = [], runs, frame }: { title: 
 }
 
 /** A published deck's Artifact Version's files: its deck.json, then each slide it lists. */
-export async function readDeck(path: string, read: (path: string) => Promise<string>): Promise<DeckFile[]> {
-  const index = `${path}/project/deck.json`;
+export async function readDeck(path: FilesPath, read: (path: FilesPath) => Promise<string>): Promise<DeckFile[]> {
+  const index = filesPath(`${path}/project/deck.json`);
   const text = await read(index);
   const order = orderOf(text);
   if (order === null) throw new Error("its deck.json does not parse as a deck");
   const slides = await Promise.all(order.map(async (id) => {
-    const slide = `${path}/project/slides/${id}.html`;
+    const slide = filesPath(`${path}/project/slides/${id}.html`);
     return { path: slide, text: await read(slide), complete: true };
   }));
   return [{ path: index, text, complete: true }, ...slides];
 }
 
 /** A published deck's Artifact Version from Files: its deck.json, then each slide it lists; empty while it loads. */
-export function useVersionFiles(path: string, read: (path: string) => Promise<string>): DeckFile[] | { error: string } {
+export function useVersionFiles(path: FilesPath, read: (path: FilesPath) => Promise<string>): DeckFile[] | { error: string } {
   const [files, setFiles] = useState<DeckFile[] | { error: string }>([]);
   useEffect(() => {
     let current = true;

@@ -17,7 +17,7 @@ from typing import Any
 
 from . import artifact_check, kept_files
 
-SUFFIX = '.email.json'
+SUFFIX = artifact_check.SUFFIXES['email']
 
 
 def draft(source: Path) -> Path | None:
@@ -59,7 +59,7 @@ def keep(version: Path, versions: Path, root: Path, find: Callable[[str], Path |
         [(index, attachment['file']) for index, attachment in enumerate(attachments)], versions, root, find,
     )
     if missing:
-        name = versions.name.removesuffix('.versions')
+        name = versions.name.removesuffix(artifact_check.VERSIONS)
         raise ValueError(
             'The draft attaches a File that is not in Files, so nothing was published. Save it there, then publish again:\n'
             + '\n'.join(

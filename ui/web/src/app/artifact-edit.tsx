@@ -10,6 +10,7 @@ import { useVersionFiles, VersionDeck, type DeckFile } from "./artifact-slides";
 import type { ArtifactVersion, ViewerProps } from "./artifact-viewer";
 import { Presence, presenceMotion, Swap } from "./collapse";
 import { reason } from "./composer-files";
+import { filesPath, underOf, type FilesPath } from "./files-path";
 import { Button } from "@/components/ui/button";
 
 const TEXT_BLOCKS = "h1, h2, h3, p, li, th, td";
@@ -72,8 +73,8 @@ function SlideTextEditor({ label, file, onChange }: { label: string; file: strin
   );
 }
 
-const slidesOf = (folder: string, files: readonly DeckFile[]) => files.flatMap(({ path, text }) => {
-  const name = path.slice(folder.length + 1);
+const slidesOf = (folder: FilesPath, files: readonly DeckFile[]) => files.flatMap(({ path, text }) => {
+  const name = underOf(folder, filesPath(path)) ?? "";
   return /^project\/slides\/[^/]+\.html$/.test(name) ? [{ name, id: name.slice("project/slides/".length, -".html".length), text }] : [];
 });
 
@@ -85,7 +86,7 @@ export function EditableDeck({ artifact: newest, read, save, frame, shows }: Vie
   const [failures, setFailures] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const shown = useMemo(() => edit === null ? files
-    : files.map((file) => ({ ...file, text: edit.drafts[file.path.slice(deck.path.length + 1)] ?? file.text })), [files, edit, deck.path]);
+    : files.map((file) => ({ ...file, text: edit.drafts[underOf(deck.path, filesPath(file.path)) ?? ""] ?? file.text })), [files, edit, deck.path]);
   const edited = edit !== null && Object.keys(edit.drafts).length > 0;
   useEffect(() => shows({ version: deck, unsaved: edited }), [deck, edited, shows]);
   const stop = () => {

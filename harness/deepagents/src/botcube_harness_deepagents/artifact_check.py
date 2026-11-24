@@ -12,6 +12,12 @@ CHECKOUT_CHECKER = Path(__file__).resolve().parents[2] / 'artifact-check/src/cli
 # The image installs the harness into a venv, so the package is not beside it there; the Dockerfile copies it here.
 IMAGE_CHECKER = Path('/opt/artifact-check/src/cli.mjs')
 CHECKER = CHECKOUT_CHECKER if CHECKOUT_CHECKER.is_file() else IMAGE_CHECKER
+# The version store's layout, which the web app and the Chat Service read too (`botcube-artifact-check/versions`): version
+# `<n>` of a Source is `<STORE>/<Source>{VERSIONS}/<n><suffix>`, by its type's suffix in SUFFIXES.
+_LAYOUT = json.loads((CHECKER.parent / 'versions.json').read_text(encoding='utf-8'))
+STORE: str = _LAYOUT['store']
+VERSIONS: str = _LAYOUT['folder']
+SUFFIXES: dict[str, str] = {name: kind['suffix'] for name, kind in _LAYOUT['types'].items()}
 # The checker CLI's exit code for a Source with errors; any code but this and 0 is the checker itself failing.
 FOUND_ERRORS = 3
 

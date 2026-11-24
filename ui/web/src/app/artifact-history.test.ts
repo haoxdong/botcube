@@ -1,5 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { agoOf, byDay, dayOf, historyOf } from './artifact-history';
+import { artifactVersions } from './artifact-versions';
+import { filesPath } from './files-path';
 
 const NOW = new Date(2026, 10, 23, 16, 41);
 
@@ -15,7 +17,7 @@ it('lists each recorded version up to the newest, newest first, with its author 
   ];
   const authors: Record<string, string> = { 1: 'agent', 2: 'agent', 3: 'user' };
   const read = vi.fn(async (path: string) => JSON.stringify({ author: authors[/(\d+)\.json$/.exec(path)?.[1] ?? ''], title: 'Q4 plan', description: '' }));
-  expect(await historyOf('/plans/q4.md', 3, files, read)).toEqual([
+  expect(await historyOf(artifactVersions(filesPath('/plans/q4.md'), { list: async () => files, read }), 3)).toEqual([
     { version: 3, author: 'user', at: new Date('2026-11-23T14:41:00Z') },
     { version: 2, author: 'agent', at: new Date('2026-11-22T16:12:00Z') },
     { version: 1, author: 'agent', at: new Date('2026-11-21T09:30:00Z') },

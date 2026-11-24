@@ -5,7 +5,7 @@ import { Presence, presenceMotion } from "./collapse";
 import type { ComponentProps } from 'react';
 import { defaultComponents } from 'streamdown';
 import { ReplyFileCard } from './reply-file-card';
-import { replyFilePath } from './reply-file-path';
+import { linkedPath, type FilesPath } from './files-path';
 import { useReplyFile } from './use-reply-file';
 
 type LinkProps = ComponentProps<typeof defaultComponents.a>;
@@ -19,7 +19,7 @@ const MotionFileAnchor = motionElement.create(function FileAnchor({ link, style,
 const CITATION = /^\[(\d+)\]$/;
 
 export function ReplyFileLink(props: LinkProps & { 'data-file-card'?: string }) {
-  const path = props.href ? replyFilePath(props.href) : null;
+  const path = props.href ? linkedPath(props.href) : null;
   if (path && props['data-file-card'] !== undefined)
     return <ReplyFileCard path={path}>{props.children}</ReplyFileCard>;
   if (path) return <FileLink {...props} path={path} />;
@@ -37,7 +37,7 @@ export function ReplyFileLink(props: LinkProps & { 'data-file-card'?: string }) 
   );
 }
 
-function FileLink({ path, ...props }: LinkProps & { path: string }) {
+function FileLink({ path, ...props }: LinkProps & { path: FilesPath }) {
   const { file, download, downloadFailure } = useReplyFile(path);
   // The chat opens only once no link is loading (chat-opening.ts): its resolved state may take more lines.
   if (file === null) return <span data-reply-file-loading="">{props.children} (loading)</span>;

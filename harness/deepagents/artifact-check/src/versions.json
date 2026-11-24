@@ -1,0 +1,12 @@
+{
+  "store": "artifacts",
+  "folder": ".versions",
+  "record": ".json",
+  "types": {
+    "slides": { "suffix": "", "stored": "/project/deck.json" },
+    "doc": { "suffix": ".md", "stored": "" },
+    "sheet": { "suffix": ".sheet.json", "stored": "" },
+    "email": { "suffix": ".email.json", "stored": "" },
+    "page": { "suffix": ".html", "stored": "" }
+  }
+}

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { FILE_ACCOUNT_LOCK } from '../plugin/file-account';
+import { filesPath, type FilesPath } from './files-path';
 
 import { ComposerFileChips, SentFileCards, attachPastedImages, messageWithFiles, sentFilesOf, useComposerFiles, type ComposerFile } from './composer-files';
 
@@ -19,7 +20,7 @@ afterEach(() => {
 describe('messageWithFiles', () => {
   // The message carries each attached file's path, by which the agent reads it in the Turn.
   it("names the attached files' paths under the message's text", () => {
-    expect(messageWithFiles('Summarise these', ['/report.csv', '/notes (1).md'])).toBe(
+    expect(messageWithFiles('Summarise these', ['/report.csv', '/notes (1).md'].map(filesPath))).toBe(
       'Summarise these\n\nAttached files:\n- /report.csv\n- /notes (1).md',
     );
   });
@@ -35,7 +36,7 @@ describe('sentFilesOf', () => {
     ['Summarise these\n\nboth of them', ['/report.csv', '/notes (1).md']],
     ['', ['/report.csv']],
   ])('reads back the text and paths messageWithFiles wrote for %j', (text, paths) => {
-    expect(sentFilesOf(messageWithFiles(text, paths))).toEqual({ text, paths });
+    expect(sentFilesOf(messageWithFiles(text, paths.map(filesPath)))).toEqual({ text, paths });
   });
 
   it('leaves a message without a trailing files block as it is', () => {
@@ -47,7 +48,7 @@ describe('sentFilesOf', () => {
 
 describe('SentFileCards', () => {
   it("shows each sent file as a card: its type's labelled icon, its name in full on hover, and its kind", () => {
-    render(<SentFileCards paths={['/AI_Trends_2026.pdf', '/reports/rates.csv', '/Makefile']} />);
+    render(<SentFileCards paths={['/AI_Trends_2026.pdf', '/reports/rates.csv', '/Makefile'].map(filesPath)} />);
 
     const cards = within(screen.getByRole('list', { name: 'Attached files' })).getAllByRole('listitem');
     // A name without an extension is a plain page, with no label.
@@ -56,13 +57,13 @@ describe('SentFileCards', () => {
   });
 
   it('shows nothing for a message without files', () => {
-    const { container } = render(<SentFileCards paths={[]} />);
+    const { container } = render(<SentFileCards paths={[].map(filesPath)} />);
     expect(container).toBeEmptyDOMElement();
   });
 
   it("shows a sent image as its thumbnail from the bot's file URL, and any other file as its card", async () => {
-    const fileUrl = vi.fn(async (path: string) => `https://files.test${path}`);
-    render(<SentFileCards paths={['/Pasted image 2026-10-13.png', '/notes.pdf', '/logo.svg']} fileUrl={fileUrl} />);
+    const fileUrl = vi.fn(async (path: FilesPath) => `https://files.test${encodeURI(path)}`);
+    render(<SentFileCards paths={['/Pasted image 2026-10-13.png', '/notes.pdf', '/logo.svg'].map(filesPath)} fileUrl={fileUrl} />);
 
     expect(await screen.findByRole('img', { name: 'Pasted image 2026-10-13.png' })).toHaveAttribute('src', 'https://files.test/Pasted%20image%202026-10-13.png');
     expect(await screen.findByRole('img', { name: 'logo.svg' })).toHaveAttribute('src', 'https://files.test/logo.svg');
@@ -71,20 +72,20 @@ describe('SentFileCards', () => {
   });
 
   it('keeps a sent image its empty thumbnail without a file URL, the size it takes once one comes', () => {
-    render(<SentFileCards paths={['/chart.png']} />);
+    render(<SentFileCards paths={['/chart.png'].map(filesPath)} />);
     const thumbnail = screen.getByRole('listitem', { name: 'chart.png' });
     expect(thumbnail).toHaveClass('image-thumb');
     expect(thumbnail).toBeEmptyDOMElement();
   });
 
   it("names a sent image with why when its URL fails", async () => {
-    render(<SentFileCards paths={['/chart.png']} fileUrl={async () => Promise.reject(new Error('Download failed'))} />);
+    render(<SentFileCards paths={['/chart.png'].map(filesPath)} fileUrl={async () => Promise.reject(new Error('Download failed'))} />);
     expect(await screen.findByRole('alert')).toHaveTextContent('chart.png could not load: Download failed');
     expect(screen.queryByRole('img')).toBeNull();
   });
 
   it("names a sent image the browser won't show", async () => {
-    render(<SentFileCards paths={['/chart.png']} fileUrl={async () => 'https://files.test/chart.png'} />);
+    render(<SentFileCards paths={['/chart.png'].map(filesPath)} fileUrl={async () => 'https://files.test/chart.png'} />);
     fireEvent.error(await screen.findByRole('img', { name: 'chart.png' }));
     expect(screen.getByRole('alert')).toHaveTextContent('chart.png could not load: the browser could not show it');
   });
@@ -94,14 +95,14 @@ const attachingEpoch = () => localStorage.getItem(FILE_ACCOUNT_LOCK);
 
 /** An upload a test settles: its progress, then the path it resolves to or the error it rejects with. */
 function deferredUploads() {
-  const uploads: { file: File; signal: AbortSignal; progress: (fraction: number) => void; resolve: (path: string) => void; reject: (error: Error) => void }[] = [];
+  const uploads: { file: File; signal: AbortSignal; progress: (fraction: number) => void; resolve: (path: FilesPath) => void; reject: (error: Error) => void }[] = [];
   const upload = vi.fn(
     (file: File, { onProgress, signal }: { onProgress: (fraction: number) => void; signal: AbortSignal }) =>
-      new Promise<string>((resolve, reject) => {
+      new Promise<FilesPath>((resolve, reject) => {
         uploads.push({ file, signal, progress: onProgress, resolve, reject });
       }),
   );
-  const discard = vi.fn(async (_path: string, _epoch: string | null) => {});
+  const discard = vi.fn(async (_path: FilesPath, _epoch: string | null) => {});
   return { upload, uploads, discard, store: { upload, discard } };
 }
 
@@ -120,22 +121,22 @@ describe('useComposerFiles', () => {
     const { store, uploads } = deferredUploads();
     const { result, rerender } = renderHook(({ accountId }) => useComposerFiles(store, accountId), { initialProps: { accountId: 'account-a' } });
     act(() => result.current.add([report, notes]));
-    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report.csv')));
 
     rerender({ accountId: 'account-b' });
 
     expect(uploads[1]?.signal.aborted).toBe(true);
     expect(result.current.files).toEqual([]);
-    await act(async () => uploads[1]?.resolve('/notes.md'));
+    await act(async () => uploads[1]?.resolve(filesPath('/notes.md')));
     expect(result.current.files).toEqual([]);
     act(() => result.current.add([report]));
-    await act(async () => uploads[2]?.resolve('/report (1).csv'));
+    await act(async () => uploads[2]?.resolve(filesPath('/report (1).csv')));
     expect(result.current.files.map(({ state }) => state)).toEqual([{ status: 'uploaded', path: '/report (1).csv' }]);
   });
 
   it("invalidates stale paths before another tab's account claim can submit them", async () => {
     const { result, uploads } = attached([report, notes]);
-    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report.csv')));
     const stale = result.current;
     act(() => {
       localStorage.setItem(FILE_ACCOUNT_LOCK, 'another-tab-claim');
@@ -158,7 +159,7 @@ describe('useComposerFiles', () => {
       return attached;
     });
     act(() => result.current.add([report]));
-    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report.csv')));
     changing = true;
     act(() => {
       localStorage.setItem(FILE_ACCOUNT_LOCK, 'claim-before-paint');
@@ -181,11 +182,11 @@ describe('useComposerFiles', () => {
     act(() => uploads[0]?.progress(0.42));
     expect(result.current.files[0]?.state).toEqual({ status: 'uploading', progress: 0.42 });
 
-    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report.csv')));
     expect(result.current.files[0]?.state).toEqual({ status: 'uploaded', path: '/report.csv' });
     expect(result.current.sendable).toBe(false);
 
-    await act(async () => uploads[1]?.resolve('/notes.md'));
+    await act(async () => uploads[1]?.resolve(filesPath('/notes.md')));
     expect(result.current.sendable).toBe(true);
   });
 
@@ -201,7 +202,7 @@ describe('useComposerFiles', () => {
     expect(result.current.files[0]?.state).toEqual({ status: 'uploading', progress: 0 });
     expect(uploads[1]?.file).toBe(report);
 
-    await act(async () => uploads[1]?.resolve('/report.csv'));
+    await act(async () => uploads[1]?.resolve(filesPath('/report.csv')));
     expect(result.current.files[0]?.state).toEqual({ status: 'uploaded', path: '/report.csv' });
     expect(result.current.sendable).toBe(true);
   });
@@ -229,7 +230,7 @@ describe('useComposerFiles', () => {
 
   it("deletes a removed file's finished upload from the agent's Files", async () => {
     const { result, uploads, discard } = attached([report, notes]);
-    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report.csv')));
 
     await act(async () => result.current.remove(result.current.files[0]?.id ?? ''));
 
@@ -239,7 +240,7 @@ describe('useComposerFiles', () => {
 
   it('keeps the file Files already held under an attached name, deleting only the copy the attach uploaded', async () => {
     const { result, uploads, discard } = attached([report]);
-    await act(async () => uploads[0]?.resolve('/report (2).csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report (2).csv')));
 
     await act(async () => result.current.remove(result.current.files[0]?.id ?? ''));
 
@@ -262,10 +263,10 @@ describe('useComposerFiles', () => {
   it("brings back a removed file Files wouldn't delete, saying why, and deletes it again on Retry", async () => {
     const { result, uploads, discard } = attached([report]);
     discard.mockRejectedValueOnce(new Error('Delete failed'));
-    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report.csv')));
 
     await act(async () => result.current.remove(result.current.files[0]?.id ?? ''));
-    expect(result.current.files.map(({ state }) => state)).toEqual([{ status: 'failed', error: "Couldn't remove report.csv from Files: Delete failed", undeletedPath: '/report.csv' }]);
+    expect(result.current.files.map(({ state }) => state)).toEqual([{ status: 'failed', error: "Couldn't remove report.csv from Files: Delete failed", undeletedPath: filesPath('/report.csv') }]);
     expect(result.current.sendable).toBe(false);
 
     await act(async () => result.current.retry(result.current.files[0]?.id ?? ''));
@@ -277,7 +278,7 @@ describe('useComposerFiles', () => {
     const { result, uploads, discard } = attached([report]);
 
     act(() => result.current.remove(result.current.files[0]?.id ?? ''));
-    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report.csv')));
 
     expect(discard).toHaveBeenCalledExactlyOnceWith('/report.csv', attachingEpoch());
     expect(result.current.files).toEqual([]);
@@ -286,7 +287,7 @@ describe('useComposerFiles', () => {
   it("dismisses a removed file Files wouldn't delete on its second Remove", async () => {
     const { result, uploads, discard } = attached([report]);
     discard.mockRejectedValue(new Error('Files are not configured'));
-    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report.csv')));
     await act(async () => result.current.remove(result.current.files[0]?.id ?? ''));
 
     await act(async () => result.current.remove(result.current.files[0]?.id ?? ''));
@@ -302,7 +303,7 @@ describe('useComposerFiles', () => {
     discard.mockReturnValueOnce(deleted.promise);
     const { result, rerender } = renderHook(({ accountId }) => useComposerFiles(store, accountId), { initialProps: { accountId: 'account-a' } });
     act(() => result.current.add([report]));
-    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report.csv')));
     act(() => result.current.remove(result.current.files[0]?.id ?? ''));
 
     rerender({ accountId: 'account-b' });
@@ -313,7 +314,7 @@ describe('useComposerFiles', () => {
 
   it('keeps the files of a message that sends, which the agent reads', async () => {
     const { result, uploads, discard } = attached([report]);
-    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await act(async () => uploads[0]?.resolve(filesPath('/report.csv')));
 
     act(() => result.current.clear());
 
@@ -338,7 +339,7 @@ describe('ComposerFileChips', () => {
     const sheet = document.head.appendChild(document.createElement('style'));
     sheet.textContent = ':root { --motion-move: 300ms; --motion-quick: 150ms; --ease: cubic-bezier(0.32, 0.72, 0, 1); }';
     onTestFinished(() => sheet.remove());
-    const one: ComposerFile[] = [{ id: '2', file: notes, state: { status: 'uploaded', path: '/notes.md' } }];
+    const one: ComposerFile[] = [{ id: '2', file: notes, state: { status: 'uploaded', path: filesPath('/notes.md') } }];
     const view = render(<ComposerFileChips files={one} onRetry={vi.fn()} onRemove={vi.fn()} />);
     await waitFor(() => expect(chip('notes.md').style.opacity).toBe('1'));
 
@@ -355,7 +356,7 @@ describe('ComposerFileChips', () => {
   const secondLine = (name: string) => (chip(name).querySelector('[title] + span') as HTMLElement).textContent;
   const files: ComposerFile[] = [
     { id: '1', file: report, state: { status: 'uploading', progress: 0.42 } },
-    { id: '2', file: notes, state: { status: 'uploaded', path: '/notes.md' } },
+    { id: '2', file: notes, state: { status: 'uploaded', path: filesPath('/notes.md') } },
     { id: '3', file: new File([''], 'Makefile'), state: { status: 'failed', error: 'A file named Makefile is already in Files' } },
   ];
 
@@ -389,17 +390,17 @@ describe('ComposerFileChips', () => {
 
   it('shows the stored copy name on the chip, tooltip and Remove and sends its canonical path', async () => {
     const onRemove = vi.fn();
-    render(<ComposerFileChips files={[{ id: 'copy', file: report, state: { status: 'uploaded', path: '/report (2).csv' } }]} onRetry={vi.fn()} onRemove={onRemove} />);
+    render(<ComposerFileChips files={[{ id: 'copy', file: report, state: { status: 'uploaded', path: filesPath('/report (2).csv') } }]} onRetry={vi.fn()} onRemove={onRemove} />);
     expect(screen.getByText('report (2).csv').parentElement).toHaveAttribute('title', 'report (2).csv');
     expect(secondLine('report (2).csv')).toBe('CSV');
     await userEvent.click(screen.getByRole('button', { name: 'Remove report (2).csv' }));
     expect(onRemove).toHaveBeenCalledWith('copy');
-    expect(messageWithFiles('Read this', ['/report (2).csv'])).toBe('Read this\n\nAttached files:\n- /report (2).csv');
+    expect(messageWithFiles('Read this', ['/report (2).csv'].map(filesPath))).toBe('Read this\n\nAttached files:\n- /report (2).csv');
   });
 
   it("says Files wouldn't delete a removed image, on its card by its stored name, with Retry", () => {
     const photo = new File(['png'], 'photo.png', { type: 'image/png' });
-    const state = { status: 'failed' as const, error: "Couldn't remove photo (2).png from Files: Delete failed", undeletedPath: '/photo (2).png' };
+    const state = { status: 'failed' as const, error: "Couldn't remove photo (2).png from Files: Delete failed", undeletedPath: filesPath('/photo (2).png') };
     render(<ComposerFileChips files={[{ id: '1', file: photo, state }]} onRetry={vi.fn()} onRemove={vi.fn()} />);
 
     expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(["Remove failed: Couldn't remove photo (2).png from Files: Delete failed"]);
@@ -465,7 +466,7 @@ describe('ComposerFileChips', () => {
   });
 
   it('shows a file as an image by its name, as once sent: an SVG is a tile, a HEIC a card', () => {
-    const files: ComposerFile[] = ([['logo.svg', 'image/svg+xml'], ['photo.heic', 'image/heic']] as const).map(([name, type], index) => ({ id: String(index), file: new File([''], name, { type }), state: { status: 'uploaded', path: `/${name}` } }));
+    const files: ComposerFile[] = ([['logo.svg', 'image/svg+xml'], ['photo.heic', 'image/heic']] as const).map(([name, type], index) => ({ id: String(index), file: new File([''], name, { type }), state: { status: 'uploaded', path: filesPath(`/${name}`) } }));
     render(<ComposerFileChips files={files} onRetry={vi.fn()} onRemove={vi.fn()} />);
     expect(screen.getByRole('img', { name: 'logo.svg' })).toHaveAttribute('src', 'blob:test/1');
     expect(secondLine('photo.heic')).toBe('HEIC');

@@ -4,7 +4,7 @@ import { useEffect, useState, type ComponentProps } from 'react';
 import { PlotlyChart } from '../components/plotly-chart';
 import { Swap } from './collapse';
 import { isFigureName } from '../components/plotly-figure';
-import { replyFilePath } from './reply-file-path';
+import { linkedPath, type FilesPath } from './files-path';
 import { ReplyImage } from './reply-image';
 import { useReplyFile } from './use-reply-file';
 
@@ -13,7 +13,7 @@ import { useReplyFile } from './use-reply-file';
  * and anything else shows as the picture it is (ReplyImage).
  */
 export function ReplyVisual(props: ComponentProps<'img'>) {
-  const path = typeof props.src === 'string' ? replyFilePath(props.src) : null;
+  const path = typeof props.src === 'string' ? linkedPath(props.src) : null;
   if (path !== null && isFigureName(path)) return <ReplyChart path={path} label={props.alt || path} />;
   return <ReplyImage {...props} />;
 }
@@ -28,7 +28,7 @@ export const replyChartDrawWidth = () => (window.matchMedia('(max-width: 640px)'
  * One of the agent's `.plotly.json` files as a live chart across the reply's width, its box there from the first frame
  * at a chart's height; it fetches the file from its short-lived URL in Files.
  */
-export function ReplyChart({ path, label }: { path: string; label: string }) {
+export function ReplyChart({ path, label }: { path: FilesPath; label: string }) {
   const { file } = useReplyFile(path);
   const url = file?.status === 'ready' ? file.url : null;
   const [text, setText] = useState<{ url: string; text: string } | { url: string; failure: string } | null>(null);

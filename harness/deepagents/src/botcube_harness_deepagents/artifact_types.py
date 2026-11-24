@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from . import docs, email, sheets, slides
+from .artifact_check import SUFFIXES
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,7 @@ PAGE = ArtifactType(
         'An `.html` page publishes as a page, titled by its <title>: it runs its scripts in a sandbox and loads '
         'libraries only from cdn.jsdelivr.net, cdnjs.cloudflare.com or unpkg.com at a pinned version.'
     ),
-    suffix='.html',
+    suffix=SUFFIXES['page'],
     source=lambda path: path if path.suffix.lower() in ('.html', '.htm') else None,
     check=lambda page, name: None,
     store=_store_page,
@@ -67,14 +68,14 @@ PAGE = ArtifactType(
 SLIDES = ArtifactType(
     name='slides', named="a deck's project/deck.json",
     publishes="A deck's `project/deck.json` publishes the deck as Slides, once it passes the slide format's check.",
-    suffix='', source=slides.deck_folder, check=slides.refuse, store=slides.store, title=slides.title,
+    suffix=SUFFIXES['slides'], source=slides.deck_folder, check=slides.refuse, store=slides.store, title=slides.title,
     read=slides.read,
 )
 
 DOC = ArtifactType(
     name='doc', named='a .md Doc',
     publishes="A `.md` file publishes as a Doc, titled by its first `# ` heading, once it passes the Doc's check.",
-    suffix='.md', source=docs.source, check=docs.refuse, store=docs.store, title=docs.title, read=docs.read,
+    suffix=SUFFIXES['doc'], source=docs.source, check=docs.refuse, store=docs.store, title=docs.title, read=docs.read,
 )
 
 SHEET = ArtifactType(
