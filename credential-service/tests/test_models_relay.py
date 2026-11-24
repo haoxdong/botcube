@@ -235,14 +235,15 @@ def test_a_provider_without_its_own_credential_takes_the_gateways(gateway: FakeG
     )
 
 
-def test_a_listed_provider_without_a_url_is_reached_at_the_gateway_url_and_an_unlisted_one_never_is(gateway: FakeGateway, key: Path) -> None:
+@pytest.mark.parametrize(('providers', 'status'), [({'openai': {}}, 200), ({}, 404)])
+def test_the_gateway_routes_only_listed_providers(gateway: FakeGateway, key: Path, providers: dict[str, object], status: int) -> None:
     config = _endpoint({'kind': 'file', 'path': str(key)})
-    config['integrations']['modelGateway']['providers'] = {'openai': {}}
+    config['integrations']['modelGateway']['providers'] = providers
     client = _client(gateway, config)
 
     assert client.post('/models/anthropic/v1/messages', content=BODY, headers=_turn()).status_code == 404
-    assert client.post('/models/openai/responses', content=BODY, headers=_turn()).status_code == 200
-    assert [str(call.url) for call in gateway.requests] == ['https://models.example.com/v1/responses']
+    assert client.post('/models/openai/responses', content=BODY, headers=_turn()).status_code == status
+    assert [str(call.url) for call in gateway.requests] == (['https://models.example.com/v1/responses'] if status == 200 else [])
 
 
 @pytest.mark.parametrize('path', ['/models/deepseek/chat/completions', '/models/chat/completions'])

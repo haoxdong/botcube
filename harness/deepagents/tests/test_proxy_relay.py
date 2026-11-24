@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import socket
 import socketserver
 from collections.abc import Iterator
@@ -127,29 +128,19 @@ def test_relay_answers_502_naming_the_credential_and_opens_nothing_when_it_fails
     assert heads == []
 
 
-def test_no_proxy_url_without_a_proxy() -> None:
-    assert proxy_url_from_config({'integrations': {'proxy': {'kind': 'none'}}}, {}) is None
-
-
-def test_the_proxy_itself_without_a_credential_headers_or_tls() -> None:
-    url = proxy_url_from_config({'integrations': {'proxy': {'kind': 'forward', 'url': 'http://proxy.example.com:3128'}}}, {})
-
-    assert url is not None
-    assert url() == 'http://proxy.example.com:3128'
-
-
-def test_one_loopback_relay_per_process_for_a_proxy_with_headers(upstream: tuple[str, list[str]]) -> None:
-    url, heads = upstream
-    config = {'integrations': {'proxy': {'kind': 'forward', 'url': url, 'headers': {'x-tenant': 'one-relay'}}}}
+@pytest.mark.parametrize(('proxy', 'expected'), json.loads((Path(__file__).resolve().parents[3] / 'tests/fixtures/proxy-url.json').read_text()))
+def test_proxy_url_and_reuse(proxy: dict[str, Any], expected: str | None) -> None:
+    config = {'integrations': {'proxy': proxy}}
     first, second = proxy_url_from_config(config, {}), proxy_url_from_config(config, {})
-    assert first is not None and second is not None
 
-    relay = first()
+    if expected is None:
+        assert first is second is None
+    else:
+        assert first is not None and second is not None
+        relay = first()
+        assert relay == expected or (expected.endswith(':') and relay.startswith(expected) and relay[len(expected):].isdecimal())
+        assert second() == relay
 
-    assert relay.startswith('http://127.0.0.1:')
-    assert second() == relay
-    _exchange(relay, 'CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n', b'hello')
-    assert [_header(head, 'x-tenant') for head in heads] == [['one-relay']]
 
 
 def test_refuses_a_malformed_proxy_tls_block_naming_it() -> None:

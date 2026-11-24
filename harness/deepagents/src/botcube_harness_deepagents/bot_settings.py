@@ -20,7 +20,7 @@ from ruamel.yaml.error import YAMLError
 from .botcube_config import (
     CONFIG_ENV,
     botcube_config_from_env,
-    gateway_providers,
+    gateway_routes,
     yaml_document,
 )
 from .definition import (
@@ -121,11 +121,10 @@ def unreached_provider(gateway: Mapping[str, Any], provider: str) -> str | None:
     """Why the model gateway cannot call a model on `provider`, or None when it can, as botcube/config's `unreachedProvider`."""
     if gateway['kind'] == 'bedrock' or provider == ECHO_PROVIDER:
         return None
-    listed = gateway.get('providers')
-    served = gateway_providers() if listed is None else tuple(name for name in gateway_providers() if name in listed)
+    served = gateway_routes(gateway)
     if provider not in served:
-        return f"integrations.modelGateway reaches the providers {' and '.join(served)}"
-    if provider == 'anthropic' and 'url' not in (listed or {}).get('anthropic', {}) and urlsplit(gateway['url']).path.rstrip('/').endswith('/v1'):
+        return f"integrations.modelGateway reaches the providers {' and '.join(sorted(served))}"
+    if provider == 'anthropic' and 'url' not in served['anthropic'] and urlsplit(gateway['url']).path.rstrip('/').endswith('/v1'):
         return "integrations.modelGateway.url ends in /v1, which Anthropic's API adds itself: set integrations.modelGateway.providers.anthropic.url without /v1"
     return None
 

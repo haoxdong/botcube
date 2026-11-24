@@ -1,0 +1,31 @@
+[
+  [{ "kind": "none" }, null],
+  [
+    { "kind": "forward", "url": "http://proxy.example.com:3128" },
+    "http://proxy.example.com:3128"
+  ],
+  [
+    {
+      "kind": "forward",
+      "url": "http://proxy.example.com:3128",
+      "headers": { "x-tenant": "test" }
+    },
+    "http://127.0.0.1:"
+  ],
+  [
+    {
+      "kind": "forward",
+      "url": "http://proxy.example.com:3128",
+      "credential": { "kind": "file", "path": "/missing-proxy-token" }
+    },
+    "http://127.0.0.1:"
+  ],
+  [
+    {
+      "kind": "forward",
+      "url": "https://proxy.example.com:3129",
+      "tls": { "serverIdentity": "spiffe://proxy.example.com/proxy" }
+    },
+    "http://127.0.0.1:"
+  ]
+]

@@ -25,10 +25,11 @@ CONFIG_ENV = 'BOTCUBE_CONFIG'
 _SCHEMA = json.loads(Path(__file__).with_name('botcube.schema.json').read_text(encoding='utf8'))
 
 
-def gateway_providers() -> tuple[str, ...]:
-    """The providers a model gateway serves, as `integrations.modelGateway.providers` names them."""
+def gateway_routes(models: Mapping[str, Any]) -> Mapping[str, Mapping[str, Any]]:
+    if 'providers' in models:
+        return models['providers']
     [gateway] = (option for option in _SCHEMA['properties']['integrations']['properties']['modelGateway']['oneOf'] if 'providers' in option['properties'])
-    return tuple(gateway['properties']['providers']['properties'])
+    return {provider: {} for provider in gateway['properties']['providers']['properties']}
 
 
 class BotCubeConfigError(RuntimeError):

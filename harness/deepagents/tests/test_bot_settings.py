@@ -239,38 +239,19 @@ def test_the_example_bot_is_servable() -> None:
     assert (bot.agent_name, bot.models[0], bot.skills) == ('BotCube', 'echo', (example / 'skills' / 'computer',))
 
 
-@pytest.mark.parametrize(('provider', 'providers', 'served'), [
-    ('deepseek', None, 'anthropic and openai'),
-    ('openai', {'anthropic': {'url': 'https://models.example.com/anthropic'}}, 'anthropic'),
-])
-def test_the_harness_stops_on_a_bot_model_on_a_provider_the_gateway_does_not_serve_naming_it(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, provider: str, providers: dict[str, object] | None, served: str,
-) -> None:
+@pytest.mark.parametrize('case', json.loads((Path(__file__).resolve().parents[3] / 'tests/fixtures/model-provider-reachability.json').read_text()))
+def test_gateway_reachability(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, case: dict[str, Any]) -> None:
     from botcube_harness_deepagents import bot_settings
-    from deployment_fixture import ENDPOINT_MODELS
 
-    bot = _bot(tmp_path / 'bot', models=[{'key': 'claude-sonnet-5-5', 'label': 'Sonnet', 'provider': 'anthropic'}, {'key': 'other', 'label': 'Other', 'provider': provider}])
+    provider = case['provider']
+    bot = _bot(tmp_path / 'bot', models=[{'key': 'test-model', 'label': 'Test', 'provider': provider, 'maxTokens': 1024}])
     monkeypatch.setattr(bot_settings, 'load_bot_settings', lambda path: load_bot_settings(bot))
-    gateway = {**ENDPOINT_MODELS, 'url': 'https://models.example.com', **({'providers': providers} if providers else {})}
+    gateway = {**ENDPOINT_MODELS, 'url': 'https://models.example.com', **case['gateway']}
     path = deploy(monkeypatch, tmp_path, integrations={'modelGateway': gateway})
 
-    with pytest.raises(BotSettingsError, match=(
-        f"^BotCube Config {re.escape(str(path))}: the bot settings' model other is on provider {provider}, "
-        f'but integrations.modelGateway reaches the providers {served}$'
-    )):
-        bot_settings.bot_from_env()
-
-
-def test_the_harness_stops_on_an_anthropic_model_on_a_gateway_url_ending_in_v1_naming_the_fix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from botcube_harness_deepagents import bot_settings
-    from deployment_fixture import ENDPOINT_MODELS
-
-    bot = _bot(tmp_path / 'bot', models=[{'key': 'claude-sonnet-5-5', 'label': 'Sonnet', 'provider': 'anthropic'}])
-    monkeypatch.setattr(bot_settings, 'load_bot_settings', lambda path: load_bot_settings(bot))
-    path = deploy(monkeypatch, tmp_path, integrations={'modelGateway': ENDPOINT_MODELS})
-
-    with pytest.raises(BotSettingsError, match=(
-        f"^BotCube Config {re.escape(str(path))}: the bot settings' model claude-sonnet-5-5 is on provider anthropic, "
-        "but integrations.modelGateway.url ends in /v1, which Anthropic's API adds itself: set integrations.modelGateway.providers.anthropic.url without /v1$"
-    )):
-        bot_settings.bot_from_env()
+    if case['error'] is None:
+        assert bot_settings.bot_from_env()[1] == 'test-model'
+    else:
+        with pytest.raises(BotSettingsError) as raised:
+            bot_settings.bot_from_env()
+        assert str(raised.value) == f"BotCube Config {path}: the bot settings' model test-model is on provider {provider}, but {case['error']}"

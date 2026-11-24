@@ -171,29 +171,19 @@ describe('a BotCube Config', () => {
       .toEqual({ ...models, providers: { anthropic, openai: { useResponsesApi: false } } });
   });
 
-  it('stops on a bot model on a provider the gateway does not serve, naming the model and provider', () => {
-    const bot = { ...EXAMPLE_BOT, models: [{ key: 'echo', label: 'Echo', provider: 'echo' }, { key: 'deepseek-v3.2', label: 'DeepSeek', provider: 'deepseek' }] };
-    const path = configFile({ integrations: { modelGateway: ENTERPRISE_MODELS } }, bot);
-    expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: the bot settings' model deepseek-v3.2 is on provider deepseek, but integrations.modelGateway reaches the providers anthropic and openai`);
+  const reachability: { provider: string; gateway: object; error: string | null }[] = JSON.parse(
+    readFileSync(new URL('../tests/fixtures/model-provider-reachability.json', import.meta.url), 'utf8'),
+  );
+  it.each(reachability)('checks gateway reachability for $provider with $gateway', ({ provider, gateway, error }) => {
+    const bot = { ...EXAMPLE_BOT, models: [{ key: 'test-model', label: 'Test', provider }] };
+    const modelGateway = { ...ENTERPRISE_MODELS, url: 'https://models.example.com', ...gateway };
+    const path = configFile({ integrations: { modelGateway } }, bot);
+    if (error === null) {
+      expect(loadBotCube(path).bot.models).toHaveLength(1);
+    } else {
+      expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: the bot settings' model test-model is on provider ${provider}, but ${error}`);
+    }
   });
-
-  it('stops on a bot model on a provider the gateway lists no route for, naming the model and provider', () => {
-    const bot = { ...EXAMPLE_BOT, models: [{ key: 'gpt-5', label: 'GPT', provider: 'openai' }] };
-    const path = configFile({ integrations: { modelGateway: { ...ENTERPRISE_MODELS, providers: { anthropic: { url: 'https://models.example.com/anthropic' } } } } }, bot);
-    expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: the bot settings' model gpt-5 is on provider openai, but integrations.modelGateway reaches the providers anthropic`);
-  });
-
-  const V1 = "integrations.modelGateway.url ends in /v1, which Anthropic's API adds itself: set integrations.modelGateway.providers.anthropic.url without /v1";
-
-  it('stops on an anthropic bot model on a gateway URL ending in /v1 with no Anthropic URL of its own, naming the fix', () => {
-    const bot = { ...EXAMPLE_BOT, models: [{ key: 'claude-sonnet-5-5', label: 'Sonnet', provider: 'anthropic' }] };
-    const path = configFile({ integrations: { modelGateway: ENTERPRISE_MODELS } }, bot);
-    expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: the bot settings' model claude-sonnet-5-5 is on provider anthropic, but ${V1}`);
-    const own = { ...ENTERPRISE_MODELS, providers: { anthropic: { url: 'https://models.example.com/anthropic' }, openai: {} } };
-    expect(loadBotCube(configFile({ integrations: { modelGateway: own } }, bot)).bot.models).toHaveLength(1);
-  });
-
-
 
   it('reaches a listed provider with no URL of its own at the gateway URL', () => {
     const models = { ...ENTERPRISE_MODELS, providers: { openai: {} } };

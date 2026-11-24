@@ -15,7 +15,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, WebSocket
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from .botcube_config import gateway_providers
+from .botcube_config import gateway_routes
 from .credential_source import (
     CredentialSource,
     CredentialSourceError,
@@ -53,7 +53,7 @@ def models_provider_from_config(
     gateway = credential_source('models', models['credential'], env=env, now=now)
     gateway.get()
     routes: dict[str, ProviderRoute] = {}
-    for provider, own in (models.get('providers') or dict.fromkeys(gateway_providers(), {})).items():
+    for provider, own in gateway_routes(models).items():
         credential = gateway
         if 'credential' in own:
             credential = credential_source(f'models {provider}', own['credential'], env=env, now=now)

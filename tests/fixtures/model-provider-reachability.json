@@ -1,0 +1,33 @@
+[
+  {
+    "provider": "deepseek",
+    "gateway": {},
+    "error": "integrations.modelGateway reaches the providers anthropic and openai"
+  },
+  {
+    "provider": "openai",
+    "gateway": { "providers": { "anthropic": {} } },
+    "error": "integrations.modelGateway reaches the providers anthropic"
+  },
+  {
+    "provider": "openai",
+    "gateway": { "providers": {} },
+    "error": "integrations.modelGateway reaches the providers "
+  },
+  {
+    "provider": "anthropic",
+    "gateway": { "url": "https://models.example.com/v1/" },
+    "error": "integrations.modelGateway.url ends in /v1, which Anthropic's API adds itself: set integrations.modelGateway.providers.anthropic.url without /v1"
+  },
+  {
+    "provider": "anthropic",
+    "gateway": {
+      "url": "https://models.example.com/v1",
+      "providers": {
+        "anthropic": { "url": "https://models.example.com/anthropic" }
+      }
+    },
+    "error": null
+  },
+  { "provider": "echo", "gateway": { "providers": {} }, "error": null }
+]

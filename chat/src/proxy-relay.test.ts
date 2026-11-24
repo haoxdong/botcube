@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { credentialSource, type CredentialSource } from './credential-source.js';
@@ -126,12 +127,17 @@ describe('the proxy relay', () => {
 });
 
 describe("the BotCube Config's proxy in a process", () => {
-  it('is none without a proxy', () => {
-    expect(proxyUrl({ kind: 'none' })).toBeUndefined();
-  });
-
-  it('is the proxy itself when it takes no credential, headers or TLS', async () => {
-    expect(await proxyUrl({ kind: 'forward', url: 'http://proxy.example.com:3128' })?.()).toBe('http://proxy.example.com:3128');
+  const cases: [Parameters<typeof proxyUrl>[0], string | null][] = JSON.parse(
+    readFileSync(new URL('../../tests/fixtures/proxy-url.json', import.meta.url), 'utf8'),
+  );
+  it.each(cases)('resolves and reuses the URL for %j', async (proxy, expected) => {
+    const result = await proxyUrl(proxy)?.();
+    if (expected?.endsWith(':')) {
+      const port = result?.slice(expected.length);
+      expect(port).toMatch(/^\d+$/);
+      expect(result).toBe(expected + port);
+    } else expect(result).toBe(expected ?? undefined);
+    expect(await proxyUrl(proxy)?.()).toBe(result);
   });
 
   it('is one loopback relay, started when first asked for, with the credential and headers', async () => {
