@@ -11,6 +11,7 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse
 
 from botcube_credential_service.audit import CredentialAuditRecorder
+from botcube_credential_service.config import OpenAISettings
 from botcube_credential_service.openai import OpenAIProvider
 from botcube_credential_service.vault import RotatingCredentialVault
 
@@ -122,7 +123,7 @@ def test_relay_reports_failed_stream_even_after_answer(prefix: bytes) -> None:
 def test_dispatch_clock_starts_after_body_preparation(monkeypatch: pytest.MonkeyPatch) -> None:
     sink = Sink()
     clock = [10.0]
-    monkeypatch.setattr('botcube_credential_service.openai.time.monotonic', lambda: clock[0])
+    monkeypatch.setattr('time.monotonic', lambda: clock[0])
 
     class PreparedRequest(Request):
         async def body(self) -> bytes:
@@ -278,8 +279,8 @@ def test_upstream_phases_separate_monotonic_boundaries_and_never_log_trace_info(
     sink = Sink()
     clock = [100.0]
     wall = [2000.0]
-    monkeypatch.setattr('botcube_credential_service.openai.time.monotonic', lambda: clock[0])
-    monkeypatch.setattr('botcube_credential_service.openai.time.time', lambda: wall[0])
+    monkeypatch.setattr('time.monotonic', lambda: clock[0])
+    monkeypatch.setattr('time.time', lambda: wall[0])
     reasoning = frame('response.reasoning_summary_text.delta', delta='private reasoning')
     blank_reasoning = frame('response.reasoning_summary_text.delta', delta='  \n')
     answer = frame('response.output_text.delta', delta='private answer')
@@ -353,10 +354,9 @@ async def _emit_transport_phases(request: httpx.Request, clock: list[float], tra
 
 @pytest.mark.parametrize('compressed', [False, True])
 def test_real_http_transport_reports_only_allowlisted_connection_and_header_milestones(
-    monkeypatch: pytest.MonkeyPatch, compressed: bool,
+    compressed: bool,
 ) -> None:
     import gzip
-    from dataclasses import replace
 
     sink = Sink()
     content = frame('response.output_text.delta', delta='private answer') + frame('response.completed')
@@ -385,8 +385,8 @@ def test_real_http_transport_reports_only_allowlisted_connection_and_header_mile
             port = server.sockets[0].getsockname()[1]
             provider = OpenAIProvider(lambda: cast('RotatingCredentialVault', None),
                                       audit=CredentialAuditRecorder(sink=sink),
-                                      transport=httpx.AsyncHTTPTransport(trust_env=False))
-            monkeypatch.setattr(provider, '_settings', replace(provider._settings, api_origin=f'http://127.0.0.1:{port}'))
+                                      transport=httpx.AsyncHTTPTransport(trust_env=False),
+                                      settings=OpenAISettings(api_origin=f'http://127.0.0.1:{port}'))
 
             async def receive() -> dict[str, Any]:
                 return {'type': 'http.request', 'body': b'private prompt'}
@@ -550,7 +550,7 @@ def test_answer_and_completed_frames_forward_before_the_decoded_stream_eof(
 
     sink = Sink()
     clock = [100.0]
-    monkeypatch.setattr('botcube_credential_service.openai.time.monotonic', lambda: clock[0])
+    monkeypatch.setattr('time.monotonic', lambda: clock[0])
     answer = frame('response.output_text.delta', delta='private answer')
     completed = frame('response.completed')
 
@@ -605,7 +605,7 @@ def test_answer_and_completed_frames_forward_before_the_decoded_stream_eof(
 def test_grouped_answer_and_completed_keep_the_same_decoded_chunk_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
     sink = Sink()
     content = frame('response.output_text.delta', delta='answer') + frame('response.completed')
-    monkeypatch.setattr('botcube_credential_service.openai.time.monotonic', lambda: 100.0)
+    monkeypatch.setattr('time.monotonic', lambda: 100.0)
 
     async def run() -> bytes:
         class GroupedStream(httpx.AsyncByteStream):

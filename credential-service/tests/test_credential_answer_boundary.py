@@ -21,7 +21,7 @@ def test_actual_relay_boundary_excludes_headers_and_completion_and_keeps_bytes(
     monkeypatch: pytest.MonkeyPatch, response_id: str | None,
 ) -> None:
     clock = [10.0]
-    monkeypatch.setattr('botcube_credential_service.openai.time.monotonic', lambda: clock[0])
+    monkeypatch.setattr('time.monotonic', lambda: clock[0])
 
     class DelayedSink(Sink):
         def record(self, event: Mapping[str, Any]) -> None:
@@ -95,7 +95,7 @@ def test_missing_reversed_and_wrong_message_boundaries_never_break_forwarding(
 ) -> None:
     sink = Sink()
     clock = [10.0]
-    monkeypatch.setattr('botcube_credential_service.openai.time.monotonic', lambda: clock[0])
+    monkeypatch.setattr('time.monotonic', lambda: clock[0])
     content = frame('response.created', response={'id': created})
     content += frame('response.output_text.delta', item_id=item, delta='private answer' if answer else ' ')
     content += frame('response.completed')

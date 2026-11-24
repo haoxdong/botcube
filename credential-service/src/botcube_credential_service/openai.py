@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import secrets
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
@@ -19,13 +18,14 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from .answer_boundary import CredentialAnswerBoundary
 from .config import OpenAISettings
 from .cookies import isolated_cookie_jar
-from .provider import UpstreamRefusal
-from .vault import (
-    CredentialNotFound,
-    RefreshLeaseHeld,
-    RotationLost,
-    RotationStoredButRefused,
+from .openai_errors import REVOKED, UNAVAILABLE, plan_usage_error, revoked, unavailable
+from .rotating_access import (
+    Grant,
+    GrantedAccess,
+    RefreshTimings,
+    RotatingAccess,
 )
+from .rotating_vault import OPENAI_PROVIDER, OpenAIVaultAdapter
 
 if TYPE_CHECKING:
     from fastapi import Request
@@ -33,22 +33,13 @@ if TYPE_CHECKING:
     from .audit import CredentialAuditRecorder, _UpstreamContentEncoding
     from .invocation import CredentialServiceInvocation
     from .server import InvocationGuard
-    from .vault import RevisedCredential, RotatingCredentialVault
+    from .vault import RotatingCredentialVault
 
-OPENAI_PROVIDER = 'openai'
 # What one Sign in with ChatGPT leaves to vault: the identity, its dynamically registered client, and the refresh token.
 _SIGN_IN_FIELDS = ('subject', 'clientId', 'refreshToken')
 _RESPONSES_PATH = 'v1/responses'
 # The only calls Plan Usage makes: the plan's model catalog and streaming Responses.
 _RELAYED = {('GET', 'v1/models'), ('POST', _RESPONSES_PATH)}
-# The `type` of a classified Plan Usage error, in OpenAI's error shape so the Harness's client raises it.
-PLAN_USAGE_ERROR_TYPE = 'plan_usage'
-_REVOKED = (
-    'PLAN_USAGE_REVOKED',
-    'Your ChatGPT plan cannot be used: it is not eligible, or its credential was revoked or can no longer refresh. '
-    'Re-run the botcube-openai-plan-usage operator command to sign in to ChatGPT again',
-)
-_UNAVAILABLE = ('PLAN_USAGE_UNAVAILABLE', "ChatGPT could not check your plan's usage; try again later")
 _PROVIDER_TIMEOUT = ('MODEL_PROVIDER_TIMEOUT', 'OpenAI did not respond to the model call; try again')
 # OpenAI's Plan Usage error codes, each with its classified error (ADR 0078 decision 7), from
 # developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery.
@@ -56,21 +47,14 @@ _PLAN_USAGE_ERRORS = {
     'subscription_sharing_usage_limit_exceeded': (
         'PLAN_USAGE_LIMIT_REACHED', "Your ChatGPT plan's usage limit is reached; wait, or check ChatGPT Settings > Usage",
     ),
-    'subscription_sharing_usage_unavailable': _UNAVAILABLE,
-    'subscription_sharing_user_unavailable': _UNAVAILABLE,
-    'subscription_sharing_user_not_eligible': _REVOKED,
-    'subscription_sharing_invalid_user': _REVOKED,
+    'subscription_sharing_usage_unavailable': UNAVAILABLE,
+    'subscription_sharing_user_unavailable': UNAVAILABLE,
+    'subscription_sharing_user_not_eligible': REVOKED,
+    'subscription_sharing_invalid_user': REVOKED,
     'subscription_sharing_unsupported_capability': (
         'PLAN_USAGE_UNSUPPORTED', 'Your ChatGPT plan does not support part of this request',
     ),
 }
-# Refresh this long before the access token expires, so no relayed stream outlives it.
-_EXPIRY_MARGIN_SECONDS = 60
-# A live task renews this lease through write-back; a dead holder expires so another task may take over.
-_REFRESH_LEASE_SECONDS = 30
-# How long a task waits on another task's lease before failing loud; past one lease, so a dead holder's expires.
-_LEASE_WAIT_SECONDS = 45
-_LEASE_POLL_SECONDS = 0.2
 # How long a relayed call waits on OpenAI between reads: Codex's stream idle timeout (DEFAULT_STREAM_IDLE_TIMEOUT_MS).
 _READ_TIMEOUT_SECONDS = 300
 _CONNECT_TIMEOUT_SECONDS = 30
@@ -89,12 +73,6 @@ _UPSTREAM_TRACE_LIMIT = 64
 _UPSTREAM_CONTENT_ENCODINGS: dict[str, _UpstreamContentEncoding] = {
     'identity': 'identity', 'gzip': 'gzip', 'deflate': 'deflate', 'br': 'br', 'zstd': 'zstd',
 }
-
-
-@dataclass
-class _RefreshLease:
-    expires_at: float
-    request_deadline: asyncio.Timeout | None = None
 
 
 @dataclass
@@ -191,22 +169,22 @@ class OpenAIProvider:
         transport: httpx.AsyncBaseTransport | None = None,
         clock: Callable[[], float] = time.time,
         proxy: Callable[[], str] | None = None,
+        settings: OpenAISettings | None = None,
+        refresh_timings: RefreshTimings | None = None,
+        grant: Grant | None = None,
     ) -> None:
         self._vault = vault
         self._proxy = proxy
         self._audit = audit
-        self._clock = clock
-        self._settings = OpenAISettings()
-        self._expiry_margin_seconds = _EXPIRY_MARGIN_SECONDS
-        self._refresh_lease_seconds = _REFRESH_LEASE_SECONDS
-        self._lease_wait_seconds = _LEASE_WAIT_SECONDS
-        self._lease_poll_seconds = _LEASE_POLL_SECONDS
+        self._settings = settings or OpenAISettings()
         self._read_timeout_seconds = _READ_TIMEOUT_SECONDS
         self._connect_timeout_seconds = _CONNECT_TIMEOUT_SECONDS
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
-        self._access: dict[str, tuple[str, float, str]] = {}
-        self._refreshing: dict[str, asyncio.Lock] = {}
+        self._access = RotatingAccess(
+            lambda: OpenAIVaultAdapter(vault()), audit=audit, grant=self._grant if grant is None else grant,
+            clock=clock, timings=refresh_timings,
+        )
 
     def _relay_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -229,205 +207,45 @@ class OpenAIProvider:
 
     async def ingest(self, invocation: CredentialServiceInvocation, payload: Mapping[str, Any]) -> dict[str, str]:
         sign_in = {field: _required_text(payload, field) for field in _SIGN_IN_FIELDS}
-        await asyncio.to_thread(
-            self._vault().store_durable_credential, invocation.account_id, OPENAI_PROVIDER, json.dumps(sign_in),
-        )
-        self._access.pop(invocation.account_id, None)
+        await self._access.store(invocation.account_id, sign_in)
         return {'status': 'stored', 'subject': sign_in['subject']}
 
     async def linked(self, account_id: str) -> bool:
         return False
 
     async def revoke(self, account_id: str) -> None:
-        self._access.pop(account_id, None)
-        await asyncio.to_thread(self._vault().delete_durable_credential, account_id, OPENAI_PROVIDER)
+        await self._access.revoke(account_id)
 
     def allows_upstream(self, method: str, path: str) -> bool:
         return (method, path) in _RELAYED
 
     async def mint_access(self, account_id: str, request_context: Mapping[str, str]) -> str:
-        async with self._refreshing.setdefault(account_id, asyncio.Lock()):
-            cached = self._access.get(account_id)
-            if cached is not None and self._clock() < cached[1]:
-                try:
-                    revision = await asyncio.to_thread(self._vault().load_credential_revision, account_id, OPENAI_PROVIDER)
-                except CredentialNotFound:
-                    self._access.pop(account_id, None)
-                    del cached
-                    raise _no_credential() from None
-                if revision == cached[2]:
-                    return cached[0]
-                self._access.pop(account_id, None)
-            del cached
-            return await self._refresh(account_id, request_context)
-
-    async def _refresh(self, account_id: str, request_context: Mapping[str, str]) -> str:
+        # Initialize the shared pool before taking a refresh lease.
         self._relay_client()
-        vault = self._vault()
-        lease = secrets.token_urlsafe()
-        try:
-            async with asyncio.timeout(self._lease_wait_seconds):
-                stored, lease_expires_at = await self._leased(vault, account_id, lease, request_context)
-        except TimeoutError:
-            raise _unavailable('another Credential Service task is still refreshing the ChatGPT credential') from None
-        operation = asyncio.create_task(self._rotate_under_lease(vault, account_id, stored, lease, lease_expires_at))
-        try:
-            tokens, revision = await asyncio.shield(operation)
-        except asyncio.CancelledError as cancelled:
-            # Cancellation cannot abandon a thread holding a rotated token: retain custody until it settles.
-            while not operation.done():
-                try:
-                    await asyncio.shield(operation)
-                except asyncio.CancelledError:
-                    continue
-            raise (failure := operation.exception() or cancelled) from failure.__cause__
-        except RotationStoredButRefused as error:
-            raise _unavailable('the Vault refused a write whose rotated ChatGPT credential was already stored') from error
-        except RotationLost as error:
-            raise _unavailable('another write replaced the ChatGPT credential during its refresh') from error
-        expires_at = self._clock() + tokens['expires_in'] - self._expiry_margin_seconds
-        self._access[account_id] = (tokens['access_token'], expires_at, revision)
-        return tokens['access_token']
+        return await self._access.get(account_id, request_context)
 
-    async def _rotate_under_lease(
-        self, vault: RotatingCredentialVault, account_id: str, stored: RevisedCredential,
-        lease: str, lease_expires_at: float,
-    ) -> tuple[dict[str, Any], str]:
-        active_lease = _RefreshLease(lease_expires_at)
-        worker = asyncio.create_task(self._rotate(vault, account_id, stored, lease, active_lease))
-        while True:
-            await asyncio.wait({worker}, timeout=self._refresh_lease_seconds / 3)
-            if worker.done():
-                return await worker
-            # Conditional renewal and write-back can complete in either order. Observe both outcomes.
-            renewal = await asyncio.gather(
-                self._renew_under_lease(vault, account_id, stored.revision, lease, active_lease),
-                return_exceptions=True,
+    async def _grant(self, sign_in: Mapping[str, str]) -> GrantedAccess:
+        try:
+            response = await self._relay_client().post(
+                self._settings.token_url,
+                headers={'accept': 'application/json'},
+                data={
+                    'grant_type': 'refresh_token',
+                    'client_id': sign_in['clientId'],
+                    'refresh_token': sign_in['refreshToken'],
+                    'resource': self._settings.resource,
+                },
             )
-            failure = renewal[0]
-            if isinstance(failure, BaseException):
-                written = (await asyncio.gather(worker, return_exceptions=True))[0]
-                if isinstance(written, BaseException):
-                    raise _unavailable('refresh lease renewal and credential write-back failed') from BaseExceptionGroup(
-                        'Refresh renewal and write-back failed', [failure, written],
-                    )
-                if isinstance(failure, RotationLost) and failure.current_revision == written[1]:
-                    # The conditional miss observed this exact successful write, which already cleared the lease.
-                    return written
-                raise failure
-            active_lease.expires_at = failure
-            if active_lease.request_deadline is not None:
-                active_lease.request_deadline.reschedule(asyncio.get_running_loop().time() + failure - self._clock())
-
-    async def _renew_under_lease(
-        self, vault: RotatingCredentialVault, account_id: str, revision: str,
-        lease: str, active_lease: _RefreshLease,
-    ) -> float:
-        expires_at = self._clock() + self._refresh_lease_seconds
-        # Only confirmation before the current expiry can extend the HTTP deadline.
-        # A timed-out synchronous RPC may still finish; its owner/revision condition remains authoritative.
-        try:
-            async with asyncio.timeout(active_lease.expires_at - self._clock()):
-                await asyncio.to_thread(
-                    vault.renew_refresh_lease, account_id, OPENAI_PROVIDER,
-                    revision=revision, lease=lease, expires_at=expires_at,
-                )
-        except TimeoutError as error:
-            raise _unavailable('the Vault did not confirm refresh lease renewal before its expiry') from error
-        return expires_at
-
-    async def _rotate(
-        self, vault: RotatingCredentialVault, account_id: str, stored: RevisedCredential,
-        lease: str, active_lease: _RefreshLease,
-    ) -> tuple[dict[str, Any], str]:
-        sign_in = json.loads(stored.value)
-        tokens = await self._token_refresh(sign_in, active_lease)
-        rotated = json.dumps({**sign_in, 'refreshToken': tokens['refresh_token']})
-        # The Vault's AWS clients retry transient failures (ADR 0030's transport choke point); none is retried here.
-        try:
-            revision = await asyncio.to_thread(
-                vault.replace_durable_credential, account_id, OPENAI_PROVIDER, rotated,
-                revision=stored.revision, lease=lease,
-            )
-        except (RotationLost, RotationStoredButRefused):
-            raise
-        except Exception as error:
-            raise _unavailable('the Vault failed to store the rotated ChatGPT credential') from error
-        return tokens, revision
-
-    async def _leased(
-        self, vault: RotatingCredentialVault, account_id: str, lease: str, request_context: Mapping[str, str],
-    ) -> tuple[RevisedCredential, float]:
-        """The credential under this refresh's lease, and when the lease expires (ADR 0078 decision 4).
-
-        Only the lease holder spends the refresh token, so no refresh token is sent twice. A task that
-        finds another lease waits for that lease's rotation, which it then refreshes in turn: access
-        tokens stay in each task's memory, so it cannot use the other task's.
-        """
-        stored = await self._load(vault, account_id, request_context)
-        while True:
-            now = self._clock()
-            expires_at = now + self._refresh_lease_seconds
-            try:
-                await asyncio.to_thread(
-                    vault.take_refresh_lease,
-                    account_id,
-                    OPENAI_PROVIDER,
-                    revision=stored.revision,
-                    lease=lease,
-                    now=now,
-                    expires_at=expires_at,
-                )
-            except CredentialNotFound:
-                raise _no_credential() from None
-            except RefreshLeaseHeld as held:
-                if held.revision != stored.revision:
-                    stored = await self._load(vault, account_id, request_context)
-                else:
-                    await asyncio.sleep(self._lease_poll_seconds)
-                continue
-            return stored, expires_at
-
-    async def _load(
-        self, vault: RotatingCredentialVault, account_id: str, request_context: Mapping[str, str],
-    ) -> RevisedCredential:
-        try:
-            return await asyncio.to_thread(
-                vault.load_revised_credential,
-                account_id,
-                OPENAI_PROVIDER,
-                audit=self._audit,
-                request_context=request_context,
-            )
-        except CredentialNotFound:
-            raise _no_credential() from None
-
-    async def _token_refresh(self, sign_in: Mapping[str, str], active_lease: _RefreshLease) -> dict[str, Any]:
-        try:
-            async with asyncio.timeout(active_lease.expires_at - self._clock()) as deadline:
-                active_lease.request_deadline = deadline
-                response = await self._relay_client().post(
-                    self._settings.token_url,
-                    headers={'accept': 'application/json'},
-                    data={
-                        'grant_type': 'refresh_token',
-                        'client_id': sign_in['clientId'],
-                        'refresh_token': sign_in['refreshToken'],
-                        'resource': self._settings.resource,
-                    },
-                )
-        except (httpx.TransportError, TimeoutError) as error:
-            raise _unavailable(f'OpenAI could not be reached for the token refresh: {type(error).__name__}') from None
-        finally:
-            active_lease.request_deadline = None
+        except httpx.TransportError as error:
+            raise unavailable(f'OpenAI could not be reached for the token refresh: {type(error).__name__}') from None
         if response.is_success:
             return response.json()
         code = _refresh_error_code(response)
         detail = f'HTTP {response.status_code}{f" {code}" if code else ""}'
         # OAuth refuses a grant with 400 (invalid_grant) or 401 (invalid_client); anything else is OpenAI failing.
         if response.status_code in (400, 401):
-            raise _revoked(f'OpenAI refused the token refresh with {detail}')
-        raise _unavailable(f'OpenAI failed the token refresh with {detail}')
+            raise revoked(f'OpenAI refused the token refresh with {detail}')
+        raise unavailable(f'OpenAI failed the token refresh with {detail}')
 
     async def authorize_upstream(self, invocation: CredentialServiceInvocation, request: Request | WebSocket, path: str) -> None:
         if isinstance(request, WebSocket) or request.method != 'POST':
@@ -506,7 +324,7 @@ class OpenAIProvider:
         except httpx.ReadTimeout:
             await _finish_relay(timing, 'failure', None)
             cause = f'no response within {self._read_timeout_seconds:g} s'
-            return JSONResponse(_plan_usage_error(_PROVIDER_TIMEOUT, cause), status_code=504)
+            return JSONResponse(plan_usage_error(_PROVIDER_TIMEOUT, cause), status_code=504)
         except BaseException as failure:
             await _finish_relay(timing, 'cancelled' if isinstance(failure, asyncio.CancelledError) else 'failure', None)
             raise
@@ -555,30 +373,13 @@ def _timing_context(request: Request, request_context: Mapping[str, str]) -> dic
     return context
 
 
-def _plan_usage_error(classification: tuple[str, str], cause: str) -> dict[str, Any]:
-    code, message = classification
-    return {'error': {'type': PLAN_USAGE_ERROR_TYPE, 'code': code, 'message': f'{message} ({cause}).'}}
-
-
-def _revoked(cause: str) -> UpstreamRefusal:
-    return UpstreamRefusal(401, _plan_usage_error(_REVOKED, cause))
-
-
-def _no_credential() -> UpstreamRefusal:
-    return _revoked('no ChatGPT credential is stored for this account')
-
-
-def _unavailable(cause: str) -> UpstreamRefusal:
-    return UpstreamRefusal(503, _plan_usage_error(_UNAVAILABLE, cause))
-
-
 def _classified(error: Any) -> dict[str, Any] | None:
     """OpenAI's error object as its classified Plan Usage error; None for an error Plan Usage does not name."""
     if not isinstance(error, Mapping) or error.get('code') not in _PLAN_USAGE_ERRORS:
         return None
     param = error.get('param')
     cause = f'OpenAI {error["code"]}{f": {param}" if param else ""}'
-    return _plan_usage_error(_PLAN_USAGE_ERRORS[error['code']], cause)
+    return plan_usage_error(_PLAN_USAGE_ERRORS[error['code']], cause)
 
 
 def _json_error(content_type: str | None, content: bytes) -> Any:
@@ -616,7 +417,7 @@ async def _failures_as_errors(chunks: AsyncIterator[bytes], timing: _ProviderTim
             yield output
     timing.first_phase('decoded_stream_eof')
     if pending.strip(b'\r\n'):
-        event = {'type': 'error', **_plan_usage_error(_UNAVAILABLE, 'OpenAI returned an incomplete response stream frame')}
+        event = {'type': 'error', **plan_usage_error(UNAVAILABLE, 'OpenAI returned an incomplete response stream frame')}
         timing.observe(event)
         yield f'event: error\ndata: {json.dumps(event)}\n\n'.encode()
     elif pending:

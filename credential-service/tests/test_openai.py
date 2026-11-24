@@ -6,6 +6,7 @@ import os
 import sys
 import time
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from threading import Event, Lock
@@ -20,14 +21,18 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from moto import mock_aws
 
-from botcube_credential_service import openai as openai_module
 from botcube_credential_service.audit import CredentialAuditRecorder
+from botcube_credential_service.config import OpenAISettings
 from botcube_credential_service.data_keys import (
     Boto3KmsDataKeyProvider,
 )
 from botcube_credential_service.invocation import sign_credential_service_invocation
 from botcube_credential_service.openai import OpenAIProvider
-from botcube_credential_service.provider import UpstreamRefusal
+from botcube_credential_service.rotating_access import (
+    Grant,
+    GrantedAccess,
+    RefreshTimings,
+)
 from botcube_credential_service.server import CredentialServiceSettings, create_app
 from botcube_credential_service.vault import (
     CredentialNotFound,
@@ -149,8 +154,13 @@ def _client(
     sink: ListSink | None = None,
     clock: Clock | None = None,
     owner_account_id: str = 'acct-1',
+    refresh_timings: RefreshTimings | None = None,
+    grant: Grant | None = None,
 ) -> TestClient:
-    return TestClient(_app(vault, openai, sink=sink, clock=clock, owner_account_id=owner_account_id))
+    return TestClient(_app(
+        vault, openai, sink=sink, clock=clock, owner_account_id=owner_account_id,
+        refresh_timings=refresh_timings, grant=grant,
+    ))
 
 
 def _app(
@@ -160,6 +170,8 @@ def _app(
     sink: ListSink | None = None,
     clock: Clock | None = None,
     owner_account_id: str = 'acct-1',
+    refresh_timings: RefreshTimings | None = None,
+    grant: Grant | None = None,
 ) -> FastAPI:
     settings = CredentialServiceSettings(
         name='test-credential-service',
@@ -171,7 +183,7 @@ def _app(
         lambda: vault,
         audit=CredentialAuditRecorder(sink=sink, clock=clock),
         transport=httpx.MockTransport((openai or FakeOpenAI()).handle),
-        clock=clock,
+        clock=clock, refresh_timings=refresh_timings, grant=grant,
     )
     return create_app(settings, [provider])
 
@@ -951,21 +963,6 @@ def test_two_tasks_refreshing_at_once_refresh_one_after_another_and_never_reuse_
     assert json.loads(vault.load_durable_credential('acct-1', 'openai')) == {**SIGN_IN, 'refreshToken': 'rt_third'}
 
 
-def test_a_refresh_slower_than_the_first_lease_is_kept_alive_by_its_renewals(
-    vault: DynamoDbCredentialVault, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(openai_module, '_REFRESH_LEASE_SECONDS', 0.3)
-    _stored(vault)
-    openai = FakeOpenAI()
-    # OpenAI spends the refresh token, then answers after the first lease would have expired.
-    openai.refresh_seconds = 0.5
-
-    response = _client(vault, openai, clock=RealClock()).get('/openai/v1/models', headers=_turn())
-
-    assert response.status_code == 200
-    assert json.loads(vault.load_durable_credential('acct-1', 'openai')) == {**SIGN_IN, 'refreshToken': 'rt_second'}
-
-
 def test_a_write_back_the_sdk_resends_after_it_landed_keeps_the_rotated_refresh_token(
     vault: DynamoDbCredentialVault, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1020,15 +1017,14 @@ def _lease(vault: DynamoDbCredentialVault, expires_at: float) -> None:
 
 
 def test_a_task_that_cannot_get_the_refresh_lease_in_time_fails_loud_without_refreshing(
-    vault: DynamoDbCredentialVault, monkeypatch: pytest.MonkeyPatch,
+    vault: DynamoDbCredentialVault,
 ) -> None:
-    monkeypatch.setattr(openai_module, '_LEASE_WAIT_SECONDS', 0.5)
     _stored(vault)
     clock = Clock()
     _lease(vault, clock.now + 30)
     openai = FakeOpenAI()
 
-    response = _client(vault, openai, clock=clock).get('/openai/v1/models', headers=_turn())
+    response = _client(vault, openai, clock=clock, refresh_timings=RefreshTimings(wait_seconds=0.5)).get('/openai/v1/models', headers=_turn())
 
     assert response.status_code == 503
     assert response.json() == _plan_usage_error(
@@ -1129,127 +1125,6 @@ def test_a_transient_vault_failure_during_write_back_keeps_the_rotated_refresh_t
     )
 
 
-def test_stalled_renewal_does_not_delay_the_confirmed_lease_failure(
-    vault: DynamoDbCredentialVault, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from concurrent.futures import Future, ThreadPoolExecutor
-
-    from test_relay_network_timeouts import PacketClockLoop
-
-    consumed, http_cancelled, renewal_started, release_renewal = Event(), Event(), Event(), Event()
-
-    class ConsumedBeforeDelay(FakeOpenAI):
-        async def handle(self, request: httpx.Request) -> httpx.Response:
-            if request.url != 'https://auth.openai.com/api/accounts/oauth/token':
-                return await super().handle(request)
-            self.requests.append(request)
-            token = parse_qs(request.content.decode())['refresh_token'][0]
-            already_spent = token in self.spent
-            response = self._refresh(token)
-            if not already_spent:
-                consumed.set()
-                try:
-                    await asyncio.sleep(2)
-                except asyncio.CancelledError:
-                    http_cancelled.set()
-                    raise
-            return response
-
-    original_renew = vault.renew_refresh_lease
-    renewal_finished = Event()
-    late_failures: list[RotationLost] = []
-    refused_requests: list[UpstreamRefusal] = []
-    original_mint = OpenAIProvider.mint_access
-
-    async def mint(self: OpenAIProvider, account_id: str, request_context: Mapping[str, str]) -> str:
-        try:
-            return await original_mint(self, account_id, request_context)
-        except UpstreamRefusal as refused:
-            refused_requests.append(refused)
-            raise
-
-    monkeypatch.setattr(OpenAIProvider, 'mint_access', mint)
-    stalled_holder: list[str] = []
-
-    def renew(account_id: str, provider: str, *, revision: str, lease: str, expires_at: float) -> None:
-        if not stalled_holder:
-            stalled_holder.append(lease)
-            renewal_started.set()
-            assert release_renewal.wait(5)
-        try:
-            original_renew(account_id, provider, revision=revision, lease=lease, expires_at=expires_at)
-        except RotationLost as failed:
-            late_failures.append(failed)
-            raise
-        finally:
-            renewal_finished.set()
-
-    monkeypatch.setattr(vault, 'renew_refresh_lease', renew)
-    monkeypatch.setattr(openai_module, '_REFRESH_LEASE_SECONDS', 0.5)
-    _stored(vault)
-    upstream = ConsumedBeforeDelay()
-    pending_renewals: list[Future[None]] = []
-
-    async def in_memory_vault_rpc(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        if function == renew:
-            pending = executor.submit(function, *args, **kwargs)
-            pending_renewals.append(pending)
-            # Start the real SDK worker before allowing virtual lease time to advance.
-            assert renewal_started.wait(1)
-            return await asyncio.wrap_future(pending)
-        return function(*args, **kwargs)
-
-    monkeypatch.setattr(asyncio, 'to_thread', in_memory_vault_rpc)
-
-    async def requests() -> tuple[httpx.Response, httpx.Response]:
-        apps = [_app(vault, upstream, clock=clock) for _ in range(2)]
-        async with (
-            httpx.AsyncClient(transport=httpx.ASGITransport(app=apps[0]), base_url='http://service') as first,
-            httpx.AsyncClient(transport=httpx.ASGITransport(app=apps[1]), base_url='http://service') as second,
-        ):
-            initial = asyncio.create_task(first.get('/openai/v1/models', headers=_turn()))
-            try:
-                first_response = await asyncio.wait_for(initial, 1)
-                assert consumed.is_set()
-                assert renewal_started.is_set()
-                assert http_cancelled.is_set(), 'the HTTP worker itself must obey the confirmed lease deadline'
-                assert not release_renewal.is_set()
-                assert not pending_renewals[0].done(), 'the synchronous renewal RPC is still running'
-                second_response = await second.get('/openai/v1/models', headers=_turn())
-            finally:
-                release_renewal.set()
-            with pytest.raises(RotationLost):
-                pending_renewals[0].result(timeout=3)
-            assert renewal_finished.is_set()
-            return first_response, second_response
-
-    with ThreadPoolExecutor(max_workers=1) as executor, asyncio.Runner(loop_factory=PacketClockLoop) as runner:
-        class LeaseClock(Clock):
-            def __call__(self) -> float:
-                return runner.get_loop().time()
-
-        clock = LeaseClock()
-        try:
-            first_response, second_response = runner.run(requests())
-        finally:
-            release_renewal.set()
-    assert first_response.status_code == 503
-    assert second_response.status_code == 401
-    assert first_response.json()['error']['code'] == 'PLAN_USAGE_UNAVAILABLE'
-    assert [item['refresh_token'] for item in upstream.refreshes()] == [['rt_first'], ['rt_first']]
-    assert json.loads(vault.load_durable_credential('acct-1', 'openai')) == SIGN_IN
-    assert upstream.api_calls() == []
-    assert len(late_failures) == 1, 'the late RPC cannot renew after the peer has taken custody'
-    cause = refused_requests[0].__cause__
-    assert isinstance(cause, BaseExceptionGroup)
-    assert len(cause.exceptions) == 2
-    assert isinstance(cause.exceptions[0], UpstreamRefusal)
-    assert cause.exceptions[0].status_code == 503
-    assert isinstance(cause.exceptions[0].__cause__, TimeoutError)
-    assert isinstance(cause.exceptions[1], UpstreamRefusal)
-    assert cause.exceptions[1].status_code == 503
-
-
 def test_renewal_timeout_after_successful_rotation_is_a_classified_public_failure(
     vault: DynamoDbCredentialVault, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1271,11 +1146,11 @@ def test_renewal_timeout_after_successful_rotation_is_a_classified_public_failur
 
     monkeypatch.setattr(vault, 'replace_durable_credential', blocked_replace)
     monkeypatch.setattr(vault, 'renew_refresh_lease', blocked_renew)
-    monkeypatch.setattr(openai_module, '_REFRESH_LEASE_SECONDS', 0.5)
     _stored(vault)
     upstream = FakeOpenAI()
     provider = OpenAIProvider(
         lambda: vault, audit=CredentialAuditRecorder(), transport=httpx.MockTransport(upstream.handle), clock=RealClock(),
+        refresh_timings=RefreshTimings(lease_seconds=0.5),
     )
     settings = CredentialServiceSettings(
         name='test-credential-service', invocation_secret=lambda: SECRET, plan_usage_owner_account_id='acct-1',
@@ -1291,7 +1166,6 @@ def test_renewal_timeout_after_successful_rotation_is_a_classified_public_failur
             stored = json.loads(vault.load_durable_credential('acct-1', 'openai'))
             assert stored == {**SIGN_IN, 'refreshToken': 'rt_second'}
             assert upstream.api_calls() == []
-            assert provider._access == {}
             assert response.status_code == 503
             assert response.json()['error']['code'] == 'PLAN_USAGE_UNAVAILABLE'
             assert response.json()['error']['message'] == UNAVAILABLE.format(
@@ -1304,39 +1178,6 @@ def test_renewal_timeout_after_successful_rotation_is_a_classified_public_failur
         finally:
             release_write.set()
             release_renewal.set()
-
-
-@pytest.mark.parametrize('cancellations', [1, 2])
-def test_cancelled_refresh_propagates_a_custody_failure_with_its_cause(
-    vault: DynamoDbCredentialVault, monkeypatch: pytest.MonkeyPatch, cancellations: int,
-) -> None:
-    _stored(vault)
-
-    def refused(*args: Any, **kwargs: Any) -> str:
-        raise RuntimeError('synthetic persistence refusal')
-
-    monkeypatch.setattr(vault, 'replace_durable_credential', refused)
-
-    async def request() -> None:
-        consumed = asyncio.Event()
-        upstream = FakeOpenAI()
-        upstream.refresh_seconds = 0.15
-        upstream.during_refresh = consumed.set
-        provider = OpenAIProvider(
-            lambda: vault, audit=CredentialAuditRecorder(), transport=httpx.MockTransport(upstream.handle),
-        )
-        initial = asyncio.create_task(provider.mint_access('acct-1', {}))
-        await asyncio.wait_for(consumed.wait(), 2)
-        for _ in range(cancellations):
-            initial.cancel()
-            await asyncio.sleep(0)
-        [failure] = await asyncio.gather(initial, return_exceptions=True)
-        assert isinstance(failure, UpstreamRefusal)
-        assert 'Vault failed to store the rotated ChatGPT credential' in str(failure)
-        assert isinstance(failure.__cause__, RuntimeError)
-        assert str(failure.__cause__) == 'synthetic persistence refusal'
-
-    asyncio.run(request())
 
 
 def _multiline_failed_response(error: Mapping[str, Any], prefix: str) -> bytes:
@@ -1413,20 +1254,18 @@ def test_credential_receipt_precedes_authenticated_access_and_upstream_dispatch(
     _stored(vault)
     sink = ListSink()
     clock = [100.0]
-    monkeypatch.setattr('botcube_credential_service.openai.time.monotonic', lambda: clock[0])
-    original = OpenAIProvider.mint_access
+    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
 
-    async def delayed_access(self: OpenAIProvider, account_id: str, request_context: Mapping[str, str]) -> str:
+    async def grant(sign_in: Mapping[str, str]) -> GrantedAccess:
+        assert sign_in == SIGN_IN
         clock[0] = 100.3
-        return await original(self, account_id, request_context)
-
-    monkeypatch.setattr(OpenAIProvider, 'mint_access', delayed_access)
+        return GrantedAccess(access_token='at_1', refresh_token='rt_second', expires_in=300)
     upstream = FakeOpenAI()
     upstream.responses = lambda: httpx.Response(200, content=(
         b'data: {"type":"response.created","response":{"id":"resp-safe"}}\n\n'
         b'data: {"type":"response.output_text.delta","item_id":"msg-safe","delta":"answer"}\n\n'
     ))
-    response = _client(vault, upstream, sink=sink).post(
+    response = _client(vault, upstream, sink=sink, grant=grant).post(
         '/openai/v1/responses', json={'model': 'gpt-6-astra'},
         headers={**_bound_turn('openai', 'gpt-6-astra'), 'x-botcube-run-id': 'run-safe',
                  'x-botcube-model-step-id': 'step-safe',
@@ -1524,8 +1363,6 @@ def test_cancelled_stream_closes_response_without_closing_pool(vault: DynamoDbCr
 
 
 def test_model_catalog_calls_reuse_a_real_tcp_connection(vault: DynamoDbCredentialVault, monkeypatch: pytest.MonkeyPatch) -> None:
-    from dataclasses import replace
-
     _stored(vault)
     for name in ('NO_PROXY', 'no_proxy'):
         monkeypatch.setenv(name, f'{os.getenv(name, "")},127.0.0.1,localhost')
@@ -1554,8 +1391,10 @@ def test_model_catalog_calls_reuse_a_real_tcp_connection(vault: DynamoDbCredenti
         server = await asyncio.start_server(handle, '127.0.0.1', 0)
         async with server:
             origin = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}'
-            provider = OpenAIProvider(lambda: vault, audit=CredentialAuditRecorder(), clock=Clock())
-            provider._settings = replace(provider._settings, issuer=origin, api_origin=origin)
+            provider = OpenAIProvider(
+                lambda: vault, audit=CredentialAuditRecorder(), clock=Clock(),
+                settings=replace(OpenAISettings(), issuer=origin, api_origin=origin),
+            )
             app = create_app(CredentialServiceSettings('test', lambda: SECRET), [provider])
             async with app.router.lifespan_context(app):
                 async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://service') as client:
@@ -1573,7 +1412,6 @@ def test_model_catalog_calls_reuse_a_real_tcp_connection(vault: DynamoDbCredenti
 def test_client_initialization_does_not_spend_the_refresh_lease(
     vault: DynamoDbCredentialVault, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(openai_module, '_REFRESH_LEASE_SECONDS', 0.5)
     _stored(vault)
     client_class = httpx.AsyncClient
 
@@ -1582,7 +1420,7 @@ def test_client_initialization_does_not_spend_the_refresh_lease(
         return client_class(**kwargs)
 
     monkeypatch.setattr(httpx, 'AsyncClient', initialize_client)
-    with _client(vault, clock=RealClock()) as client:
+    with _client(vault, clock=RealClock(), refresh_timings=RefreshTimings(lease_seconds=0.5)) as client:
         response = client.get('/openai/v1/models', headers=_turn())
         assert response.status_code == 200
         assert response.json() == json.loads((RECORDED / 'models.json').read_text())

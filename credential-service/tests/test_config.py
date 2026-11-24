@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import json
+from urllib.parse import parse_qs
 
-def test_openai_refresh_and_relay_reach_openai() -> None:
-    import asyncio
-    from typing import NoReturn
-    from urllib.parse import parse_qs
+import httpx
+from fastapi.testclient import TestClient
 
-    import httpx
-    from fastapi import Request
-    from fastapi.responses import StreamingResponse
+from botcube_credential_service.audit import CredentialAuditRecorder
+from botcube_credential_service.openai import OpenAIProvider
+from botcube_credential_service.server import CredentialServiceSettings, create_app
+from botcube_credential_service.vault import DynamoDbCredentialVault
+from test_openai import SECRET, _stored, _turn
+from test_openai import vault as vault
 
-    from botcube_credential_service.audit import CredentialAuditRecorder
-    from botcube_credential_service.openai import OpenAIProvider, _RefreshLease
 
+def test_openai_refresh_and_relay_reach_openai(vault: DynamoDbCredentialVault) -> None:
+    _stored(vault)
     requests: list[httpx.Request] = []
 
     def answer(request: httpx.Request) -> httpx.Response:
@@ -21,27 +24,17 @@ def test_openai_refresh_and_relay_reach_openai() -> None:
             return httpx.Response(200, json={'access_token': 'access', 'refresh_token': 'rotated', 'expires_in': 300})
         return httpx.Response(200, json={'data': []})
 
-    def unused_vault() -> NoReturn:
-        raise AssertionError('the transport test must not read the Vault')
-
     provider = OpenAIProvider(
-        unused_vault, audit=CredentialAuditRecorder(), transport=httpx.MockTransport(answer), clock=lambda: 0,
+        lambda: vault, audit=CredentialAuditRecorder(), transport=httpx.MockTransport(answer), clock=lambda: 0,
     )
-
-    async def run() -> None:
-        tokens = await provider._token_refresh({'clientId': 'client', 'refreshToken': 'refresh'}, _RefreshLease(30))
-        assert tokens['access_token'] == 'access'
-        request = Request({'type': 'http', 'method': 'GET', 'path': '/openai/v1/models',
-                           'query_string': b'', 'headers': []})
-        request._body = b''
-        response = await provider.relay(request, 'v1/models', 'access', account_id='account', request_context={})
+    settings = CredentialServiceSettings('test', lambda: SECRET, plan_usage_owner_account_id='acct-1')
+    with TestClient(create_app(settings, [provider])) as client:
+        response = client.get('/openai/v1/models', headers=_turn())
         assert response.status_code == 200
-        assert isinstance(response, StreamingResponse)
-        chunks = [chunk async for chunk in response.body_iterator]
-        assert chunks == [b'{"data":[]}']
+        assert response.json() == {'data': []}
 
-    asyncio.run(run())
     assert str(requests[0].url) == 'https://auth.openai.com/api/accounts/oauth/token'
     assert parse_qs(requests[0].content.decode())['resource'] == ['https://api.openai.com/v1']
     assert str(requests[1].url) == 'https://api.openai.com/v1/models'
     assert requests[1].headers['authorization'] == 'Bearer access'
+    assert json.loads(vault.load_durable_credential('acct-1', 'openai'))['refreshToken'] == 'rotated'
