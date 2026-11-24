@@ -22,7 +22,6 @@ type Route =
 
 /** Every outbound client the Chat Service and the Credential Service build, by the file that builds it. */
 const CLIENTS: Readonly<Record<string, readonly { client: string; route: Route }[]>> = {
-  [`${CHAT}/endpoint.ts`]: [{ client: "an Endpoint's fetch: the model gateway's, for Turn summaries", route: { reference: 'integrations.modelGateway.proxy', reads: [[`${CHAT}/endpoint.ts`, 'config.proxy && proxyUrl(proxy, env)']] } }],
   [`${CHAT}/tracing.ts`]: [{ client: 'the OTLP trace exporter', route: { reference: 'integrations.telemetry.proxy', reads: [[`${CHAT}/tracing.ts`, 'otlp?.proxy && proxyUrl(proxy, env)']] } }],
   [`${CHAT}/oidc-sign-in.ts`]: [{ client: "the OIDC issuer's discovery, token and userinfo calls", route: { reference: 'integrations.signIn.proxy', reads: [[`${CHAT}/oidc-sign-in.ts`, 'identity.proxy && proxyUrl(proxy, env)']] } }],
   [`${CHAT}/credential-source.ts`]: [
@@ -51,7 +50,6 @@ const CLIENTS: Readonly<Record<string, readonly { client: string; route: Route }
   [`${CHAT}/cdp.ts`]: [{ client: "AgentCore Browser's automation stream", route: { direct: 'aws' } }],
   [`${CHAT}/browser-sessions.ts`]: [{ client: 'AgentCore Browser sessions', route: { direct: 'aws' } }],
   [`${CHAT}/server.ts`]: [{ client: 'AgentCore Browser live view', route: { direct: 'aws' } }],
-  [`${CHAT}/turn-summaries.ts`]: [{ client: 'Bedrock', route: { direct: 'aws' } }],
   ...Object.fromEntries([
     'account-resources.ts', 'account-store.ts', 'agent-documents.ts', 'files-efs.ts', 'files-pool-lease.ts', 'files-pool-manifest.ts',
     'park-history.ts', 'production-activity.ts', 'scheduled-execution.ts', 'scheduled-run-store.ts', 'scheduled-tasks.ts', 'scheduler.ts',

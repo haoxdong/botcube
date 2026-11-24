@@ -2,7 +2,7 @@ import { createServer, type IncomingHttpHeaders, type Server, type ServerRespons
 import type { AddressInfo } from 'node:net';
 import { serve, type ServerType } from '@hono/node-server';
 import { Hono } from 'hono';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DynamoDBDocumentClient, PutCommand, ScanCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
 import * as purges from './purges.js';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -16,7 +16,6 @@ import type { SessionApi } from './session-api.js';
 import { DynamoDBSessionMetadata, SessionDispatchPendingError, type SessionMetadata } from './session-metadata.js';
 import { buildDirectAgent } from '../../ui/web/src/app/conversations.js';
 import { defined } from '../test/defined.js';
-import { FakeBedrock } from '../test/fakes/fake-backends.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { eventually } from '../test/eventually.js';
 
@@ -29,10 +28,6 @@ interface Received {
   body: string;
 }
 
-// Each finished Turn is summarized after its stream ends, so the summary model outlives every test.
-const bedrock = new FakeBedrock();
-beforeAll(() => bedrock.listen());
-afterAll(() => bedrock.close());
 
 const closers: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -116,7 +111,6 @@ const sessionMetadata: SessionMetadata = {
   markRead: async () => undefined,
   markPosted: async () => undefined,
   turnEnded: async () => undefined,
-  turnSummaryFailed: async () => undefined,
   turnStarted: async () => undefined,
 };
 
@@ -129,7 +123,7 @@ const agentDocuments: AgentDocuments = {
   delete: async () => undefined,
 };
 
-const config: Omit<ChatServiceConfig, 'turnSummaryModel'> = {
+const config: ChatServiceConfig = {
   agentCore: null,
   localHarnessUrl: null,
   corsOrigins: [],
@@ -147,9 +141,8 @@ async function chatService(localHarnessUrl: string, options: {
   overrides?: StockOverrides;
   config?: Partial<ChatServiceConfig>;
 } = {}): Promise<string> {
-  const turnSummaryModel = { kind: 'bedrock' as const, region: 'us-east-1', url: `${bedrock.url}/model/summary/converse` };
   const { app, history } = createChatService({ env, overrides: { ...bot, ...options.overrides } },
-    { ...config, localHarnessUrl, turnSummaryModel, ...options.config }, options.metadata ?? sessionMetadata, agentDocuments, options.invoke);
+    { ...config, localHarnessUrl, ...options.config }, options.metadata ?? sessionMetadata, agentDocuments, options.invoke);
   options.history?.(history);
   return listening(serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' }));
 }

@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 ENDPOINT_MODELS = {'kind': 'openai-compatible', 'url': 'https://models.example.com/v1',
-                   'credential': {'kind': 'file', 'path': '/run/secrets/botcube/models-api-key'}, 'turnSummaryModel': 'openai:example-summary'}
+                   'credential': {'kind': 'file', 'path': '/run/secrets/botcube/models-api-key'}}
 
 
 REQUIRED: dict[str, Any] = json.loads((Path(__file__).resolve().parents[3] / 'tests' / 'required-keys.json').read_text(encoding='utf8'))

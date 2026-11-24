@@ -4,16 +4,15 @@ import type { ServerType } from '@hono/node-server';
 import { DeleteTableCommand, DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
 import { Hono } from 'hono';
 import * as scheduledRuns from './scheduled-runs.js';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeAgentCore } from '../test/fakes/fake-agentcore.js';
-import { FakeBedrock, FakeSessionApi } from '../test/fakes/fake-backends.js';
+import { FakeSessionApi } from '../test/fakes/fake-backends.js';
 import { HttpFake, sendJson } from '../test/fakes/http-fake.js';
 import { RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
 import { dispatcherFetch } from './dispatcher-fetch.js';
 import { serveChatService } from './server.js';
 import type { StockOverrides } from './stock.js';
 import { DynamoDBSessionMetadata } from './session-metadata.js';
-import { reportUnsavedTurnSummaries } from './turn-summaries.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { credentialSource } from './credential-source.js';
 import { testBotCubeConfig } from '../test/stock-bot.js';
@@ -41,10 +40,6 @@ const overrides: StockOverrides = {
   turnStarting: () => undefined, recoverAccountDeletions: async () => undefined, browserLiveView: async () => null,
 };
 
-// Each finished Turn is summarized after its stream ends, so the summary model outlives every test.
-const bedrock = new FakeBedrock();
-beforeAll(() => bedrock.listen());
-afterAll(() => bedrock.close());
 
 const closers: (() => Promise<void>)[] = [];
 const tableClosers: (() => Promise<void>)[] = [];
@@ -91,7 +86,7 @@ async function allocatedTable(sessionId: string): Promise<string> {
 async function serve(env: NodeJS.ProcessEnv): Promise<string> {
   vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
-  const server: ServerType = serveChatService({ BOTCUBE_CONFIG: CONFIG, AWS_ENDPOINT_URL_BEDROCK_RUNTIME: bedrock.url, ...env }, { overrides });
+  const server: ServerType = serveChatService({ BOTCUBE_CONFIG: CONFIG, ...env }, { overrides });
   closers.push(async () => {
     await new Promise((resolve) => server.close(resolve));
   });
@@ -167,12 +162,6 @@ describe('the Chat Service served from the environment', () => {
       return message;
     }
 
-    it("the models Endpoint's", async () => {
-      const models = { kind: 'openai-compatible', url: 'https://models.example.com', credential: { kind: 'file', path: absent }, turnSummaryModel: 'openai:example-summary' };
-      const env = { BOTCUBE_CONFIG: testBotCubeConfig(undefined, { integrations: { modelGateway: models } }) };
-      expect(await exitsWith(overrides, env)).toContain(`models credential (file ${absent}): ENOENT`);
-    });
-
     it("the bot's own, such as sign-in's client secret", async () => {
       const startupCredentials = [credentialSource('identity.clients.0.clientSecret', { kind: 'file', path: absent })];
       expect(await exitsWith({ ...overrides, startupCredentials }, {})).toContain(`identity.clients.0.clientSecret credential (file ${absent}): ENOENT`);
@@ -184,13 +173,6 @@ describe('the Chat Service served from the environment', () => {
 
     expect(console.log).toHaveBeenCalledWith(`Chat Service listening on :0`);
     expect((await fetch(`${url}/ping`)).status).toBe(200);
-  });
-
-  // A Turn's summary runs on after its stream closed, so a task stopping meanwhile alarms on it.
-  it('raises the Turn-summary alarm, as it exits, for each summary it has not saved', async () => {
-    await serve({ PORT: '0', BOTCUBE_CHAT_TABLE: await newTable() });
-
-    expect(process.listeners('exit')).toContain(reportUnsavedTurnSummaries);
   });
 
   it('answers Live wake requests after the parked Worker hands over', async () => {
@@ -274,20 +256,6 @@ describe('the Chat Service served from the environment', () => {
     ]);
   });
 
-  it('summarizes each finished Turn with Claude Haiku 4.5', async () => {
-    const agentcore = await fake(new FakeAgentCore());
-    const env = { PORT: '0', AGENTCORE_RUNTIME_ARN: RUNTIME_ARN, AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: agentcore.url };
-    const summaryModel = await fake(new FakeBedrock());
-    const summarized = () => summaryModel.requests.map(({ path }) => path);
-
-    const url = await serve({ ...env, BOTCUBE_CHAT_TABLE: await allocatedTable('env-default-model'), AWS_ENDPOINT_URL_BEDROCK_RUNTIME: summaryModel.url });
-
-    await (await postTurn(url, 'env-default-model')).text();
-
-    await expect.poll(() => summarized()).toEqual([
-      `/model/${encodeURIComponent('us.anthropic.claude-haiku-4-5-20251001-v1:0')}/converse`,
-    ]);
-  });
 
   it('sends Turns to BOTCUBE_LOCAL_HARNESS_URL instead of AgentCore when it is set', async () => {
     const local = await fake(

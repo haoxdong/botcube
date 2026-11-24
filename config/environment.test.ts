@@ -31,7 +31,7 @@ describe("the deploy's trust roots", () => {
 });
 
 describe("the deploy's command credential opt-in", () => {
-  const withCommand = botcubeConfig.parse({ ...REQUIRED, allowCommandCredentials: true, integrations: { modelGateway: { kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: COMMAND, turnSummaryModel: 'openai:summary' } } });
+  const withCommand = botcubeConfig.parse({ ...REQUIRED, allowCommandCredentials: true, integrations: { modelGateway: { kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: COMMAND } } });
   const withoutCommand = botcubeConfig.parse(REQUIRED);
 
   it('passes BOTCUBE_ALLOW_COMMAND_CREDENTIALS through when the operator sets it in the deploy environment', () => {
@@ -85,7 +85,7 @@ describe("the deploy's secret grants", () => {
   } as const;
 
   it("grants the secret an OAuth client's secret is read from, for models and telemetry", () => {
-    const models = modelGatewayResources({ kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: oauthClient, turnSummaryModel: 'openai:summary' });
+    const models = modelGatewayResources({ kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: oauthClient });
     const telemetry = telemetryEnvironment({ kind: 'otlp', url: 'https://collector.example.com/v1/traces', credential: oauthClient });
 
     expect(models?.secretIds).toEqual([SECRET_ARN]);

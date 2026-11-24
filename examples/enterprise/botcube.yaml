@@ -73,8 +73,7 @@
       "headers": {
         "x-tenant": "botcube-example"
       },
-      "proxy": "integrations.proxy",
-      "turnSummaryModel": "openai:example-summary"
+      "proxy": "integrations.proxy"
     },
     "harnessAuth": {
       "kind": "jwt-bearer",

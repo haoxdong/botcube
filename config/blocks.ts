@@ -135,8 +135,6 @@ export type ModelProvider = z.output<typeof modelProvider>;
 
 /** The providers whose own API a model gateway serves. */
 export const GATEWAY_PROVIDERS = ['anthropic', 'openai'] as const satisfies readonly ModelProvider[];
-export type GatewayProvider = typeof GATEWAY_PROVIDERS[number];
-export const isGatewayProvider = (provider: ModelProvider): provider is GatewayProvider => GATEWAY_PROVIDERS.some((name) => name === provider);
 
 const gatewayUrl = z.url().refine(httpsOrLoopback, 'A models endpoint is an https URL; only a stand-in on this machine may use http');
 const providerRoute = z.strictObject({
@@ -156,12 +154,6 @@ export const gatewayModels = endpoint.extend({
     }).optional(),
   }).optional()
     .describe("Every provider the gateway serves, by LangChain's provider name, and where; absent, it serves each at its URL."),
-  turnSummaryModel: z.string().refine((name) => providerModel(name) !== undefined, 'Expected provider:model, such as anthropic:claude-haiku-4-5, its provider one a bot model may name')
-    .describe("The model on the gateway that summarizes each finished Turn for the Activity, as `provider:model`, such as `anthropic:claude-haiku-4-5`, called on its provider's own API."),
-}).superRefine((gateway, context) => {
-  const summary = providerModel(gateway.turnSummaryModel);
-  const unreached = summary && unreachedProvider(gateway, summary.provider);
-  if (unreached) context.addIssue({ code: 'custom', path: ['turnSummaryModel'], message: `On provider ${summary.provider}, but ${unreached}` });
 }).describe("Every model on a gateway, by its key in the bot settings, called on its provider's own API; Plan Usage models still run through the Credential Service.");
 export type GatewayModels = z.output<typeof gatewayModels>;
 
@@ -178,13 +170,6 @@ export function unreachedProvider(gateway: GatewayModels | { kind: 'bedrock' }, 
 }
 
 /** A model named `provider:model`, its provider read as a bot model's is; undefined unless it names both. */
-export function providerModel(name: string): { provider: ModelProvider; model: string } | undefined {
-  const at = name.indexOf(':');
-  const provider = modelProvider.safeParse(name.slice(0, at));
-  const model = name.slice(at + 1);
-  return at > 0 && provider.success && model ? { provider: provider.data, model } : undefined;
-}
-
 export const oidcIssuer = z.url().refine(httpsOrLoopback, 'An OIDC issuer is an https URL; only a stand-in on this machine may use http');
 
 /** An OIDC issuer's discovery URL, as AgentCore's JWT authorizer takes it. */

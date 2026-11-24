@@ -251,7 +251,7 @@ def test_the_harness_stops_on_a_bot_model_on_a_provider_the_gateway_does_not_ser
 
     bot = _bot(tmp_path / 'bot', models=[{'key': 'claude-sonnet-5-5', 'label': 'Sonnet', 'provider': 'anthropic'}, {'key': 'other', 'label': 'Other', 'provider': provider}])
     monkeypatch.setattr(bot_settings, 'load_bot_settings', lambda path: load_bot_settings(bot))
-    gateway = {**ENDPOINT_MODELS, 'url': 'https://models.example.com', 'turnSummaryModel': 'anthropic:claude-haiku-4-5', **({'providers': providers} if providers else {})}
+    gateway = {**ENDPOINT_MODELS, 'url': 'https://models.example.com', **({'providers': providers} if providers else {})}
     path = deploy(monkeypatch, tmp_path, integrations={'modelGateway': gateway})
 
     with pytest.raises(BotSettingsError, match=(

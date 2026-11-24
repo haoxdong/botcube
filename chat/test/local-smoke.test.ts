@@ -4,7 +4,7 @@ import { afterAll, expect, it, vi } from 'vitest';
 import { serveChatService } from '../src/server.js';
 import { fileURLToPath } from 'node:url';
 import { FakeAgentCore } from './fakes/fake-agentcore.js';
-import { FakeBedrock, FakeSessionApi } from './fakes/fake-backends.js';
+import { FakeSessionApi } from './fakes/fake-backends.js';
 import { RUNTIME_ARN, createChatTable } from './fakes/stack.js';
 import { motoEndpoint } from './fakes/moto.js';
 
@@ -19,8 +19,7 @@ afterAll(async () => {
 it('serves the stock Chat Service over HTTP with persisted thread metadata and classified runtime failures', async () => {
   const agent = await new FakeAgentCore().listen();
   const sessions = await new FakeSessionApi().listen();
-  const bedrock = await new FakeBedrock().listen();
-  cleanup.push(() => agent.close(), () => sessions.close(), () => bedrock.close());
+  cleanup.push(() => agent.close(), () => sessions.close());
   const endpoint = motoEndpoint();
   const table = `template-smoke-${Math.random().toString(36).slice(2)}`;
   await createChatTable(endpoint, table);
@@ -28,7 +27,6 @@ it('serves the stock Chat Service over HTTP with persisted thread metadata and c
     PORT: '0', AWS_REGION: 'us-east-1',
     AWS_ENDPOINT_URL_DYNAMODB: endpoint,
     AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: agent.url,
-    AWS_ENDPOINT_URL_BEDROCK_RUNTIME: bedrock.url,
     AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
     BOTCUBE_CHAT_TABLE: table,
     BOTCUBE_LOCAL_SESSION_API_URL: sessions.url,

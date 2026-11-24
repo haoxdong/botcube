@@ -52,7 +52,6 @@ const ENTERPRISE_MODELS = {
   url: 'https://models.example.com/v1',
   credential: { kind: 'file', path: '/run/secrets/botcube/models-api-key' },
   headers: { 'x-tenant': 'botcube-example' },
-  turnSummaryModel: 'openai:example-summary',
 };
 
 const SECRET_ARN = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube-example/models-api-key';
@@ -148,7 +147,7 @@ describe('a BotCube Config', () => {
 
   it.each([
     ['integrations.telemetry.proxy', { integrations: { telemetry: { kind: 'otlp', url: 'https://collector.example.com/v1/traces', proxy: 'integrations.proxy' } } }],
-    ['integrations.modelGateway.proxy', { integrations: { modelGateway: { kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/secrets/models' }, turnSummaryModel: 'openai:summary', proxy: 'integrations.proxy' } } }],
+    ['integrations.modelGateway.proxy', { integrations: { modelGateway: { kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/secrets/models' }, proxy: 'integrations.proxy' } } }],
     ['network.openEgress.proxy', { network: { openEgress: { proxy: 'integrations.proxy' } } }],
     ['integrations.signIn.proxy', { integrations: { signIn: { ...OIDC, proxy: 'integrations.proxy' } } }],
     ['integrations.relayProviders.openai.proxy', { integrations: { relayProviders: { openai: { proxy: 'integrations.proxy' } } } }],
@@ -180,7 +179,7 @@ describe('a BotCube Config', () => {
 
   it('stops on a bot model on a provider the gateway lists no route for, naming the model and provider', () => {
     const bot = { ...EXAMPLE_BOT, models: [{ key: 'gpt-5', label: 'GPT', provider: 'openai' }] };
-    const path = configFile({ integrations: { modelGateway: { ...ENTERPRISE_MODELS, turnSummaryModel: 'anthropic:claude-haiku-4-5', providers: { anthropic: { url: 'https://models.example.com/anthropic' } } } } }, bot);
+    const path = configFile({ integrations: { modelGateway: { ...ENTERPRISE_MODELS, providers: { anthropic: { url: 'https://models.example.com/anthropic' } } } } }, bot);
     expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: the bot settings' model gpt-5 is on provider openai, but integrations.modelGateway reaches the providers anthropic`);
   });
 
@@ -194,15 +193,7 @@ describe('a BotCube Config', () => {
     expect(loadBotCube(configFile({ integrations: { modelGateway: own } }, bot)).bot.models).toHaveLength(1);
   });
 
-  it('stops on an anthropic turn summary model on a gateway URL ending in /v1 with no Anthropic URL of its own, naming the fix', () => {
-    const path = configFile({ integrations: { modelGateway: { ...ENTERPRISE_MODELS, turnSummaryModel: 'anthropic:claude-haiku-4-5' } } });
-    expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: integrations.modelGateway.turnSummaryModel: On provider anthropic, but ${V1}`);
-  });
 
-  it('stops on a turn summary model on a provider the gateway lists no route for', () => {
-    const path = configFile({ integrations: { modelGateway: { ...ENTERPRISE_MODELS, providers: { anthropic: { url: 'https://models.example.com/anthropic' } } } } });
-    expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: integrations.modelGateway.turnSummaryModel: On provider openai, but integrations.modelGateway reaches the providers anthropic`);
-  });
 
   it('reaches a listed provider with no URL of its own at the gateway URL', () => {
     const models = { ...ENTERPRISE_MODELS, providers: { openai: {} } };
@@ -302,13 +293,6 @@ describe('a BotCube Config', () => {
       'integrations.modelGateway.headers.Authorization: The credential sets Authorization'],
     ['an OpenAI-compatible endpoint over http beyond this machine', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, url: 'http://models.example.com/v1' } } },
       'integrations.modelGateway.url: A models endpoint is an https URL; only a stand-in on this machine may use http'],
-    ['an OpenAI-compatible endpoint without a turn summary model', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, turnSummaryModel: undefined } } }, 'integrations.modelGateway.turnSummaryModel: '],
-    ...['example-summary', 'vertex:gemini', 'anthropic:'].map(turnSummaryModel => [
-      `a turn summary model ${turnSummaryModel}, not provider:model`, { integrations: { modelGateway: { ...ENTERPRISE_MODELS, turnSummaryModel } } },
-      'integrations.modelGateway.turnSummaryModel: Expected provider:model, such as anthropic:claude-haiku-4-5, its provider one a bot model may name',
-    ] as const),
-    ['a turn summary model on a provider the gateway does not serve', { integrations: { modelGateway: { ...ENTERPRISE_MODELS, turnSummaryModel: 'deepseek:deepseek-v3.2' } } },
-      'integrations.modelGateway.turnSummaryModel: On provider deepseek, but integrations.modelGateway reaches the providers anthropic and openai'],
     ['a section without its kind', { integrations: { harnessAuth: {} } }, "integrations.harnessAuth.kind: Invalid discriminator value. Expected 'sigv4' | 'jwt-bearer'"],
     ['a JWT bearer without its client', { integrations: { harnessAuth: { kind: 'jwt-bearer' } } }, 'integrations.harnessAuth.clients: '],
     ['a JWT bearer on the old audience field', { integrations: { harnessAuth: { kind: 'jwt-bearer', clients: [{ clientId: 'botcube-harness' }], audience: 'botcube-harness' } } },
@@ -417,7 +401,6 @@ describe('a BotCube Config', () => {
     ['a Plan Usage owner that is no Account', { planUsage: { ownerAccountId: '123456789012' } },
       'planUsage.ownerAccountId: Expected an Account id, acct_ and its token'],
     ['an empty automation user agent', { parking: { automationUserAgents: [''] } }, 'parking.automationUserAgents.0: '],
-    ['an empty Bedrock turn summary model', { integrations: { modelGateway: { kind: 'bedrock', turnSummaryModel: '' } } }, 'integrations.modelGateway.turnSummaryModel: '],
   ])('stops on %s and names the field', (_, config, field) => {
     const path = configFile(config);
     expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: ${field}`);
@@ -487,10 +470,6 @@ describe('a BotCube Config', () => {
     expect(loadBotCube(configFile({ ...product })).config).toMatchObject(product);
   });
 
-  it('summarizes Turns on a Bedrock model the operator names', () => {
-    const models = { kind: 'bedrock', turnSummaryModel: 'us.anthropic.claude-haiku-4-5-20251001-v1:0' };
-    expect(loadBotCube(configFile({ integrations: { modelGateway: models } })).config.integrations.modelGateway).toEqual(models);
-  });
 
   it('takes a stand-in OIDC issuer over http on this machine', () => {
     const identity = { ...OIDC, issuer: 'http://127.0.0.1:9400' };

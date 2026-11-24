@@ -14,7 +14,7 @@ import { fired, type ScheduledRunMessage, type ScheduledTask, type ScheduledTask
 import type { ScheduledRunCard } from './session-api.js';
 import { SessionBusyError, SessionDeletedError, type SessionMetadata } from './session-metadata.js';
 import { credentialValues } from './turn-stream.js';
-import { recordTurnSummary, turnActivity, type CompletedTurnSummarizer } from './turn-summaries.js';
+import { turnActivity } from './turn-summaries.js';
 import { forwardSnapshotEpoch } from './session-lifecycle.js';
 import { assertReservedMainIdentity, postScheduledResult, type ScheduledDeliveryDeps } from './scheduled-run-delivery.js';
 import type { ScheduledDelivery, ScheduledRunStore } from './scheduled-run-store.js';
@@ -42,7 +42,6 @@ export interface ScheduledRunDeps extends ScheduledDeliveryDeps {
   bot: ScheduledRunSource;
   agentDocuments: AgentDocuments;
   scheduledTasks: Pick<ScheduledTasks, 'get' | 'recordRun' | 'retire' | 'issueSideChat'>;
-  summarizeTurn: CompletedTurnSummarizer;
   parkHistory?: ParkHistory | undefined;
   stopScheduledRuntime?: ((sessionId: string) => Promise<void | 'absent'>) | undefined;
 }
@@ -268,18 +267,27 @@ async function runInSideChat(
       await sessionMetadata.turnEnded(owner, sideChat, running, undefined, output?.started ? model.provider : undefined);
     }
   }
+  return finishScheduledTurn(bot, sessionMetadata, owner, { sessionId: sideChat, filingUserId: sessionUserId, messageId }, task.prompt, output);
+}
+
+async function finishScheduledTurn(
+  bot: ScheduledRunDeps['bot'],
+  sessionMetadata: SessionMetadata,
+  owner: string,
+  turn: Parameters<SessionMetadata['saveTurnSummary']>[1],
+  prompt: string,
+  output: ScheduledRunOutput,
+): Promise<RunOutcome> {
   const signIn = await bot.signInNeeded?.(owner, [...output.toolResults, ...output.texts]) ?? null;
   const answer = output.texts.at(-1);
-  const turn = { sessionId: sideChat, filingUserId: sessionUserId, messageId };
   if (signIn === null && output.error === null) {
-    await recordTurnSummary(
-      (finished) => deps.summarizeTurn(finished, { requester, sessionId: sideChat, model }),
-      (finished) => sessionMetadata.saveTurnSummary(owner, turn, finished),
-      sideChat,
-      { request: task.prompt, answer: answer ?? '' },
-    );
+    try {
+      await sessionMetadata.saveTurnSummary(owner, turn, turnActivity(prompt));
+    } catch (error) {
+      if (!(error instanceof SessionDeletedError)) throw error;
+    }
   } else {
-    await sessionMetadata.saveTurnSummary(owner, turn, turnActivity(task.prompt, output.error ?? undefined));
+    await sessionMetadata.saveTurnSummary(owner, turn, turnActivity(prompt, output.error ?? undefined));
   }
   return signIn !== null
     ? { status: 'sign-in', text: signIn }

@@ -38,13 +38,13 @@ export interface PreviewChatServiceProps extends ScheduledRunsProps {
   telemetry?: { kind: 'xray' } | { kind: 'otlp' | 'none'; environment: Readonly<Record<string, string>>; secretIds: readonly string[] };
   /** The BotCube Config's Agent Computer `liveView` adapter; `none` grants no live view stream. */
   liveView?: 'agentcore-browser' | 'none';
-  metricFilterNames?: Partial<Record<'sessionPurgeFailures' | 'turnSummaryFailures' | 'agentComputerStopSleepFailures' | 'filesMountFailures' | 'accountDeletionFailures' | 'errors', string>>;
+  metricFilterNames?: Partial<Record<'sessionPurgeFailures' | 'agentComputerStopSleepFailures' | 'filesMountFailures' | 'accountDeletionFailures' | 'errors', string>>;
   taskFamily?: string;
   taskRoleName?: string;
   executionRoleName?: string;
   securityGroupName?: string;
   targetGroupName?: string;
-  alarmNames?: Partial<Record<'task-deficit' | 'session-purge-failures' | 'turn-summary-failures' | 'agent-computer-stop-sleep-failures' | 'files-mount-failures' | 'account-deletion-failures' | 'account-deletion-stalled' | 'alb-5xx' | 'target-5xx' | 'unhealthy-hosts', string>>;
+  alarmNames?: Partial<Record<'task-deficit' | 'session-purge-failures' | 'agent-computer-stop-sleep-failures' | 'files-mount-failures' | 'account-deletion-failures' | 'account-deletion-stalled' | 'alb-5xx' | 'target-5xx' | 'unhealthy-hosts', string>>;
   ingress?: ChatServiceIngress;
   vpc?: ec2.IVpc;
   subnets?: ec2.SubnetSelection;
@@ -229,8 +229,6 @@ export class PreviewChatService extends Construct {
     };
     // A purge whose retries ran out leaves the Session fenced with its events stored.
     failures('SessionPurgeFailures', 'sessionPurgeFailures', 'session-purge-failures', 'Session purge failed');
-    // A failed Turn summary leaves that Turn's Activity row showing the request's first line.
-    failures('TurnSummaryFailures', 'turnSummaryFailures', 'turn-summary-failures', 'Turn summary failed');
     // A stopping task whose Agent Computer browsers did not sleep may leave them running until their timeout.
     failures('AgentComputerStopSleepFailures', 'agentComputerStopSleepFailures', 'agent-computer-stop-sleep-failures', 'Agent Computer sleep at task stop failed');
     // A Turn whose Files could not be mounted reached no Files: its relayed run error carries FILES_MOUNT.

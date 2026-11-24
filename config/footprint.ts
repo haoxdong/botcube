@@ -178,13 +178,12 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in AdapterSections[S]['
   modelGateway: {
     bedrock: {
       iam: {
-        chatService: { actions: ['bedrock:InvokeModel'] },
         harness: { actions: ['bedrock:CountTokens', 'bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'] },
       },
       egressHosts: aws('bedrock-runtime'),
     },
     'openai-compatible': ({ url, credential, tls, providers = {} }) => {
-      const readers = ['chatService', 'credentialService'] as const;
+      const readers = ['credentialService'] as const;
       const reached = (at: string): Need => ({ egressHosts: [new URL(at).host], egressFrom: { [new URL(at).host]: readers } });
       return [
         reached(url), credentialNeed('integrations.modelGateway.credential', credential, readers), ...tlsNeed('integrations.modelGateway.tls', tls, readers),

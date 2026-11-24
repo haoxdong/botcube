@@ -22,7 +22,6 @@ afterAll(() => Promise.all(scratch.map((dir) => rm(dir, { recursive: true, force
 const AGENT_TOOL_CALL = { name: 'ls', arguments: { path: '/' } };
 
 /**
- * The example deployed offline, its External Services on their stand-ins, after one Turn and its summary. On an
  * OpenAI-compatible Endpoint the agent's model calls a tool first, and answers once the tool's result is back.
  */
 async function conversation(path: string) {
@@ -34,11 +33,9 @@ async function conversation(path: string) {
   const thread = await browser.newSideChat();
   const turn = await browser.sendTurn(thread, { text: 'Hello, who are you?' });
   const frames = sseFrames(await turn.text()).map(frameData);
-  // The Turn's summary is made after its stream closes.
-  const summaries = stack.openAICompatible ?? stack.bedrock;
-  await summaries.waitForRequests(() => summaries.summarizedTurns().length > 0);
   return {
     stack,
+    browser,
     identity: await (await browser.get('/agent/identity')).json(),
     reply: frames.filter(({ type }) => type === 'TEXT_MESSAGE_CONTENT').map(({ delta }) => delta).join(''),
     toolCalls: frames.filter(({ type }) => type === 'TOOL_CALL_START').map(({ toolCallName }) => toolCallName),
@@ -67,22 +64,18 @@ describe('the public and the enterprise example, the enterprise one on the OpenA
     expect({ toolCalls: enterprise.toolCalls, toolResults: enterprise.toolResults }).toEqual({ toolCalls: [AGENT_TOOL_CALL.name], toolResults: 1 });
     // The model's first answer called the tool; its second request carried the tool's result back, and it answered.
     expect(endpoint.toolResults()).toHaveLength(1);
-    // The example bot's model and the summary model are on the openai provider: OpenAI's Chat Completions API, the gateway's default.
-    expect(endpoint.wires()).toEqual(['chat-completions', 'chat-completions', 'chat-completions']);
+    expect(endpoint.wires()).toEqual(['chat-completions', 'chat-completions']);
   });
 
-  it('reach their models, turn summaries included, on Bedrock and on the model gateway', () => {
-    const summarized = [{ request: 'Hello, who are you?', answer: 'Echo: Hello, who are you?' }];
-    expect(pub.stack.bedrock.summarizedTurns()).toEqual(summarized);
+  it("sends only the Turn's requests to the model gateway", async () => {
+    await expect.poll(async () => (await enterprise.browser.get('/activity')).json()).toEqual({
+      tasks: [{ title: 'Hello, who are you?', completedAt: expect.any(String) }],
+    });
     expect(pub.stack.openAICompatible).toBeUndefined();
 
     const endpoint = required(enterprise.stack.openAICompatible, 'the models endpoint stand-in');
-    expect(enterprise.stack.bedrock.requests).toEqual([]);
-    // The agent's model by its key in the bot settings, before and after its tool call, then the summary model the BotCube Config names.
-    expect(endpoint.models()).toEqual(['echo', 'echo', 'example-summary']);
-    expect(endpoint.summarizedTurns()).toEqual(summarized);
-    // The BotCube Config's header reaches the endpoint on the Turn and on its summary.
-    expect(endpoint.requests.map(({ headers }) => headers['x-tenant'])).toEqual(['botcube-example', 'botcube-example', 'botcube-example']);
+    expect(endpoint.models()).toEqual(['echo', 'echo']);
+    expect(endpoint.requests.map(({ headers }) => headers['x-tenant'])).toEqual(['botcube-example', 'botcube-example']);
   });
 });
 

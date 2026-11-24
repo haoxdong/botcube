@@ -32,7 +32,7 @@ it('keeps a completed answer successful if the upstream connection resets after 
   const body = await response.text();
   expect.soft(body).toContain('RUN_FINISHED');
   expect.soft(body).not.toContain('RUN_ERROR');
-  expect.soft(finished).toHaveBeenCalledExactlyOnceWith('Done.');
+  expect.soft(finished).toHaveBeenCalledOnce();
   expect.soft(failed).not.toHaveBeenCalled();
   expect.soft(ended).toHaveBeenCalledExactlyOnceWith(undefined);
 });

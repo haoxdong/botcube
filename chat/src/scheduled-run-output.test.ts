@@ -16,7 +16,6 @@ describe('a scheduled run', () => {
     await run(account, partial);
     const posts = await posted(main);
     expect(posts).toEqual([{ content: 'Scheduled task "Morning brief" failed: AgentCore upstream stream ended before RUN_FINISHED', userId: filed(account) }]);
-    expect(stack.bedrock.summarizedTurns()).not.toContainEqual(expect.objectContaining({ answer: 'Unfinished research conclusion' }));
 
     await run(account, stream(...text('recovered', 'Completed research conclusion')), 'Recovered brief');
     await vi.waitFor(async () => expect(await posted(main)).toContainEqual({ content: 'Scheduled task "Recovered brief": Completed research conclusion', userId: filed(account) }), { timeout: 2_000 });
@@ -147,8 +146,7 @@ describe('a scheduled run', () => {
       },
     });
     expect(signInChecks).toContainEqual({ owner: account, outputs: ['Checking the curve.', 'The 10y yield fell 5bp overnight.'] });
-    expect(await activity(account, started)).toEqual([{ title: 'Completed plan task', summary: 'Ran the scheduled brief' }]);
-    expect(stack.bedrock.summarizedTurns().map(({ request }) => request)).not.toContain(prompt);
+    expect(await activity(account, started)).toEqual([{ title: prompt }]);
     // The run is done, so it leaves the queue.
     await vi.waitFor(async () => expect(await scheduler.queued()).toBe(0), { timeout: 2_000 });
   });
@@ -200,7 +198,7 @@ describe('a scheduled run', () => {
     expect(await posted(main)).toEqual([{ content: 'Scheduled task "Morning brief": Done.', userId: filed(account) }]);
     expect(stack.agentcore.invocationFor(defined(await sideChatOf(account, id), 'the run Side Chat')).payload.forwardedProps)
       .toMatchObject({ model: 'thorough' });
-    expect(stack.bedrock.summarizedTurns().map(({ request }) => request)).toContain(prompt);
+    expect(await activity(account, 0)).toEqual([{ title: prompt }]);
   });
 
   it("keeps its Side Chat on the default model's provider, and the Main Chat on none until the user's Turn", async () => {
@@ -273,14 +271,14 @@ describe('a scheduled run', () => {
       post: 'Scheduled task "Morning brief" could not finish: Sign in to continue.',
       listed: {},
     },
-  ])('leaves $name out of the finished-Turn Activity summaries', async ({ frames, post, listed }) => {
+  ])('leaves $name out of the finished-Turn Activity entries', async ({ frames, post, listed }) => {
     const account = owner();
     const main = await mainChat(account);
     const started = Date.now();
     const { prompt } = await run(account, stream(...frames));
     expect((await posted(main)).map(({ content }) => content)).toEqual([post]);
 
-    expect(await activity(account, started)).toEqual([{ summary: prompt, ...listed }]);
+    expect(await activity(account, started)).toEqual([{ title: prompt, ...listed }]);
   });
 
   it('says so when the agent finished without an answer', async () => {

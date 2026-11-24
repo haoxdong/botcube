@@ -1,4 +1,4 @@
-"""The fake site: a sign-in page, data behind a sign-in credential, and a Converse stand-in for Turn Summaries.
+"""The fake site: a sign-in page and data behind a sign-in credential.
 
 Standard library only; the parity tests run it by path.
 """
@@ -46,24 +46,6 @@ class FakeSiteHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         assert isinstance(self.server, FakeSiteServer)
-        if self.path.startswith('/model/') and self.path.endswith('/converse'):
-            try:
-                request = json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0'))))
-                tool = request['toolConfig']['toolChoice']['tool']['name']
-            except (ValueError, KeyError, TypeError):
-                self._json(400, {'error': 'Invalid Converse request'})
-                return
-            if tool != 'turn_summary':
-                self._json(400, {'error': 'Only turn_summary is supported'})
-                return
-            self._json(200, {
-                'output': {'message': {'role': 'assistant', 'content': [{'toolUse': {
-                    'toolUseId': 'local-summary', 'name': 'turn_summary',
-                    'input': {'title': 'Answered a question', 'summary': 'Replied to the user'},
-                }}]}},
-                'stopReason': 'tool_use',
-            })
-            return
         if self.path == '/access':
             credential = self.headers.get('Authorization', '').removeprefix('Bearer ')
             if credential not in self.server.credentials:

@@ -85,33 +85,20 @@ function writerBusy({ Item }: CancellationReason): SessionBusyError {
 
 export class SessionConcurrencyError extends Error {}
 
-/** What the agent did in one finished Turn, as the Agent Profile's Activity shows it. */
-export interface TurnSummary {
-  /** The task, in a few words. */
-  title: string;
-  /** What the agent did, in one line. */
-  summary: string;
-}
-
-/**
- * A finished Turn as the Activity lists it (ADR 0067 §2): when it finished and the first line
- * of its request, and its summary once the summary model wrote one, or why it failed.
- */
 export interface TurnActivity {
   /** The first line of the user message that started the Turn. */
   request: string;
   /** When the Turn finished, ISO 8601. */
   completedAt: string;
-  summary?: TurnSummary;
-  /** The first line of the run error the Turn ended with, or of why its summary failed. */
+  /** The first line of the run error the Turn ended with. */
   failed?: string;
 }
 
 /**
  * A finished Turn's row, by its Session and the user message that started the Turn. Rows saved
- * before the Activity backfill carry only the summary until it adds the rest.
+ * from before the Activity backfill can lack a request and completion time.
  */
-export interface StoredTurnSummary extends Partial<TurnSummary> {
+export interface StoredTurnSummary {
   session_id: string;
   message_id: string;
   request?: string;
@@ -197,11 +184,6 @@ export interface SessionMetadata {
   ): Promise<string>;
   /** Clear this running Turn's mark, and record why it failed, unless another run replaced it. */
   turnEnded(owner: string, sessionId: string, running: RunningTurn, failure: TurnFailure | undefined, provider?: string): Promise<void>;
-  /**
-   * Record why this Turn's summary failed, which runs on after its stream closed, unless another run
-   * started since; the thread's next read returns it.
-   */
-  turnSummaryFailed(owner: string, sessionId: string, running: RunningTurn, failure: TurnFailure): Promise<void>;
   /** The Harness sent this running Turn something. Only the production activity observer implements it. */
   turnActive?(owner: string, sessionId: string, running: RunningTurn): void;
   /** The Harness emitted RUN_STARTED for this Turn; it can now be stopped by run ID. */
@@ -802,21 +784,6 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     }
   }
 
-  async turnSummaryFailed(owner: string, sessionId: string, running: RunningTurn, failure: TurnFailure): Promise<void> {
-    try {
-      await this.updateRunningMark(
-        owner,
-        sessionId,
-        running,
-        'SET turn_failure = :failure',
-        { ':failure': { ...failure, runId: running.runId } },
-        'attribute_exists(pk) AND attribute_not_exists(deleted_at) AND turn_latest_run_id = :run_id AND (attribute_not_exists(turn_running_since) OR turn_running_since = :started_at)',
-      );
-    } catch (error) {
-      if (!(error instanceof ConditionalCheckFailedException)) throw error;
-    }
-  }
-
   private async updateRunningMark(
     owner: string,
     sessionId: string,
@@ -847,7 +814,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     turn: { sessionId: string; filingUserId: string; messageId: string },
     finished: TurnActivity,
   ): Promise<void> {
-    const { request, completedAt, summary, failed } = finished;
+    const { request, completedAt, failed } = finished;
     const write = {
       Put: {
         TableName: this.tableName,
@@ -857,7 +824,6 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
           message_id: turn.messageId,
           request,
           completed_at: completedAt,
-          ...summary,
           ...(failed === undefined ? {} : { failed }),
         },
         ConditionExpression: 'attribute_not_exists(completed_at) OR completed_at <= :completed_at',
@@ -892,13 +858,11 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
 
   async turnSummaries(filingUserId: string): Promise<StoredTurnSummary[]> {
     const items = (await this.queryPartition(turnSummariesPk(filingUserId), SESSION, false)) as unknown as StoredTurnSummary[];
-    return items.map(({ session_id, message_id, request, completed_at, title, summary, failed }) => ({
+    return items.map(({ session_id, message_id, request, completed_at, failed }) => ({
       session_id,
       message_id,
       ...(request === undefined ? {} : { request }),
       ...(completed_at === undefined ? {} : { completed_at }),
-      ...(title === undefined ? {} : { title }),
-      ...(summary === undefined ? {} : { summary }),
       ...(failed === undefined ? {} : { failed }),
     }));
   }

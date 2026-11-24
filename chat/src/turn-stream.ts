@@ -551,7 +551,7 @@ interface RelayedTurn {
   initialMessages?: readonly unknown[];
   held?: HeldIds;
   /** Runs after success without holding the stream open; records its own failure. */
-  finished: (answer: string) => void | Promise<void>;
+  finished: () => void | Promise<void>;
   /** Once at upstream end, even without a client, with the last relayed failure. */
   ended: (failure: TurnFailure | undefined) => Promise<void>;
   /** Awaited before RUN_STARTED is relayed, once the Harness accepts this Turn. */
@@ -627,14 +627,6 @@ async function upstreamError(upstream: Upstream, response: Response, credentials
   return failed(error, safeDetails, response.status >= 400 ? response.status : 502);
 }
 
-function snapshotAnswerTexts(messages: unknown) {
-  const texts = new Map<string, string>();
-  for (const message of recordValues(messages)) {
-    if (message.role === 'assistant' && typeof message.content === 'string') texts.set(String(message.id), message.content);
-  }
-  return texts;
-}
-
 interface RelayedFrames {
   out: string;
   events: Record<string, unknown>[];
@@ -644,22 +636,6 @@ const runErrorFrame = (message: string, code: string) => {
   const event = { type: EventType.RUN_ERROR, message, code };
   return { out: `data: ${JSON.stringify(event)}\n\n`, events: [event] };
 };
-
-function relayedOutcome() {
-  let texts = new Map<string, string>();
-  const normalize = chunkEvents();
-  return {
-    observe(events: Record<string, unknown>[]) {
-      for (const { type, messageId, delta, messages } of normalize(events)) {
-        if (type === EventType.TEXT_MESSAGE_CONTENT && typeof delta === 'string') {
-          texts.set(String(messageId), (texts.get(String(messageId)) ?? '') + delta);
-        }
-        if (type === EventType.MESSAGES_SNAPSHOT) texts = snapshotAnswerTexts(messages);
-      }
-    },
-    answer: () => ([...texts.values()].at(-1) ?? '').trim(),
-  };
-}
 
 /** Invoke the Stop payload; throw on refusal. */
 export async function stopTurn(upstream: Upstream, stop: string, sessionId: string): Promise<void> {
@@ -672,7 +648,6 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
   type Frame = ReturnType<typeof flush>[number];
   const { sessionId, credentials, finished } = turn;
   const liveView = new LiveViewInjector(turn.initialBrowserSessionId);
-  const outcome = relayedOutcome();
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let readAt = Date.now();
@@ -692,26 +667,26 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
   let terminal = false;
   let started = false;
   let startFailure: { error: unknown } | undefined;
-  let endTiming: { readAt: number; summarized: Promise<{ summaryMs: number; summaryFailed: boolean }>; endedMs?: number } | undefined;
+  let endTiming: { readAt: number; activitySaved: Promise<{ activityMs: number; activityFailed: boolean }>; endedMs?: number } | undefined;
   let endLogged = false;
   const logEnd = (client: 'attached' | 'gone', endedFailed: boolean) => {
     if (endTiming === undefined || endLogged) return;
     endLogged = true;
-    const { readAt, summarized, endedMs } = endTiming;
+    const { readAt, activitySaved, endedMs } = endTiming;
     const doneMs = Date.now() - readAt;
-    void summarized.then(({ summaryMs, summaryFailed }) => {
-      console.info(`${upstream.label} relayed the Turn's end session_id=${sessionId} run_finished_read_at=${new Date(readAt).toISOString()} summary_ms=${summaryMs} summary_failed=${summaryFailed} ended_ms=${endedMs} ended_failed=${endedFailed} done_ms=${doneMs} client=${client}`);
+    void activitySaved.then(({ activityMs, activityFailed }) => {
+      console.info(`${upstream.label} relayed the Turn's end session_id=${sessionId} run_finished_read_at=${new Date(readAt).toISOString()} activity_ms=${activityMs} activity_failed=${activityFailed} ended_ms=${endedMs} ended_failed=${endedFailed} done_ms=${doneMs} client=${client}`);
     });
   };
 
-  const complete = async (answer: string) => {
-    const summaryAt = Date.now();
+  const complete = async () => {
+    const activityAt = Date.now();
     try {
-      await finished(answer);
-      return { summaryMs: Date.now() - summaryAt, summaryFailed: false };
+      await finished();
+      return { activityMs: Date.now() - activityAt, activityFailed: false };
     } catch (error) {
       console.error(`The Turn's completion failed after its answer was relayed session_id=${sessionId}`, error);
-      return { summaryMs: Date.now() - summaryAt, summaryFailed: true };
+      return { activityMs: Date.now() - activityAt, activityFailed: true };
     }
   };
 
@@ -769,7 +744,7 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
     const runFinished = events.find(({ type }) => type === EventType.RUN_FINISHED);
     if (runFinished !== undefined) {
       terminal = true;
-      if (runFinishedOutcome(runFinished) === 'success') endTiming = { readAt: frameReadAt, summarized: complete(outcome.answer()) };
+      if (runFinishedOutcome(runFinished) === 'success') endTiming = { readAt: frameReadAt, activitySaved: complete() };
       return null;
     }
     const runError = events.find(({ type }) => type === EventType.RUN_ERROR);
@@ -807,7 +782,6 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
           return { out: out + classified.out, events: [...emittedEvents, ...classified.events], failed: true };
         }
       }
-      outcome.observe(events);
       // eslint-disable-next-line no-await-in-loop -- readiness is recorded before this frame is relayed
       const readiness = await readinessError(events);
       if (readiness !== null) return { out: out + readiness.out, events: [...emittedEvents, ...readiness.events], failed: true };

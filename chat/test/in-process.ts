@@ -15,7 +15,7 @@ import type { ParkHistory } from '../src/park-history.js';
 import type { ProductionActivity } from '../src/production-activity.js';
 import { SchedulerView, createScheduledRuns } from './fakes/scheduler.js';
 import { FakeAgentCore } from './fakes/fake-agentcore.js';
-import { FakeBedrock, FakeSessionApi } from './fakes/fake-backends.js';
+import { FakeSessionApi } from './fakes/fake-backends.js';
 import { RUNTIME_ARN, createChatTable } from './fakes/stack.js';
 import { motoAws, motoEndpoint } from './fakes/moto.js';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
@@ -55,7 +55,6 @@ export interface InProcessStack {
   readonly agentcore: FakeAgentCore;
   readonly sessionApi: FakeSessionApi;
   /** The Bedrock Converse endpoint each finished Turn is summarized at. */
-  readonly bedrock: FakeBedrock;
   /** A real DynamoDB Session Metadata over this stack's own table in the run's moto. */
   readonly sessionMetadata: DynamoDBSessionMetadata;
   /** This stack's own DynamoDB table and a client of it, for rows earlier versions wrote. */
@@ -80,7 +79,6 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
   const sessionMetadata = new DynamoDBSessionMetadata(table, client);
   const agentcore = await new FakeAgentCore().listen();
   const sessionApi = await new FakeSessionApi().listen();
-  const bedrock = await new FakeBedrock().listen();
   const botcubeConfig = testBotCubeConfig(undefined, options.botcube);
   const config: ChatServiceConfig = {
     agentCore: { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: agentcore.url },
@@ -91,7 +89,6 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
     browserId: 'aws.browser.v1',
     sessionApi: { localUrl: sessionApi.url },
     warmupTimeoutMs: 10_000,
-    turnSummaryModel: { kind: 'bedrock', region: 'us-east-1', url: `${bedrock.url}/model/summary/converse` },
     ...options.config,
   };
   const aws = motoAws();
@@ -133,7 +130,6 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
     history,
     agentcore,
     sessionApi,
-    bedrock,
     sessionMetadata,
     table: { name: table, client },
     scheduler: runs && new SchedulerView(endpoint, runs),
@@ -143,7 +139,7 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
     },
     async stop() {
       stopped = true;
-      await Promise.all([agentcore.close(), sessionApi.close(), bedrock.close()]);
+      await Promise.all([agentcore.close(), sessionApi.close()]);
     },
   };
 }

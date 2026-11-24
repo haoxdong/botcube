@@ -69,7 +69,7 @@ def test_an_empty_file_stops_startup_naming_each_key_a_deployment_gives(tmp_path
 
 def test_a_valid_file_gives_its_sections_and_the_defaults_of_those_it_leaves_out(tmp_path: Path) -> None:
     config = load_botcube_config(_file(tmp_path, {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'url': 'https://models.example.com/v1',
-                                                     'credential': {'kind': 'file', 'path': '/run/secrets/key'}, 'turnSummaryModel': 'openai:summary'}}}))
+                                                     'credential': {'kind': 'file', 'path': '/run/secrets/key'}}}}))
 
     assert config['integrations']['modelGateway']['url'] == 'https://models.example.com/v1'
     assert config['integrations']['proxy'] == {'kind': 'none'}

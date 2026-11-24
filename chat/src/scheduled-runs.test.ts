@@ -412,7 +412,6 @@ describe('a scheduled run', () => {
     await runScheduledTask({
       turnIdentity: null, bot, sessionMetadata: stack.sessionMetadata,
       agentDocuments: new DynamoDBAgentDocuments(stack.table.name, stack.table.client), scheduledTasks: tasks,
-      summarizeTurn: async () => ({ title: 'Cutover', summary: 'Cutover' }),
       upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined), invokeSessionApi: post,
     }, { owner: account, taskId: id, deliveryId: delivery.deliveryId });
     expect(invoke).not.toHaveBeenCalled();
@@ -451,7 +450,6 @@ describe('a scheduled run', () => {
     const post = vi.fn<import('./session-api.js').SessionApi>(async () => ({}));
     const deps = {
       turnIdentity: null,
-      summarizeTurn: async () => ({ title: 'US rates', summary: 'Gave a rates update.' }),
       bot, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: tasks,
       upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined), invokeSessionApi: post,
@@ -506,7 +504,6 @@ describe('a scheduled run', () => {
 
     await runScheduledTask({
       turnIdentity: null,
-      summarizeTurn: async () => ({ title: 'US rates', summary: 'Gave a rates update.' }),
       bot, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task, recordRun: async () => undefined, retire, issueSideChat: async () => task.id },
       upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined),
@@ -850,7 +847,7 @@ describe('a scheduled run', () => {
     const sends = vi.spyOn(SQSClient.prototype, 'send');
     try {
       await scheduler.deliver(delivery);
-      // The resumed model, summary and Main post precede SQS acknowledgement.
+      // The resumed model, Activity write and Main post precede SQS acknowledgement.
       // Observe that acknowledgement rather than imposing a queue-drain budget.
       for (;;) {
         const acknowledged = sends.mock.calls.findIndex(([command]) => command instanceof DeleteMessageCommand && command.input.QueueUrl === scheduler.runs.queueUrl);
@@ -1016,7 +1013,6 @@ describe('a scheduled run', () => {
         const { tasks } = await (await call('/scheduled-tasks')).json() as { tasks: { id: string; lastRun?: { status: string } }[] };
         expect(tasks.find((task) => task.id === id)?.lastRun?.status).toBe('failed');
       });
-      expect(isolated.bedrock.summarizedTurns()).not.toContainEqual(expect.objectContaining({ request: 'Brief me' }));
     } finally {
       await isolated.stop();
     }

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:net';
 import { inject } from 'vitest';
 import { FakeAgentCore } from '../fakes/fake-agentcore.js';
-import { FakeBedrock, FakeSessionApi } from '../fakes/fake-backends.js';
+import { FakeSessionApi } from '../fakes/fake-backends.js';
 import { HttpFake, sendJson } from '../fakes/http-fake.js';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable, RUNTIME_ARN } from '../fakes/stack.js';
 import { motoEndpoint } from '../fakes/moto.js';
@@ -47,7 +47,6 @@ export async function startStack(options: StackOptions = {}) {
   if (options.table !== 'missing') await createChatTable(endpoint, name);
   const agentcore = await new FakeAgentCore().listen();
   const sessionApi = await new FakeSessionApi().listen();
-  const bedrock = await new FakeBedrock().listen();
   const files = await new FakeEfs(join(home, 'files')).listen();
   const credentialService = await startNoLinkedAccounts();
   const unreachable = createServer((socket) => socket.destroy());
@@ -66,7 +65,6 @@ export async function startStack(options: StackOptions = {}) {
     BOTCUBE_CONFIG: imageConfig,
     BOTCUBE_TEST_IMAGE_SETTINGS: join(imageConfig, '..', 'bot.yaml'),
     BOTCUBE_LOCAL_SESSION_API_URL: sessionApi.url,
-    AWS_ENDPOINT_URL_BEDROCK_RUNTIME: bedrock.url,
     AWS_ENDPOINT_URL_STS: endpoint,
     ...files.environment,
     ...(options.agentcore === 'unconfigured' ? {} : {
@@ -80,7 +78,7 @@ export async function startStack(options: StackOptions = {}) {
     BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'parity-credential-secret',
   };
   const closeFakes = async () => {
-    await Promise.all([agentcore.close(), sessionApi.close(), bedrock.close(), files.close(), credentialService.close()]);
+    await Promise.all([agentcore.close(), sessionApi.close(), files.close(), credentialService.close()]);
     if (unreachable.listening) await new Promise<void>((done) => unreachable.close(() => done()));
     await rm(home, { recursive: true, force: true });
   };
@@ -95,7 +93,7 @@ export async function startStack(options: StackOptions = {}) {
   const url = new URL(service.url).origin;
   return {
     get url() { return url; },
-    agentcore, sessionApi, bedrock, files,
+    agentcore, sessionApi,  files,
     browser: () => new Browser(url),
     logs: () => service.output(),
     async stop() {

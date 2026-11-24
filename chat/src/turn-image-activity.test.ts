@@ -49,7 +49,7 @@ it('records an image-only Turn that ends in a run error as failed in Activity', 
     expect(await response.text()).toContain('Model overloaded');
     await vi.waitFor(async () => {
       expect(await (await stack.app.request('/activity')).json()).toEqual({
-        tasks: [{ summary: '', failed: 'Model overloaded', completedAt: expect.any(String) }],
+        tasks: [{ title: '', failed: 'Model overloaded', completedAt: expect.any(String) }],
       });
     });
     expect(await stack.sessionMetadata.get('acct_account-1', 'failed-image')).not.toHaveProperty('turn_running_since');
@@ -75,10 +75,8 @@ it.each([false, true])('retains both Activity entries for a full-history image f
   const activity = async () => (await (await stack.app.request('/activity')).json()) as { tasks: { title: string }[] };
   try {
     await stack.allocate('acct_account-1', 'image-follow-up');
-    stack.bedrock.turnSummary = { title: 'First task', summary: 'First report analyzed' };
     await post('first', [firstMessage]);
-    await vi.waitFor(async () => { expect((await activity()).tasks).toMatchObject([{ title: 'First task' }]); });
-    stack.bedrock.turnSummary = { title: 'Image task', summary: 'Image described' };
+    await vi.waitFor(async () => { expect((await activity()).tasks).toMatchObject([{ title: 'Analyze the first report' }]); });
     await post('image', [firstMessage,
       { id: 'answer-first', role: 'assistant', content: 'A completed answer' },
       { id: 'image-question', role: 'user', content: [
@@ -90,7 +88,7 @@ it.each([false, true])('retains both Activity entries for a full-history image f
       const tasks = (await activity()).tasks;
       expect(tasks).toHaveLength(2);
       expect(tasks).toEqual(expect.arrayContaining([
-        expect.objectContaining({ title: 'First task' }), expect.objectContaining({ title: 'Image task' }),
+        expect.objectContaining({ title: 'Analyze the first report' }), expect.objectContaining({ title: withText ? 'Describe the new image' : '' }),
       ]));
     });
   } finally { await stack.stop(); }

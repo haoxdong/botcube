@@ -34,9 +34,6 @@ import { cdkPackageRoot } from './project-dir.js';
 
 const cubeRoot = path.resolve(cdkPackageRoot, '../../..');
 
-/** The cheap foundation model that summarizes each finished Turn for the Activity: `MODEL_ID` in botcube/chat's `turn-summaries.ts`. */
-const TURN_SUMMARY_MODEL = 'anthropic.claude-haiku-4-5-20251001-v1:0';
-
 /** The environment names every bot's Chat Service reads its deploy inputs under. */
 export const CHAT_SERVICE_ENV = {
   agentComputerPolicyBucket: 'BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET',
@@ -304,7 +301,6 @@ function defineStacks(app: App, options: ProductionOptions) {
       agentComputer.browser.attrBrowserArn,
     ],
   }));
-  addTurnSummaryModel(origin, chat, options);
 }
 
 function configureChatDeployment(chat: PreviewChatService, origin: PreviewOriginStack, parkState: string, wakeUrl: string, filesWorkspace?: string) {
@@ -312,19 +308,6 @@ function configureChatDeployment(chat: PreviewChatService, origin: PreviewOrigin
   chat.container.addEnvironment('BOTCUBE_WAKE_URL', wakeUrl);
   chat.container.addEnvironment('BOTCUBE_PARK_STATE_PARAMETER', parkState);
   chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameterHistory'], resources: [origin.formatArn({ service: 'ssm', resource: `parameter${parkState}` })] }));
-}
-
-/** Where Turn summaries run: the BotCube Config's OpenAI-compatible Endpoint, or Bedrock. */
-function addTurnSummaryModel(origin: PreviewOriginStack, chat: PreviewChatService, options: ProductionOptions) {
-  if (grantModelsEndpoint(chat, options.models)) return;
-  // The Turn summary model runs on a US cross-region inference profile, which routes to US Regions.
-  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
-    actions: ['bedrock:InvokeModel'],
-    resources: [
-      origin.formatArn({ service: 'bedrock', resource: 'inference-profile', resourceName: `us.${TURN_SUMMARY_MODEL}` }),
-      `arn:aws:bedrock:*::foundation-model/${TURN_SUMMARY_MODEL}`,
-    ],
-  }));
 }
 
 function createServingOrigin(app: App, options: ProductionOptions, input: OriginInput, health: ApiHealthStack, egress: PrivateEgressStack | undefined, wakeUrl: string) {

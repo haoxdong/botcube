@@ -27,8 +27,6 @@ import { configAdapters, type ConfigAdapters, type AwsAccessAdapter } from './co
 import { ssmParkHistory, type ParkHistory } from './park-history.js';
 import { isUserRequest, ProductionActivity } from './production-activity.js';
 import { ecsTaskDraining, pollScheduledRuns, runScheduledTask, type RunQueue } from './scheduled-runs.js';
-import { accountModelList, isPlanModelKey } from './models.js';
-import { type CompletedTurnSummarizer, reportUnsavedTurnSummaries, turnSummarizer, turnSummaryModel, type TurnSummaryModel } from './turn-summaries.js';
 import { harnessBearer, type ChatHarnessAuth } from './harness-auth.js';
 import { agentCoreEndpointFromEnv, agentCoreUpstream, localAgentUpstream, type AgentCoreRuntime } from './upstream.js';
 import { turnRoutes } from './turn-routes.js';
@@ -60,8 +58,6 @@ export interface ChatServiceConfig {
   /** How long a warmup waits for the Runtime to answer. */
   warmupTimeoutMs: number;
   wakeUrl?: string;
-  /** The model that summarizes each finished Turn for the Activity. */
-  turnSummaryModel: TurnSummaryModel;
 }
 
 function configFromEnv(env: NodeJS.ProcessEnv, adapters: ConfigAdapters): ChatServiceConfig {
@@ -83,7 +79,6 @@ function configFromEnv(env: NodeJS.ProcessEnv, adapters: ConfigAdapters): ChatSe
         : null,
     warmupTimeoutMs: 60_000,
     ...(env.BOTCUBE_WAKE_URL ? { wakeUrl: env.BOTCUBE_WAKE_URL } : {}),
-    turnSummaryModel: turnSummaryModel(adapters.models, env, region, adapters.proxy),
     ...(turnIdentity ? { turnIdentity } : {}),
     awsAccess: adapters.awsAccess,
   };
@@ -168,18 +163,12 @@ export function createChatService(
   const bot = stockChatService(deployment.env, deployment)(history);
   const initialRecovery = recoverPurges();
   void initialRecovery.then(() => sweepEvery(120_000, draining, recoverPurges));
-  const summarizeOffPlan = turnSummarizer(config.turnSummaryModel);
-  const summarizeTurn: CompletedTurnSummarizer = async (turn, { requester, sessionId, model }) => {
-    if (!isPlanModelKey(model.key)) return summarizeOffPlan(turn);
-    const planDefault = (await accountModelList(bot, requester)).find(({ key }) => isPlanModelKey(key));
-    if (planDefault === undefined) throw new Error("The account's OpenAI plan has no available summary model");
-    return bot.summarizePlanTurn(requester.owner, sessionId, planDefault, turn);
-  };
+
   const awsAccess = config.awsAccess?.kind === 'assume-role' ? assumeRoleAwsAccess(config.awsAccess) : turnIdentity;
   const app = new Hono();
   let scheduledRunsUnavailable = false;
   if (scheduled !== null) {
-    const deps = { bot, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, stopScheduledRuntime: config.localHarnessUrl ? undefined : runtime?.stop, summarizeTurn, turnIdentity: awsAccess, userTokens: turnIdentity, parkHistory: scheduled.parkHistory };
+    const deps = { bot, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, stopScheduledRuntime: config.localHarnessUrl ? undefined : runtime?.stop, turnIdentity: awsAccess, userTokens: turnIdentity, parkHistory: scheduled.parkHistory };
     const unavailable = () => { scheduledRunsUnavailable = true; };
     const stopRuns = pollScheduledRuns(scheduled.queue, (message) => runScheduledTask(deps, message), scheduled.draining, unavailable, async () => {
       for (const { owner, taskId, error } of await scheduled.tasks.retireExpired()) {
@@ -219,7 +208,7 @@ export function createChatService(
     bot,
     stores: { sessionMetadata, agentDocuments },
     harness: { upstream, warmupTimeoutMs: config.warmupTimeoutMs },
-    turns: { summarizeTurn, turnQuota, awsAccess, userTokens: turnIdentity },
+    turns: { turnQuota, awsAccess, userTokens: turnIdentity },
   });
 
   const checkReadiness = async () => {
@@ -335,7 +324,6 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: 
   const websocket = { server: new WebSocketServer({ noServer: true }) as unknown as WebSocketServerLike };
   const tracing = startChatTracing(adapters.telemetry, env, adapters.proxy);
   const startupCredentials = [
-    ...(config.turnSummaryModel.kind === 'openai-compatible' ? [config.turnSummaryModel.endpoint.credential] : []),
     ...(tracing?.credential ? [tracing.credential] : []),
     ...(chat.startupCredentials ?? []),
   ];
@@ -354,9 +342,7 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: 
     console.log(`Chat Service listening on :${port}`),
   );
   const sleepAgentComputers = chat.sleepAgentComputers?.bind(chat);
-  let taskStopping = false;
   const unregisterTaskStop = (sleepAgentComputers || tracing) && sleepComputersAtTaskStop(() => {
-    taskStopping = true;
     stopScheduledRuns?.();
     const sleep = sleepAgentComputers?.() ?? { slept: Promise.resolve([]), sleeps: [] };
     if (tracing === undefined) return sleep;
@@ -365,12 +351,10 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: 
     }).then(stopTracing);
     return { slept: Promise.all([sleep.slept, drained]).then(([sessions]) => sessions), sleeps: [...sleep.sleeps, drained] };
   });
-  process.on('exit', reportUnsavedTurnSummaries);
   server.once('close', () => {
     stopScheduledRuns?.();
     void stopTracing().catch((error: unknown) => { console.error('Chat tracing shutdown failed', error); });
     unregisterTaskStop?.();
-    if (!taskStopping) process.off('exit', reportUnsavedTurnSummaries);
   });
   return server;
 }

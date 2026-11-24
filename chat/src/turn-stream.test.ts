@@ -1,7 +1,6 @@
 import { ActivityDeltaEventSchema, RunStartedEventSchema, ToolCallArgsEventSchema } from '@ag-ui/core/schemas';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { persistedTurnError, relayTurn, stopTurn, turnCredentialGuard, credentialValues } from './turn-stream.js';
-import { recordTurnSummary } from './turn-summaries.js';
 import { TurnTiming } from './turn-timing.js';
 import type { Upstream } from './upstream.js';
 import { defined } from '../test/defined.js';
@@ -92,7 +91,7 @@ describe('decoded relay frames', () => {
         ...turn, credentials: ['private-token'], timing, finished, ended,
       });
       expect(await response.text()).toBe(frames.slice(0, 3).join('') + `data: ${JSON.stringify(browser)}\n\n` + frames[3]);
-      expect(finished).toHaveBeenCalledWith('Session: browser-1');
+      expect(finished).toHaveBeenCalledOnce();
       expect(ended).toHaveBeenCalledExactlyOnceWith(undefined);
       expect(emitted.mock.calls.flatMap(([values]) => values)).toEqual([...events.slice(0, 3), browser, events[3]]);
       for (const payload of payloads) expect(parse.mock.calls.filter(([value]) => value === payload)).toHaveLength(1);
@@ -264,7 +263,7 @@ describe('the credential guard follows client message buffers', () => {
     const finished = vi.fn();
     const response = await relayTurn(fakeUpstream(() => sse(streamOf(frames))).upstream, { ...turn, credentials: ['private-token'], finished });
     expect(await response.text()).toBe(frames.join(''));
-    expect(finished).toHaveBeenCalledWith('The answer.');
+    expect(finished).toHaveBeenCalledOnce();
   });
 
   it('blocks credentials split across legacy thinking content', async () => {
@@ -599,18 +598,6 @@ describe("a relayed Turn's outcome", () => {
     expect(finished).not.toHaveBeenCalled();
   });
 
-  it("hands over the agent's last message once a finished run's stream ends", async () => {
-    expect(
-      await outcome([
-        data({ type: 'RUN_STARTED' }),
-        text('m1', 'Let me look. '),
-        text('m2', ' Apple beat '),
-        text('m2', 'on revenue. '),
-        data({ type: 'RUN_FINISHED' }),
-      ]),
-    ).toEqual([['Apple beat on revenue.']]);
-  });
-
   it.each(['interrupt', 'cancelled'] as const)('does not complete a %s outcome', async (type) => {
     const finished = vi.fn();
     const failed = vi.fn();
@@ -626,11 +613,11 @@ describe("a relayed Turn's outcome", () => {
   });
 
   it('completes an explicit success outcome', async () => {
-    expect(await outcome([text('m1', 'Done'), data({ type: 'RUN_FINISHED', threadId: 'session', runId: 'run', outcome: { type: 'success' } })])).toEqual([['Done']]);
+    expect(await outcome([text('m1', 'Done'), data({ type: 'RUN_FINISHED', threadId: 'session', runId: 'run', outcome: { type: 'success' } })])).toEqual([[]]);
   });
 
   it('hands over an empty answer for a finished run that said nothing', async () => {
-    expect(await outcome([data({ type: 'RUN_STARTED' }), data({ type: 'RUN_FINISHED' })])).toEqual([['']]);
+    expect(await outcome([data({ type: 'RUN_STARTED' }), data({ type: 'RUN_FINISHED' })])).toEqual([[]]);
   });
 
   it('hands over nothing for a run that failed or never finished', async () => {
@@ -952,22 +939,22 @@ describe('a relayed Turn', () => {
     ]);
   });
 
-  // The client sends its next Turn only once this stream closes, so the summary must not hold it open.
-  it('closes the stream once RUN_FINISHED is relayed, while the Turn summary still runs', async () => {
-    let summarized: (() => void) | undefined;
-    const finished = vi.fn(() => new Promise<void>((resolve) => { summarized = resolve; }));
+  // The client sends its next Turn only once this stream closes, so the Activity write must not hold it open.
+  it('closes the stream once RUN_FINISHED is relayed, while the Activity write still runs', async () => {
+    let activitySaved: (() => void) | undefined;
+    const finished = vi.fn(() => new Promise<void>((resolve) => { activitySaved = resolve; }));
     const ended = vi.fn(async () => undefined);
     const frames = ['data: {"type":"RUN_STARTED"}\n\n', 'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"m1","delta":"Done."}\n\n', 'data: {"type":"RUN_FINISHED"}\n\n'];
     const response = await relayTurn(fakeUpstream(() => sse(streamOf(frames))).upstream, { ...turn, finished, ended });
 
     expect(await response.text()).toBe(frames.join(''));
-    expect(finished).toHaveBeenCalledExactlyOnceWith('Done.');
+    expect(finished).toHaveBeenCalledOnce();
     expect(ended.mock.calls).toEqual([[undefined]]);
-    summarized?.();
+    activitySaved?.();
   });
 
-  it('relays RUN_FINISHED when the Turn summary fails, and logs the failure', async () => {
-    const failure = new Error('The Turn summary could not be saved: summary refused');
+  it('relays RUN_FINISHED when the Activity write fails, and logs the failure', async () => {
+    const failure = new Error('The Activity write could not be saved: Activity write refused');
     const ended = vi.fn(async () => undefined);
     const frames = ['data: {"type":"RUN_STARTED"}\n\n', 'data: {"type":"RUN_FINISHED"}\n\n'];
     const response = await relayTurn(fakeUpstream(() => sse(streamOf(frames))).upstream, { ...turn, finished: async () => { throw failure; }, ended });
@@ -975,34 +962,6 @@ describe('a relayed Turn', () => {
     expect(await response.text()).toBe(frames.join(''));
     expect(ended.mock.calls).toEqual([[undefined]]);
     await vi.waitFor(() => expect(consoleError.mock.calls).toEqual([["The Turn's completion failed after its answer was relayed session_id=session-1", failure]]));
-  });
-
-  it('raises the Turn-summary alarm when the Activity row cannot be saved after the stream closed, rejecting nothing unhandled', async () => {
-    const unhandled = vi.fn();
-    process.on('unhandledRejection', unhandled);
-    try {
-      const failure = new Error('DynamoDB rejected the write');
-      const frames = ['data: {"type":"RUN_STARTED"}\n\n', 'data: {"type":"RUN_FINISHED"}\n\n'];
-      const response = await relayTurn(fakeUpstream(() => sse(streamOf(frames))).upstream, {
-        ...turn,
-        finished: (answer) => recordTurnSummary(
-          async () => ({ title: 'Brief on rates', summary: 'Compared the yields' }),
-          async () => { throw failure; },
-          'session-1',
-          { request: 'Compare rates', answer },
-        ),
-      });
-
-      expect(await response.text()).toBe(frames.join(''));
-      await vi.waitFor(() => expect(consoleError.mock.calls).toEqual([
-        ['Turn summary failed session_id=session-1', failure],
-        ["The Turn's completion failed after its answer was relayed session_id=session-1", new Error('The Turn summary could not be saved: DynamoDB rejected the write')],
-      ]));
-      await settled();
-      expect(unhandled).not.toHaveBeenCalled();
-    } finally {
-      process.off('unhandledRejection', unhandled);
-    }
   });
 
   // A reload or a closed tab stopped the Turn, leaving its reply cut off; only an explicit Stop stops one.
@@ -1021,7 +980,7 @@ describe('a relayed Turn', () => {
     await reader.cancel('client closed');
 
     expect(calls).toHaveLength(1);
-    expect(finished).toHaveBeenCalledWith('the whole answer');
+    expect(finished).toHaveBeenCalledOnce();
     expect(ended.mock.calls).toEqual([[undefined]]);
   });
 
@@ -1076,13 +1035,13 @@ describe('a relayed Turn', () => {
 
   describe("the Turn's end", () => {
     const readAt = Date.UTC(2026, 9, 5, 9, 10, 21, 300);
-    let settleSummary: (failure?: Error) => void = () => undefined;
-    /** A finished Turn whose end write takes 0.3 s, and whose summary settles 1.8 s in, after its stream closed. */
+    let settleActivity: (failure?: Error) => void = () => undefined;
+    /** A finished Turn whose end write takes 0.3 s, and whose Activity write settles 1.8 s in, after its stream closed. */
     const timed = (overrides: Partial<Parameters<typeof relayTurn>[1]> = {}) =>
       relayTurn(fakeUpstream(() => sse(streamOf(['data: {"type":"RUN_STARTED"}\n\n', 'data: {"type":"RUN_FINISHED"}\n\n']))).upstream, {
         ...turn,
         finished: () => new Promise<void>((resolve, reject) => {
-          settleSummary = (failure) => {
+          settleActivity = (failure) => {
             vi.setSystemTime(readAt + 1_800);
             if (failure === undefined) resolve();
             else reject(failure);
@@ -1093,8 +1052,8 @@ describe('a relayed Turn', () => {
         },
         ...overrides,
       });
-    const logged = (summaryFailed: boolean, client: string, endedFailed = false) =>
-      `Test upstream relayed the Turn's end session_id=session-1 run_finished_read_at=2026-10-05T09:10:21.300Z summary_ms=1800 summary_failed=${summaryFailed} ended_ms=300 ended_failed=${endedFailed} done_ms=300 client=${client}`;
+    const logged = (activityFailed: boolean, client: string, endedFailed = false) =>
+      `Test upstream relayed the Turn's end session_id=session-1 run_finished_read_at=2026-10-05T09:10:21.300Z activity_ms=1800 activity_failed=${activityFailed} ended_ms=300 ended_failed=${endedFailed} done_ms=300 client=${client}`;
     let info: MockInstance<typeof console.info>;
     beforeEach(() => {
       info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
@@ -1117,7 +1076,7 @@ describe('a relayed Turn', () => {
       await response.text();
 
       await settled();
-      expect(info.mock.calls).toEqual([[`Test upstream relayed the Turn's end session_id=session-1 run_finished_read_at=2026-10-05T09:10:21.300Z summary_ms=1800 summary_failed=false ended_ms=300 ended_failed=false done_ms=2600 client=attached`]]);
+      expect(info.mock.calls).toEqual([[`Test upstream relayed the Turn's end session_id=session-1 run_finished_read_at=2026-10-05T09:10:21.300Z activity_ms=1800 activity_failed=false ended_ms=300 ended_failed=false done_ms=2600 client=attached`]]);
     });
 
     it('reports an attached client without claiming that prefetched bytes were consumed', async () => {
@@ -1136,7 +1095,7 @@ describe('a relayed Turn', () => {
       await response.text();
 
       await settled();
-      expect(info.mock.calls).toEqual([[`Test upstream relayed the Turn's end session_id=session-1 run_finished_read_at=2026-10-05T09:10:21.300Z summary_ms=0 summary_failed=false ended_ms=0 ended_failed=false done_ms=9000 client=attached`]]);
+      expect(info.mock.calls).toEqual([[`Test upstream relayed the Turn's end session_id=session-1 run_finished_read_at=2026-10-05T09:10:21.300Z activity_ms=0 activity_failed=false ended_ms=0 ended_failed=false done_ms=9000 client=attached`]]);
     });
 
     it('logs a failed end write while retaining the stream failure', async () => {
@@ -1146,27 +1105,27 @@ describe('a relayed Turn', () => {
         throw failure;
       } });
       await expect(response.text()).rejects.toBe(failure);
-      settleSummary();
+      settleActivity();
 
       await settled();
       expect(info.mock.calls).toEqual([[logged(false, 'attached', true)]]);
     });
 
-    // The summary runs on after the stream closed, so done_ms leaves it out.
-    it('logs when the relay read RUN_FINISHED, how long the end write took, and the summary once it settles', async () => {
+    // The Activity write runs on after the stream closed, so done_ms leaves it out.
+    it('logs when the relay read RUN_FINISHED, how long the end write took, and the Activity write once it settles', async () => {
       await (await timed()).text();
       expect(info).not.toHaveBeenCalled();
 
-      settleSummary();
+      settleActivity();
 
       await settled();
       expect(info.mock.calls).toEqual([[logged(false, 'attached')]]);
     });
 
-    it('logs a summary that failed', async () => {
+    it('logs a failed Activity write', async () => {
       await (await timed()).text();
 
-      settleSummary(new Error('summary refused'));
+      settleActivity(new Error('Activity write refused'));
 
       await settled();
       expect(info.mock.calls).toEqual([[logged(true, 'attached')]]);
@@ -1175,7 +1134,7 @@ describe('a relayed Turn', () => {
     it('logs the end of a Turn whose client went away', async () => {
       await defined((await timed()).body, 'streaming response body').cancel();
 
-      settleSummary();
+      settleActivity();
 
       await settled();
       expect(info.mock.calls).toEqual([[logged(false, 'gone')]]);
@@ -1461,32 +1420,6 @@ describe("the agent's document edits in a relayed Turn", () => {
   });
 });
 
-
-describe('the answer passed to Turn completion', () => {
-  it.each([
-    [{ type: 'TEXT_MESSAGE_CHUNK', messageId: 'a1', role: 'assistant', delta: 'The current answer.' }],
-    [{ type: 'MESSAGES_SNAPSHOT', messages: [{ id: 'a1', role: 'assistant', content: 'The current answer.' }] }],
-  ])('uses the current answer from a supported message event %j', async (message) => {
-    const finished = vi.fn();
-    const frames = [message, { type: 'RUN_FINISHED' }].map((event) => `data: ${JSON.stringify(event)}\n\n`);
-    const { upstream } = fakeUpstream(() => sse(streamOf(frames)));
-    await (await relayTurn(upstream, { ...turn, finished })).text();
-    expect(finished).toHaveBeenCalledExactlyOnceWith('The current answer.');
-  });
-});
-
-
-it('passes the full answer when subsequent text chunks omit their active message ID', async () => {
-  const finished = vi.fn();
-  const frames = [
-    { type: 'TEXT_MESSAGE_CHUNK', messageId: 'a1', role: 'assistant', delta: 'The current ' },
-    { type: 'TEXT_MESSAGE_CHUNK', delta: 'answer.' },
-    { type: 'RUN_FINISHED' },
-  ].map((event) => `data: ${JSON.stringify(event)}\n\n`);
-  const { upstream } = fakeUpstream(() => sse(streamOf(frames)));
-  await (await relayTurn(upstream, { ...turn, finished })).text();
-  expect(finished).toHaveBeenCalledExactlyOnceWith('The current answer.');
-});
 
 describe('an explicit Stop', () => {
   it("asks the upstream to stop the Session's Turn, closing its answer", async () => {

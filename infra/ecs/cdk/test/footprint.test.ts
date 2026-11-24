@@ -289,7 +289,7 @@ test("the enterprise example's Chat Service, Credential Service and Runtime read
     .map(([logicalId, task]) => [logicalId.replace(/[0-9A-F]{8}$/, ''), ((task.Properties as Properties).ContainerDefinitions ?? []).flatMap(container => (container.Environment ?? []).map(({ Name }) => Name))] as const);
   const [runtime] = Object.values(Template.fromStack(app.node.findChild(AGENTCORE_STACK) as Stack).findResources('AWS::BedrockAgentCore::Runtime'));
   const runtimeVariables = Object.keys((runtime.Properties as Properties).EnvironmentVariables ?? {});
-  const models = (name: string) => name.startsWith('BOTCUBE_MODELS_') || name === 'BOTCUBE_TURN_SUMMARY_MODEL';
+  const models = (name: string) => name.startsWith('BOTCUBE_MODELS_');
 
   expect(environments.filter(([, names]) => names.includes('BOTCUBE_CONFIG')).map(([task]) => task)).toEqual(['ChatServiceTask', 'CredentialServiceTask']);
   expect([...environments.flatMap(([, names]) => names), ...runtimeVariables].filter(models)).toEqual([]);

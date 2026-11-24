@@ -71,7 +71,7 @@ def gateway() -> FakeGateway:
 
 
 def _deployed(endpoint: Mapping[str, Any]) -> dict[str, Any]:
-    return {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'openai:summary', **endpoint}}}
+    return {'integrations': {'modelGateway': {'kind': 'openai-compatible', **endpoint}}}
 
 
 def _endpoint(credential: Mapping[str, Any]) -> dict[str, Any]:

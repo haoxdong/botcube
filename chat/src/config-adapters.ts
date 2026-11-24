@@ -20,7 +20,6 @@ export interface ConfigAdapters {
   corsOrigins: string[];
   /** `parking.automationUserAgents`: requests from these keep no parked deployment awake. */
   automationUserAgents: string[];
-  models: BotCubeConfig['integrations']['modelGateway'];
 }
 
 /**
@@ -29,11 +28,11 @@ export interface ConfigAdapters {
  */
 export function configAdapters(env: NodeJS.ProcessEnv): ConfigAdapters {
   const config = env.BOTCUBE_CONFIG ? loadConfig(env.BOTCUBE_CONFIG) : sectionDefaults();
-  const { integrations: { harnessAuth, awsAccess, telemetry, modelGateway: models, proxy }, schedules, parking, caBundle } = config;
+  const { integrations: { harnessAuth, awsAccess, telemetry, proxy }, schedules, parking, caBundle } = config;
   if (caBundle !== undefined) loadCaBundle(caBundle);
   return {
     harnessAuth, awsAccess: awsAccessAdapter(awsAccess.kind, env[USER_MEMORY_ROLE_ARN] || undefined, config.existing?.kmsKeys?.memory), schedules, telemetry, proxy,
-    corsOrigins: allowedOrigins(config), automationUserAgents: parking?.automationUserAgents ?? [], models,
+    corsOrigins: allowedOrigins(config), automationUserAgents: parking?.automationUserAgents ?? [],
   };
 }
 

@@ -251,17 +251,16 @@ describe("the models Endpoint's credential", () => {
 
   it("reaches a provider's own URL with its own credential from the same readers as the gateway's", () => {
     const needs = footprint({ ...config, integrations: { ...config.integrations, modelGateway: { ...models, providers: { anthropic } } } });
-    expect(section(formatFootprint(needs), 'Egress hosts')).toContain('  anthropic.models.example.com (chatService, credentialService)');
+    expect(section(formatFootprint(needs), 'Egress hosts')).toContain('  anthropic.models.example.com (credentialService)');
     expect(needs.iam.credentialService?.actions).toContain('secretsmanager:GetSecretValue');
   });
 
-  it("is reached by the Chat Service for Turn summaries and the Credential Service for the agent's relayed calls, never the Harness", () => {
-    expect(section(formatFootprint(footprint(config)), 'Egress hosts')).toContain('  models.example.com (chatService, credentialService)');
+  it("is reached by the Credential Service for the agent's relayed calls", () => {
+    expect(section(formatFootprint(footprint(config)), 'Egress hosts')).toContain('  models.example.com (credentialService)');
   });
 
-  it('from a secret grants its readers, the Chat Service and the Credential Service, its value, and the Harness nothing', () => {
+  it('from a secret grants the Credential Service access to its value', () => {
     const needs = withCredential({ kind: 'secret', secretId });
-    expect(needs.iam.chatService?.actions).toContain('secretsmanager:GetSecretValue');
     expect(needs.iam.credentialService?.actions).toContain('secretsmanager:GetSecretValue');
     expect(needs.iam.harness?.actions).not.toContain('secretsmanager:GetSecretValue');
     expect(needs.egressHosts).toContain('secretsmanager.<region>.amazonaws.com');
@@ -269,7 +268,7 @@ describe("the models Endpoint's credential", () => {
 
   it('from a command lists the command its readers may run, and the Harness runs none', () => {
     const printed = formatFootprint(withCredential({ kind: 'command', command: ['/usr/local/bin/token-broker', '--audience', 'models'], timeoutSeconds: 30 }));
-    expect(printed).toContain('\nCommands\n  integrations.modelGateway.credential (chatService, credentialService): /usr/local/bin/token-broker --audience models\n');
+    expect(printed).toContain('\nCommands\n  integrations.modelGateway.credential (credentialService): /usr/local/bin/token-broker --audience models\n');
   });
 
   const oauth = (clientSecret: Extract<CredentialSource, { kind: 'oauth-client-credentials' }>['clientSecret']) =>
@@ -278,14 +277,13 @@ describe("the models Endpoint's credential", () => {
   it('from OAuth client credentials reaches the token endpoint, and grants its readers the client secret and the Harness nothing', () => {
     const needs = oauth({ kind: 'secret', secretId });
     expect(needs.egressHosts).toEqual(expect.arrayContaining(['idp.example.com:8443', 'secretsmanager.<region>.amazonaws.com']));
-    expect(needs.iam.chatService?.actions).toContain('secretsmanager:GetSecretValue');
     expect(needs.iam.credentialService?.actions).toContain('secretsmanager:GetSecretValue');
     expect(needs.iam.harness?.actions).not.toContain('secretsmanager:GetSecretValue');
   });
 
   it("from OAuth client credentials lists the command its readers may run for the client secret", () => {
     const printed = formatFootprint(oauth({ kind: 'command', command: ['/usr/local/bin/client-secret'], timeoutSeconds: 30 }));
-    expect(printed).toContain('\nCommands\n  integrations.modelGateway.credential.clientSecret (chatService, credentialService): /usr/local/bin/client-secret\n');
+    expect(printed).toContain('\nCommands\n  integrations.modelGateway.credential.clientSecret (credentialService): /usr/local/bin/client-secret\n');
   });
 });
 
@@ -409,7 +407,7 @@ describe('Endpoint TLS', () => {
     const printed = formatFootprint(footprint({ ...config, integrations: { ...config.integrations,  modelGateway: { ...models, tls: files }, telemetry: { kind: 'otlp', url: 'https://otel-collector.example.com/v1/traces', tls: files }, proxy: { ...proxy, url: 'https://proxy.example.com:3129', tls: files } } }));
 
     expect(section(printed, 'TLS')).toEqual([
-      '  integrations.modelGateway.tls (chatService, credentialService): server identity spiffe://example.org/ns/egress/sa/proxy; client certificate /run/spiffe/svid.pem, key /run/spiffe/svid-key.pem',
+      '  integrations.modelGateway.tls (credentialService): server identity spiffe://example.org/ns/egress/sa/proxy; client certificate /run/spiffe/svid.pem, key /run/spiffe/svid-key.pem',
       '  integrations.proxy.tls (chatService, credentialService, harness): server identity spiffe://example.org/ns/egress/sa/proxy; client certificate /run/spiffe/svid.pem, key /run/spiffe/svid-key.pem',
       '  integrations.telemetry.tls (chatService, harness): server identity spiffe://example.org/ns/egress/sa/proxy; client certificate /run/spiffe/svid.pem, key /run/spiffe/svid-key.pem',
     ]);
@@ -418,8 +416,8 @@ describe('Endpoint TLS', () => {
   it('lists a client certificate command under Commands', () => {
     const printed = formatFootprint(footprint({ ...config, allowCommandCredentials: true, integrations: { ...config.integrations,  modelGateway: { ...models, tls: command } } }));
 
-    expect(section(printed, 'TLS')).toEqual(['  integrations.modelGateway.tls (chatService, credentialService): client certificate from a command']);
-    expect(section(printed, 'Commands')).toContain('  integrations.modelGateway.tls.clientCertificate (chatService, credentialService): /usr/local/bin/svid-broker --audience models');
+    expect(section(printed, 'TLS')).toEqual(['  integrations.modelGateway.tls (credentialService): client certificate from a command']);
+    expect(section(printed, 'Commands')).toContain('  integrations.modelGateway.tls.clientCertificate (credentialService): /usr/local/bin/svid-broker --audience models');
   });
 });
 

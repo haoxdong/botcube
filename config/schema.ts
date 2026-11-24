@@ -117,9 +117,7 @@ const identity = z.discriminatedUnion('kind', [
   }).describe('Users sign in with an OpenID Connect provider, by authorization code with PKCE: with the first client, or the one a sign-in names.'),
 ]);
 const models = z.discriminatedUnion('kind', [
-  kindOnly('bedrock').extend({
-    turnSummaryModel: z.string().min(1).optional().describe("The Bedrock model that summarizes each finished Turn; absent, BotCube's own."),
-  }),
+  kindOnly('bedrock'),
   gatewayModels,
 ]);
 /** The audience of each kind of token BotCube's Chat Service signs; botcube/chat signs with these. */

@@ -6,14 +6,12 @@ import type { TaskStopSleep } from './task-stop.js';
 import { serveChatService } from './server.js';
 import type { StockOverrides } from './stock.js';
 import { testBotCubeConfig } from '../test/stock-bot.js';
-import { reportUnsavedTurnSummaries } from './turn-summaries.js';
 
 const lifecycle = vi.hoisted(() => ({ shutdown: vi.fn<() => Promise<void>>(), stop: undefined as (() => TaskStopSleep) | undefined }));
 vi.mock('./tracing.js', () => ({ startChatTracing: () => ({ shutdown: lifecycle.shutdown }) }));
 vi.mock('./task-stop.js', () => ({ sleepComputersAtTaskStop: (stop: () => TaskStopSleep) => { lifecycle.stop = stop; return () => undefined; } }));
 afterEach(() => {
   vi.restoreAllMocks();
-  process.off('exit', reportUnsavedTurnSummaries);
 });
 
 const overrides: StockOverrides = {
@@ -48,5 +46,4 @@ it.each([false, true])('waits for the single tracing shutdown before task-stop s
   const outcomes = await result;
   expect(outcomes.map((outcome) => outcome.status)).toEqual(failure ? ['rejected', 'rejected'] : ['fulfilled', 'fulfilled']);
   expect(lifecycle.shutdown).toHaveBeenCalledTimes(1);
-  expect(process.listeners('exit')).toContain(reportUnsavedTurnSummaries);
 });

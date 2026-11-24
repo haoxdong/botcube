@@ -852,12 +852,7 @@
             {
               "type": "object",
               "properties": {
-                "kind": { "type": "string", "const": "bedrock" },
-                "turnSummaryModel": {
-                  "description": "The Bedrock model that summarizes each finished Turn; absent, BotCube's own.",
-                  "type": "string",
-                  "minLength": 1
-                }
+                "kind": { "type": "string", "const": "bedrock" }
               },
               "required": ["kind"],
               "additionalProperties": false
@@ -1567,13 +1562,9 @@
                     }
                   },
                   "additionalProperties": false
-                },
-                "turnSummaryModel": {
-                  "type": "string",
-                  "description": "The model on the gateway that summarizes each finished Turn for the Activity, as `provider:model`, such as `anthropic:claude-haiku-4-5`, called on its provider's own API."
                 }
               },
-              "required": ["url", "credential", "kind", "turnSummaryModel"],
+              "required": ["url", "credential", "kind"],
               "additionalProperties": false,
               "description": "Every model on a gateway, by its key in the bot settings, called on its provider's own API; Plan Usage models still run through the Credential Service."
             }

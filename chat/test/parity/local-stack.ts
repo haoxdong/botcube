@@ -7,7 +7,7 @@ import { Browser } from './browser.js';
 import { loadConfig } from '../../../config/load.js';
 import { readConfig } from '../../../config/read.cjs';
 import { telemetryEnvironment } from '../../../config/telemetry.js';
-import { FakeBedrock, FakeOpenAICompatible } from '../fakes/fake-backends.js';
+import { FakeOpenAICompatible } from '../fakes/fake-backends.js';
 import { FakeForwardProxy, FakeOtlpCollector } from '../fakes/egress.js';
 import { FakeMtlsFront, FakeMtlsProxy, mtlsCertificates, SERVER_IDENTITY, type MtlsCertificates } from '../fakes/mtls.js';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../fakes/stack.js';
@@ -46,7 +46,6 @@ const PUBLIC_EXAMPLE = fileURLToPath(new URL('../../../examples/public/botcube.y
 export interface LocalStack {
   readonly url: string;
   /** The Bedrock Converse endpoint each finished Turn is summarized at. */
-  readonly bedrock: FakeBedrock;
   /** The stand-in for a BotCube Config's OpenAI-compatible models endpoint, when it names one. */
   readonly openAICompatible?: FakeOpenAICompatible;
   readonly scheduler?: SchedulerView;
@@ -64,8 +63,7 @@ export interface LocalStack {
 
 /**
  * The Chat Service against the real local Harness (echo model) and session
- * API, sharing one SQLite checkpoint file, with moto for Session Metadata and a fake
- * summary model: the local-development stack, with no AWS.
+ * API, sharing one SQLite checkpoint file, with moto for Session Metadata.
  */
 export async function startLocalStack(options: {
   harnessCommand?: string;
@@ -107,7 +105,6 @@ export async function startLocalStack(options: {
     ...options.harnessEnv,
   };
   const processes: RunningProcess[] = [];
-  const bedrock = await new FakeBedrock().listen();
   const models = config.integrations.modelGateway;
   const openAICompatible = models.kind === 'openai-compatible' ? await new FakeOpenAICompatible(`sk-${table}`).listen() : undefined;
   const harnessAuth = config.integrations.harnessAuth;
@@ -116,7 +113,7 @@ export async function startLocalStack(options: {
   let authorizer: FakeJwtAuthorizer | undefined;
   const stopAll = async () => {
     await Promise.all([
-      ...processes.map((running) => running.stop()), bedrock.close(), openAICompatible?.close(), authorizer?.close(), egress?.proxy.close(), egress?.collector?.close(),
+      ...processes.map((running) => running.stop()), openAICompatible?.close(), authorizer?.close(), egress?.proxy.close(), egress?.collector?.close(),
       mtls?.proxy.close(), mtls?.front.close(),
     ]);
     mtls?.certificates.remove();
@@ -124,8 +121,7 @@ export async function startLocalStack(options: {
   };
   try {
     // Every process reads the one BotCube Config, its External Services replaced by their offline stand-ins.
-    // The models Endpoint's stand-in, its API key in a file as a secret injector mounts it, for the Chat Service's Turn
-    // Summary and the Credential Service the Harness relays through; the Endpoint's headers are the BotCube Config's own.
+    // The models Endpoint's stand-in, its API key in a file as a secret injector mounts it, for the Credential Service.
     const modelsStandIn = await standInModels(models, openAICompatible, home, mtls);
     const botcubeConfig = await standInBotCubeConfig(deploymentPath, config, home, { ...egress?.offline, ...modelsStandIn });
     // The Harness serves the bot settings the BotCube Config's `bot` names, as the example bot's image does.
@@ -185,7 +181,6 @@ export async function startLocalStack(options: {
           BOTCUBE_TURN_IDENTITY_KEYS: JSON.stringify([{ ...generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ format: 'jwk' }), kid: 'local' }]),
         } : {}),
         BOTCUBE_LOCAL_SESSION_API_URL: sessionApi,
-        AWS_ENDPOINT_URL_BEDROCK_RUNTIME: bedrock.url,
         ...(scheduledRuns ? {
           AWS_ENDPOINT_URL_SCHEDULER: dynamodbEndpoint,
           AWS_ENDPOINT_URL_SQS: dynamodbEndpoint,
@@ -211,7 +206,7 @@ export async function startLocalStack(options: {
       harnessProcess = await startProcess(required(harnessOptions, 'Harness start options'));
       processes.push(harnessProcess);
     };
-    return { url, bedrock, ...(openAICompatible ? { openAICompatible } : {}), harnessUrl, egress, ...(mtls ? { mtls } : {}), restartHarness, ...(scheduledRuns ? { scheduler: new SchedulerView(dynamodbEndpoint, scheduledRuns) } : {}), browser: () => new Browser(url), logs: () => chatService.output(), stop: stopAll };
+    return { url,  ...(openAICompatible ? { openAICompatible } : {}), harnessUrl, egress, ...(mtls ? { mtls } : {}), restartHarness, ...(scheduledRuns ? { scheduler: new SchedulerView(dynamodbEndpoint, scheduledRuns) } : {}), browser: () => new Browser(url), logs: () => chatService.output(), stop: stopAll };
   } catch (error) {
     await stopAll();
     throw error;

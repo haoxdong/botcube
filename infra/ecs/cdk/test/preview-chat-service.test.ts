@@ -172,20 +172,6 @@ test('a Turn whose Files could not be mounted alarms on the existing alert owner
   });
 });
 
-test('a failed Turn summary alarms on the existing alert owner', () => {
-  const template = synth();
-  template.hasResourceProperties('AWS::Logs::MetricFilter', {
-    FilterPattern: '"Turn summary failed"',
-    MetricTransformations: [{ MetricNamespace: 'BotCube/ChatService', MetricName: 'TurnSummaryFailures', MetricValue: '1' }],
-  });
-  template.hasResourceProperties('AWS::CloudWatch::Alarm', {
-    AlarmName: 'test-turn-summary-failures',
-    Namespace: 'BotCube/ChatService', MetricName: 'TurnSummaryFailures', Statistic: 'Sum',
-    Threshold: 0, ComparisonOperator: 'GreaterThanThreshold', EvaluationPeriods: 1, DatapointsToAlarm: 1, TreatMissingData: 'notBreaching',
-    AlarmActions: [{ 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':sns:us-east-1:123456789012:existing-alerts']] }],
-  });
-});
-
 test('a failed sleep of Agent Computer browsers at task stop alarms on the existing alert owner', () => {
   const template = synth();
   template.hasResourceProperties('AWS::Logs::MetricFilter', {
@@ -522,7 +508,7 @@ test('a parameter runtime composes with the default AgentCore Harness', () => {
 
 test('adopter names reach Chat tasks, roles, queues, ingress and alarms', () => {
   const template = synth(undefined, false, privateSubnets, {
-    metricFilterNames: { sessionPurgeFailures: 'adopter-purge-filter', turnSummaryFailures: 'adopter-summary-filter', agentComputerStopSleepFailures: 'adopter-sleep-filter', errors: 'adopter-errors-filter' },
+    metricFilterNames: { sessionPurgeFailures: 'adopter-purge-filter', agentComputerStopSleepFailures: 'adopter-sleep-filter', errors: 'adopter-errors-filter' },
     taskFamily: 'adopter-chat-task',
     taskRoleName: 'adopter-chat-role', executionRoleName: 'adopter-chat-execution',
     scheduledRunsQueueName: 'adopter-runs', scheduledRunsFailedQueueName: 'adopter-failed',
@@ -537,7 +523,7 @@ test('adopter names reach Chat tasks, roles, queues, ingress and alarms', () => 
   template.hasResourceProperties('AWS::EC2::SecurityGroup', { GroupName: 'adopter-chat-network' });
   template.hasResourceProperties('AWS::ElasticLoadBalancingV2::TargetGroup', { Name: 'adopter-chat-target' });
   for (const AlarmName of ['adopter-deficit', 'adopter-alb-errors', 'adopter-purge-errors']) template.hasResourceProperties('AWS::CloudWatch::Alarm', { AlarmName });
-  for (const FilterName of ['adopter-purge-filter', 'adopter-summary-filter', 'adopter-sleep-filter', 'adopter-errors-filter']) template.hasResourceProperties('AWS::Logs::MetricFilter', { FilterName });
+  for (const FilterName of ['adopter-purge-filter', 'adopter-sleep-filter', 'adopter-errors-filter']) template.hasResourceProperties('AWS::Logs::MetricFilter', { FilterName });
   expect(Object.keys(template.findResources('AWS::ElasticLoadBalancingV2::TargetGroup'))).toEqual(['OriginHttpsChatServiceGroup7CF46779']);
 });
 

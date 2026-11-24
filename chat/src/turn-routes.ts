@@ -10,7 +10,7 @@ import { requireCandidatePrompts } from './candidate-prompt.js';
 import type { Requester } from './requester.js';
 import { warmingSessions, warmupTiming } from './warming-sessions.js';
 import { namedModel } from './models.js';
-import { SessionOpeningError, SessionUnissuedError, type SessionMetadata, type PreparedTurn, type TurnFailure, type TurnActivity, type SessionPurge } from './session-metadata.js';
+import { SessionDeletedError, SessionOpeningError, SessionUnissuedError, type SessionMetadata, type PreparedTurn, type TurnFailure, type TurnActivity, type SessionPurge } from './session-metadata.js';
 import { assertIdleContinuable } from './sessions.js';
 import { SessionReadOnlyError } from './session-identity.js';
 import { forwardSnapshotEpoch, type sessionLifecycle } from './session-lifecycle.js';
@@ -19,7 +19,7 @@ import { forwardUserToken, type UserTokenSigner } from './user-token.js';
 import { TurnTiming } from './turn-timing.js';
 import type { TurnQuota } from './turn-quota.js';
 import { turnErrorDetails, credentialValues, relayTurn, stopTurn, type HeldIds } from './turn-stream.js';
-import { recordTurnSummary, turnActivity, type CompletedTurnSummarizer } from './turn-summaries.js';
+import { turnActivity } from './turn-summaries.js';
 import { readTurnEvents } from './turn-events.js';
 import { steeringRoutes } from './steering-routes.js';
 import { isRecord, omitOptionalNulls } from './payload.js';
@@ -75,7 +75,6 @@ interface TurnRoutesOptions {
   stores: { sessionMetadata: SessionMetadata; agentDocuments: AgentDocuments };
   harness: { upstream: ReturnType<typeof sessionLifecycle> | null; warmupTimeoutMs: number };
   turns: {
-    summarizeTurn: CompletedTurnSummarizer;
     turnQuota: TurnQuota | null;
     awsAccess: TurnIdentitySource | null;
     userTokens: UserTokenSigner | null;
@@ -85,7 +84,7 @@ interface TurnRoutesOptions {
 export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoutesOptions) {
   const { sessionMetadata, agentDocuments } = stores;
   const { upstream, warmupTimeoutMs } = harness;
-  const { summarizeTurn, turnQuota, awsAccess: credentialSource, userTokens } = turns;
+  const { turnQuota, awsAccess: credentialSource, userTokens } = turns;
   const warming = warmingSessions();
 
   const turnPayload = async (input: RunAgentInput, requester: Requester, model: AgentModel, captureCredentials?: (credentials: readonly string[]) => void, documents: Promise<AgentDocumentSet> = agentDocuments.get(requester.owner, bot.agentDocuments)) => {
@@ -189,21 +188,12 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
           credentials,
           initialMessages,
           held,
-          finished: async (answer) => {
+          finished: async () => {
             if (request === undefined) return;
             try {
-              await recordTurnSummary(
-                (turn) => summarizeTurn(turn, { requester, sessionId: input.threadId, model }),
-                async (finished) => saveTurn(finished),
-                input.threadId,
-                { request: userText(request), answer },
-              );
+              await saveTurn(turnActivity(userText(request)));
             } catch (error) {
-              const failure = { code: 'TURN_SUMMARY_FAILED', message: (error as Error).message };
-              await sessionMetadata.turnSummaryFailed(requester.owner, input.threadId, running, failure).catch((recordError: unknown) => {
-                throw new AggregateError([error, recordError], 'The Turn summary failed and its failure could not be recorded');
-              });
-              throw error;
+              if (!(error instanceof SessionDeletedError)) throw error;
             }
           },
           failed: (message) => request === undefined ? undefined : saveTurn(turnActivity(userText(request), message)),

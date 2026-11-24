@@ -104,7 +104,6 @@ describe('scheduled persistence dispatch admission', () => {
       const deps = { turnIdentity: null, bot, sessionMetadata: isolated.sessionMetadata,
         agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: tasks,
         stopScheduledRuntime: runtime.stop, upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
-        summarizeTurn: async () => ({ title: 'Brief', summary: 'Checked the curve.' }),
       };
       isolated.agentcore.scriptPrompt('Check the curve', { ...stream(...text('brief', 'Rates rose.')), hold });
       const original = { owner: account, taskId: id, deliveryId: 'first-occurrence' };
@@ -156,7 +155,6 @@ describe('scheduled persistence dispatch admission', () => {
       const deps = { turnIdentity: null, bot, sessionMetadata: isolated.sessionMetadata,
         agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: tasks,
         stopScheduledRuntime: runtime.stop, upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
-        summarizeTurn: async () => ({ title: 'Payrolls', summary: 'Previewed payrolls.' }),
       };
       isolated.agentcore.scriptPrompt('Preview payrolls', stream(...text('payrolls', 'Payrolls beat.')));
       // The daily run is already queued when the user makes the task run once, next year.
@@ -199,7 +197,6 @@ describe('scheduled persistence dispatch admission', () => {
       const deps = { turnIdentity: null, bot, sessionMetadata: isolated.sessionMetadata,
         agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: { get: tasks.get.bind(tasks), recordRun: tasks.recordRun.bind(tasks), retire, issueSideChat: tasks.issueSideChat.bind(tasks) },
         stopScheduledRuntime: runtime.stop, upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
-        summarizeTurn: async () => ({ title: 'Payrolls', summary: 'Previewed payrolls.' }),
       };
       isolated.agentcore.scriptPrompt('Preview payrolls', stream(...text('payrolls', 'Payrolls beat.')));
       const delivery = { owner: account, taskId: id, deliveryId: 'one-off-occurrence' };
@@ -244,7 +241,6 @@ describe('scheduled persistence dispatch admission', () => {
     const deps = { turnIdentity: null, bot, sessionMetadata: claimed.sessionMetadata,
       agentDocuments: new DynamoDBAgentDocuments(claimed.table.name, claimed.table.client), scheduledTasks: tasks,
       stopScheduledRuntime: runtime.stop, upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: claimed.sessionApi.url }),
-      summarizeTurn: async () => ({ title: 'Reserved Claim', summary: 'Completed this occurrence.' }),
     };
     await runs.fire(taskId);
     const sqs = new SQSClient(motoAws());
@@ -366,7 +362,7 @@ describe('scheduled persistence dispatch admission', () => {
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
     const post = vi.fn<SessionApi>(async () => ({}));
     const deps = {
-      turnIdentity: null, summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed.' }),
+      turnIdentity: null,
       bot, sessionMetadata: stack.sessionMetadata,
       agentDocuments: { get: async () => templates, save: async () => undefined, delete: async () => undefined, picture: async () => null, savePicture: async () => undefined },
       scheduledTasks: { get: async () => task, recordRun: vi.fn(async () => undefined), retire: async () => undefined, issueSideChat: async () => task.id },
@@ -399,7 +395,7 @@ describe('scheduled persistence dispatch admission', () => {
     const post = vi.fn<SessionApi>(async () => ({}));
     const stop = vi.fn<() => Promise<void>>().mockRejectedValue(new Error('Temporary stop failure'));
     const deps = {
-      turnIdentity: null, summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed.' }),
+      turnIdentity: null,
       bot, sessionMetadata: stack.sessionMetadata,
       agentDocuments: { get: async () => templates, save: async () => undefined, delete: async () => undefined, picture: async () => null, savePicture: async () => undefined },
       scheduledTasks: { get: async () => task, recordRun: vi.fn(async () => undefined), retire: async () => undefined, issueSideChat: async () => task.id },
@@ -446,7 +442,7 @@ describe('scheduled persistence dispatch admission', () => {
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
     const post = vi.fn<SessionApi>(async () => ({}));
     const deps = {
-      turnIdentity: null, summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed.' }),
+      turnIdentity: null,
       bot, sessionMetadata: stack.sessionMetadata,
       agentDocuments: { get: async () => templates, save: async () => undefined, delete: async () => undefined, picture: async () => null, savePicture: async () => undefined },
       scheduledTasks: { get: async () => task, recordRun: vi.fn(async () => undefined), retire: async () => undefined, issueSideChat: async () => task.id },
@@ -520,7 +516,6 @@ describe('scheduled persistence dispatch admission', () => {
     });
     const deps = {
       turnIdentity: null,
-      summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       bot, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task, recordRun: async () => undefined, retire: async () => undefined, issueSideChat: async () => task.id },
       stopScheduledRuntime: async () => undefined, upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined),
@@ -678,7 +673,6 @@ describe('scheduled persistence dispatch admission', () => {
     const post = vi.fn(async () => ({}));
     const deps = {
       turnIdentity: null,
-      summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       bot, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task, recordRun, retire: async () => undefined, issueSideChat: async () => task.id },
       stopScheduledRuntime: async () => undefined, upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined),
@@ -717,7 +711,6 @@ describe('scheduled persistence dispatch admission', () => {
     const post = vi.fn(async () => ({}));
     await expect(runScheduledTask({
       turnIdentity: null,
-      summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       bot, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => ({ id: 'deleted-run', proposalId: 'deleted-proposal', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false }), recordRun: async () => undefined, retire: async () => undefined, issueSideChat: async () => 'deleted-run' },
       upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined),
@@ -749,7 +742,6 @@ describe('scheduled persistence dispatch admission', () => {
     let finish: (() => void) | undefined;
     const run = runScheduledTask({
       turnIdentity: null,
-      summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       bot, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task, recordRun: async () => undefined, retire: async () => undefined, issueSideChat: async () => task.id },
       upstream: sessionLifecycle({ label: 'AgentCore', invoke: async () => new Response('data: {"type":"RUN_FINISHED"}\n\n') }, async () => undefined),

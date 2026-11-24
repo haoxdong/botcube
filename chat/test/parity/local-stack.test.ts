@@ -40,7 +40,6 @@ describe('against the local Harness', () => {
     await browser.openAccountSession();
     const id = await browser.newSideChat();
 
-    stack.bedrock.turnSummary = { title: 'First task', summary: 'Echoed the first turn' };
     const first = await browser.sendTurn(id, { text: 'first turn' });
     expect(first.status).toBe(200);
     expect(first.headers.get('content-type')).toContain('text/event-stream');
@@ -54,8 +53,6 @@ describe('against the local Harness', () => {
     expect(replayed).toMatchObject({ id, title: 'first turn' });
     expect(contents(replayed.messages)).toEqual(['first turn', 'Echo: first turn']);
 
-    await expect.poll(() => stack?.bedrock.summarizedTurns().length).toBe(1);
-    stack.bedrock.turnSummary = { title: 'Second task', summary: 'Echoed the second turn' };
     const second = await browser.post(
       '/',
       {
@@ -79,14 +76,10 @@ describe('against the local Harness', () => {
     expect(contents(continued.messages)).toEqual(['first turn', 'Echo: first turn', 'second turn', 'Echo: second turn']);
 
     await expect
-      .poll(async () => ((await (await browser.get('/activity')).json()) as { tasks: { title?: string; summary: string }[] }).tasks)
+      .poll(async () => ((await (await browser.get('/activity')).json()) as { tasks: { title: string }[] }).tasks)
       .toEqual([
-        expect.objectContaining({ title: 'Second task', summary: 'Echoed the second turn' }),
-        expect.objectContaining({ title: 'First task', summary: 'Echoed the first turn' }),
+        expect.objectContaining({ title: 'second turn' }),
+        expect.objectContaining({ title: 'first turn' }),
       ]);
-    expect(stack.bedrock.summarizedTurns()).toEqual([
-      { request: 'first turn', answer: 'Echo: first turn' },
-      { request: 'second turn', answer: 'Echo: second turn' },
-    ]);
   });
 });

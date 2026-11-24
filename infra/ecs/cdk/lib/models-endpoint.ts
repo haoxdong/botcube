@@ -3,8 +3,7 @@ import type { ModelsDeployment } from '../../../../config/seams.js' with { 'reso
 import { grantSecretReads } from './secret-reads.js';
 
 /** Grant the secrets the models Endpoint's credential is read from; the service reads the Endpoint from its BotCube Config. */
-export function grantModelsEndpoint(service: { task: TaskDefinition }, models: ModelsDeployment | undefined): boolean {
-  if (!models) return false;
+export function grantModelsEndpoint(service: { task: TaskDefinition }, models: ModelsDeployment | undefined): void {
+  if (!models) return;
   grantSecretReads(service.task, service.task, models.secretIds);
-  return true;
 }

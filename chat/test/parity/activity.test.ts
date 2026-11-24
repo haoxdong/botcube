@@ -8,18 +8,6 @@ beforeAll(async () => {
 });
 afterAll(() => stack.stop());
 
-/** A Turn the agent answers with this text. */
-const answer = (text: string) => ({
-  kind: 'stream' as const,
-  frames: [
-    { type: 'RUN_STARTED' },
-    { type: 'TEXT_MESSAGE_START', messageId: 'a1', role: 'assistant' },
-    { type: 'TEXT_MESSAGE_CONTENT', messageId: 'a1', delta: text },
-    { type: 'TEXT_MESSAGE_END', messageId: 'a1' },
-    { type: 'RUN_FINISHED' },
-  ].map((frame) => `data: ${JSON.stringify(frame)}`),
-});
-
 async function chattingBrowser(...topics: string[]): Promise<{ browser: Browser }> {
   const browser = stack.browser();
   await browser.openAccountSession();
@@ -50,8 +38,8 @@ describe('GET /activity', () => {
     const tasks = await activityOf(browser, 2);
 
     expect(tasks).toEqual([
-      { title: 'Answered a question', summary: 'Replied to the user', completedAt: expect.any(String) },
-      { title: 'Answered a question', summary: 'Replied to the user', completedAt: expect.any(String) },
+      { title: 'about activity-rates', completedAt: expect.any(String) },
+      { title: 'about activity-earnings', completedAt: expect.any(String) },
     ]);
     expect(tasks.map(({ completedAt }) => completedAt)).toEqual(tasks.map(({ completedAt }) => completedAt).sort().reverse());
   });
@@ -62,50 +50,6 @@ describe('GET /activity', () => {
     const response = await browser.get('/activity');
 
     expect(await response.json()).toEqual({ tasks: [] });
-  });
-
-  it('says what the agent did in each finished Turn: a title and a one-line summary', async () => {
-    const { browser } = await chattingBrowser();
-    const threadId = await browser.newSideChat();
-    stack.agentcore.script(threadId, answer('Apple beat on revenue; services grew 12%.'));
-    stack.bedrock.turnSummary = { title: 'Summarize AAPL earnings', summary: 'Found Apple beat on revenue' };
-    await (await browser.sendTurn(threadId, { text: 'about activity-summarized' })).text();
-
-    expect(await activityOf(browser, 1)).toEqual([
-      { title: 'Summarize AAPL earnings', summary: 'Found Apple beat on revenue', completedAt: expect.any(String) },
-    ]);
-    expect(stack.bedrock.summarizedTurns()).toContainEqual({
-      request: 'about activity-summarized',
-      answer: 'Apple beat on revenue; services grew 12%.',
-    });
-  });
-
-  it.each([
-    ['an upstream error', 'fail', 'The summary model answered HTTP 500'],
-    ['a malformed result', { title: '', summary: 'Missing title' }, 'The summary model answered without a title and summary'],
-  ] as const)('finishes the answer, and shows %s from the summary model in the Activity, and logs it', async (_label, result, detail) => {
-    const browser = stack.browser();
-    await browser.openAccountSession();
-    const threadId = await browser.newSideChat();
-    stack.agentcore.script(threadId, answer('Done.'));
-    stack.bedrock.turnSummary = result;
-    try {
-      const response = await browser.sendTurn(threadId, { text: 'Summarize this task' });
-      expect(response.status).toBe(200);
-      const frames = (await response.text()).split('\n\n').filter((frame) => frame.startsWith('data:'))
-        .map((frame) => JSON.parse(frame.slice(5)) as { type: string });
-      expect(frames.map(({ type }) => type)).not.toContain('RUN_ERROR');
-      expect(frames.at(-1)).toEqual({ type: 'RUN_FINISHED' });
-
-      await expect.poll(() => stack.logs()).toContain(`Turn summary failed session_id=${threadId}`);
-      expect(await activityOf(browser, 1)).toContainEqual({
-        summary: 'Summarize this task',
-        completedAt: expect.any(String),
-        failed: `The Turn summary could not be made: ${detail}`,
-      });
-    } finally {
-      stack.bedrock.turnSummary = { title: 'Answered a question', summary: 'Replied to the user' };
-    }
   });
 
   it('refuses a request without a Account', async () => {

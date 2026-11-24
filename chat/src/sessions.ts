@@ -103,14 +103,11 @@ export function sessionOperations(
       const turns = (await Promise.all(filingUserIds.map((id) => sessionMetadata.turnSummaries(id)))).flat();
       const tasks = turns
         .filter(({ session_id }) => listed.has(session_id))
-        .map(({ session_id, message_id, request, completed_at, title, summary, failed }) => {
+        .map(({ session_id, message_id, request, completed_at, failed }) => {
           if (request === undefined || completed_at === undefined) {
             throw new Error(`Turn ${message_id} of Session ${session_id} has no Activity entry; run the Activity backfill`);
           }
-          if (failed !== undefined) return { summary: request, failed, completedAt: completed_at };
-          return title === undefined || summary === undefined
-            ? { summary: request, completedAt: completed_at }
-            : { title, summary, completedAt: completed_at };
+          return { title: request, completedAt: completed_at, ...(failed === undefined ? {} : { failed }) };
         });
       return tasks.sort((a, b) => Date.parse(b.completedAt) - Date.parse(a.completedAt));
     },

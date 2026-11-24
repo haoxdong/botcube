@@ -108,58 +108,14 @@ export class FakeSessionApi extends HttpFake {
   }
 }
 
-/** What the fake summary model answers for a finished Turn: a title and a one-line summary, or a 500. */
-export type TurnSummaryAnswer = { title: string; summary: string } | 'fail';
-
-/** A Bedrock Converse request, as the Chat Service sends one with a forced tool. */
-interface ConverseRequest {
-  messages: { content: { text: string }[] }[];
-  toolConfig: { toolChoice: { tool: { name: string } } };
-}
-
-const converse = (request: { body: string }) => JSON.parse(request.body) as ConverseRequest;
-const forcedTool = (request: { body: string }) => converse(request).toolConfig.toolChoice.tool.name;
-const prompt = (request: { body: string }) => converse(request).messages[0]?.content[0]?.text ?? '{}';
-
-/**
- * The Bedrock Converse endpoint the Chat Service's models are called at. It answers a
- * finished Turn's summary with `turnSummary`, and records every request.
- */
-export class FakeBedrock extends HttpFake {
-  turnSummary: TurnSummaryAnswer = { title: 'Answered a question', summary: 'Replied to the user' };
-
-  constructor() {
-    super((request, response) => {
-      const tool = forcedTool(request);
-      if (this.turnSummary === 'fail') {
-        sendJson(response, 500, { message: `fake ${tool} model failure` });
-        return;
-      }
-      sendJson(response, 200, {
-        output: { message: { role: 'assistant', content: [{ toolUse: { toolUseId: `${tool}-1`, name: tool, input: this.turnSummary } }] } },
-        stopReason: 'tool_use',
-      });
-    });
-  }
-
-  /** The finished Turns sent for a summary, as the summary prompt carries them. */
-  summarizedTurns(): { request: string; answer: string }[] {
-    return this.requests
-      .filter((request) => forcedTool(request) === 'turn_summary')
-      .map((request) => JSON.parse(prompt(request)) as { request: string; answer: string });
-  }
-}
-
 /** Text content as either wire carries it: a string, or parts each with their text. */
 type Content = string | null | undefined | { type: string; text?: string }[];
 
 const contentText = (content: Content) => (typeof content === 'string' ? content : (content ?? []).map(({ text }) => text ?? '').join(''));
 
-/** A Messages request, as the summary model on an `anthropic` model sends one. */
 interface MessagesRequest {
   model: string;
   messages: { role: string; content: Content }[];
-  tool_choice?: { type: 'tool'; name: string };
 }
 
 /** A Chat Completions request, as an `openai` model sends one unless the gateway's openai provider uses Responses. */
@@ -167,7 +123,6 @@ interface ChatCompletionsRequest {
   model: string;
   stream?: boolean;
   messages: { role: string; content: Content }[];
-  tool_choice?: { type: 'function'; function: { name: string } };
 }
 
 /** A Responses request, as an `openai` model sends one when the gateway's openai provider uses Responses. */
@@ -175,7 +130,6 @@ interface ResponsesRequest {
   model: string;
   stream?: boolean;
   input: { type?: string; role?: string; content?: Content; output?: string }[];
-  tool_choice?: string | { type: 'function'; name: string };
 }
 
 /** The provider API a model request comes on: OpenAI's Chat Completions or Responses, or Anthropic's Messages. */
@@ -186,8 +140,6 @@ interface ModelCall {
   wire: ModelsApi;
   model: string;
   stream: boolean;
-  /** The tool the request forces, as the summary model does. */
-  forcedTool: string | undefined;
   /** The newest user message's text, which the fake echoes. */
   asked: string | undefined;
   /** The tool results the request carries back, in order. */
@@ -206,32 +158,30 @@ function lastAskedIndex(items: ReadonlyArray<{ role?: string }>): number {
 /** The request on `wire`, parsed once. */
 function modelCall(wire: ModelsApi, body: string): ModelCall {
   if (wire === 'messages') {
-    const { model, messages, tool_choice: choice } = JSON.parse(body) as MessagesRequest;
+    const { model, messages } = JSON.parse(body) as MessagesRequest;
     const lastAsked = lastAskedIndex(messages);
     return {
-      wire, model, stream: false, forcedTool: choice?.name,
+      wire, model, stream: false,
       asked: lastAsked < 0 ? undefined : contentText(messages[lastAsked]?.content),
       toolResults: [], toolAnswered: false,
     };
   }
   if (wire === 'chat-completions') {
-    const { model, stream, messages, tool_choice: choice } = JSON.parse(body) as ChatCompletionsRequest;
+    const { model, stream, messages } = JSON.parse(body) as ChatCompletionsRequest;
     const lastAsked = lastAskedIndex(messages);
     const results = (items: ChatCompletionsRequest['messages']) => items.flatMap(({ role, content }) => (role === 'tool' ? [contentText(content)] : []));
     return {
       wire, model, stream: stream === true,
-      forcedTool: choice?.function.name,
       asked: lastAsked < 0 ? undefined : contentText(messages[lastAsked]?.content),
       toolResults: results(messages),
       toolAnswered: results(messages.slice(lastAsked + 1)).length > 0,
     };
   }
-  const { model, stream, input, tool_choice: choice } = JSON.parse(body) as ResponsesRequest;
+  const { model, stream, input } = JSON.parse(body) as ResponsesRequest;
   const lastAsked = lastAskedIndex(input);
   const results = (items: ResponsesRequest['input']) => items.flatMap(({ type, output }) => (type === 'function_call_output' ? [output ?? ''] : []));
   return {
     wire, model, stream: stream === true,
-    forcedTool: typeof choice === 'object' ? choice.name : undefined,
     asked: lastAsked < 0 ? undefined : contentText(input[lastAsked]?.content),
     toolResults: results(input),
     toolAnswered: results(input.slice(lastAsked + 1)).length > 0,
@@ -243,13 +193,11 @@ type Answer = { id: number } & ({ text: string } | { tool: string; callId: strin
 
 /**
  * A model gateway (the BotCube Config's `openai-compatible` models), serving OpenAI's Chat Completions at
- * `<url>/v1/chat/completions` and Responses at `<url>/v1/responses`, and Anthropic's Messages, unstreamed, at `<url>/v1/messages`. It answers a forced `turn_summary` with `turnSummary`, and any other request as
+ * `<url>/v1/chat/completions` and Responses at `<url>/v1/responses`, and Anthropic's Messages, unstreamed, at `<url>/v1/messages`. It answers as
  * BotCube's echo model does, streamed when asked; with `agentToolCall` set, it first calls that tool, and echoes once the
  * tool's result is back. It accepts only `apiKey` and records every request, headers included.
  */
 export class FakeOpenAICompatible extends HttpFake {
-  /** `no-tool`: the summary model answers in text, without the forced tool. */
-  turnSummary: TurnSummaryAnswer | 'no-tool' = { title: 'Answered a question', summary: 'Replied to the user' };
   /** The tool the agent's model calls before it answers a user message, and its arguments. */
   agentToolCall: { name: string; arguments: Record<string, unknown> } | undefined;
   /** The statuses the next requests are answered with before any body, as a gateway in front of the models fails. */
@@ -291,10 +239,6 @@ export class FakeOpenAICompatible extends HttpFake {
       }
       const call = modelCall(wire, request.body);
       const answer = this.answer(call, this.requests.length);
-      if (answer === 'fail') {
-        sendJson(response, 500, { error: { message: `fake ${call.forcedTool} model failure` } });
-        return;
-      }
       if (wire === 'messages') {
         sendJson(response, 200, messagesBody(call.model, answer));
         return;
@@ -317,12 +261,7 @@ export class FakeOpenAICompatible extends HttpFake {
     });
   }
 
-  private answer({ forcedTool, asked, toolAnswered }: ModelCall, id: number): Answer | 'fail' {
-    if (forcedTool !== undefined) {
-      if (this.turnSummary === 'fail') return 'fail';
-      if (this.turnSummary === 'no-tool') return { id, text: 'No summary.' };
-      return { id, tool: forcedTool, callId: `${forcedTool}-${id}`, arguments: JSON.stringify(this.turnSummary) };
-    }
+  private answer({ asked, toolAnswered }: ModelCall, id: number): Answer {
     const scripted = toolAnswered ? undefined : this.toolCalls.shift();
     if (scripted !== undefined) return { id, tool: scripted.name, callId: `${scripted.name}-call`, arguments: JSON.stringify(scripted.arguments) };
     if (this.agentToolCall !== undefined && !toolAnswered) {
@@ -351,13 +290,6 @@ export class FakeOpenAICompatible extends HttpFake {
   /** The tool results the agent's model requests carried back, in order. */
   toolResults(): string[] {
     return this.calls().flatMap(({ toolResults }) => toolResults);
-  }
-
-  /** The finished Turns sent for a summary, as the summary prompt carries them. */
-  summarizedTurns(): { request: string; answer: string }[] {
-    return this.calls()
-      .filter(({ forcedTool }) => forcedTool === 'turn_summary')
-      .map(({ asked }) => JSON.parse(asked ?? '{}') as { request: string; answer: string });
   }
 }
 

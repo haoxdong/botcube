@@ -7,7 +7,7 @@ describe('the models section on an OpenAI-compatible Endpoint', () => {
   it('grants the Chat Service and the Credential Service the secret its credential is read from', () => {
     const credential = { kind: 'secret', secretId: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/models-api-key' } as const;
     const deployed = modelGatewayResources({
-      kind: 'openai-compatible', url: 'https://models.example.com/v1', credential, headers: { 'x-tenant': 'botcube-example' }, turnSummaryModel: 'openai:summary',
+      kind: 'openai-compatible', url: 'https://models.example.com/v1', credential, headers: { 'x-tenant': 'botcube-example' },
     });
 
     expect(deployed).toEqual({ secretIds: [credential.secretId] });
@@ -16,7 +16,7 @@ describe('the models section on an OpenAI-compatible Endpoint', () => {
   it("grants the secret each provider's own credential is read from, beside the gateway's", () => {
     const anthropic = { kind: 'secret', secretId: 'botcube/anthropic-key' } as const;
     const deployed = modelGatewayResources({
-      kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/key' }, turnSummaryModel: 'openai:summary',
+      kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/key' },
       providers: { anthropic: { url: 'https://models.example.com/anthropic', credential: anthropic }, openai: { url: 'https://models.example.com/openai/v1' } },
     });
 
@@ -25,7 +25,7 @@ describe('the models section on an OpenAI-compatible Endpoint', () => {
 
   it('grants nothing for a credential read from a file', () => {
     const deployed = modelGatewayResources({
-      kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/key' }, turnSummaryModel: 'openai:summary',
+      kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/key' },
     });
 
     expect(deployed).toEqual({ secretIds: [] });

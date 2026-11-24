@@ -243,7 +243,7 @@ describe('a scheduled run', () => {
     });
   });
 
-  it("puts what the run did in the Activity: its Turn's title and summary", async () => {
+  it("puts the scheduled prompt in Activity", async () => {
     const browser = await visitor();
     const task = await confirm(browser, { ...MORNING_BRIEF, prompt: 'Brief me on oil' });
     stack.agentcore.scriptPrompt(
@@ -254,43 +254,18 @@ describe('a scheduled run', () => {
         { type: 'TEXT_MESSAGE_END', messageId: 'a1' }
       )
     );
-    stack.bedrock.turnSummary = { title: 'Brief on oil', summary: 'Reported Brent up 2%' };
     const { id: mainChat } = (await (await browser.get('/main-chat')).json()) as { id: string };
 
     await scheduler.fire(task.id);
 
     expect(await posted(mainChat)).toHaveLength(1);
     expect(((await (await browser.get('/activity')).json()) as { tasks: unknown[] }).tasks).toContainEqual({
-      title: 'Brief on oil',
-      summary: 'Reported Brent up 2%',
+      title: 'Brief me on oil',
       completedAt: expect.any(String),
     });
-    expect(stack.bedrock.summarizedTurns()).toContainEqual({ request: 'Brief me on oil', answer: 'Brent rose 2%.' });
   });
 
 
-  it('posts the summary failure to Main Chat and keeps its queue delivery failed', async () => {
-    const logged = vi.spyOn(console, 'error');
-    const browser = await visitor();
-    const task = await confirm(browser, { ...MORNING_BRIEF, prompt: 'Brief me with a broken summary' });
-    stack.agentcore.scriptPrompt('Brief me with a broken summary', answer(
-      { type: 'TEXT_MESSAGE_START', messageId: 'a1', role: 'assistant' },
-      { type: 'TEXT_MESSAGE_CONTENT', messageId: 'a1', delta: 'Rates rose.' },
-      { type: 'TEXT_MESSAGE_END', messageId: 'a1' },
-    ));
-    const { id: mainChat } = (await (await browser.get('/main-chat')).json()) as { id: string };
-    stack.bedrock.turnSummary = 'fail';
-    try {
-      await scheduler.fire(task.id);
-      expect(await posted(mainChat)).toEqual([
-        'Scheduled task "Morning brief" failed: The Turn summary could not be saved: The summary model answered HTTP 500',
-      ]);
-      await vi.waitFor(() => expect(logged.mock.calls).toContainEqual(['Scheduled run failed', expect.any(Error)]));
-      expect(await scheduler.queued()).toBe(1);
-    } finally {
-      stack.bedrock.turnSummary = { title: 'Answered a question', summary: 'Replied to the user' };
-    }
-  });
 
   it('posts a failed run to the Main Chat', async () => {
     const browser = await visitor();

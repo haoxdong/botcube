@@ -494,31 +494,29 @@ describe('fence', () => {
   it("deletes the Session's Turn summaries and keeps other Sessions'", async () => {
     await turn('account-1', 'session-1', T1);
     await turn('account-1', 'session-1#2', T1);
-    await summarize('account-1', 'session-1', 'message-1');
-    await summarize('account-1', 'session-1#2', 'message-2');
+    await saveActivity('account-1', 'session-1', 'message-1');
+    await saveActivity('account-1', 'session-1#2', 'message-2');
 
     await fence('account-1', 'session-1', T2);
 
-    expect(await metadata.turnSummaries('filed-account-1')).toMatchObject([summarized('session-1#2', 'message-2')]);
+    expect(await metadata.turnSummaries('filed-account-1')).toMatchObject([activityRow('session-1#2', 'message-2')]);
   });
 });
 
-async function summarize(owner: string, sessionId: string, messageId: string): Promise<void> {
+async function saveActivity(owner: string, sessionId: string, messageId: string): Promise<void> {
   await metadata.saveTurnSummary(
     owner,
     { sessionId, filingUserId: `filed-${owner}`, messageId },
-    { request: `Request ${messageId}`, completedAt: T2, summary: { title: `Title ${messageId}`, summary: `Summary of ${messageId}` } },
+    { request: `Request ${messageId}`, completedAt: T2 },
   );
 }
 
-/** The row `summarize` saves. */
-const summarized = (sessionId: string, messageId: string) => ({
+/** The row `saveActivity` saves. */
+const activityRow = (sessionId: string, messageId: string) => ({
   session_id: sessionId,
   message_id: messageId,
   request: `Request ${messageId}`,
   completed_at: T2,
-  title: `Title ${messageId}`,
-  summary: `Summary of ${messageId}`,
 });
 
 describe('Turn summaries', () => {
@@ -533,13 +531,13 @@ describe('Turn summaries', () => {
       });
       queries += 1;
       if (queries === 3) throw new Error('Summary read denied');
-      return { output: { $metadata: {}, Items: [summarized('session-1', `message-${queries}`)],
+      return { output: { $metadata: {}, Items: [activityRow('session-1', `message-${queries}`)],
         ...(queries === 1 ? { LastEvaluatedKey: { pk: 'TURN_SUMMARIES#filed-account-1', sk: 'SESSION#session-1#TURN#message-1' } } : {}),
       }, response: {} };
     }, { step: 'initialize' });
     const eventual = new DynamoDBSessionMetadata(table, recording);
     expect(await eventual.turnSummaries('filed-account-1')).toEqual([
-      summarized('session-1', 'message-1'), summarized('session-1', 'message-2'),
+      activityRow('session-1', 'message-1'), activityRow('session-1', 'message-2'),
     ]);
     expect(queries).toBe(2);
     await expect(eventual.turnSummaries('filed-account-1')).rejects.toThrow('Summary read denied');
@@ -547,42 +545,30 @@ describe('Turn summaries', () => {
 
   it("lists each finished Turn's summary under its Session's filing user", async () => {
     await turn('account-1', 'session-1', T1);
-    await summarize('account-1', 'session-1', 'message-1');
-    await summarize('account-1', 'session-1', 'message-2');
+    await saveActivity('account-1', 'session-1', 'message-1');
+    await saveActivity('account-1', 'session-1', 'message-2');
 
     expect(await metadata.turnSummaries('filed-account-1')).toMatchObject([
-      summarized('session-1', 'message-1'),
-      summarized('session-1', 'message-2'),
+      activityRow('session-1', 'message-1'),
+      activityRow('session-1', 'message-2'),
     ]);
     expect(await metadata.turnSummaries('filed-account-2')).toMatchObject([]);
   });
 
-  it('keeps the latest summary of a Turn summarized again', async () => {
+  it('keeps the latest Activity entry for the same Turn', async () => {
     await turn('account-1', 'session-1', T1);
-    await summarize('account-1', 'session-1', 'message-1');
+    await saveActivity('account-1', 'session-1', 'message-1');
     await metadata.saveTurnSummary(
       'account-1',
       { sessionId: 'session-1', filingUserId: 'filed-account-1', messageId: 'message-1' },
-      { request: 'Asked again', completedAt: T3, summary: { title: 'Retitled', summary: 'Resummarized' } },
+      { request: 'Asked again', completedAt: T3 },
     );
 
     expect(await metadata.turnSummaries('filed-account-1')).toMatchObject([
-      { session_id: 'session-1', message_id: 'message-1', request: 'Asked again', completed_at: T3, title: 'Retitled', summary: 'Resummarized' },
+      { session_id: 'session-1', message_id: 'message-1', request: 'Asked again', completed_at: T3 },
     ]);
   });
 
-  it('saves a Turn the summary model could not summarize with its request and completion time alone', async () => {
-    await turn('account-1', 'session-1', T1);
-    await metadata.saveTurnSummary(
-      'account-1',
-      { sessionId: 'session-1', filingUserId: 'filed-account-1', messageId: 'message-1' },
-      { request: 'Plot EURUSD', completedAt: T2 },
-    );
-
-    expect(await metadata.turnSummaries('filed-account-1')).toMatchObject([
-      { session_id: 'session-1', message_id: 'message-1', request: 'Plot EURUSD', completed_at: T2 },
-    ]);
-  });
 
   it('saves a failed Turn with its request, completion time and error', async () => {
     await turn('account-1', 'session-1', T1);
@@ -602,7 +588,7 @@ describe('Turn summaries', () => {
     await metadata.transferOwner('account-1', 'account-2');
     if (deleted === 'Session') await metadata.fence('account-2', 'session-1');
     else await metadata.fenceOwner('account-2');
-    await expect(summarize('account-1', 'session-1', 'message-1')).rejects.toBeInstanceOf(SessionDeletedError);
+    await expect(saveActivity('account-1', 'session-1', 'message-1')).rejects.toBeInstanceOf(SessionDeletedError);
     expect(await metadata.get('account-1', 'session-1')).toBeNull();
     expect(await metadata.get('account-2', 'session-1')).toBeNull();
     expect(await metadata.turnSummaries('filed-account-1')).toMatchObject([]);
@@ -614,7 +600,7 @@ describe('Turn summaries', () => {
     await expect(metadata.saveTurnSummary(
       'account-1',
       { sessionId: 'session-1', filingUserId: 'filed-account-2', messageId: 'message-1' },
-      { request: 'Request', completedAt: T2, summary: { title: 'Title', summary: 'Summary' } },
+      { request: 'Request', completedAt: T2 },
     )).rejects.toBeInstanceOf(SessionDeletedError);
     expect(await metadata.get('account-1', 'session-1')).toBeNull();
     expect(await metadata.get('account-2', 'session-1')).toMatchObject({ filing_user_id: 'filed-account-1' });
@@ -633,7 +619,7 @@ describe('Turn summaries', () => {
     await expect(failing.saveTurnSummary(
       'account-1',
       { sessionId: 'session-1', filingUserId: 'filed-account-1', messageId: 'message-1' },
-      { request: 'Request', completedAt: T2, summary: { title: 'Title', summary: 'Summary' } },
+      { request: 'Request', completedAt: T2 },
     )).rejects.toBe(failure);
     expect(await metadata.turnSummaries('filed-account-1')).toMatchObject([]);
   });
@@ -659,7 +645,7 @@ describe('Turn summaries', () => {
 
     for (const [owner, sessionId] of [['account-1', 'missing'], ['account-1', 'fenced'], ['account-2', 'session-2']] as const) {
       // eslint-disable-next-line no-await-in-loop -- each refusal is checked against the same table
-      await expect(summarize(owner, sessionId, 'message-1')).rejects.toBeInstanceOf(SessionDeletedError);
+      await expect(saveActivity(owner, sessionId, 'message-1')).rejects.toBeInstanceOf(SessionDeletedError);
     }
     expect(await items()).toEqual(before);
   });
@@ -1483,16 +1469,16 @@ describe('durable Turn summary erasure recovery', () => {
     await turn('alice', 'shared', T1);
     await turn('alice', 'shared#2', T1);
     await turn('bob', 'shared', T1);
-    await summarize('alice', 'shared', 'alice-message');
-    await summarize('alice', 'shared#2', 'longer-session');
-    await summarize('bob', 'shared', 'bob-message');
+    await saveActivity('alice', 'shared', 'alice-message');
+    await saveActivity('alice', 'shared#2', 'longer-session');
+    await saveActivity('bob', 'shared', 'bob-message');
     const failure = new Error('task terminated during summary deletion');
     const interrupted = metadataWith(async (command) => { if (command === 'DeleteItemCommand') throw failure; });
     await expect(interrupted.fence('alice', 'shared')).rejects.toBe(failure);
     const job = { session_id: 'shared', filing_user_id: 'filed-alice' };
     expect(await metadata.pendingPurges()).toMatchObject([job]);
     expect(await metadata.turnSummaries('filed-alice')).toHaveLength(2);
-    await expect(summarize('alice', 'shared', 'late-summary')).rejects.toBeInstanceOf(SessionDeletedError);
+    await expect(saveActivity('alice', 'shared', 'late-summary')).rejects.toBeInstanceOf(SessionDeletedError);
     await expect(interrupted.completePurge(job)).rejects.toBe(failure);
     expect(await metadata.pendingPurges()).toMatchObject([job]);
     expect((await items()).find((item) => item.pk === 'PURGES')).not.toHaveProperty('completed_at');
@@ -1500,10 +1486,10 @@ describe('durable Turn summary erasure recovery', () => {
     await replacement.completePurge(job);
     expect(await replacement.pendingPurges()).toMatchObject([]);
     expect(await replacement.turnSummaries('filed-alice')).toMatchObject([
-      { session_id: 'shared#2', message_id: 'longer-session', request: 'Request longer-session', completed_at: '2026-01-02T03:04:06.000Z', title: 'Title longer-session', summary: 'Summary of longer-session' },
+      activityRow('shared#2', 'longer-session'),
     ]);
     expect(await replacement.turnSummaries('filed-bob')).toMatchObject([
-      { session_id: 'shared', message_id: 'bob-message', request: 'Request bob-message', completed_at: '2026-01-02T03:04:06.000Z', title: 'Title bob-message', summary: 'Summary of bob-message' },
+      activityRow('shared', 'bob-message'),
     ]);
   });
 });
@@ -1617,58 +1603,6 @@ describe('the running mark', () => {
     expect(session).not.toHaveProperty('turn_failure');
   });
 
-  // The summary runs on after the stream closed, so it can fail on either side of turnEnded.
-  const summaryFailure = { code: 'TURN_SUMMARY_FAILED', message: 'The Turn summary could not be saved: throttled' };
-
-  it.each(['before', 'after'])('records why the Turn summary failed %s the Turn ends', async (side) => {
-    const running = { startedAt: T1, runId: `run-${T1}` };
-    await start(T1);
-
-    if (side === 'after') await metadata.turnEnded('account-1', 'session-1', running, undefined);
-    await metadata.turnSummaryFailed('account-1', 'session-1', running, summaryFailure);
-    if (side === 'before') await metadata.turnEnded('account-1', 'session-1', running, undefined);
-
-    const session = await metadata.get('account-1', 'session-1');
-    expect(session).toMatchObject({ turn_failure: { ...summaryFailure, runId: running.runId } });
-    expect(session).not.toHaveProperty('turn_run_id');
-  });
-
-  it("keeps a newer Turn's mark when an earlier Turn's summary fails", async () => {
-    await start(T1);
-    await start(T2);
-
-    await metadata.turnSummaryFailed('account-1', 'session-1', { startedAt: T1, runId: `run-${T1}` }, summaryFailure);
-
-    const session = await metadata.get('account-1', 'session-1');
-    expect(session).toMatchObject({ turn_running_since: T2, turn_run_id: `run-${T2}` });
-    expect(session).not.toHaveProperty('turn_failure');
-  });
-
-  it("does not mark a newer, finished Turn failed when an earlier Turn's summary fails", async () => {
-    await start(T1);
-    await start(T2);
-    await metadata.turnEnded('account-1', 'session-1', { startedAt: T2, runId: `run-${T2}` }, undefined);
-
-    await metadata.turnSummaryFailed('account-1', 'session-1', { startedAt: T1, runId: `run-${T1}` }, summaryFailure);
-
-    expect(await metadata.get('account-1', 'session-1')).not.toHaveProperty('turn_failure');
-  });
-
-  it("does not mark a later scheduled Turn failed when an earlier Turn's summary fails", async () => {
-    await start(T1);
-    await metadata.turnEnded('account-1', 'session-1', { startedAt: T1, runId: `run-${T1}` }, undefined);
-    await metadata.recordTurn('account-1', 'session-1', { allocation: true, filingUserId: 'filed-account-1', title: 'hello' });
-
-    await metadata.turnSummaryFailed('account-1', 'session-1', { startedAt: T1, runId: `run-${T1}` }, summaryFailure);
-
-    expect(await metadata.get('account-1', 'session-1')).not.toHaveProperty('turn_failure');
-  });
-
-  it('creates no Session for a summary failure', async () => {
-    await metadata.turnSummaryFailed('account-1', 'never-recorded', { startedAt: T1, runId: `run-${T1}` }, summaryFailure);
-
-    expect(await metadata.get('account-1', 'never-recorded')).toBeNull();
-  });
 });
 
 describe('running identity retry', () => {

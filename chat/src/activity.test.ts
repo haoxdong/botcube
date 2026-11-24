@@ -1,5 +1,5 @@
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
-import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
 import { eventually } from '../test/eventually.js';
@@ -72,7 +72,6 @@ describe('GET /activity', () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toContain(JSON.stringify(terminal));
     expect(await (await activity(account)).json()).toEqual({ tasks: [] });
-    expect(stack.bedrock.summarizedTurns()).not.toContainEqual(expect.objectContaining({ request: `about ${threadId}` }));
     expect(await stack.sessionMetadata.get(account, threadId)).not.toHaveProperty('turn_running_since');
     stack.agentcore.script(threadId, { kind: 'stream', frames: ['data: {"type":"RUN_FINISHED"}'] });
     await chat(account, '2026-10-29T00:00:00.000Z', threadId);
@@ -87,29 +86,8 @@ describe('GET /activity', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       tasks: [
-        { title: 'Answered a question', summary: 'Replied to the user', completedAt: '2026-10-01T10:00:00.000Z' },
-        { title: 'Answered a question', summary: 'Replied to the user', completedAt: '2026-10-01T09:00:00.000Z' },
-      ],
-    });
-  });
-
-  it("shows each summarized Turn's title and summary, and the request's first line, failed on why, for the rest", async () => {
-    onTestFinished(() => {
-      stack.bedrock.turnSummary = { title: 'Answered a question', summary: 'Replied to the user' };
-    });
-    stack.bedrock.turnSummary = 'fail';
-    await chat('summarized', '2026-10-02T01:00:00.000Z', 'unsummarized');
-    stack.bedrock.turnSummary = { title: 'Chart the 10y', summary: 'Charted the 10y yield since January' };
-    await chat('summarized', '2026-10-02T02:00:00.000Z', 'yields');
-
-    expect(await (await activity('summarized')).json()).toEqual({
-      tasks: [
-        { title: 'Chart the 10y', summary: 'Charted the 10y yield since January', completedAt: '2026-10-02T02:00:00.000Z' },
-        {
-          summary: 'about unsummarized',
-          completedAt: '2026-10-02T01:00:00.000Z',
-          failed: 'The Turn summary could not be made: The summary model answered HTTP 500',
-        },
+        { title: 'about rates', completedAt: '2026-10-01T10:00:00.000Z' },
+        { title: 'about earnings', completedAt: '2026-10-01T09:00:00.000Z' },
       ],
     });
   });
@@ -124,9 +102,8 @@ describe('GET /activity', () => {
     await chat('failing', '2026-10-06T01:00:00.000Z', 'broken');
 
     expect(await (await activity('failing')).json()).toEqual({
-      tasks: [{ summary: 'about broken', failed: 'Model overloaded', completedAt: '2026-10-06T01:00:00.000Z' }],
+      tasks: [{ title: 'about broken', failed: 'Model overloaded', completedAt: '2026-10-06T01:00:00.000Z' }],
     });
-    expect(stack.bedrock.summarizedTurns()).not.toContainEqual(expect.objectContaining({ request: 'about broken' }));
   });
 
   it('reads Session Metadata alone, with no session API call', async () => {
@@ -146,7 +123,7 @@ describe('GET /activity', () => {
     expect((await stack.app.request('/threads/deleted', { method: 'DELETE', headers: { 'x-account': 'keeper' } })).ok).toBe(true);
 
     expect(await (await activity('keeper')).json()).toEqual({
-      tasks: [{ title: 'Answered a question', summary: 'Replied to the user', completedAt: '2026-10-04T01:00:00.000Z' }],
+      tasks: [{ title: 'about kept', completedAt: '2026-10-04T01:00:00.000Z' }],
     });
   });
 

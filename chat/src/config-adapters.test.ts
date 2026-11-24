@@ -27,7 +27,6 @@ describe("the Chat Service's adapters", () => {
       proxy: { kind: 'none' },
       corsOrigins: ['http://localhost:3001', 'http://127.0.0.1:3001'],
       automationUserAgents: [],
-      models: { kind: 'bedrock' },
     });
   });
 
