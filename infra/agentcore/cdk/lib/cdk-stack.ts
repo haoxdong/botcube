@@ -1,3 +1,4 @@
+import { harnessAlarmEvents } from 'botcube-config/harness-alarm-events';
 import type { AgentCoreApplication, AgentCoreProjectSpec } from '@aws/agentcore-cdk';
 import { CfnOutput, Duration, Stack, type CfnResource, type StackProps } from 'aws-cdk-lib';
 import * as bedrockagentcore from 'aws-cdk-lib/aws-bedrockagentcore';
@@ -353,7 +354,7 @@ export class AgentCoreStack extends Stack {
     // Session finishes. Both count as progress on the Chat Service's account-deletion stalled alarm.
     new logs.MetricFilter(this, 'SessionPurgeProgress', {
       logGroup,
-      filterPattern: logs.FilterPattern.literal('"Session purge deleted"'),
+      filterPattern: logs.FilterPattern.allTerms(harnessAlarmEvents.sessionPurgeDeleted),
       metricNamespace: 'BotCube/ChatService',
       metricName: 'AccountDeletionProgress',
       metricValue: '1',

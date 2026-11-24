@@ -7,6 +7,14 @@
   },
   "exports": {
     ".": "./schema.ts",
+    "./alarm-events": {
+      "types": "./alarm-events.d.cts",
+      "default": "./alarm-events.cjs"
+    },
+    "./harness-alarm-events": {
+      "types": "./harness-alarm-events.d.cts",
+      "default": "./harness-alarm-events.cjs"
+    },
     "./blocks": "./blocks.ts",
     "./existing": "./existing.ts",
     "./images": "./images.ts",

@@ -16,6 +16,8 @@ from tempfile import NamedTemporaryFile
 from threading import Lock
 from time import perf_counter
 
+from .alarm_events import FILES_MOUNT_ERROR_CODE
+
 _MOUNT_LOCK = Lock()
 _LOCAL = Path('/run/botcube-files')
 _WATCHDOG: subprocess.Popen[bytes] | None = None
@@ -23,7 +25,7 @@ MOUNT_TIMEOUT = 30.0
 
 
 class FilesMountError(RuntimeError):
-    code = 'FILES_MOUNT'
+    code = FILES_MOUNT_ERROR_CODE
 
 
 @dataclass(frozen=True)

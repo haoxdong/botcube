@@ -246,7 +246,7 @@ test.each([false, true])('persistent account deletion failures notify the alert 
   const template = synth(undefined, parked);
   template.hasResourceProperties('AWS::Logs::MetricFilter', {
     LogGroupName: { Ref: named(template, 'ChatServiceLogs').id },
-    FilterPattern: '?"Account deletion failed; it remains pending" ?"Session purge failed; authorized account deletion remains pending"',
+    FilterPattern: '?"Account deletion failed; it remains pending" ?"Session purge failed; account history deletion remains pending"',
     MetricTransformations: [{ MetricNamespace: 'BotCube/ChatService', MetricName: 'AccountDeletionFailures', MetricValue: '1' }],
   });
   template.hasResourceProperties('AWS::CloudWatch::Alarm', {

@@ -1,3 +1,6 @@
+import { chatAlarmEvents } from 'botcube-config/alarm-events';
+import { harnessAlarmEvents } from 'botcube-config/harness-alarm-events';
+import { accountDeletionFailureFilter } from './account-deletion-filter.js';
 import { parkState, parkServiceIngress } from './park-state.js';
 import { optionalPhysicalName } from './physical-name.js';
 import { ArnFormat, CfnOutput, CfnResource, Duration, Stack, Token } from 'aws-cdk-lib';
@@ -220,20 +223,17 @@ export class PreviewChatService extends Construct {
     const failures = (id: string, filter: keyof NonNullable<PreviewChatServiceProps['metricFilterNames']>, suffix: Parameters<typeof alarm>[0], line: string) => {
       const filterResource = new logs.MetricFilter(this, id, {
         ...optionalPhysicalName('filterName', props.metricFilterNames?.[filter]),
-        logGroup, filterPattern: logs.FilterPattern.literal(`"${line}"`), metricNamespace: 'BotCube/ChatService', metricName: id, metricValue: '1',
+        logGroup, filterPattern: logs.FilterPattern.allTerms(line), metricNamespace: 'BotCube/ChatService', metricName: id, metricValue: '1',
       });
       (filterResource.node.defaultChild as CfnResource).cfnOptions.condition = parkState(this).liveCondition;
       const metric = filterResource.metric({ statistic: 'Sum', period: Duration.seconds(props.failureAlarmPeriodSeconds ?? 300) });
       alarm(suffix, metric, cloudwatch.TreatMissingData.NOT_BREACHING, 0, cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
         { periods: 1, alarmName: `${props.clusterName}-${suffix}` });
     };
-    // A purge whose retries ran out leaves the Session fenced with its events stored.
-    failures('SessionPurgeFailures', 'sessionPurgeFailures', 'session-purge-failures', 'Session purge failed');
-    // A stopping task whose Agent Computer browsers did not sleep may leave them running until their timeout.
-    failures('AgentComputerStopSleepFailures', 'agentComputerStopSleepFailures', 'agent-computer-stop-sleep-failures', 'Agent Computer sleep at task stop failed');
-    // A Turn whose Files could not be mounted reached no Files: its relayed run error carries FILES_MOUNT.
-    failures('FilesMountFailures', 'filesMountFailures', 'files-mount-failures', 'code=FILES_MOUNT');
-    // The error grouper (ops/credentials/error_grouper.py) reads its Chat Service matcher from this filter, and alarms on none.
+    failures('SessionPurgeFailures', 'sessionPurgeFailures', 'session-purge-failures', chatAlarmEvents.sessionPurgeFailed);
+    failures('AgentComputerStopSleepFailures', 'agentComputerStopSleepFailures', 'agent-computer-stop-sleep-failures', chatAlarmEvents.agentComputerStopSleepFailed);
+    failures('FilesMountFailures', 'filesMountFailures', 'files-mount-failures', `${chatAlarmEvents.runErrorCodeField}${harnessAlarmEvents.filesMountErrorCode}`);
+    // ops/credentials/error_grouper.py reads its matcher from this filter.
     new logs.MetricFilter(this, 'Errors', {
       ...optionalPhysicalName('filterName', props.metricFilterNames?.errors),
       logGroup, filterPattern: logs.FilterPattern.anyTerm('Error', 'ERROR', 'Exception', 'failed'),
@@ -241,7 +241,7 @@ export class PreviewChatService extends Construct {
     });
     const accountDeletionFailures = new logs.MetricFilter(this, 'AccountDeletionFailures', {
       ...optionalPhysicalName('filterName', props.metricFilterNames?.accountDeletionFailures),
-      logGroup, filterPattern: logs.FilterPattern.anyTerm('Account deletion failed; it remains pending', 'Session purge failed; authorized account deletion remains pending'),
+      logGroup, filterPattern: accountDeletionFailureFilter,
       metricNamespace: 'BotCube/ChatService', metricName: 'AccountDeletionFailures', metricValue: '1',
     });
     const accountDeletionAlarm = new cloudwatch.Alarm(this, 'AccountDeletionAlarm', {
@@ -267,8 +267,8 @@ export class PreviewChatService extends Construct {
       metric: new cloudwatch.MathExpression({
         expression: 'IF(FILL(pending, 0) > 0 AND FILL(progress, 0) == 0, 1, 0)',
         usingMetrics: {
-          pending: deletionLines('AccountDeletionPending', logs.FilterPattern.literal('"Account deletion pending"')),
-          progress: deletionLines('AccountDeletionProgress', logs.FilterPattern.anyTerm('Account history erase purged', 'Account deletion completed')),
+          pending: deletionLines('AccountDeletionPending', logs.FilterPattern.allTerms(chatAlarmEvents.accountDeletionPending)),
+          progress: deletionLines('AccountDeletionProgress', logs.FilterPattern.anyTerm(chatAlarmEvents.accountEraseProgress, chatAlarmEvents.accountDeletionCompleted)),
         },
         period: Duration.minutes(5),
       }),

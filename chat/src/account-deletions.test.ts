@@ -117,6 +117,7 @@ describe('the first deletion sweep after a wake', () => {
     store.heldElsewhere = false;
     await deletions.recover();
     await vi.waitFor(() => expect(store.deletions.get(intent.accountId)?.status).toBe('completed'));
+    expect(info).toHaveBeenCalledWith('Account deletion completed operation_id=op_1');
   });
 
   // A live task whose erase hangs renews its lease, so only a sweep's own line shows the deletion still pending.

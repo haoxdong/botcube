@@ -1,3 +1,4 @@
+import { chatAlarmEvents } from 'botcube-config/alarm-events';
 import { stillServing } from './task-drain.js';
 import type { SessionApi } from './session-api.js';
 import { RuntimeAdmissionUnprovedError } from './session-lifecycle.js';
@@ -90,13 +91,13 @@ export function purgeQueue(
   async function failPurge(session: SessionPurge, error: unknown): Promise<void> {
     if (!(error instanceof RuntimeAdmissionUnprovedError)) queued.delete(jobKey(session));
     // The Session-purge alarm's metric filter matches this literal.
-    console.error(`Session purge failed; the Session stays fenced. session_id=${session.session_id}`, error);
+    console.error(`${chatAlarmEvents.sessionPurgeFailed}; the Session stays fenced. session_id=${session.session_id}`, error);
     if (error instanceof RuntimeAdmissionUnprovedError) {
       try {
         await retainUnproved(session);
       } catch (persistenceError) {
         queued.delete(jobKey(session));
-        console.error(`Session purge failed; recording the unproved admission fence failed. session_id=${session.session_id}`, persistenceError);
+        console.error(`${chatAlarmEvents.sessionPurgeFailed}; recording the unproved admission fence failed. session_id=${session.session_id}`, persistenceError);
       }
     }
   }
@@ -116,7 +117,7 @@ export function purgeQueue(
           // Another task releases only its durable row, so keep observing the
           // fenced Session until that registration clears or turns 3 h old (REGISTRATION_EXPIRY_MS).
           if (pending === backoffMs.length) {
-            console.error(`Session purge failed; the Session stays fenced. session_id=${sessionId}`, error);
+            console.error(`${chatAlarmEvents.sessionPurgeFailed}; the Session stays fenced. session_id=${sessionId}`, error);
           }
           const wait = backoffMs[Math.min(pending, backoffMs.length - 1)] ?? 5_000;
           // Rejoin the serial queue after waiting: a stranded writer must not
@@ -187,7 +188,7 @@ export function purgeQueue(
         done += 1;
         if (Date.now() - reported >= PROGRESS_EVERY_MS) {
           reported = Date.now();
-          console.info(`Account history erase purged ${done} of ${sessions.length} Sessions`);
+          console.info(`${chatAlarmEvents.accountEraseProgress} ${done} of ${sessions.length} Sessions`);
         }
         if (atOnce < eraseAtOnce && Date.now() - cleanSince >= REGROW_AFTER_MS) {
           atOnce += 1;
@@ -238,7 +239,7 @@ export function purgeQueue(
     wait(sessions: SessionPurge[]) {
       accountErases += 1;
       const result = eraseAll(sessions).finally(() => { accountErases -= 1; });
-      void result.catch((error: unknown) => { console.error('Session purge failed; account history deletion remains pending', error); });
+      void result.catch((error: unknown) => { console.error(chatAlarmEvents.accountPurgeFailed, error); });
       return result;
     },
   });

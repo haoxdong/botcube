@@ -1,3 +1,4 @@
+import { chatAlarmEvents } from 'botcube-config/alarm-events';
 import type { Account, AccountDeletionIntent } from './account-record.js';
 import type { AccountStore } from './account-store.js';
 import { HttpError } from './http-error.js';
@@ -69,7 +70,7 @@ export function accountDeletions<A extends Account>({ store, deleteAccount, cred
       }
       await deleteAccount(intent.accountId);
       await store().completeAccountDeletion(authorized);
-      console.info(`Account deletion completed operation_id=${intent.operationId}`);
+      console.info(`${chatAlarmEvents.accountDeletionCompleted} operation_id=${intent.operationId}`);
     });
     if (!ran) console.info(`Account deletion continues on another task operation_id=${intent.operationId}`);
   }
@@ -77,11 +78,11 @@ export function accountDeletions<A extends Account>({ store, deleteAccount, cred
   async function enqueuePending(): Promise<void> {
     for (const intent of await store().pendingAccountDeletions()) {
       // Each sweep, so an alarm sees a pending deletion that logs no progress.
-      console.info(`Account deletion pending operation_id=${intent.operationId}`);
+      console.info(`${chatAlarmEvents.accountDeletionPending} operation_id=${intent.operationId}`);
       if (finishing.has(intent.accountId)) continue;
       finishing.add(intent.accountId);
       void finish(intent).catch((error: unknown) => {
-        console.error('Account deletion failed; it remains pending', intent.accountId, error);
+        console.error(chatAlarmEvents.accountDeletionFailed, intent.accountId, error);
       }).finally(() => { finishing.delete(intent.accountId); });
     }
   }
@@ -96,7 +97,7 @@ export function accountDeletions<A extends Account>({ store, deleteAccount, cred
         await enqueuePending();
         return;
       }
-      void sweep().catch((error: unknown) => { console.error('Account deletion failed; it remains pending', error); });
+      void sweep().catch((error: unknown) => { console.error(chatAlarmEvents.accountDeletionFailed, error); });
     },
   };
 }

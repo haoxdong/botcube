@@ -1,8 +1,6 @@
+import { chatAlarmEvents } from 'botcube-config/alarm-events';
 /** ECS kills a stopping task 120 s after its SIGTERM (stopTimeout, preview-chat-service.ts): a sleep still running by then has failed. */
 const STOP_DEADLINE_MS = 110_000;
-
-/** Every failure of the sleep at task stop logs this line, which alarms (ADR 0030). */
-const STOP_SLEEP_FAILED = 'Agent Computer sleep at task stop failed';
 
 /** What putting every awake Agent Computer to sleep at task stop answers. */
 export interface TaskStopSleep {
@@ -27,7 +25,7 @@ export function sleepComputersAtTaskStop(sleepAgentComputers: () => TaskStopSlee
       stream.write('', () => process.exit(code));
     };
     const deadline = setTimeout(() => {
-      console.error(STOP_SLEEP_FAILED, new Error(`Agent Computers still sleeping ${STOP_DEADLINE_MS} ms after SIGTERM`));
+      console.error(chatAlarmEvents.agentComputerStopSleepFailed, new Error(`Agent Computers still sleeping ${STOP_DEADLINE_MS} ms after SIGTERM`));
       exit(1, process.stderr);
     }, STOP_DEADLINE_MS).unref();
     const { slept, sleeps } = sleepAgentComputers();
@@ -41,10 +39,10 @@ export function sleepComputersAtTaskStop(sleepAgentComputers: () => TaskStopSlee
         if (exiting) return;
         // The first failure alarms at once (ADR 0030), and each later one as it comes: the other browsers go on
         // sleeping before the task exits.
-        console.error(STOP_SLEEP_FAILED, error);
+        console.error(chatAlarmEvents.agentComputerStopSleepFailed, error);
         const logged = sleeps.map((sleep) =>
           sleep.catch((later: unknown) => {
-            if (later !== error) console.error(STOP_SLEEP_FAILED, later);
+            if (later !== error) console.error(chatAlarmEvents.agentComputerStopSleepFailed, later);
           }),
         );
         void Promise.all(logged).then(() => exit(1, process.stderr));

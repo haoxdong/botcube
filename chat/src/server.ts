@@ -1,3 +1,4 @@
+import { chatAlarmEvents } from 'botcube-config/alarm-events';
 import { TurnQuota, TurnQuotaExceeded } from './turn-quota.js';
 import { startChatTracing } from './tracing.js';
 import { chatTable } from './config.js';
@@ -147,7 +148,7 @@ export function createChatService(
       recoveryError = undefined;
     } catch (error) {
       recoveryError = error;
-      console.error('Session purge failed; durable cleanup recovery failed', error);
+      console.error(`${chatAlarmEvents.sessionPurgeFailed}; durable cleanup recovery failed`, error);
     }
   };
   const sessions = sessionOperations(sessionMetadata, invokeSessionApi, agentDocuments, scheduledTasks, purgeSessions, (owner) => bot.filingUserId(owner));

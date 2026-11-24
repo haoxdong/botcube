@@ -1,3 +1,4 @@
+import { accountDeletionFailureFilter } from '../../infra/ecs/cdk/lib/account-deletion-filter.js';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { RuntimeAdmissionUnprovedError } from './session-lifecycle.js';
 import { accountErasesRunning, purgeQueue } from './purges.js';
@@ -237,6 +238,12 @@ describe('a background Session purge', () => {
     expect(erased).toEqual(['unrelated']);
     expect(completed).toEqual(['unrelated']);
     expect(consoleError).toHaveBeenCalledWith('Session purge failed; account history deletion remains pending', failure);
+    const [line] = defined(consoleError.mock.calls.find(([, error]) => error === failure), 'the emitted purge failure');
+    const { logPatternString } = accountDeletionFailureFilter;
+    expect(logPatternString).toMatch(/^\?"[^"]+"(?: \?"[^"]+")*$/);
+    const terms = [...logPatternString.matchAll(/\?"([^"]+)"/g)].map(([, term]) => defined(term, 'a metric filter term'));
+    expect(terms.some((term) => String(line).includes(term)),
+      `Expected ${JSON.stringify(line)} to match ${logPatternString}`).toBe(true);
   });
 
   it('purges each Session in turn, starting the next once the last is done', async () => {

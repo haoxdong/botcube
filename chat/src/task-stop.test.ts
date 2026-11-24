@@ -1,12 +1,8 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { readFileSync } from 'node:fs';
-import { transpileModule, ScriptTarget, ModuleKind } from 'typescript';
 import { expect, it } from 'vitest';
 
-const main = transpileModule(readFileSync(new URL('./task-stop.ts', import.meta.url), 'utf8').replace(/^import .*;\n/gm, '').replace('export function', 'function'), {
-  compilerOptions: { target: ScriptTarget.ES2022, module: ModuleKind.ES2022 },
-}).outputText;
+const main = `import { sleepComputersAtTaskStop } from ${JSON.stringify(new URL('./task-stop.ts', import.meta.url).href)};`;
 
 const modes = ['failure', 'later-failure', 'deadline', 'success', 'deadline-late-success', 'success-before-deadline'] as const;
 for (const mode of modes) {

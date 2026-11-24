@@ -1,3 +1,4 @@
+import { chatAlarmEvents } from 'botcube-config/alarm-events';
 import { runFinishedOutcome } from './run-outcome.js';
 import type { TurnTiming } from './turn-timing.js';
 import { AbstractAgent, CompatibilityBoundary, EventType, transformChunks, type BaseEvent } from '@ag-ui/client';
@@ -722,7 +723,7 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
     for (const { type, code, message } of events) {
       if (type === EventType.RUN_ERROR) {
         terminal = true;
-        console.error(`${upstream.label} run failed session_id=${sessionId} code=${String(code)} message=${String(message)}`);
+        console.error(`${upstream.label} run failed session_id=${sessionId} ${chatAlarmEvents.runErrorCodeField}${String(code)} message=${String(message)}`);
       }
     }
   };
