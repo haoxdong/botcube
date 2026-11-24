@@ -1,9 +1,8 @@
 """The proxy Endpoint's credential, headers and TLS (ADR 0091) for the Credential Service, the twin of the Harness's `proxy_relay`.
 
 An HTTP client takes its proxy once, so the models relay, when its Endpoint names the proxy, is pointed at this
-loopback relay, which opens each request to the proxy the BotCube Config names with the credential file's current
-value and the client certificate as read now: a rotated token or certificate reaches the next request. Neither is
-read before the first request.
+loopback relay. Each request uses the token from the Credential Source and the current client certificate.
+The first request triggers both reads.
 """
 from __future__ import annotations
 
@@ -15,11 +14,11 @@ import socket
 import socketserver
 import ssl
 from collections.abc import Callable, Mapping
-from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
 from urllib.parse import urlsplit
 
+from .credential_source import CredentialSource, credential_source
 from .endpoint_tls import (
     EndpointTls,
     EndpointTlsError,
@@ -34,22 +33,6 @@ log = logging.getLogger(__name__)
 _MAX_HEAD_BYTES = 64 * 1024
 # Request headers the relay sets itself, dropping a client's.
 _REPLACED = {'proxy-authorization', 'proxy-connection', 'connection'}
-
-
-def _file_credential(source: Mapping[str, str]) -> Callable[[], str]:
-    """A proxy credential, always a file (`proxy.credential` in botcube/config)."""
-    if source['kind'] != 'file':
-        raise RuntimeError(f"proxy.credential: the proxy credential is a file, not {source['kind']}")
-    path = Path(source['path'])
-
-    def read() -> str:
-        # Read on each request, so a rotated file reaches the next one.
-        try:
-            return path.read_text().strip()
-        except OSError as error:
-            raise RuntimeError(f'proxy credential (file {path}): {error.strerror}') from None
-
-    return read
 
 
 _relays: dict[str, str] = {}
@@ -67,7 +50,7 @@ def proxy_url_from_config(config: Mapping[str, Any], env: Mapping[str, str] = os
     if not {'credential', 'headers', 'tls'} & proxy.keys():
         return lambda: proxy['url']
     key = json.dumps(proxy, sort_keys=True)
-    credential = _file_credential(proxy['credential']) if 'credential' in proxy else None
+    credential = credential_source('proxy', proxy['credential'], env=env) if 'credential' in proxy else None
     tls = endpoint_tls('proxy', proxy['tls'], env=env) if 'tls' in proxy else None
 
     def relay() -> str:
@@ -86,7 +69,7 @@ def relay_provider_proxy(config: Mapping[str, Any], provider: str, env: Mapping[
 
 
 def start_proxy_relay(
-    *, upstream: str, listen: tuple[str, int], credential: Callable[[], str] | None, headers: Mapping[str, str], tls: EndpointTls | None = None,
+    *, upstream: str, listen: tuple[str, int], credential: CredentialSource | None, headers: Mapping[str, str], tls: EndpointTls | None = None,
 ) -> str:
     """Serve `listen` as a forward proxy that sends each request on to `upstream`, authenticated; its proxy URL."""
     target = urlsplit(upstream)
@@ -98,7 +81,7 @@ def start_proxy_relay(
             client: socket.socket = self.request
             try:
                 head, rest = _read_head(client)
-                authorization = f'Bearer {credential()}' if credential else None
+                authorization = f'Bearer {credential.get().value}' if credential else None
                 context = (tls.context() if tls else ssl.create_default_context()) if secure else None
             except Exception as error:
                 refuse(client, f'could not open a request through {upstream}', error)

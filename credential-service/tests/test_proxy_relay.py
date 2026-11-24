@@ -18,7 +18,6 @@ from botcube_credential_service.openai import OpenAIProvider
 from botcube_credential_service.proxy_relay import (
     proxy_url_from_config,
     relay_provider_proxy,
-    start_proxy_relay,
 )
 
 pytestmark = pytest.mark.integration
@@ -90,25 +89,26 @@ def _from_config(url: str, token: Path, **proxy: object) -> str:
     return relay()
 
 
-def test_relay_opens_each_tunnel_with_the_files_current_value_and_the_headers(upstream: tuple[str, list[str]], tmp_path: Path) -> None:
+def test_relay_opens_each_tunnel_with_the_file_credential_and_headers(upstream: tuple[str, list[str]], tmp_path: Path) -> None:
     url, heads = upstream
     token = tmp_path / 'proxy-token'
     token.write_text('first\n')
     relay = _from_config(url, token, headers={'x-tenant': 'botcube-example'})
 
     answer = _exchange(relay, 'CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\nProxy-Authorization: Basic stale\r\n\r\n', b'hello')
-    token.write_text('rotated\n')
     _exchange(relay, 'CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n', b'again')
 
     assert answer == b'HTTP/1.1 200 Connection Established\r\n\r\nhello'
     assert [head.split('\r\n')[0] for head in heads] == ['CONNECT api.example.com:443 HTTP/1.1'] * 2
-    assert [_header(head, 'proxy-authorization') for head in heads] == [['Bearer first'], ['Bearer rotated']]
+    assert [_header(head, 'proxy-authorization') for head in heads] == [['Bearer first'], ['Bearer first']]
     assert [_header(head, 'x-tenant') for head in heads] == [['botcube-example']] * 2
 
 
-def test_relay_authenticates_a_plain_http_request_one_to_a_connection(upstream: tuple[str, list[str]]) -> None:
+def test_relay_authenticates_a_plain_http_request_one_to_a_connection(upstream: tuple[str, list[str]], tmp_path: Path) -> None:
     url, heads = upstream
-    relay = start_proxy_relay(upstream=url, listen=('127.0.0.1', 0), credential=lambda: 'token', headers={})
+    token = tmp_path / 'proxy-token'
+    token.write_text('token')
+    relay = _from_config(url, token)
 
     answer = _exchange(relay, 'GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\nConnection: keep-alive\r\n\r\n')
 
@@ -126,8 +126,21 @@ def test_relay_answers_502_naming_the_credential_and_opens_nothing_when_it_fails
     answer = _exchange(relay, 'CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n').decode('latin-1')
 
     assert answer.split('\r\n')[0] == 'HTTP/1.1 502 Bad Gateway'
-    assert f'proxy credential (file {missing}): No such file or directory' in answer
+    assert f'proxy credential (file {missing}):' in answer
+    assert 'No such file or directory' in answer
     assert heads == []
+
+
+def test_relay_refuses_an_empty_credential_file_before_forwarding(upstream: tuple[str, list[str]], tmp_path: Path) -> None:
+    url, heads = upstream
+    token = tmp_path / 'proxy-token'
+    token.write_text('')
+    relay = _from_config(url, token)
+
+    answer = _exchange(relay, 'GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n').decode('latin-1')
+
+    assert (answer.split('\r\n')[0], [_header(head, 'proxy-authorization') for head in heads]) == ('HTTP/1.1 502 Bad Gateway', [])
+    assert f'proxy credential (file {token}): the file is empty' in answer
 
 
 @pytest.mark.parametrize(('proxy', 'expected'), json.loads((Path(__file__).resolve().parents[2] / 'tests/fixtures/proxy-url.json').read_text()))
@@ -142,7 +155,6 @@ def test_proxy_url_and_reuse(proxy: dict[str, Any], expected: str | None) -> Non
         relay = first()
         assert relay == expected or (expected.endswith(':') and relay.startswith(expected) and relay[len(expected):].isdecimal())
         assert second() == relay
-
 
 
 @pytest.mark.parametrize(('relay_providers', 'through'), [
