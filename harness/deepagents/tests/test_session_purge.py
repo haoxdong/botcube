@@ -114,6 +114,36 @@ def test_a_purge_retried_after_failing_part_way_empties_everything(
     assert _left(memory, SESSION) == {}
 
 
+@pytest.mark.parametrize('resource', ['event', 'memory'])
+def test_a_purge_tolerates_only_the_listed_event_disappearing(
+    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch, resource: str,
+) -> None:
+    saver = agentcore.build_checkpointer(MEMORY_ID, region_name='us-east-1')
+    _write(saver, SESSION, 2)
+    _write(saver, OTHER, 1)
+    delete = memory.delete_event
+
+    def delete_after_event_disappears(**params: Any) -> dict[str, Any]:
+        monkeypatch.setattr(memory, 'delete_event', delete)
+        if resource == 'event':
+            delete(**params)
+            message = f"Event not found with id: {params['eventId']}"
+        else:
+            message = 'Memory not found'
+        raise memory.exceptions.ResourceNotFoundException(
+            {'Error': {'Code': 'ResourceNotFoundException', 'Message': message}}, 'DeleteEvent')
+
+    monkeypatch.setattr(memory, 'delete_event', delete_after_event_disappears)
+    if resource == 'event':
+        purge_module.purge_session(saver, 'user-1', SESSION)
+        assert _left(memory, SESSION) == {}
+        assert len(_left(memory, OTHER)) == 2
+    else:
+        with pytest.raises(memory.exceptions.ResourceNotFoundException, match='Memory not found'):
+            purge_module.purge_session(saver, 'user-1', SESSION)
+        assert _left(memory, SESSION)
+
+
 def test_a_purge_deletes_at_five_per_second(memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch) -> None:
     clock = [10.0]
     sleeps: list[float] = []

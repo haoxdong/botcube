@@ -8,7 +8,6 @@ their IDs (ADR 0067 decision 9). A damaged snapshot requires a prefix scan.
 from __future__ import annotations
 
 import logging
-from contextlib import suppress
 from threading import Lock
 from time import monotonic, sleep
 from typing import Any
@@ -80,16 +79,24 @@ def _purge(events: Any, actor_id: str, session_id: str) -> None:
         )['events']
         if not page:
             return
+        deleted = 0
         for event in page:
+            event_id = event['eventId']
             _pace()
-            with suppress(events.client.exceptions.ResourceNotFoundException):
+            try:
                 events.client.delete_event(
                     memoryId=events.memory_id,
                     actorId=actor_id,
                     sessionId=session_id,
-                    eventId=event['eventId'],
+                    eventId=event_id,
                 )
-        log.info('Session purge deleted %d events. session_id=%s', len(page), session_id)
+            except events.client.exceptions.ResourceNotFoundException as error:
+                if error.response.get('Error', {}).get('Message') != f'Event not found with id: {event_id}':
+                    raise
+                continue
+            deleted += 1
+        if deleted:
+            log.info('Session purge deleted %d events. session_id=%s', deleted, session_id)
 
 
 def _pace() -> None:

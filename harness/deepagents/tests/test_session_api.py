@@ -888,7 +888,14 @@ def test_concurrent_session_purges_both_succeed(
     def delete_listed_event(**params: Any) -> dict[str, Any]:
         deleting.wait(timeout=5)
         with lock:
-            memory.get_event(**params)
+            try:
+                memory.get_event(**params)
+            except memory.exceptions.ResourceNotFoundException as error:
+                raise memory.exceptions.ResourceNotFoundException(
+                    {'Error': {'Code': 'ResourceNotFoundException',
+                               'Message': f"Event not found with id: {params['eventId']}"}},
+                    'DeleteEvent',
+                ) from error
             return delete(**params)
 
     monkeypatch.setattr(memory, 'delete_event', delete_listed_event)
