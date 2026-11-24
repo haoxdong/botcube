@@ -62,3 +62,18 @@ it('keeps the header inside the same panned viewport as the composer', () => {
   });
   expect(result.current).toEqual({ inset: 0, top: 0 });
 });
+
+it('reads the viewport on its events, not on every render', () => {
+  const { result, rerender } = renderHook(usePhoneViewport);
+  let reads = 0;
+  vi.stubGlobal('visualViewport', new Proxy(viewport, { get: (target, key) => (key === 'height' && reads++, Reflect.get(target, key)) }));
+  rerender();
+  rerender();
+  expect(reads).toBe(0);
+  act(() => {
+    viewport.height = 500;
+    window.dispatchEvent(new Event('resize'));
+  });
+  expect(reads).toBe(1);
+  expect(result.current.inset).toBe(344);
+});
