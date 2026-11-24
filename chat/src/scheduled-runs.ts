@@ -222,11 +222,10 @@ async function runInSideChat(
   if (prepared === null) return { status: 'skipped', text: 'the previous run was still going' };
   const sessionUserId = prepared.session.filing_user_id;
   reached.sideChat = true;
-  let output: ScheduledRunOutput;
+  let output: ScheduledRunOutput | undefined;
   let execution: ScheduledExecution | undefined;
   let phase: 'preparing' | 'submitted' | 'received' = 'preparing';
   let failure: unknown;
-  let provider: string | undefined;
   try {
     execution = await deps.sessionMetadata.scheduledRuns?.execution(owner, sideChat);
     if (execution === undefined) throw new HttpError(503, 'Scheduled execution admission is unavailable');
@@ -258,7 +257,6 @@ async function runInSideChat(
       credentialValues(payload.forwardedProps, bot.credentialProps, token),
       initialMessages,
     );
-    provider = model.provider;
   } catch (error) {
     failure = error;
     throw error;
@@ -266,7 +264,8 @@ async function runInSideChat(
     try {
       await execution?.finish(stops, phase !== 'submitted', failure);
     } finally {
-      await sessionMetadata.turnEnded(owner, sideChat, running, undefined, provider);
+      // Scheduled runs buffer the stream, so record RUN_STARTED with completion in one write.
+      await sessionMetadata.turnEnded(owner, sideChat, running, undefined, output?.started ? model.provider : undefined);
     }
   }
   const signIn = await bot.signInNeeded?.(owner, [...output.toolResults, ...output.texts]) ?? null;
@@ -280,7 +279,6 @@ async function runInSideChat(
       { request: task.prompt, answer: answer ?? '' },
     );
   } else {
-    // The Activity lists a run that could not finish by its request, failed on a run error.
     await sessionMetadata.saveTurnSummary(owner, turn, turnActivity(task.prompt, output.error ?? undefined));
   }
   return signIn !== null

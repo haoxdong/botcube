@@ -5,22 +5,22 @@ import { readTurnEvents } from './turn-events.js';
 import { turnCredentialGuard, turnErrorDetails } from './turn-stream.js';
 
 export interface ScheduledRunOutput {
+  started: boolean;
   texts: string[];
   toolResults: string[];
   error: string | null;
 }
 
-/** Read a Turn's AG-UI event stream to its end. */
 export async function readScheduledRun(response: Response, label: string, credentials: readonly string[], initialMessages: RunAgentInput['messages']): Promise<ScheduledRunOutput> {
   if (!response.ok) {
-    return { texts: [], toolResults: [], error: `${label} returned HTTP ${response.status}: ${turnErrorDetails((await response.text()).trim(), credentials)}` };
+    return { started: false, texts: [], toolResults: [], error: `${label} returned HTTP ${response.status}: ${turnErrorDetails((await response.text()).trim(), credentials)}` };
   }
   const texts = new Map<string, string>();
   let snapshotTexts = new Map<string, string>();
   const toolResults: string[] = [];
   let error: string | null = null;
   let finished = false;
-  const withheld: ScheduledRunOutput = { texts: [], toolResults: [], error: "The agent's answer carried the Turn's credentials, so it was withheld" };
+  const withheld: ScheduledRunOutput = { started: false, texts: [], toolResults: [], error: "The agent's answer carried the Turn's credentials, so it was withheld" };
   const events = await readTurnEvents(await response.text(), credentials, initialMessages);
   if (events === null) return withheld;
   for (const event of events) {
@@ -50,9 +50,10 @@ export async function readScheduledRun(response: Response, label: string, creden
 
   error ??= finished ? null : `${label} stream ended before RUN_FINISHED`;
   const answers = new Map([...snapshotTexts, ...texts]);
-  const output = { texts: [...answers.values()].map((text) => text.trim()).filter(Boolean), toolResults, error };
+  const started = events.some(({ type }) => type === 'RUN_STARTED');
+  const output = { started, texts: [...answers.values()].map((text) => text.trim()).filter(Boolean), toolResults, error };
   // The scheduled consumer assembles its own text, independently of client snapshot replacement.
-  return turnCredentialGuard(credentials).leaks('', [output]) ? withheld : output;
+  return turnCredentialGuard(credentials).leaks('', [output]) ? { ...withheld, started } : output;
 }
 
 function currentSnapshotTexts(event: unknown, requestMessageId: string | undefined): Map<string, string> {

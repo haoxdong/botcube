@@ -690,6 +690,7 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
     withheld.length = 0;
   };
   let terminal = false;
+  let started = false;
   let startFailure: { error: unknown } | undefined;
   let endTiming: { readAt: number; summarized: Promise<{ summaryMs: number; summaryFailed: boolean }>; endedMs?: number } | undefined;
   let endLogged = false;
@@ -776,9 +777,10 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
   };
 
   const readinessError = async (events: Frame['events']) => {
-    if (turn.started === undefined || !events.some(({ type }) => type === EventType.RUN_STARTED)) return null;
+    if (started || turn.started === undefined || !events.some(({ type }) => type === EventType.RUN_STARTED)) return null;
     try {
       await turn.started();
+      started = true;
       return null;
     } catch (error) {
       startFailure = { error };

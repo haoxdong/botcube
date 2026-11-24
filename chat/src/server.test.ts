@@ -425,8 +425,10 @@ it.each(['main', 'side'])('replays a recorded pre-dispatch opening failure in %s
     expect((await target.app.request('/', openingPost(id, 'failed-opening-run'))).status).toBe(500);
     const replay = await target.app.request(kind === 'main' ? '/main-chat' : `/threads/${id}`);
     expect(replay.status).toBe(200);
-    expect(await replay.json()).toMatchObject({ id, provider: 'anthropic', messages: [], running: false,
+    const thread = await replay.json();
+    expect(thread).toMatchObject({ id, messages: [], running: false,
       failure: { runId: 'failed-opening-run', message: 'opening payload failed' } });
+    expect(thread).not.toHaveProperty('provider');
     expect(target.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: id, userId: filed('acct_account-1') });
     expect((await target.app.request('/', openingPost(id, 'duplicate'))).status).toBe(409);
     fail = false;
@@ -473,8 +475,11 @@ it.each([{ kind: 'main', failure: 'http' }, { kind: 'side', failure: 'http' }, {
     await response.text();
     const replay = await target.app.request(kind === 'main' ? '/main-chat' : `/threads/${id}`);
     expect(replay.status).toBe(200);
-    expect(await replay.json()).toMatchObject({ id, provider: 'anthropic', messages: [], running: false,
+    const thread = await replay.json();
+    expect(thread).toMatchObject({ id, messages: [], running: false,
       failure: { runId: 'rejected-opening-run', message: expect.stringContaining('Model service unavailable') } });
+    if (failure === 'stream') expect(thread).toHaveProperty('provider', 'anthropic');
+    else expect(thread).not.toHaveProperty('provider');
     target.sessionApi.reply(id, 404, { error: 'The route is missing' });
     expect((await target.app.request(kind === 'main' ? '/main-chat' : `/threads/${id}`)).status).toBe(404);
     target.sessionApi.reply(id, 503, { error: 'Checkpoint storage failed' });

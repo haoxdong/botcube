@@ -259,6 +259,38 @@ describe("a Session's provider", () => {
     expect(await threadOf('session-provider-first')).toMatchObject({ provider: 'openai' });
   });
 
+  it('records a provider switch once and preserves it when the next Turn is refused', async () => {
+    const threadId = 'session-provider-switch';
+    await stack.allocate('acct_account-1', threadId);
+    await (await postTurn(turn(threadId, { model: 'quick' }, 'bedrock-turn'))).text();
+    expect(await threadOf(threadId)).toMatchObject({ provider: 'anthropic' });
+
+    const writes: unknown[] = [];
+    stack.table.client.middlewareStack.add((next) => async (args) => {
+      if ('ExpressionAttributeValues' in args.input) {
+        const provider = args.input.ExpressionAttributeValues?.[':provider'];
+        if (provider !== undefined) writes.push(provider);
+      }
+      return next(args);
+    }, { step: 'initialize', name: 'observeTurnProviderWrites' });
+    try {
+      stack.agentcore.script(threadId, { kind: 'stream', frames: [
+        'data: {"type":"RUN_STARTED"}',
+        'data: {"type":"RUN_STARTED"}',
+        'data: {"type":"RUN_FINISHED"}',
+      ] });
+      await (await postTurn(turn(threadId, { model: 'plan' }, 'plan-turn'))).text();
+      expect(await threadOf(threadId)).toMatchObject({ provider: 'openai' });
+
+      stack.agentcore.script(threadId, { kind: 'stream', frames: ['data: {"type":"RUN_ERROR","message":"Refused before execution"}'] });
+      expect(await (await postTurn(turn(threadId, { model: 'quick' }, 'refused-turn'))).text()).toContain('Refused before execution');
+      expect(await threadOf(threadId)).toMatchObject({ provider: 'openai' });
+      expect(writes).toEqual(['openai']);
+    } finally {
+      stack.table.client.middlewareStack.remove('observeTurnProviderWrites');
+    }
+  });
+
   it("is the account's default model's when its first Turn names none", async () => {
     await stack.allocate('acct_account-1', 'session-provider-default');
     const response = await postTurn(turn('session-provider-default', {}));

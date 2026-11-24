@@ -222,6 +222,35 @@ describe('a scheduled run', () => {
   });
 
   it.each([
+    { kind: 'error', status: 409, body: 'Session busy' },
+    { kind: 'stream', frames: ['data: {"type":"RUN_ERROR","message":"Session busy"}'] },
+  ] satisfies import('../test/fakes/fake-agentcore.js').UpstreamScript[])('keeps the last provider in the same Side Chat after a $kind refusal', async (refusal) => {
+    const account = owner();
+    const main = await mainChat(account);
+    const { id, prompt } = await run(account, stream(...text('a1', 'Done.')));
+    await posted(main);
+    const sideChat = defined(await sideChatOf(account, id) ?? undefined, 'the run Side Chat');
+    const thread = async () => (await request(account, `/threads/${sideChat}`)).json();
+    expect(await thread()).toMatchObject({ provider: 'openai' });
+
+    planCatalogs.set(account, []);
+    stack.agentcore.scriptPrompt(prompt, refusal);
+    await scheduler.fire(id);
+    await vi.waitFor(async () => expect(await posted(main)).toContainEqual({
+      content: expect.stringContaining('Session busy'), userId: filed(account),
+    }));
+    expect(await thread()).toMatchObject({ provider: 'openai' });
+
+    stack.agentcore.scriptPrompt(prompt, stream({ type: 'RUN_ERROR', message: 'Model overloaded after start' }));
+    await scheduler.fire(id);
+    await vi.waitFor(async () => expect(await posted(main)).toContainEqual({
+      content: expect.stringContaining('Model overloaded after start'), userId: filed(account),
+    }));
+    expect(await thread()).toMatchObject({ provider: 'anthropic' });
+    expect(await sideChatOf(account, id)).toBe(sideChat);
+  });
+
+  it.each([
     ['same ID safe history', 'safe-', 'a1', ['safe-token']],
     ['different ID credential prefix', 'scheduled-invocation-', 'a2', ['scheduled-invocation-', 'token']],
   ])('preserves scheduled aggregation for %s across a snapshot', async (_, prefix, secondId, outputs) => {
