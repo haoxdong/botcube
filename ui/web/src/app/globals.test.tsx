@@ -1338,10 +1338,10 @@ it('keeps the phone header and menu on screen with the keyboard up', () => {
 });
 
 
-// iOS Safari tints the strip behind the clock with the page's colour, so the open drawer's grey reaches up to the clock
-// only when the page itself turns grey. happy-dom resolves neither :has nor the phone query, so the sheet is read.
-it("turns the page the drawer's grey while the phone drawer is open, up behind the clock", () => {
-  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*html:has\(\.sidebar-expanded\),\s*html:has\(\.sidebar-expanded\) body \{\s*background: var\(--color-fill\);/);
+// iOS Safari tints the strip behind the clock with the page's colour, so the open drawer's white reaches up to the clock
+// only when the page itself turns white. happy-dom resolves neither :has nor the phone query, so the sheet is read.
+it("turns the page the drawer's white while the phone drawer is open, up behind the clock", () => {
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*html:has\(\.sidebar-expanded\),\s*html:has\(\.sidebar-expanded\) body \{\s*background: var\(--color-white\);/);
 });
 
 // An earlier design drew a 99px Marq, about 77px tall with his hat, behind a shadowed pill over his body. Muse's 68px avatar sits
@@ -1544,7 +1544,7 @@ it('keeps the phone as it was: no desktop card, frame, header or sidebar value r
     happyDOM.settings.navigator.maxTouchPoints = 5;
     const open = render(desktopApp('sidebar-expanded'));
     try {
-      expect(styleOf(open.container, '.sidebar').backgroundColor).toBe('#f0f0f0');
+      expect(styleOf(open.container, '.sidebar').backgroundColor).toBe('#fff');
       expect(zero(styleOf(open.container, '.sidebar-main').gap)).toBe('0px');
       expect(styleOf(open.container, '.sidebar-main').padding).toBe('38px 10px 10px');
       expect(styleOf(open.container, '.sidebar-section-header').padding).toBe('10px 20px 0px');

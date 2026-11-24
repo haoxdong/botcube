@@ -100,11 +100,11 @@
     padding-bottom: 0;
   }
 
-  /* The open drawer's grey reaches up behind the clock: iOS Safari tints its status bar strip with the page's
+  /* The open drawer's white reaches up behind the clock: iOS Safari tints its status bar strip with the page's
      colour. */
   html:has(.sidebar-expanded),
   html:has(.sidebar-expanded) body {
-    background: var(--color-fill);
+    background: var(--color-white);
   }
 
   /* The page scrolls on a phone, so the button is fixed to stay on screen. */

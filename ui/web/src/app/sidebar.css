@@ -2,13 +2,6 @@
   display: none;
 }
 
-/* Desktop: open, the sidebar docks in the chat's white; shut, only its menu button shows, over the chat. */
-@media (min-width: 641px) {
-  .sidebar {
-    background: var(--color-white);
-  }
-}
-
 .sidebar-collapsed {
   height: auto;
   background: none;
@@ -24,7 +17,7 @@
   }
 
   .app-layout:has(> .sidebar-expanded) {
-    background: var(--color-fill);
+    background: var(--color-white);
   }
 
   .app-layout:has(> .sidebar-expanded) .app-shell {

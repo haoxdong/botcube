@@ -135,7 +135,7 @@
   left: 0;
   z-index: 90;
   height: 100dvh;
-  background: var(--color-fill);
+  background: var(--color-white);
   display: flex;
   flex-direction: column;
   overflow: visible;

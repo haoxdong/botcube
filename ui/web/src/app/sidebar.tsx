@@ -21,8 +21,10 @@ export function useSidebar(layoutRef: RefObject<HTMLDivElement | null>, isPhone:
     const set = (name: string, px: number) => layout.style.setProperty(`--drawer-${name}`, `${px}px`);
     set('scroll', window.scrollY);
     set('page-height', document.documentElement.scrollHeight);
-    set('reach', DRAWER_REACH);
-    const fitBottom = () => set('bottom', Math.max(0, window.screen.height - window.innerHeight - DRAWER_REACH));
+    // Under the clock the page is the screen, so the card's corners show (Fig 21)
+    const reach = parseFloat(getComputedStyle(layout).getPropertyValue('--shell-top')) > 0 ? 0 : DRAWER_REACH;
+    set('reach', reach);
+    const fitBottom = () => set('bottom', reach && Math.max(0, window.screen.height - window.innerHeight - reach));
     fitBottom();
     window.addEventListener('resize', fitBottom);
     layout.setAttribute('data-drawer-preview', '');
