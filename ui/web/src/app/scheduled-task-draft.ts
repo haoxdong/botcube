@@ -1,5 +1,4 @@
 import type { AgentModel } from "./conversations";
-import { pickerModels } from "./picker-models";
 import { WEEKDAYS, describeSchedule, fromExpression, lastRun, repeatsWords, stopInstant, toExpression, wallTime, type Cadence, type Ending, type Weekday } from "./schedule";
 import type { ScheduledTask, TaskChanges } from "./scheduled-task";
 
@@ -205,17 +204,14 @@ interface ModelChoice {
   disabled?: boolean;
 }
 
-export function modelChoices(task: ScheduledTask, models: AgentModel[] | null, modelsFailed: boolean, runsOn: string | undefined, families?: readonly string[]): ModelChoice[] {
+export function modelChoices(task: ScheduledTask, models: AgentModel[] | null, modelsFailed: boolean, runsOn: string | undefined): ModelChoice[] {
   const choices: ModelChoice[] = [];
   if (models === null || (modelsFailed && runsOn === undefined)) choices.push({ value: runsOn ?? "", label: `${task.model ?? "Account default"} (models unavailable)` });
   // A named model the account no longer has: its runs fail, so it shows as unavailable.
   if (task.model !== undefined && models !== null && !models.some(({ key }) => key === task.model)) {
     choices.push({ value: task.model, label: `${task.model} (${modelsFailed ? "models unavailable" : "unavailable"})`, disabled: true });
   }
-  const visible = pickerModels(models ?? [], families);
-  const current = models?.find(({ key }) => key === runsOn);
-  if (current && !visible.includes(current)) choices.push({ value: current.key, label: current.label, disabled: true });
-  return [...choices, ...visible.map(({ key, label }) => ({ value: key, label }))];
+  return [...choices, ...(models ?? []).map(({ key, label }) => ({ value: key, label }))];
 }
 
 export function countedWall(ending: Ending | undefined, timezone: string): string | undefined {

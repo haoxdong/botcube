@@ -14,13 +14,12 @@ export const isPlanModelKey = (key: string) => key.startsWith(PLAN_MODEL_PREFIX)
 
 export interface ModelSource<R extends Requester = Requester> {
   readonly models: readonly [AgentModel, ...AgentModel[]];
-  /** The plan catalog, or an empty list when there is no plan sign-in. */
   accountModels(requester: R, options?: { refresh?: boolean }): Promise<readonly AgentModel[]>;
 }
 
 export async function accountModelList<R extends Requester>(bot: ModelSource<R>, requester: R, options?: { refresh?: boolean }): Promise<readonly AgentModel[]> {
   const plan = await bot.accountModels(requester, options);
-  return plan.length ? plan : bot.models;
+  return bot.models.filter(({ key }) => !isPlanModelKey(key) || plan.some((model) => model.key === key));
 }
 
 export function accountDefaultModel(models: readonly AgentModel[]): AgentModel {
@@ -30,11 +29,10 @@ export function accountDefaultModel(models: readonly AgentModel[]): AgentModel {
 }
 
 export async function namedModel<R extends Requester>(bot: ModelSource<R>, requester: R, key: unknown): Promise<AgentModel> {
-  const models = await accountModelList(bot, requester);
-  if (key === undefined || (isPlanModelKey(models[0]?.key ?? '') && bot.models.some((model) => model.key === key))) {
-    return accountDefaultModel(models);
+  if (key === undefined) return accountDefaultModel(await accountModelList(bot, requester));
+  const named = bot.models.find((model) => model.key === key);
+  if (named && (!isPlanModelKey(named.key) || (await bot.accountModels(requester)).some((model) => model.key === key))) {
+    return named;
   }
-  const named = models.find((model) => model.key === key);
-  if (named === undefined) throw new HttpError(422, `Model ${JSON.stringify(key)} is not available to this account`);
-  return named;
+  throw new HttpError(422, `Model ${JSON.stringify(key)} is not available to this account`);
 }

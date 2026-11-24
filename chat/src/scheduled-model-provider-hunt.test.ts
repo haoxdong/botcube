@@ -1,11 +1,11 @@
 import { expect, it } from 'vitest';
 import { eventually } from '../test/eventually.js';
-import { mainChat, owner, planCatalogs, posted, request, scheduler, stack, stream, text } from '../test/scheduled-run-fixture.js';
+import { catalogPlan, mainChat, owner, planCatalogs, posted, request, scheduler, stack, stream, text } from '../test/scheduled-run-fixture.js';
 
 it.each([
   ['same provider after a run', true, 'thorough'],
-  ['another provider after a run', true, 'plan'],
-  ['another provider before the first run', false, 'plan'],
+  ['another provider after a run', true, catalogPlan.key],
+  ['another provider before the first run', false, catalogPlan.key],
 ] as const)('accepts a supported model edit for %s', async (_name, alreadyRan, model) => {
   const account = owner();
   planCatalogs.set(account, []);
@@ -30,6 +30,7 @@ it.each([
     release();
     expect(await completed).toHaveLength(1);
   }
+  planCatalogs.set(account, [catalogPlan]);
   const changed = await request(account, `/scheduled-tasks/${id}`, { method: 'PATCH', body: { model } });
   expect(changed.status).toBe(200);
   expect((await changed.json()).model).toBe(model);

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { defined } from '../test/defined.js';
 import { startInProcess } from '../test/in-process.js';
 
-import { activity, mainChat, owner, posted, request, run, scheduler, sideChatOf, signInChecks, stack, stream, text, planCatalogs } from '../test/scheduled-run-fixture.js';
+import { activity, mainChat, owner, posted, request, run, scheduler, sideChatOf, signInChecks, stack, stream, text, catalogPlan, planCatalogs } from '../test/scheduled-run-fixture.js';
 import { filed } from '../test/stock-bot.js';
 
 describe('a scheduled run', () => {
@@ -137,8 +137,8 @@ describe('a scheduled run', () => {
       forwardedProps: {
         requester: { owner: account, scheduled: true },
         // The owner's default model, the one the composer starts on.
-        model: 'plan',
-        approvedModel: { key: 'plan', label: 'Plan', provider: 'openai' },
+        model: catalogPlan.key,
+        approvedModel: catalogPlan,
         sessionUserId: filed(account),
         agentIdentity: { name: 'Test Bot' },
         soul: 'Be brief.',
@@ -147,11 +147,8 @@ describe('a scheduled run', () => {
       },
     });
     expect(signInChecks).toContainEqual({ owner: account, outputs: ['Checking the curve.', 'The 10y yield fell 5bp overnight.'] });
-    expect(await activity(account, started)).toEqual([{ title: 'Answered a question', summary: 'Replied to the user' }]);
-    expect(stack.bedrock.summarizedTurns()).toContainEqual({
-      request: prompt,
-      answer: 'The 10y yield fell 5bp overnight.',
-    });
+    expect(await activity(account, started)).toEqual([{ title: 'Completed plan task', summary: 'Ran the scheduled brief' }]);
+    expect(stack.bedrock.summarizedTurns().map(({ request }) => request)).not.toContain(prompt);
     // The run is done, so it leaves the queue.
     await vi.waitFor(async () => expect(await scheduler.queued()).toBe(0), { timeout: 2_000 });
   });
@@ -165,8 +162,8 @@ describe('a scheduled run', () => {
     await posted(main);
     const [sideChat] = ((await (await request(account, '/threads')).json()) as { threads: { id: string }[] }).threads;
     expect(stack.agentcore.invocationFor(defined(sideChat, 'the run Side Chat').id).payload.forwardedProps).toMatchObject({
-      model: 'plan',
-      approvedModel: { key: 'plan', label: 'Plan', provider: 'openai' },
+      model: catalogPlan.key,
+      approvedModel: catalogPlan,
     });
   });
 
@@ -185,7 +182,7 @@ describe('a scheduled run', () => {
     });
   });
 
-  it('dispatches a task saved with a gateway model on the plan after sign-in', async () => {
+  it('retains a task’s explicit Bedrock model after plan sign-in', async () => {
     const account = owner();
     const main = await mainChat(account);
     planCatalogs.set(account, []);
@@ -195,16 +192,15 @@ describe('a scheduled run', () => {
     });
     expect(created.status).toBe(201);
     const { id } = await created.json() as { id: string };
-    planCatalogs.set(account, [{ key: 'openai-plan:gpt-6-sol', label: 'GPT-6-Sol', provider: 'openai' }]);
+    planCatalogs.set(account, [catalogPlan]);
     stack.agentcore.scriptPrompt(prompt, stream(...text('a1', 'Done.')));
 
     await scheduler.fire(id);
 
     expect(await posted(main)).toEqual([{ content: 'Scheduled task "Morning brief": Done.', userId: filed(account) }]);
     expect(stack.agentcore.invocationFor(defined(await sideChatOf(account, id), 'the run Side Chat')).payload.forwardedProps)
-      .toMatchObject({ model: 'openai-plan:gpt-6-sol' });
-    expect(await activity(account, 0)).toEqual([{ title: 'Completed plan task', summary: 'Ran the scheduled brief' }]);
-    expect(stack.bedrock.summarizedTurns().map(({ request }) => request)).not.toContain(prompt);
+      .toMatchObject({ model: 'thorough' });
+    expect(stack.bedrock.summarizedTurns().map(({ request }) => request)).toContain(prompt);
   });
 
   it("keeps its Side Chat on the default model's provider, and the Main Chat on none until the user's Turn", async () => {

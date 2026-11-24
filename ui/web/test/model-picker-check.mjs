@@ -2,18 +2,13 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const DESCRIPTION = 'A model for complex analysis and everyday work with extended reasoning and coding capabilities.';
-const PICKER_MODELS = [
-  ['openai-plan:gpt-6.1-sol', 'GPT-6.1-Sol'],
-  ['openai-plan:gpt-6-astra', 'GPT-6-Astra'],
-  ['openai-plan:gpt-6-sol', 'GPT-6-Sol'],
-  ['openai-plan:gpt-6-luna', 'GPT-6-Luna'],
-  ['openai-plan:gpt-5.6-sol', 'GPT-5.6-Sol'],
-  ['sonnet-4.6', 'Sonnet 4.6'],
-  ['opus-4.6', 'Opus 4.6'],
-  ['opus-5.5', 'Opus 5.5'],
-  ['deepseek-v3.2', 'DeepSeek V3.2'],
-].map(([key, label]) => ({ key, label, provider: 'openai', description: DESCRIPTION }));
-const VISIBLE_MODELS = ['GPT-6.1-Sol', 'GPT-6-Astra', 'Opus 5.5', 'DeepSeek V3.2'];
+const PICKER_MODELS = /** @type {const} */ ([
+  ['openai-plan:gpt-6.2-astra', 'GPT-6.2-Astra', 'openai'],
+  ['openai-plan:gpt-6.2-sol', 'GPT-6.2-Sol', 'openai'],
+  ['us.anthropic.claude-opus-5-5', 'Opus 5.5', 'anthropic'],
+  ['deepseek.v3.2', 'DeepSeek V3.2', 'deepseek'],
+]).map(([key, label, provider]) => ({ key, label, provider, description: DESCRIPTION }));
+const VISIBLE_MODELS = PICKER_MODELS.map(({ label }) => label);
 const PICKER = '.chat-model-picker [data-slot="popover-trigger"]';
 
 /** @param {string} label */

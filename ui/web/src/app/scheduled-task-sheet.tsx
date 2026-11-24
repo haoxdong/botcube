@@ -3,7 +3,6 @@
 import { m as motionElement } from "motion/react";
 import { Presence, presenceMotion, Collapse, Swap } from "./collapse";
 
-import { webUiPlugin } from "@bot-ui";
 import { ChevronDown } from "lucide-react";
 import { useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Button } from "../components/pill-button";
@@ -343,7 +342,7 @@ function TaskEditForm({ task, models, modelsFailed, runsOn, notices, onChange, o
             </>
           </Collapse>
           <SelectRow label="Model" value={draft.model} disabled={saving || models === null} onChange={(model) => set({ model })}>
-            {modelChoices(task, models, modelsFailed, runsOn, webUiPlugin.config.pickerModelFamilies).map((choice) => (
+            {modelChoices(task, models, modelsFailed, runsOn).map((choice) => (
               <option key={choice.value} value={choice.value} disabled={choice.disabled}>
                 {choice.label}
               </option>

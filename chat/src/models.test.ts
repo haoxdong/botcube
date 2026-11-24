@@ -35,15 +35,19 @@ const postTurn = (body: string) =>
 
 
 describe('stock Plan Usage', () => {
-  it('lists only plan models and continues an Anthropic Session on the plan until sign-out', async () => {
+  it('lists the configured models and dispatches them across providers in the same Session', async () => {
+    const astra = { key: 'openai-plan:gpt-6.2-astra', label: 'GPT-6.2-Astra', provider: 'openai' };
+    const sol = { key: 'openai-plan:gpt-6.2-sol', label: 'GPT-6.2-Sol', provider: 'openai' };
+    const opus = { key: 'opus-5.5', label: 'Opus 5.5', provider: 'anthropic' };
+    const deepseek = { key: 'deepseek.v3.2', label: 'DeepSeek V3.2', provider: 'deepseek' };
+    let planSlugs = ['gpt-6.2-sol', 'gpt-6.1-sol', 'gpt-6.2-astra'];
     const owner = 'acct_plan_owner_0000000000';
     const limit = "Your ChatGPT plan's usage limit is reached.";
     const credential = await new HttpFake((request, response) => {
       if (request.method === 'GET' && request.path === '/openai/v1/models') {
-        return sendJson(response, 200, { models: [
-          { slug: 'gpt-6-astra', display_name: 'GPT-6-Astra', visibility: 'list' },
-          { slug: 'gpt-6-sol', display_name: 'GPT-6-Sol', visibility: 'list' },
-        ] });
+        return sendJson(response, 200, {
+          models: planSlugs.map((slug) => ({ slug, display_name: slug, visibility: 'list' })),
+        });
       }
       if (request.method !== 'POST' || request.path !== '/openai/v1/responses') {
         return sendJson(response, 404, {});
@@ -62,6 +66,7 @@ describe('stock Plan Usage', () => {
     }).listen();
     const signedIn = await startInProcess({
       botcube: { planUsage: { ownerAccountId: owner } },
+      overrides: { models: [astra, sol, opus, deepseek] },
       env: { BOTCUBE_CREDENTIAL_SERVICE_URL: credential.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'test-secret' },
     });
     const headers = { 'x-test-owner': owner, 'content-type': 'application/json' };
@@ -91,26 +96,39 @@ describe('stock Plan Usage', () => {
           expect.objectContaining({ type: 'TOOL_CALL_RESULT', toolCallId: callId, content: leg }),
           expect.objectContaining({ type: 'RUN_FINISHED' }),
         ]));
-        const dispatched = JSON.parse(signedIn.agentcore.invocations().at(-1)?.body ?? '{}') as RunAgentInput;
+        const invocation = signedIn.agentcore.invocations().at(-1);
+        const dispatched = JSON.parse(invocation?.body ?? '{}') as RunAgentInput;
         expect(dispatched).toMatchObject({ threadId, forwardedProps: { model: expectedModel }, messages: history });
+        const token = String(invocation?.headers['x-botcube-credential-invocation']);
+        expect(verifyCredentialServiceInvocation('test-secret', token)).toMatchObject({
+          modelProvider: provider, modelId: expectedModel.replace(/^openai-plan:/, ''),
+        });
         expect(await (await signedIn.app.request(`/threads/${threadId}`, { headers })).json()).toMatchObject({ provider });
         history.push({ id: `call-${leg}`, role: 'assistant', toolCalls: [{ id: callId, type: 'function', function: { name: 'lookup', arguments: '{}' } }] },
           { id: `result-${leg}`, role: 'tool', toolCallId: callId, content: leg },
           { id: `reply-${leg}`, role: 'assistant', content: `Found ${leg}` });
       };
-      await run('before-sign-in', 'anthropic', 'quick', 'quick');
+      const refuse = async (model: string) => {
+        const count = signedIn.agentcore.invocations().length;
+        const response = await signedIn.app.request('/', {
+          method: 'POST', headers, body: turn(threadId, { model }, 'unavailable', history),
+        });
+        expect(response.status).toBe(422);
+        expect(signedIn.agentcore.invocations()).toHaveLength(count);
+      };
+
+      expect(await list()).toEqual({ models: [opus, deepseek] });
+      await run('before-sign-in', 'anthropic', opus.key);
+      await refuse(astra.key);
 
       await signedIn.accounts.recordOpenAISignIn(owner, 'openai-owner');
-      expect(await list()).toEqual({ models: [
-        { key: 'openai-plan:gpt-6-astra', label: 'GPT-6-Astra', provider: 'openai' },
-        { key: 'openai-plan:gpt-6-sol', label: 'GPT-6-Sol', provider: 'openai' },
-      ] });
+      expect(await list()).toEqual({ models: [astra, sol, opus, deepseek] });
       const activity = async () => (await signedIn.app.request('/activity', { headers })).json();
-      await run('on-plan', 'openai', 'openai-plan:gpt-6-sol', 'openai-plan:gpt-6-sol');
+      await run('on-plan', 'openai', sol.key, sol.key);
       await eventually(async () => expect(await activity()).toMatchObject({
         tasks: expect.arrayContaining([{ completedAt: expect.any(String), title: 'Plan lookup', summary: 'Found the requested result' }]),
       }));
-      await run('plan-limit', 'openai', 'openai-plan:gpt-6-astra');
+      await run('plan-limit', 'openai', astra.key);
       await eventually(async () => expect(await activity()).toMatchObject({
         tasks: expect.arrayContaining([{
           completedAt: expect.any(String), summary: 'Look up plan-limit',
@@ -120,17 +138,29 @@ describe('stock Plan Usage', () => {
       expect(signedIn.bedrock.summarizedTurns().map(({ request }) => request)).toEqual(['Look up before-sign-in']);
       const summaries = credential.requests.filter(({ method, path }) => method === 'POST' && path === '/openai/v1/responses');
       expect(summaries.map(({ body }) => JSON.parse(body))).toEqual(['on-plan', 'plan-limit'].map((leg) => expect.objectContaining({
-        model: 'gpt-6-astra', stream: true, store: false,
+        model: 'gpt-6.2-astra', stream: true, store: false,
         input: [{ role: 'user', content: JSON.stringify({ request: `Look up ${leg}`, answer: `Found ${leg}` }) }],
       })));
       expect(summaries.map(({ headers }) => verifyCredentialServiceInvocation('test-secret', String(headers.authorization).replace(/^Bearer /, ''))))
-        .toEqual(Array.from({ length: 2 }, () => expect.objectContaining({ accountId: owner, sessionId: threadId, modelProvider: 'openai', modelId: 'gpt-6-astra' })));
+        .toEqual(Array.from({ length: 2 }, () => expect.objectContaining({ accountId: owner, sessionId: threadId, modelProvider: 'openai', modelId: 'gpt-6.2-astra' })));
+
+      await run('plan-default', 'openai', astra.key);
+      await run('opus', 'anthropic', opus.key, opus.key);
+      await run('deepseek', 'deepseek', deepseek.key, deepseek.key);
+      await refuse('openai-plan:gpt-6.1-sol');
+      await refuse('sonnet-4.6');
+      await refuse('opus-4.6');
+      await refuse('deepseek-v3.2');
+
+      planSlugs = ['gpt-6.2-sol', 'gpt-6.1-sol'];
+      expect(await list()).toEqual({ models: [sol, opus, deepseek] });
+      await refuse(astra.key);
+      await run('catalog-default', 'openai', sol.key);
 
       await signedIn.accounts.removeOpenAISignIn(owner);
-      expect(await list()).toMatchObject({ models: [{ key: 'quick' }, { key: 'thorough' }] });
-      await run('after-sign-out', 'anthropic', 'quick');
-      await eventually(() => expect(signedIn.bedrock.summarizedTurns().map(({ request }) => request))
-        .toEqual(['Look up before-sign-in', 'Look up after-sign-out']));
+      expect(await list()).toEqual({ models: [opus, deepseek] });
+      await refuse(sol.key);
+      await run('after-sign-out', 'anthropic', opus.key);
     } finally {
       await Promise.all([signedIn.stop(), credential.close()]);
     }
@@ -141,8 +171,8 @@ describe("an account's allowed models", () => {
   it('are the ones the bot gives the requesting account', async () => {
     const perAccount = await startInProcess({
       overrides: {
-        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-        accountModels: async ({ owner }) => (owner === 'acct_account-with-plan' ? [{ key: 'plan', label: 'Plan', provider: 'openai' }] : []),
+        models: [{ key: 'openai-plan:plan', label: 'Plan', provider: 'openai' }, { key: 'quick', label: 'Quick', provider: 'anthropic' }],
+        accountModels: async ({ owner }) => (owner === 'acct_account-with-plan' ? [{ key: 'openai-plan:plan', label: 'Plan', provider: 'openai' }] : []),
       },
     });
     try {
@@ -151,25 +181,37 @@ describe("an account's allowed models", () => {
           models: { key: string }[];
         };
 
-      expect((await listed('acct_account-with-plan')).models.map(({ key }) => key)).toEqual(['plan']);
+      expect((await listed('acct_account-with-plan')).models.map(({ key }) => key)).toEqual(['openai-plan:plan', 'quick']);
       expect((await listed('acct_account-without-plan')).models.map(({ key }) => key)).toEqual(['quick']);
     } finally {
       await perAccount.stop();
     }
   });
 
-  it('refuses both listing and gateway dispatch when the plan catalog fails', async () => {
-    const failing = await startInProcess({ overrides: { accountModels: async () => { throw new HttpError(503, 'Plan catalog unavailable'); } } });
+  it('reports a catalog outage and still dispatches a named Bedrock model', async () => {
+    const unavailable = 'openai-plan:plan';
+    const threadId = 'catalog-failed';
+    const failing = await startInProcess({ overrides: (chat) => ({
+      models: [{ key: unavailable, label: 'Plan', provider: 'openai' }, ...chat.models],
+      accountModels: async () => { throw new HttpError(503, 'Plan catalog unavailable'); },
+    }) });
+    const post = (model: string) => failing.app.request('/', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: turn(threadId, { model }),
+    });
     try {
-      const responses = await Promise.all([
-        failing.app.request('/agent/models'),
-        failing.app.request('/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: turn('catalog-failed', { model: 'quick' }) }),
-      ]);
+      const responses = await Promise.all([failing.app.request('/agent/models'), post(unavailable)]);
       expect(responses.map(({ status }) => status)).toEqual([503, 503]);
       expect(await Promise.all(responses.map((response) => response.json()))).toEqual([
         { detail: 'Plan catalog unavailable' }, { detail: 'Plan catalog unavailable' },
       ]);
+      expect((await post('unlisted')).status).toBe(422);
       expect(failing.agentcore.invocations()).toEqual([]);
+
+      await failing.allocate('acct_account-1', threadId);
+      const bedrock = await post('quick');
+      expect(bedrock.status).toBe(200);
+      await bedrock.text();
+      expect(failing.agentcore.invocationFor(threadId).payload.forwardedProps).toMatchObject({ model: 'quick' });
     } finally {
       await failing.stop();
     }

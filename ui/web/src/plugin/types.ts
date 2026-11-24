@@ -105,7 +105,6 @@ export interface WebUiPlugin {
     logoutLabel?: string;
     /** What the user's own account is called in the account menu. */
     accountLabel: string;
-    pickerModelFamilies?: readonly string[];
   };
   AuthProvider: ComponentType<AuthProviderProps>;
 }

@@ -1,7 +1,5 @@
 "use client";
 
-import { webUiPlugin } from "@bot-ui";
-import { pickerModels } from "./picker-models";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchAgentModels, type AgentModel } from "./conversations";
 
@@ -48,8 +46,7 @@ function offeredEffort(effort: string | undefined): string {
 
 function modelInList(models: ModelList, selected: string | undefined): string | undefined {
   if (!models.loaded || models.models.some(({ key }) => key === selected)) return selected;
-  const first = models.models[0]?.key;
-  return first?.startsWith("openai-plan:") ? first : pickerModels(models.models, webUiPlugin.config.pickerModelFamilies)[0]?.key;
+  return models.models[0]?.key;
 }
 
 /** The account's offered choice, and its browser persistence. */
@@ -113,7 +110,8 @@ export function useModelSelection({
     shown.current = { account: accountId, label: offeredLabel };
     rememberChoice({ shown: shown.current });
   }, [offeredLabel, accountId]);
-  const properties = useMemo(() => ({ model: offeredModel, effort, sandbox: true }), [offeredModel, effort]);
+  const confirmedModel = models.loaded ? offeredModel : undefined;
+  const properties = useMemo(() => ({ model: confirmedModel, effort, sandbox: true }), [confirmedModel, effort]);
   useEffect(() => {
     if (offeredModel !== model) {
       modelChosen.current = false;

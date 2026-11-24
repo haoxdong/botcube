@@ -9,7 +9,7 @@ import { SchedulerView } from './fakes/scheduler.js';
 import { startInProcess, type InProcessStack } from './in-process.js';
 
 export const signInChecks: { owner: string; outputs: string[] }[] = [];
-const plan = { key: 'plan', label: 'Plan', provider: 'openai' };
+export const catalogPlan = { key: 'openai-plan:gpt-6-sol', label: 'GPT-6-Sol', provider: 'openai' };
 export const planCatalogs = new Map<string, readonly AgentModel[]>();
 export const turnSecrets = {
   files: { accessKeyId: 'scheduled-access-key', secretAccessKey: 'scheduled/secret+key', sessionToken: 'scheduled-session-token' },
@@ -23,12 +23,12 @@ beforeAll(async () => {
   stack = await startInProcess({
     scheduled: true,
     overrides: (chat) => ({
-      models: [...chat.models, plan],
+      models: [catalogPlan, ...chat.models],
       credentialProps: ['agentComputerCdpUrl'],
       // A scheduled run acts for its owner with no request: say so in the payload.
       scheduledRequester: async (owner) => ({ owner, scheduled: true }),
       summarizePlanTurn: async () => ({ title: 'Completed plan task', summary: 'Ran the scheduled brief' }),
-      accountModels: async ({ owner }) => planCatalogs.get(owner) ?? [plan],
+      accountModels: async ({ owner }) => planCatalogs.get(owner) ?? [catalogPlan],
       invocationPayload: async (input, requester, model?: AgentModel) => ({
         ...input, credentialServiceInvocationToken,
         forwardedProps: { ...input.forwardedProps, requester, approvedModel: model, ...forwardedSecrets },

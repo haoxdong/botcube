@@ -458,7 +458,9 @@ describe("the stock Chat Service's Plan Usage", () => {
     expect((await accountStore.loadAccount(other))?.openaiIdentity).toBeUndefined();
   });
 
-  it('lets the operator sign the owner in to OpenAI and out again over HTTP, which shows and then empties his catalog', async () => {
+  it('lets the operator sign the owner in to OpenAI and out again over HTTP, which adds and removes a configured plan model', async () => {
+    const echo = { key: 'echo', label: 'Echo', provider: 'openai' };
+    stageBotImage({ ...exampleBot(), models: [model, echo] });
     const endpoint = motoEndpoint();
     const table = `stock-plan-${Math.random().toString(36).slice(2)}`;
     await createChatTable(endpoint, table);
@@ -481,15 +483,15 @@ describe("the stock Chat Service's Plan Usage", () => {
         ...(method === 'POST' ? { body: JSON.stringify({ subject: 'openai-http-owner', refreshToken: 'rt' }) } : {}),
       });
 
-      expect(await models()).toEqual([{ key: 'echo', label: 'Echo', provider: 'openai' }]);
+      expect(await models()).toEqual([echo]);
       const signedIn = await operator('POST', 'credential_capture');
       expect([signedIn.status, await signedIn.json()]).toEqual([200, { status: 'stored', subject: 'openai-http-owner' }]);
-      expect(await models()).toEqual([model]);
+      expect(await models()).toEqual([model, echo]);
 
       const signedOut = await operator('DELETE', 'credential_revocation');
       expect([signedOut.status, await signedOut.json()]).toEqual([200, { status: 'removed' }]);
       expect(vault.has(owner)).toBe(false);
-      expect(await models()).toEqual([{ key: 'echo', label: 'Echo', provider: 'openai' }]);
+      expect(await models()).toEqual([echo]);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       vi.unstubAllEnvs();

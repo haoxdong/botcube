@@ -2,14 +2,12 @@
 
 import { RotateCcw } from "lucide-react";
 import { useId, useRef, useState } from "react";
-import { webUiPlugin } from "@bot-ui";
 
 import { Button } from "../components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "../components/ui/select";
 import { Slider } from "../components/ui/slider";
 import { EFFORT_LEVELS, type ModelList } from "./model-selection";
-import { pickerModels } from "./picker-models";
 import { zoomOf } from "@/lib/utils";
 import { composerEdges } from "./composer-edges";
 
@@ -28,7 +26,6 @@ export function ModelSelector({ models, model, effort, loadingLabel, onModelChan
   const effortName = useId();
   const [open, setOpen] = useState(false);
   const catalog = models.loaded ? models.models : [];
-  const options = pickerModels(catalog, webUiPlugin.config.pickerModelFamilies);
   const modelLabel = models.loaded ? catalog.find((item) => item.key === model)?.label : (models.error ?? loadingLabel ?? "Loading models…");
   const effortLabel = EFFORT_LEVELS.find((item) => item.key === effort)?.label ?? effort;
   const step = Math.max(0, EFFORT_LEVELS.findIndex((item) => item.key === effort));
@@ -66,7 +63,7 @@ export function ModelSelector({ models, model, effort, loadingLabel, onModelChan
               {modelLabel}
             </SelectTrigger>
             <SelectContent className="w-auto">
-              {options.map((choice) => <SelectItem key={choice.key} value={choice.key} label={choice.label}>
+              {catalog.map((choice) => <SelectItem key={choice.key} value={choice.key} label={choice.label}>
                 <span className="flex flex-col">
                   <span>{choice.label}</span>
                   <span className="max-w-64 text-xs whitespace-normal text-muted-foreground empty:hidden">{choice.description}</span>

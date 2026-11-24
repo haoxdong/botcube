@@ -15,7 +15,7 @@ import { ScheduledTasks } from './scheduled-tasks.js';
 import { sessionLifecycle } from './session-lifecycle.js';
 import { SessionDeletedError } from './session-metadata.js';
 
-import { activity, mainChat, owner, posted, request, run, scheduler, signInChecks, snapshot, stack, stream, text } from '../test/scheduled-run-fixture.js';
+import { catalogPlan, activity, mainChat, owner, posted, request, run, scheduler, signInChecks, snapshot, stack, stream, text } from '../test/scheduled-run-fixture.js';
 import { motoAws } from '../test/fakes/moto.js';
 import { eventually } from '../test/eventually.js';
 import { filed } from '../test/stock-bot.js';
@@ -183,7 +183,7 @@ describe('a scheduled run', () => {
     await stack.allocate(account, oldChat);
     const previous = await request(account, '/', { method: 'POST', body: {
       threadId: oldChat, runId: 'legacy-run', messages: [{ id: 'legacy-request', role: 'user', content: 'Morning brief' }],
-      tools: [], context: [], state: {}, forwardedProps: { model: 'plan' },
+      tools: [], context: [], state: {}, forwardedProps: { model: catalogPlan.key },
     } });
     expect(previous.status).toBe(200);
     await previous.text();
@@ -211,7 +211,7 @@ describe('a scheduled run', () => {
       });
       const response = await request(account, '/', { method: 'POST', body: {
         threadId: side, runId: 'overlapping-user', messages: [{ id: 'question', role: 'user', content: 'Discuss the brief' }],
-        tools: [], context: [], state: {}, forwardedProps: { model: 'plan' },
+        tools: [], context: [], state: {}, forwardedProps: { model: catalogPlan.key },
       } });
       expect(response.status).toBe(409);
       expect(await response.json()).toEqual({ detail: 'Test Bot is still busy. Send your message again in a minute.', code: 'SESSION_BUSY' });
@@ -235,7 +235,7 @@ describe('a scheduled run', () => {
     stack.agentcore.scriptPrompt('Discuss the brief', { ...stream(...text('reply', 'User reply.')), hold });
     const chatting = await request(account, '/', { method: 'POST', body: {
       threadId: side, runId: 'user-discussion', messages: [{ id: 'discussion', role: 'user', content: 'Discuss the brief' }],
-      tools: [], context: [], state: {}, forwardedProps: { model: 'plan' },
+      tools: [], context: [], state: {}, forwardedProps: { model: catalogPlan.key },
     } });
     try {
       expect(chatting.status).toBe(200);
