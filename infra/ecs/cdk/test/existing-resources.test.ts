@@ -14,7 +14,7 @@ import { loadConfig } from '../../../../config/load.js';
 import { botcubeConfigPath, synthesizeExample } from './example-fixture.js';
 
 interface Resource { Type: string; Properties: Record<string, unknown> }
-interface Container { Name: string; Environment?: { Name: string; Value: unknown }[] }
+interface Container { Name: string; Image: string; Environment?: { Name: string; Value: unknown }[] }
 
 interface StackTemplate { Resources: Record<string, Resource>; Parameters?: Record<string, unknown> }
 
@@ -88,7 +88,7 @@ test("runs the Credential Service's audit copy from its image, in the private su
     image: (Properties.Code as { ImageUri?: unknown }).ImageUri,
     subnets: (Properties.VpcConfig as { SubnetIds?: unknown } | undefined)?.SubnetIds,
     key: Properties.KmsKeyArn,
-  }))).toEqual([{ image: 'botcube-credential-service', subnets: PRIVATE_SUBNETS, key: 'arn:aws:kms:us-east-1:000000000000:key/55555555-eeee-4eee-8eee-555555555555' }]);
+  }))).toEqual([{ image: '123456789012.dkr.ecr.us-east-1.amazonaws.com/bot-cube/credential:release', subnets: PRIVATE_SUBNETS, key: 'arn:aws:kms:us-east-1:000000000000:key/55555555-eeee-4eee-8eee-555555555555' }]);
 });
 
 /** Whether the role `roleId` may create network interfaces by an inline grant scoped to the existing subnets. */
@@ -206,8 +206,7 @@ test('encrypts with the existing KMS keys', () => {
   });
   expect(ofType('AWS::BedrockAgentCore::Memory').map(({ Properties }) => Properties.EncryptionKeyArn))
     .toEqual(['arn:aws:kms:us-east-1:000000000000:key/33333333-cccc-4ccc-8ccc-333333333333']);
-  expect(ofType('AWS::ECR::Repository').map(({ Properties }) => Properties.EncryptionConfiguration))
-    .toEqual([{ EncryptionType: 'KMS', KmsKey: 'arn:aws:kms:us-east-1:000000000000:key/44444444-dddd-4ddd-8ddd-444444444444' }]);
+  expect(ofType('AWS::ECR::Repository')).toEqual([]);
 });
 
 test('reaches the Credential Service at the existing Endpoint, with no Cloud Map namespace or service', () => {
@@ -228,23 +227,17 @@ test('logs connections to the existing bucket', () => {
 });
 
 const MIRROR = 'mirror.example.com/ecr-public';
-/** The images the example's test fixture stands in for the ones BotCube builds from this repository. */
-const BUILT = new Set(['botcube-chat-service', 'botcube-credential-service']);
-
-test('runs every image it does not build from the mirror registry', () => {
-  const pulled = containers().map(({ Image }) => (Image as unknown as string)).filter(image => !BUILT.has(image));
-  expect(pulled.filter(image => !image.startsWith(`${MIRROR}/`))).toEqual([]);
+test('pulls its sidecar images from the mirror registry', () => {
+  const deploymentImages = new Set(['chat-service', 'credential-service']);
+  const sidecars = containers().filter(({ Name }) => !deploymentImages.has(Name));
+  expect(sidecars.map(({ Image }) => Image).filter(image => !image.startsWith(`${MIRROR}/`))).toEqual([]);
 });
 
 test('builds every image FROM the mirror registry', () => {
   const builds = app.synth().artifacts.filter((artifact): artifact is AssetManifestArtifact => artifact instanceof AssetManifestArtifact)
     .flatMap(artifact => Object.values((JSON.parse(fs.readFileSync(artifact.file, 'utf8')) as { dockerImages?: Record<string, { source: { dockerBuildArgs?: Record<string, string> } }> }).dockerImages ?? {}))
     .map(({ source }) => source.dockerBuildArgs?.REGISTRY);
-  // AgentCore builds the bot's image in CodeBuild, with the build args its image builder resource passes.
-  const harness = resources.flatMap(({ Properties }) => (typeof Properties.BuildArgs === 'string' ? [JSON.parse(Properties.BuildArgs) as Record<string, string>] : []))
-    .map(args => args.REGISTRY);
-  expect(builds.length).toBeGreaterThan(0);
-  expect({ builds: [...new Set(builds)], harness }).toEqual({ builds: [MIRROR], harness: [MIRROR] });
+  expect([...new Set(builds)]).toEqual([MIRROR]);
 });
 
 /** The Dockerfiles of the images BotCube builds, relative to botcube/, and the local stack's. */

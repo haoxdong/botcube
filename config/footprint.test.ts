@@ -54,8 +54,6 @@ describe('the enterprise example', () => {
       '    grant Credential Service task: kms:Decrypt kms:DescribeKey kms:GetPublicKey on arn:aws:kms:us-east-1:000000000000:key/* if ForAnyValue:StringEquals kms:ResourceAliases alias/corp-botcube-sign-in-sheet',
       '  existing.kmsKeys.memory arn:aws:kms:us-east-1:000000000000:key/33333333-cccc-4ccc-8ccc-333333333333',
       '    grant AgentCore Memory execution role: kms:Decrypt kms:DescribeKey kms:GenerateDataKey',
-      '  existing.kmsKeys.images arn:aws:kms:us-east-1:000000000000:key/44444444-dddd-4ddd-8ddd-444444444444',
-      '    grant Harness (AgentCore Runtime): kms:Decrypt',
       '  existing.kmsKeys.functions arn:aws:kms:us-east-1:000000000000:key/55555555-eeee-4eee-8eee-555555555555',
       "    grant the Credential Service's audit-copy function's role: kms:Decrypt",
       "    grant the deploy role, which sets the function's environment: kms:CreateGrant kms:Encrypt",
@@ -84,13 +82,20 @@ describe('the enterprise example', () => {
     expect(existing.iam.chatService?.actions.filter((action) => action.startsWith('elasticfilesystem:'))).toEqual([]);
   });
 
+  it('omits the build repository and its grant when running a published Bot Image', () => {
+    const { existing, created, iam } = footprint(loadConfig(example('enterprise')));
+    expect(existing.map(resource => resource.field)).not.toContain('existing.kmsKeys.images');
+    expect(created.join('\n')).not.toContain('existing.kmsKeys.images');
+    expect(iam.harness?.actions).not.toContain('kms:Decrypt');
+  });
+
   it('creates none of the resources it supplies', () => {
     expect(section(printedFor('enterprise'), 'Created resources')).toEqual([]);
   });
 
-  it('supplies every resource an operator can supply, those BotCube would create only at runtime included', () => {
+  it('supplies the resources used by a deployment with published images', () => {
     const { existing, runtime } = footprint(loadConfig(example('enterprise')));
-    expect(existing.map(({ field }) => field)).toEqual(Object.keys(SUPPLIABLE).map((key) => `existing.${key}`));
+    expect(existing.map(({ field }) => field)).toEqual(Object.keys(SUPPLIABLE).filter(key => key !== 'kmsKeys.images').map(key => `existing.${key}`));
     expect(runtime).toEqual([]);
   });
 
@@ -152,7 +157,6 @@ describe('the public example', () => {
     expect(section(printed, 'Created resources')).toEqual([
       "  existing.vpc: the private subnets' NAT gateway, its Elastic IP and route",
       "  existing.kmsKeys.vault: the Credential Service's vault key",
-      "  existing.kmsKeys.images: the bot image repository's key",
       '  existing.tables.chat: the chat table and its stream',
       "  existing.tables.vault: the Credential Service's vault table",
       "  existing.buckets.connectionLogs: the origin load balancer's connection logs bucket",
@@ -164,7 +168,7 @@ describe('the public example', () => {
   it('grants the roles what the resources BotCube creates need', () => {
     const { iam } = footprint(loadConfig(example('public')));
     expect(iam.credentialService?.actions).toEqual(expect.arrayContaining(['dynamodb:GetItem', 'kms:GenerateDataKey']));
-    expect(iam.harness?.actions).toContain('kms:Decrypt');
+    expect(iam.harness?.actions).not.toContain('kms:Decrypt');
   });
 
   it('lets each Lambda function write its logs by an inline grant, holding no AWS managed policy', () => {

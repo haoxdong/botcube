@@ -1,12 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { botDirectoryErrors, checkBotDirectory } from './read.cjs';
 
-const REPOSITORY = fileURLToPath(new URL('../..', import.meta.url));
+const BOTCUBE_ROOT = fileURLToPath(new URL('../', import.meta.url));
+const REPOSITORY = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: BOTCUBE_ROOT, encoding: 'utf8' }).trim();
 
 /** A bot directory holding the files given, by their paths relative to it. */
 function botDirectory(files: readonly string[]): string {
@@ -53,7 +54,10 @@ describe("this repository's bot directories", () => {
   const configs = execFileSync('git', ['ls-files', '*botcube.yaml'], { cwd: REPOSITORY, encoding: 'utf8' }).trim().split('\n');
 
   it('are found', () => {
-    expect(configs).toEqual(expect.arrayContaining(['botcube/examples/enterprise/botcube.yaml', 'botcube/examples/public/botcube.yaml']));
+    expect(configs).toEqual(expect.arrayContaining([
+      relative(REPOSITORY, join(BOTCUBE_ROOT, 'examples/enterprise/botcube.yaml')),
+      relative(REPOSITORY, join(BOTCUBE_ROOT, 'examples/public/botcube.yaml')),
+    ]));
   });
 
   it.each(configs)('hold one config beside %s: it and the images it names', config => {

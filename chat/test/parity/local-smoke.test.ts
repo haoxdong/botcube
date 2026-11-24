@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, expect, it } from 'vitest';
+import { readConfig } from '../../../config/read.cjs';
 import { required } from '../required.js';
 import { startLocalStack, type LocalStack } from './local-stack.js';
 import { startOnFreePort, type RunningProcess } from '../fakes/process.js';
@@ -16,7 +17,8 @@ const cube = (path: string) => fileURLToPath(new URL(`../../../${path}`, import.
 /** The public example's BotCube Config, its web origins this test's UI port. */
 async function webOriginsConfig(): Promise<string> {
   const path = join(await mkdtemp(join(tmpdir(), 'local-smoke-deployment-')), 'botcube.yaml');
-  await writeFile(path, JSON.stringify({ domains: { web: 'http://localhost:4001', webAliases: ['http://127.0.0.1:4001'], chatService: 'http://localhost:8123' } }));
+  const config = readConfig(cube('examples/public/botcube.yaml'));
+  await writeFile(path, JSON.stringify({ ...config, domains: { web: 'http://localhost:4001', webAliases: ['http://127.0.0.1:4001'], chatService: 'http://localhost:8123' } }));
   return path;
 }
 let stack: LocalStack | undefined;

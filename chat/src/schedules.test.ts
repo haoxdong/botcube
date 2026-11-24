@@ -144,6 +144,7 @@ describe('a deployment on the table poller', () => {
     vi.stubEnv('AWS_DEFAULT_REGION', undefined);
     vi.stubEnv('AWS_PROFILE', undefined);
     vi.stubEnv('AWS_CONFIG_FILE', '/nonexistent/aws-config');
+    vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', '/nonexistent/aws-credentials');
     const scheduling = chatScheduling({ kind: 'table-poller' }, { BOTCUBE_SCHEDULED_RUNS_QUEUE_URL: queueUrl }, table);
 
     await expect(scheduling?.tasks.list(randomUUID())).rejects.toThrow('Region is missing');

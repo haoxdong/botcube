@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SignJWT } from 'jose';
 import type { ModelsWire } from '../../../config/blocks.js';
-import { loadBotCube } from '../../../config/load.js';
+import { loadConfig } from '../../../config/load.js';
 import { required } from '../required.js';
 import { frameData, sseFrames } from './browser.js';
 import { MTLS_MODELS_HOST, PUBLIC_ORIGIN, startLocalStack, type LocalStack } from './local-stack.js';
@@ -173,7 +173,7 @@ it("stops the enterprise example on sign-in's old client secret field, naming it
 
 it("sends the enterprise example's traces to its authenticated collector through its authenticating proxy", { timeout: 120_000 }, async () => {
   const path = botcubeConfig('enterprise');
-  const { integrations: { telemetry } } = loadBotCube(path).config;
+  const { integrations: { telemetry } } = loadConfig(path);
   if (telemetry.kind !== 'otlp') throw new Error('The enterprise example exports to its own collector');
   const collectorHost = new URL(telemetry.url).host;
   const stack = await startLocalStack({ botcubeConfig: path, chatEnv: { OTEL_BSP_SCHEDULE_DELAY: '100' } });

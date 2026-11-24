@@ -117,7 +117,9 @@ const FILES_ACCESS_POINTS: Readonly<Record<FilesAccessPointMode, Need>> = {
 /** Each resource BotCube would create: existing, with the grants on it moved to its entry, or created and granted. */
 function existingResources(config: BotCubeConfig): { need: Need; created: string[] } {
   const { existing, integrations: { signIn: identity } } = config;
-  const entries = Object.entries(SUPPLIABLE).map(([key, resource]) => ({ key, resource, name: resource.name(existing, config) }));
+  const entries = Object.entries(SUPPLIABLE)
+    .filter(([key]) => key !== 'kmsKeys.images' || !config.agentCore?.runtime?.containerUri)
+    .map(([key, resource]) => ({ key, resource, name: resource.name(existing, config) }));
   const existingEntries: ExistingResource[] = entries.flatMap(({ key, resource, name }) => (name === undefined ? [] : [{
     field: `existing.${key}`,
     name,

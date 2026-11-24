@@ -83,6 +83,7 @@ describe('the assume-role STS client', () => {
     vi.stubEnv('AWS_DEFAULT_REGION', undefined);
     vi.stubEnv('AWS_PROFILE', undefined);
     vi.stubEnv('AWS_CONFIG_FILE', '/nonexistent/aws-config');
+    vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', '/nonexistent/aws-credentials');
     const turn = { actorId: filed('a'), filingActorId: filed('a'), sessionId: randomUUID(), startedAt: new Date().toISOString() };
 
     await expect(assumeRoleAwsAccess({ roleArn: ROLE_ARN }).grant(turn)).rejects.toThrow('Region is missing');

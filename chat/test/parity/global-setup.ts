@@ -25,11 +25,12 @@ export default async function setup(project: TestProject) {
       format: 'esm',
       banner: { js: "import{createRequire as __parityCreateRequire}from'node:module';const require=__parityCreateRequire(import.meta.url);" },
     });
-    return `node ${entry}`;
+    return entry;
   };
   const [parity, fakeSite] = await Promise.all([bundle('./chat-service.ts'), bundle('./fake-site-service.ts')]);
-  project.provide('parityServiceCommand', parity);
-  project.provide('fakeSiteServiceCommand', fakeSite);
+  project.provide('parityServiceCommand', `node ${parity}`);
+  const imageSettings = fileURLToPath(new URL('../image-process.mjs', import.meta.url));
+  project.provide('fakeSiteServiceCommand', `node --import ${imageSettings} ${fakeSite}`);
   const stop = await setupMoto(project);
   return async () => {
     await stop();

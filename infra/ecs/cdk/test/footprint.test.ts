@@ -6,7 +6,6 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import { readConfig, webOrigins } from 'botcube-config/read';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { footprint } from '../../../../config/footprint.js';
-import { IMAGES } from '../../../../config/footprint-images.js';
 import type { Principal } from '../../../../config/principals.js';
 import { loadConfig } from '../../../../config/load.js';
 import { CREDENTIAL_IMAGE_EXAMPLES_ROOT, EXAMPLES_ROOT, IMAGE_EXAMPLES_ROOT } from '../example/app.js';
@@ -86,6 +85,7 @@ interface Properties {
   Roles?: (string | { Ref: string })[];
   ContainerDefinitions?: { Image: string; Environment?: { Name: string; Value: unknown }[] }[];
   EnvironmentVariables?: Record<string, unknown>;
+  AgentRuntimeArtifact?: { ContainerConfiguration: { ContainerUri: string } };
   Role?: { 'Fn::GetAtt': [string, string] };
   LoggingConfig?: { LogGroup?: { Ref: string } };
 }
@@ -181,8 +181,8 @@ function servedBotCubeConfig(imagePath: unknown): string {
 function imagesIn(resources: Resources): string[] {
   return Object.values(resources).flatMap(({ Type, Properties }) => {
     if (Type === 'AWS::ECS::TaskDefinition') return (Properties.ContainerDefinitions ?? []).map(container => container.Image);
-    // The Runtime runs the bot's image, which AgentCore builds from the bot's Harness image.
-    return Type === 'AWS::BedrockAgentCore::Runtime' ? [IMAGES.bot] : [];
+    const uri = Properties.AgentRuntimeArtifact?.ContainerConfiguration.ContainerUri;
+    return Type === 'AWS::BedrockAgentCore::Runtime' && uri ? [uri] : [];
   });
 }
 
