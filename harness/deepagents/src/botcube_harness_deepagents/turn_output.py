@@ -15,13 +15,15 @@ _CHUNK_CHARACTERS = 16000
 _QUOTED_CURL = re.compile(r'\bcurl\s[^\n`]*')
 
 
-def retain(output: str, environment: Mapping[str, str]) -> None:
+def retain(output: str, environment: Mapping[str, str], *, invocation_token: str | None = None) -> None:
     context = trace.get_current_span().get_span_context()
     if not context.is_valid or not output:
         return
     # The redactor reads curl's credential options only where curl starts a command, so each quoted command is read alone.
     # Its credentials are then stripped wherever else the answer repeats them.
     known = environment_secrets(environment)
+    if invocation_token:
+        known.append(invocation_token)
     quoted = [secret for match in _QUOTED_CURL.finditer(output) for secret in cookie_secrets(match.group())]
     output = _QUOTED_CURL.sub(lambda match: strip_secrets(match.group(), known), output)
     output = strip_secrets(output, sorted(known + quoted, key=len, reverse=True))

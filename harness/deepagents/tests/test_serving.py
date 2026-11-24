@@ -212,14 +212,14 @@ def _call(name: str, args: Mapping[str, str], index: int) -> ChatGenerationChunk
     return ChatGenerationChunk(message=AIMessageChunk(content='', tool_call_chunks=[call]))
 
 
-def _prepare_invocation(run: Any) -> serving.InvocationAuth:
+def _prepare_invocation(run: Any, token: str | None) -> serving.InvocationAuth:
     props = run.forwarded_props or {}
-    relay = props.get('relay')
+    relay = props.get('credentialServiceUrl') or props.get('relay')
     return serving.InvocationAuth(
         props.get('actorId'),
         bool(props.get('memory')),
         props.get('env'),
-        model_relay=ModelRelay(base_url=relay, token='invocation-1', headers={}, session_id='thread-1') if relay else None,
+        model_relay=ModelRelay(base_url=relay, token=token or 'invocation-1', headers={}, session_id='thread-1') if relay else None,
     )
 
 
@@ -1641,6 +1641,30 @@ def test_a_plan_usage_error_ends_the_turn_with_its_classified_error_and_no_other
 
 
 SUMMARY = ['**Checking the request**\n\nThe user wants the single word hello.', '**Answering**\n\nReply with it exactly.']
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(('headers', 'legacy', 'expected'), [
+    ({'X-BotCube-Credential-Invocation': 'synthetic-turn-token'}, {}, 'synthetic-turn-token'),
+    ({'X-BotCube-Credential-Invocation': 'synthetic-turn-token'}, {'credentialServiceInvocationToken': 'old-token'}, 'synthetic-turn-token'),
+    ({}, {'credentialServiceInvocationToken': 'old-token'}, 'old-token'),
+])
+def test_invocation_credential_authenticates_a_plan_turn(
+    service: _Service, headers: dict[str, str], legacy: dict[str, str], expected: str,
+) -> None:
+    with serving_relay() as relay:
+        response = service.client.post('/invocations', json={
+            'threadId': 'thread-1', 'runId': 'header-bound-turn',
+            'messages': [{'id': 'question', 'role': 'user', 'content': 'Say exactly: hello'}],
+            'tools': [], 'context': [], 'state': {},
+            'forwardedProps': {
+                'actorId': 'actor-1', 'sessionUserId': 'user-1',
+                'model': 'openai-plan:gpt-6-astra', 'credentialServiceUrl': relay.url, **legacy,
+            },
+        }, headers=headers)
+    assert response.status_code == 200
+    assert _sse_events(response.text)[-1]['type'] == 'RUN_FINISHED'
+    assert [call['headers']['Authorization'] for call in relay.calls] == [f'Bearer {expected}']
 
 
 @pytest.mark.integration
@@ -3704,25 +3728,23 @@ def test_retained_final_answer_excludes_failed_turns_and_tool_narration(
         assert [row['output'] for row in rows] == ['Both checks finished.']
 
 
-def test_retained_final_answer_strips_the_consumed_credential_binding(
-    service: _Service, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+def test_retained_final_answer_strips_the_invocation_header(
+    service: _Service, caplog: pytest.LogCaptureFixture,
 ) -> None:
     from opentelemetry import trace
     from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 
-    bot = serving._require_bot()
-
-    def prepare(run: Any) -> serving.InvocationAuth:
-        auth = bot.prepare_invocation(run)
-        token = run.forwarded_props.pop('credentialServiceInvocationToken')
-        return replace(auth, environment={'SERVICE_AUTH_TOKEN': token})
-
-    monkeypatch.setattr(serving, '_bot', replace(bot, prepare_invocation=prepare))
     caplog.set_level(logging.INFO, logger='botcube_harness_deepagents.turn_output')
     context = SpanContext(1, 2, False, TraceFlags(1))
     with trace.use_span(NonRecordingSpan(context)):
-        events = service.turn('say: The value is opaque-private-invocation-value.',
-                              credentialServiceInvocationToken='opaque-private-invocation-value')
+        response = service.client.post('/invocations', json={
+            'threadId': 'thread-1', 'runId': 'retained-output',
+            'messages': [{'id': 'question', 'role': 'user', 'content': 'say: The value is opaque-private-invocation-value.'}],
+            'tools': [], 'context': [], 'state': {},
+            'forwardedProps': {'actorId': 'actor-1', 'sessionUserId': 'user-1'},
+        }, headers={'X-BotCube-Credential-Invocation': 'opaque-private-invocation-value'})
+    assert response.status_code == 200
+    events = _sse_events(response.text)
     assert events[-1]['type'] == 'RUN_FINISHED'
     rows = [json.loads(record.getMessage()) for record in caplog.records
             if record.name == 'botcube_harness_deepagents.turn_output']

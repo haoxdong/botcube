@@ -50,6 +50,57 @@ describe('a Turn', () => {
     }
   });
 
+  it('streams a new answer while the Harness is still open after seeding history ending in e', async () => {
+    const target = await startInProcess({ overrides: {
+      invocationPayload: async (input) => ({
+        ...input, credentialServiceInvocationToken: 'example-private-token',
+        forwardedProps: { ...input.forwardedProps, credentialServiceUrl: 'https://credential-service.example' },
+      }),
+    } });
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const history = { id: 'old', role: 'assistant', content: 'Earlier response' };
+    const frame = (event: object) => `data: ${JSON.stringify(event)}`;
+    try {
+      const id = await target.allocate('acct_account-1', 'history-prefix-turn');
+      target.agentcore.script(id, { kind: 'stream', hold, frames: [
+        [
+          frame({ type: 'RUN_STARTED', threadId: id, runId: 'run-1', input: { messages: [history] } }),
+          frame({ type: 'TEXT_MESSAGE_START', messageId: 'answer', role: 'assistant' }),
+          frame({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: 'New answer.' }),
+        ].join('\n\n'),
+        frame({ type: 'TEXT_MESSAGE_END', messageId: 'answer' }),
+        frame({ type: 'RUN_FINISHED', threadId: id, runId: 'run-1' }),
+      ] });
+
+      const response = await postTurn(target, turn(id, [history, { id: 'm1', role: 'user', content: 'hello' }]));
+      const invocation = target.agentcore.invocationFor(id);
+      expect(invocation.headers['x-botcube-credential-invocation']).toBe('example-private-token');
+      expect(invocation.body.includes('example-private-token')).toBe(false);
+      const reader = defined(response.body, 'Turn response stream').getReader();
+      const decoder = new TextDecoder();
+      const answer = async () => {
+        let text = '';
+        while (!text.includes('New answer.')) {
+          // eslint-disable-next-line no-await-in-loop -- read SSE chunks in order
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          text += decoder.decode(chunk.value, { stream: true });
+        }
+        return text;
+      };
+      await expect(Promise.race([answer(), new Promise<null>((resolve) => {
+        const timer = setTimeout(resolve, 1000, null);
+        timer.unref();
+      })])).resolves.toContain('New answer.');
+      release();
+      await reader.cancel();
+    } finally {
+      release();
+      await target.stop();
+    }
+  });
+
   it('passes the browser timezone through to the Harness', async () => {
     await stack.allocate('acct_account-1', 'timezone-turn');
     const response = await postTurn(stack, JSON.stringify({

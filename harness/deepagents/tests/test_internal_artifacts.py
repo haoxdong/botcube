@@ -62,7 +62,7 @@ def configured_shell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> LocalSh
     monkeypatch.setattr(serving, '_bot', None)
     monkeypatch.setattr(serving, '_workspace', lambda: tmp_path)
     serving.configure_harness_definition(HarnessDefinition(
-        skills=(), agent_name='artifacts', prepare_invocation=lambda invocation: invocation,
+        skills=(), agent_name='artifacts', prepare_invocation=lambda invocation, _token: invocation,
         prepare_root=lambda root: None, session_id_env_var='TEST_SESSION_ID',
         environment_cache_key=lambda environment: (),
     ))

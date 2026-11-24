@@ -47,8 +47,9 @@ export interface TurnRouteSource<R extends Requester = Requester> extends TurnSo
   warmSession(requester: R, sessionId: string): Promise<void>;
 }
 
-/** The JSON body an upstream Harness receives for one Turn. */
+/** A Turn prepared for upstream transport. The invocation token is sent in a header. */
 export type InvocationPayload = Record<string, unknown> & {
+  credentialServiceInvocationToken?: string | undefined;
   forwardedProps: Record<string, unknown>;
 };
 

@@ -346,7 +346,7 @@ def _serve_session(
             system_prompt='',
             skills=[],
             agent_name='round-trip',
-            prepare_invocation=lambda _input: serving.InvocationAuth('user-1', False, None),
+            prepare_invocation=lambda _input, _token: serving.InvocationAuth('user-1', False, None),
             build_backend=lambda _env: LocalShellBackend(
                 root_dir=tmp_path, virtual_mode=True, inherit_env=False
             ),

@@ -16,6 +16,7 @@ export const turnSecrets = {
   credentialServiceInvocationToken: 'scheduled-invocation-token',
   agentComputerCdpUrl: 'https://computer.example/cdp?token=scheduled-cdp-token',
 };
+const { credentialServiceInvocationToken, ...forwardedSecrets } = turnSecrets;
 export let stack: InProcessStack;
 export let scheduler: SchedulerView;
 beforeAll(async () => {
@@ -23,12 +24,13 @@ beforeAll(async () => {
     scheduled: true,
     overrides: (chat) => ({
       models: [...chat.models, plan],
-      credentialProps: ['credentialServiceInvocationToken', 'agentComputerCdpUrl'],
+      credentialProps: ['agentComputerCdpUrl'],
       // A scheduled run acts for its owner with no request: say so in the payload.
       scheduledRequester: async (owner) => ({ owner, scheduled: true }),
       accountModels: async ({ owner }) => planCatalogs.get(owner) ?? [plan],
       invocationPayload: async (input, requester, model?: AgentModel) => ({
-        ...input, forwardedProps: { ...input.forwardedProps, requester, approvedModel: model, ...turnSecrets },
+        ...input, credentialServiceInvocationToken,
+        forwardedProps: { ...input.forwardedProps, requester, approvedModel: model, ...forwardedSecrets },
       }),
       signInNeeded: async (owner, outputs) => {
         signInChecks.push({ owner, outputs });

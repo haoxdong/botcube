@@ -37,14 +37,14 @@ export function sseFrameData(lines: readonly string[]): string | null {
   return data.length === 0 ? null : data.join('\n');
 }
 
-export function credentialValues(forwardedProps: Record<string, unknown>, credentialProps: readonly string[]): string[] {
+export function credentialValues(forwardedProps: Record<string, unknown>, credentialProps: readonly string[], invocationToken?: string): string[] {
   const keys = (binding: unknown) => {
     if (!isRecord(binding)) return [];
     const { accessKeyId, secretAccessKey, sessionToken } = binding;
     return [accessKeyId, secretAccessKey, sessionToken];
   };
   const filesKeys = [...keys(forwardedProps.files), ...keys(forwardedProps.turnIdentity)];
-  const props = [...credentialProps.map((prop) => forwardedProps[prop]), forwardedProps.turnIdentity, forwardedProps.userToken];
+  const props = [...credentialProps.map((prop) => forwardedProps[prop]), forwardedProps.turnIdentity, forwardedProps.userToken, invocationToken];
   const queryValues = props.flatMap((value) =>
     typeof value === 'string' && URL.canParse(value) ? [...new URL(value).searchParams.values()] : [],
   );

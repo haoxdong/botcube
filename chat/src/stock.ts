@@ -18,7 +18,7 @@ import type { ScheduledRunSource } from './scheduled-runs.js';
 import { computerFilesRoutes } from './computer-files-routes.js';
 import { chatTable } from './config.js';
 import { allowedOrigins } from './cors.js';
-import { signCredentialServiceInvocation, turnCredentialBinding } from './credential-service-token.js';
+import { signCredentialServiceInvocation, signTurnCredential } from './credential-service-token.js';
 import { accountFilesFromEnv, filesConfigured } from './files.js';
 import { filingUserId } from './filing-user-id.js';
 import { localAgentComputer } from './local-agent-computer.js';
@@ -228,18 +228,18 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
       },
       invocationPayload: async (input, requester, model) => ({
         ...input,
+        credentialServiceInvocationToken: credentialServiceUrl
+          ? signTurnCredential(invocationSecret ?? '', requester.owner, input.threadId, model, await plan.planAccountId(requester.owner, model))
+          : undefined,
         forwardedProps: {
           ...input.forwardedProps,
-          ...(env.BOTCUBE_CREDENTIAL_SERVICE_URL
-            ? turnCredentialBinding(env.BOTCUBE_CREDENTIAL_SERVICE_URL, env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '', requester.owner, input.threadId, model,
-              await plan.planAccountId(requester.owner, model))
-            : {}),
+          ...(credentialServiceUrl ? { credentialServiceUrl } : {}),
           ...(await computer.forwardedProps(requester.owner, input.threadId)),
           // The account's Files, mounted as the agent's working directory.
           ...(filesConfigured(env) ? { files: await files().mountBinding(requester.owner) } : {}),
         },
       }),
-      credentialProps: ['credentialServiceInvocationToken', 'agentComputerCdpUrl'],
+      credentialProps: ['agentComputerCdpUrl'],
       authorizeBrowserLiveView: computer.authorizeBrowserLiveView,
       warmSession: computer.warmSession,
       turnStarting: computer.turnStarting,

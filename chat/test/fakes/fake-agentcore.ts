@@ -6,7 +6,7 @@ export type UpstreamScript =
    * 200 SSE: each frame is followed by a blank line; `drop` cuts the connection after them.
    * Frames given as a function are built from the invocation's forwarded props.
    */
-  | { kind: 'stream'; frames: string[] | ((forwardedProps: Record<string, unknown>) => string[]); drop?: boolean; hold?: Promise<void> }
+  | { kind: 'stream'; frames: string[] | ((forwardedProps: Record<string, unknown>, headers: RecordedRequest['headers']) => string[]); drop?: boolean; hold?: Promise<void> }
   /** A non-2xx answer; a null body is cut off before it can be read. */
   | { kind: 'error'; status: number; body: string | null };
 
@@ -68,7 +68,7 @@ export class FakeAgentCore extends HttpFake {
         response.on('close', () => this.starting.delete(sessionId));
       }
       const payload = JSON.parse(request.body) as { threadId: string; forwardedProps: Record<string, unknown>; messages: { content: unknown }[] };
-      playRuntime(this.scripts.get(payload.threadId) ?? this.promptScripts.get(String(payload.messages.at(-1)?.content)) ?? { kind: 'stream', frames: ['data: {"type":"RUN_STARTED"}', 'data: {"type":"RUN_FINISHED"}'] }, payload.forwardedProps, response);
+      playRuntime(this.scripts.get(payload.threadId) ?? this.promptScripts.get(String(payload.messages.at(-1)?.content)) ?? { kind: 'stream', frames: ['data: {"type":"RUN_STARTED"}', 'data: {"type":"RUN_FINISHED"}'] }, payload.forwardedProps, request.headers, response);
     });
   }
   startBrowser(): string {
@@ -95,7 +95,7 @@ export class FakeAgentCore extends HttpFake {
   invocations(): RecordedRequest[] { return this.requests.filter((request) => request.path.startsWith('/runtimes/') && request.path.includes('/invocations')); }
 }
 
-function playRuntime(script: UpstreamScript, forwardedProps: Record<string, unknown>, response: ServerResponse): void {
+function playRuntime(script: UpstreamScript, forwardedProps: Record<string, unknown>, headers: RecordedRequest['headers'], response: ServerResponse): void {
   if (script.kind === 'error') {
     if (script.body === null) {
       response.writeHead(script.status, { 'content-length': '1000' });
@@ -107,7 +107,7 @@ function playRuntime(script: UpstreamScript, forwardedProps: Record<string, unkn
     return;
   }
   response.writeHead(200, { 'content-type': 'text/event-stream' });
-  const frames = typeof script.frames === 'function' ? script.frames(forwardedProps) : script.frames;
+  const frames = typeof script.frames === 'function' ? script.frames(forwardedProps, headers) : script.frames;
   const body = frames.map((frame) => `${frame}\n\n`).join('');
   if (script.drop) {
     response.write(body, () => response.socket?.destroy());

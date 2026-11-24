@@ -13,8 +13,7 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture(scope='module')
-def exported_spans_by_session() -> dict[str, list[dict[str, Any]]]:
+def exported_telemetry(*, content: bool) -> dict[str, list[dict[str, Any]]]:
     env = {key: value for key, value in os.environ.items() if not key.startswith(('OTEL_', 'AWS_', 'AGENT_'))}
     env.update({
         'AGENT_OBSERVABILITY_ENABLED': 'true',
@@ -26,7 +25,7 @@ def exported_spans_by_session() -> dict[str, list[dict[str, Any]]]:
         'OTEL_METRICS_EXPORTER': 'none',
         'OTEL_LOGS_EXPORTER': 'console',
         'OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED': 'true',
-        'TRACELOOP_TRACE_CONTENT': 'false',
+        'TRACELOOP_TRACE_CONTENT': str(content).lower(),
         'LANGSMITH_TRACING': 'true',
         'LANGCHAIN_TRACING_V2': 'true',
     })
@@ -51,6 +50,18 @@ def exported_spans_by_session() -> dict[str, list[dict[str, Any]]]:
         for session in ('agentcore-success', 'agentcore-tool-error', 'agentcore-model-error', 'agentcore-disconnect', 'cli-success', 'cli-failure',
                         'cli-failed-turn')
     }}
+
+
+@pytest.fixture(scope='module')
+def exported_spans_by_session() -> dict[str, list[dict[str, Any]]]:
+    return exported_telemetry(content=False)
+
+
+def test_content_tracing_omits_the_invocation_token() -> None:
+    exported = json.dumps(exported_telemetry(content=True))
+    assert 'sensitive-model-input' in exported
+    assert 'synthetic-invocation-token-9065' not in exported
+    assert 'obsolete-body-token-9065' not in exported
 
 
 @pytest.mark.parametrize('session', [

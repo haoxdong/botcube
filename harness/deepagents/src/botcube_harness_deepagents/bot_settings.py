@@ -108,15 +108,15 @@ def bot_definition(bot: BotSettings) -> HarnessDefinition:
     )
 
 
-def _prepare_invocation(input_data: Any, *, user_token_in_shell: bool) -> InvocationAuth:
-    """The Turn's User, with Memory, and the Credential Service's model relay when Chat bound one for the Session.
+def _prepare_invocation(input_data: Any, token: str | None, *, user_token_in_shell: bool) -> InvocationAuth:
+    """The Turn's User and its Credential Service model relay.
 
     The User is the Turn identity's actor; the Session's filing ID differs for a Session filed under an older ID.
     The shell names the User and Chat's traffic marker to the spans of any CLI the agent runs.
     """
     props = input_data.get('forwardedProps', {}) if isinstance(input_data, dict) else input_data.forwarded_props or {}
     session = input_data.get('threadId') if isinstance(input_data, dict) else input_data.thread_id
-    url, token = props.get('credentialServiceUrl'), props.get('credentialServiceInvocationToken')
+    url = props.get('credentialServiceUrl')
     if bool(url) != bool(token):
         raise ValueError('The Credential Service binding needs both its URL and its invocation token')
     relay = openai_model_relay(url, token, session) if url and token and isinstance(session, str) else None

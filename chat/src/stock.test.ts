@@ -361,8 +361,8 @@ describe("the stock Chat Service's Plan Usage", () => {
   beforeAll(async () => { await credentialService.listen(); });
   afterAll(async () => { await credentialService.close(); });
 
-  const claims = (payload: { forwardedProps?: Record<string, unknown> }) => JSON.parse(Buffer.from(
-    String(payload.forwardedProps?.credentialServiceInvocationToken).split('.')[1] ?? '', 'base64url',
+  const claims = (payload: { credentialServiceInvocationToken?: string | undefined }) => JSON.parse(Buffer.from(
+    String(payload.credentialServiceInvocationToken).split('.')[1] ?? '', 'base64url',
   ).toString()) as Record<string, unknown>;
 
   async function planUsage() {

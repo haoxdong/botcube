@@ -230,20 +230,18 @@ async function runInSideChat(
   try {
     execution = await deps.sessionMetadata.scheduledRuns?.execution(owner, sideChat);
     if (execution === undefined) throw new HttpError(503, 'Scheduled execution admission is unavailable');
-    const payload = await bot.invocationPayload(input, requester, model);
+    const { credentialServiceInvocationToken: token, ...payload } = await bot.invocationPayload(input, requester, model);
     const documents = await deps.agentDocuments.get(owner, bot.agentDocuments);
     payload.forwardedProps.agentIdentity = documents.agentIdentity;
     payload.forwardedProps.soul = documents.soul;
     botMemory(payload.forwardedProps, bot);
     payload.forwardedProps.sessionUserId = sessionUserId;
     payload.forwardedProps.turnStartedAt = new Date().toISOString();
-    // The prompt may still say how often to run; a run must not propose another task.
     payload.forwardedProps.scheduledRun = true;
     await forwardTurnIdentity(deps.turnIdentity, payload.forwardedProps, {
       actorId: bot.filingUserId(owner), filingActorId: sessionUserId, sessionId: sideChat, startedAt: running.startedAt,
     });
     await forwardUserToken(deps.userTokens ?? null, payload.forwardedProps, { ...requester, threadId: sideChat, startedAt: running.startedAt });
-    // A scheduled run is a Turn of its Side Chat, so its browser starts as a chat Turn's does (ADR 0077 decision 1).
     bot.turnStarting?.(requester, sideChat);
     const current = await deps.scheduledTasks.get(owner, task.id, deliveryContext);
     if (current === null) return { status: 'skipped', text: 'the task was no longer available' };
@@ -252,12 +250,12 @@ async function runInSideChat(
     const complete = await prepared.dispatch();
     forwardSnapshotEpoch(payload.forwardedProps, complete);
     phase = 'submitted';
-    const response = await deps.upstream.invokeRegistered(JSON.stringify(payload), complete.session, complete);
+    const response = await deps.upstream.invokeRegistered(JSON.stringify(payload), complete.session, complete, { credentialServiceInvocationToken: token });
     phase = 'received';
     output = await readScheduledRun(
       response,
       deps.upstream.label,
-      credentialValues(payload.forwardedProps, bot.credentialProps),
+      credentialValues(payload.forwardedProps, bot.credentialProps, token),
       initialMessages,
     );
     provider = model.provider;

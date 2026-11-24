@@ -76,6 +76,7 @@ from .artifact import SKILLS_SOURCE, artifact_tool
 from .bot_settings import bot_from_env
 from .botcube_config import botcube_config_from_env
 from .definition import HarnessDefinition, InvocationAuth, ModelRelay
+from .definition import InvocationContext as _RequestContext
 from .files import (
     FilesBindingError,
     absolute_attachment_paths,
@@ -197,7 +198,7 @@ class HarnessBot:
     skills: Sequence[str]
     agent_name: str
     system_prompt: str
-    prepare_invocation: Callable[[Any], InvocationAuth]
+    prepare_invocation: Callable[[Any, str | None], InvocationAuth]
     build_backend: Callable[[dict[str, str]], LocalShellBackend]
     apply_session_id: Callable[[LocalShellBackend, str | None], None]
     environment_cache_key: Callable[[Mapping[str, str] | None], tuple[tuple[str, str], ...]]
@@ -252,9 +253,6 @@ def _require_bot() -> HarnessBot:
     return _bot
 
 
-# AgentCore passes the runtime session id on this header (what AGUIApp read via
-# RequestContext). The bot definition maps it into its tool session environment.
-SESSION_ID_HEADER = 'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id'
 # An SSE comment the Turn's stream sends after each quiet stretch this long: the Chat Service's read of the
 # stream fails after 300 s with nothing sent. The interval is the SSE spec's suggestion for proxies.
 _KEEPALIVE_SECONDS = 15.0
@@ -268,11 +266,6 @@ class _RuntimeApp(FastAPI):
 
 # ADR 0029 uses the AgentCore container protocol, not the SDK's AGUIApp.
 app = _RuntimeApp(title='BotCube DeepAgents Harness Runtime', telemetry={'auto_configure': False})
-
-
-@dataclass
-class _RequestContext:
-    session_id: str | None
 
 
 class _AgentKey(NamedTuple):
@@ -616,7 +609,7 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
         documents = None
     files = pop_files_mount(forwarded)
     with turn_timing.phase('invocation_auth'):
-        auth = _require_bot().prepare_invocation(input_data)
+        auth = context.prepare(input_data, _require_bot().prepare_invocation)
     forwarded.pop('sessionUserId', None)
     # Only an opted-in bot's shell holds the user token, for its CLIs to call its own service as the User (ADR 0091):
     # minted per Turn, user-token audience, redacted from tool output, never in the model's context.
@@ -1053,12 +1046,7 @@ class _InvocationResponse(StreamingResponse):
 
 @app.post('/invocations')
 async def invocations(request: Request) -> Any:
-    """Parse RunAgentInput → run the agent → stream AG-UI events as SSE.
-
-    Malformed bodies get HTTP 400 (the stream hasn't started). Errors raised
-    mid-stream are emitted as a RunErrorEvent on the open SSE connection,
-    matching the AG-UI spec (parity with AGUIApp).
-    """
+    """Stream AG-UI over SSE. Malformed requests get HTTP 400 before streaming."""
     receipt = perf_counter()
     process_observation.mark('first_invocation')
     try:
@@ -1071,9 +1059,9 @@ async def invocations(request: Request) -> Any:
     except Exception as e:
         return JSONResponse({'error': 'Invalid RunAgentInput', 'details': str(e)}, status_code=400)
 
-    context = _RequestContext(request.headers.get(SESSION_ID_HEADER))
-    encoder = EventEncoder(accept=request.headers.get('accept', ''))
     forwarded = run_input.forwarded_props or {}
+    context = _RequestContext.from_request(request.headers, forwarded)
+    encoder = EventEncoder(accept=request.headers.get('accept', ''))
     if 'timezone' in forwarded:
         name = forwarded['timezone']
         if not isinstance(name, str):
@@ -1091,7 +1079,7 @@ async def invocations(request: Request) -> Any:
         keep_alive(_invocation_frames(run_input, context, encoder, timing), _KEEPALIVE_SECONDS),
         run_id=run_input.run_id, runtime_session_id=context.session_id, media_type=encoder.get_content_type(),
         diagnostic_hold=diagnostic_response.response_hold(
-            run_input, receipt, lambda: _require_bot().prepare_invocation(run_input).actor_id,
+            run_input, receipt, lambda: context.prepare(run_input, _require_bot().prepare_invocation).actor_id,
         ),
     )
 
@@ -1144,7 +1132,7 @@ async def _invocation_frames(
     finally:
         _record_failed_calls(calls, responded=finished)
         if finished and not timing.warmup:
-            turn_output.retain(reply.text, environment)
+            turn_output.retain(reply.text, environment, invocation_token=context.credential_token)
         failure = error or stream_error
         timing.finish(_invocation_status(finished, failure))
 

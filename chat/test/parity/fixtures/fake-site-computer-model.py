@@ -24,8 +24,8 @@ from botcube_harness_deepagents.definition import InvocationAuth
 _environment: dict[str, str] = {}
 
 
-def prepare_invocation(input_data: Any) -> InvocationAuth:
-    auth = FAKE_SITE_DEFINITION.prepare_invocation(input_data)
+def prepare_invocation(input_data: Any, token: str | None) -> InvocationAuth:
+    auth = FAKE_SITE_DEFINITION.prepare_invocation(input_data, token)
     _environment.clear()
     _environment.update(auth.environment or {})
     _environment['AGENT_BROWSER_CDP'] = input_data.forwarded_props['agentComputerCdpUrl']

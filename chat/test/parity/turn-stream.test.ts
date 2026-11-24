@@ -9,9 +9,11 @@ beforeAll(async () => {
 });
 afterAll(() => stack.stop());
 
+const invocationHeader = 'x-botcube-credential-invocation';
+
 describe("a Turn's credentials never reach the client, whatever Harness answers", () => {
   it.each([
-    ['the signed Credential Service invocation token', 'credentialServiceInvocationToken'],
+    ['the signed Credential Service invocation token', invocationHeader],
     ["the Agent Computer's tokened CDP URL", 'agentComputerCdpUrl'],
   ])('withholds a stream that echoes %s', async (_, prop) => {
     const browser = stack.browser();
@@ -19,17 +21,17 @@ describe("a Turn's credentials never reach the client, whatever Harness answers"
     const threadId = await browser.newSideChat();
     stack.agentcore.script(threadId, {
       kind: 'stream',
-      frames: (forwarded) => [
+      frames: (forwarded, headers) => [
         'data: {"type":"RUN_STARTED"}',
-        `data: ${JSON.stringify({ type: 'STATE_SNAPSHOT', snapshot: { [prop]: forwarded[prop] } })}`,
+        `data: ${JSON.stringify({ type: 'STATE_SNAPSHOT', snapshot: { [prop]: headers[prop] ?? forwarded[prop] } })}`,
         'data: {"type":"RUN_FINISHED"}',
       ],
     });
 
     const response = await browser.sendTurn(threadId);
 
-    const { forwardedProps } = stack.agentcore.invocationFor(threadId).payload;
-    expect(forwardedProps[prop]).toEqual(expect.any(String));
+    const { headers, payload } = stack.agentcore.invocationFor(threadId);
+    expect(headers[prop] ?? payload.forwardedProps[prop]).toEqual(expect.any(String));
     expect(sseFrames(await response.text())).toEqual([
       'data: {"type":"RUN_STARTED"}',
       `data: ${JSON.stringify({
@@ -40,7 +42,7 @@ describe("a Turn's credentials never reach the client, whatever Harness answers"
     ]);
   });
   it.each([
-    ['the signed Credential Service invocation token', 'credentialServiceInvocationToken'],
+    ['the signed Credential Service invocation token', invocationHeader],
     ["the Agent Computer's tokened CDP URL", 'agentComputerCdpUrl'],
   ])('withholds %s split across message deltas', async (_, prop) => {
     const browser = stack.browser();
@@ -48,8 +50,8 @@ describe("a Turn's credentials never reach the client, whatever Harness answers"
     const threadId = await browser.newSideChat();
     stack.agentcore.script(threadId, {
       kind: 'stream',
-      frames: (forwarded) => {
-        const value = String(forwarded[prop]);
+      frames: (forwarded, headers) => {
+        const value = String(headers[prop] ?? forwarded[prop]);
         const split = Math.floor(value.length / 2);
         return [
           'data: {"type":"RUN_STARTED"}',
@@ -73,7 +75,7 @@ describe("a Turn's credentials never reach the client, whatever Harness answers"
     ]);
   });
   it.each([
-    ['the signed Credential Service invocation token', 'credentialServiceInvocationToken'],
+    ['the signed Credential Service invocation token', invocationHeader],
     ["the Agent Computer's tokened CDP URL", 'agentComputerCdpUrl'],
   ])('withholds %s split across tool argument deltas', async (_, prop) => {
     const browser = stack.browser();
@@ -81,8 +83,8 @@ describe("a Turn's credentials never reach the client, whatever Harness answers"
     const threadId = await browser.newSideChat();
     stack.agentcore.script(threadId, {
       kind: 'stream',
-      frames: (forwarded) => {
-        const value = String(forwarded[prop]);
+      frames: (forwarded, headers) => {
+        const value = String(headers[prop] ?? forwarded[prop]);
         const split = Math.floor(value.length / 2);
         return [
           'data: {"type":"RUN_STARTED"}',

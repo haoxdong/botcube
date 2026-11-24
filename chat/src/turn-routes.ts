@@ -92,7 +92,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
     const forwardedProps = { ...(input.forwardedProps as Record<string, unknown>) };
     for (const prop of [...BOTCUBE_CREDENTIAL_PROPS, ...bot.credentialProps, ...(bot.identityProps ?? [])]) delete forwardedProps[prop];
     const preparing = bot.invocationPayload({ ...input, forwardedProps }, requester, model).then((payload) => {
-      captureCredentials?.(credentialValues(payload.forwardedProps, bot.credentialProps));
+      captureCredentials?.(credentialValues(payload.forwardedProps, bot.credentialProps, payload.credentialServiceInvocationToken));
       return payload;
     });
     const [payload, loadedDocuments] = await admissionResults([preparing, documents]);
@@ -152,7 +152,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
       const end = (failure: TurnFailure | undefined) => sessionMetadata.turnEnded(requester.owner, input.threadId, running, failure);
       let credentials = credentialValues(input.forwardedProps ?? {}, bot.credentialProps);
       try {
-        const payload = await turnPayload(input, requester, model, (issued) => { credentials = [...credentials, ...issued]; }, documents.then(([result]) => {
+        const { credentialServiceInvocationToken, ...payload } = await turnPayload(input, requester, model, (issued) => { credentials = [...credentials, ...issued]; }, documents.then(([result]) => {
           if (result.status === 'rejected') throw result.reason;
           return result.value;
         }));
@@ -179,7 +179,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
         const complete = await dispatchAfterWriter(prepared, input.threadId, input.runId, c.req.raw.signal);
         forwardSnapshotEpoch(payload.forwardedProps, complete);
         timing.mark('dispatch');
-        return await relayTurn({ label: upstream.label, invoke: (body, _sessionId, init) => upstream.invokeRegistered(body, complete.session, complete, init) }, {
+        return await relayTurn({ label: upstream.label, invoke: (body, _sessionId, init) => upstream.invokeRegistered(body, complete.session, complete, { ...init, credentialServiceInvocationToken }) }, {
           timing,
           body: JSON.stringify(payload),
           sessionId: input.threadId,
@@ -260,7 +260,10 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
     };
     const payload = await turnPayload(input, requester, await namedModel(bot, requester, requestedModel ?? undefined));
     const recorded = await sessionMetadata.get(requester.owner, input.threadId);
-    return { ...payload.forwardedProps, warmup: true, sessionUserId: recorded?.filing_user_id ?? bot.filingUserId(requester.owner) };
+    return {
+      credentialServiceInvocationToken: payload.credentialServiceInvocationToken,
+      forwardedProps: { ...payload.forwardedProps, warmup: true, sessionUserId: recorded?.filing_user_id ?? bot.filingUserId(requester.owner) },
+    };
   };
 
   app.post('/warmup', async (c) => {
@@ -291,16 +294,19 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
       state: {},
       forwardedProps: { warmup: true },
     };
+    let credentialServiceInvocationToken: string | undefined;
     let warmSession: () => Promise<void> = async () => undefined;
     let endWarming = () => {};
     if (mainChat === true || (typeof threadId === 'string' && threadId)) {
       const requester = await bot.requester(c);
       input.threadId = mainChat === true ? await sessionMetadata.mainChat(requester.owner, bot.filingUserId(requester.owner)) : (threadId as string);
       endWarming = warming.begin(requester.owner, input.threadId);
-      input.forwardedProps = await namedWarmupProps(input, requester, requestedModel, effort).catch((error: unknown) => {
+      const prepared = await namedWarmupProps(input, requester, requestedModel, effort).catch((error: unknown) => {
         endWarming();
         throw error;
       });
+      input.forwardedProps = prepared.forwardedProps;
+      credentialServiceInvocationToken = prepared.credentialServiceInvocationToken;
       mark('props');
       const sessionId = input.threadId;
       namedSession = { owner: requester.owner, accountActorId: bot.filingUserId(requester.owner), session: { session_id: sessionId, filing_user_id: input.forwardedProps.sessionUserId as string } };
@@ -308,7 +314,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
     }
     const warmAgent = async () => {
       try {
-        const init = { signal: AbortSignal.timeout(warmupTimeoutMs) };
+        const init = { signal: AbortSignal.timeout(warmupTimeoutMs), credentialServiceInvocationToken };
         const complete = namedSession === undefined ? Object.assign(async () => undefined, { session: undefined, snapshotEpoch: undefined })
           : await sessionMetadata.beginDispatch(namedSession.owner, namedSession.session.session_id, namedSession.session.filing_user_id);
         mark('dispatch');
@@ -332,7 +338,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
           await response.body?.cancel();
           return c.json({ error: 'AgentCore warmup failed', details: `HTTP ${response.status}` }, 502);
         }
-        const credentials = credentialValues(input.forwardedProps as Record<string, unknown>, bot.credentialProps);
+        const credentials = credentialValues(input.forwardedProps as Record<string, unknown>, bot.credentialProps, credentialServiceInvocationToken);
         const text = await response.text();
         mark('answer');
         const failure = await runError(text, credentials);

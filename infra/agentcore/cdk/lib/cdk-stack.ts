@@ -252,9 +252,7 @@ export class AgentCoreStack extends Stack {
   }
 
   private configureRuntimes(props: AgentCoreStackProps): void {
-    // Cap each runtime's lifecycle (ADR 0029 defense-in-depth). The
-    // agentcore-cdk L3 construct doesn't expose LifecycleConfiguration, so set
-    // it on the underlying CfnRuntime (the runtime's default child).
+    // agentcore-cdk does not expose lifecycle or request-header settings.
     for (const env of this.runtimes) {
       const cfnRuntime = env.runtime.node.defaultChild as bedrockagentcore.CfnRuntime;
       const platformVersion = props.platformVersion === undefined ? 'V2' : props.platformVersion;
@@ -262,6 +260,7 @@ export class AgentCoreStack extends Stack {
       new CfnOutput(this, 'RuntimePlatformVersion', { value: platformVersion });
       if (props.rollbackVersion !== undefined)
         new CfnOutput(this, 'V1RollbackVersion', { value: props.rollbackVersion });
+      cfnRuntime.requestHeaderConfiguration = { requestHeaderAllowlist: ['X-BotCube-Credential-Invocation'] };
       cfnRuntime.lifecycleConfiguration = {
         maxLifetime: props.runtimeMaxLifetimeSeconds ?? RUNTIME_MAX_LIFETIME_SECONDS,
         idleRuntimeSessionTimeout: props.runtimeIdleTimeoutSeconds ?? RUNTIME_IDLE_TIMEOUT_SECONDS,

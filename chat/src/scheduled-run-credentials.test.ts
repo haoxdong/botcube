@@ -4,6 +4,7 @@ import { mainChat, owner, posted, run, scheduler, signInChecks, stream, text, tu
 
 describe('a scheduled run', () => {
   it.each([
+    ['Invocation token in text', text('a1', turnSecrets.credentialServiceInvocationToken)],
     ['Files access key in malformed data', [`data: ${turnSecrets.files.accessKeyId}`]],
     ['Files access key in text', text('a1', turnSecrets.files.accessKeyId)],
     ['Files session token in a tool result', [{ type: 'TOOL_CALL_RESULT', messageId: 'r1', toolCallId: 't1', content: `Sign in to continue: ${turnSecrets.files.sessionToken}` }]],

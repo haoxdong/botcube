@@ -34,7 +34,7 @@ from opentelemetry.sdk.trace import TracerProvider
 
 from botcube_harness_deepagents import serving, trace_relay, turn_timing
 from botcube_harness_deepagents.agent import build_agent
-from botcube_harness_deepagents.definition import HarnessDefinition
+from botcube_harness_deepagents.definition import SESSION_ID_HEADER, HarnessDefinition
 from botcube_harness_deepagents.session_agent import SessionAgent
 from conftest import ToolBindableFakeMessagesModel, prepared
 
@@ -48,6 +48,14 @@ async def lookup(value: str) -> str:
     if value == 'tool-error':
         raise ValueError('lookup failed')
     return 'found ' + value
+
+
+def credential_headers(mode: str, forwarded: dict[str, str]) -> dict[str, str]:
+    if os.environ.get('TRACELOOP_TRACE_CONTENT') != 'true':
+        return {}
+    forwarded['credentialServiceInvocationToken'] = 'obsolete-body-token-9065'
+    forwarded['credentialServiceUrl'] = 'https://credential-service.example'
+    return {'X-BotCube-Credential-Invocation': 'synthetic-invocation-token-9065'} if mode == 'success' else {}
 
 
 async def exercise(session_id: str, mode: str) -> None:
@@ -66,7 +74,7 @@ async def exercise(session_id: str, mode: str) -> None:
     patch.setattr(serving, '_require_bot', lambda: serving.HarnessBot(
         skills=(), agent_name='test', system_prompt='',
         build_backend=lambda _: LocalShellBackend(root_dir='.', virtual_mode=True, inherit_env=False),
-        environment_cache_key=lambda _: (), prepare_invocation=lambda _: serving.InvocationAuth('owner', False, None),
+        environment_cache_key=lambda _: (), prepare_invocation=lambda _, _token: serving.InvocationAuth('owner', False, None),
         apply_session_id=lambda *_: None,
     ))
     graph = StateGraph(AgentState)
@@ -99,11 +107,13 @@ async def exercise(session_id: str, mode: str) -> None:
         serving._SESSION_TURNS = turns
         pytest.MonkeyPatch().setattr(serving, '_turn_agent', turn_agent)
         inputs.forwarded_props = {'sessionUserId': 'owner'}
+        credential = credential_headers(mode, inputs.forwarded_props)
         trace_id = {'success': '1', 'tool-error': '2', 'model-error': '3'}[mode] * 32
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=serving.app), base_url='http://harness') as client:
             response = await client.post('/invocations', json=inputs.model_dump(by_alias=True), headers={
-                serving.SESSION_ID_HEADER: session_id,
+                SESSION_ID_HEADER: session_id,
                 'traceparent': f'00-{trace_id}-1234567890abcdef-01',
+                **credential,
             })
         assert response.status_code == 200
         assert ('RUN_ERROR' if mode.endswith('error') else 'RUN_FINISHED') in response.text
@@ -120,7 +130,7 @@ async def exercise_command(command: str, *, sync: bool = False) -> None:
         os.environ['BOTCUBE_WORKSPACE'] = root
         serving._bot = None
         serving.configure_harness_definition(HarnessDefinition(
-            skills=(), agent_name='test', prepare_invocation=lambda _: serving.InvocationAuth('owner', False, None),
+            skills=(), agent_name='test', prepare_invocation=lambda _, _token: serving.InvocationAuth('owner', False, None),
             prepare_root=lambda _: None, session_id_env_var='TEST_SESSION', environment_cache_key=lambda _: (),
         ))
         backend = serving._require_bot().build_backend({'PATH': root + ':/usr/bin:/bin'})
@@ -215,7 +225,7 @@ async def exercise_cli_turn(session_id: str, command: str, *, answer_fails: bool
         os.environ['BOTCUBE_WORKSPACE'] = root
         serving._bot = None
         serving.configure_harness_definition(HarnessDefinition(
-            skills=(), agent_name='test', prepare_invocation=lambda _: serving.InvocationAuth('owner', False, None),
+            skills=(), agent_name='test', prepare_invocation=lambda _, _token: serving.InvocationAuth('owner', False, None),
             prepare_root=lambda _: None, session_id_env_var='TEST_SESSION', environment_cache_key=lambda _: (),
         ))
         backend = serving._require_bot().build_backend({'PATH': root + ':/usr/bin:/bin'})
@@ -239,7 +249,7 @@ async def exercise_cli_turn(session_id: str, command: str, *, answer_fails: bool
             tools=[], context=[], state={}, forwarded_props={'sessionUserId': 'owner'},
         )
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=serving.app), base_url='http://harness') as client:
-            response = await client.post('/invocations', json=inputs.model_dump(by_alias=True), headers={serving.SESSION_ID_HEADER: session_id})
+            response = await client.post('/invocations', json=inputs.model_dump(by_alias=True), headers={SESSION_ID_HEADER: session_id})
         assert ('RUN_ERROR' if answer_fails else 'RUN_FINISHED') in response.text, response.text
     collector.shutdown()
     collector.server_close()

@@ -251,7 +251,7 @@ def test_new_actor_discovers_and_reads_primed_artifact_skills_without_filesystem
         monkeypatch.setattr(serving, name, None)
     serving.configure_harness_definition(HarnessDefinition(
         skills=[], agent_name='snapshot-fixture', system_prompt='Fixture instructions.',
-        prepare_invocation=lambda _: InvocationAuth(None, False, None),
+        prepare_invocation=lambda _, _token: InvocationAuth(None, False, None),
         prepare_root=lambda _: None, session_id_env_var='TEST_SESSION_ID',
         environment_cache_key=lambda _: (),
     ))

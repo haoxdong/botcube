@@ -6,6 +6,7 @@ import type { HarnessBearer } from './harness-auth.js';
 
 /** The header that names the Session a Runtime invocation belongs to. */
 const SESSION_ID_HEADER = 'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id';
+const CREDENTIAL_INVOCATION_HEADER = 'X-BotCube-Credential-Invocation';
 
 /** A cold AgentCore Runtime can take this long to accept a connection; headers and body wait 300 s (the default). */
 const CONNECT_TIMEOUT_MS = 30_000;
@@ -27,7 +28,21 @@ export interface Upstream {
   /** How client-facing errors name this upstream. */
   readonly label: string;
   readonly runtimeTarget?: string;
-  invoke(body: string, sessionId: string, init?: { accept?: string | undefined; signal?: AbortSignal | undefined; traceContext?: Context | undefined }): Promise<Response>;
+  invoke(body: string, sessionId: string, init?: InvocationOptions): Promise<Response>;
+}
+
+interface InvocationOptions {
+  accept?: string | undefined;
+  signal?: AbortSignal | undefined;
+  traceContext?: Context | undefined;
+  credentialServiceInvocationToken?: string | undefined;
+}
+
+function invocationHeaders(sessionId: string, init: InvocationOptions): Record<string, string> {
+  const headers: Record<string, string> = { 'content-type': 'application/json', [SESSION_ID_HEADER]: sessionId };
+  if (init.credentialServiceInvocationToken !== undefined) headers[CREDENTIAL_INVOCATION_HEADER] = init.credentialServiceInvocationToken;
+  if (init.traceContext !== undefined) propagation.inject(init.traceContext, headers);
+  return headers;
 }
 
 export interface AgentCoreRuntime {
@@ -87,11 +102,9 @@ export function agentCoreUpstream(runtime: AgentCoreRuntime, options: UpstreamOp
       return undefined;
     },
     invoke(body, sessionId, init = {}) {
-      const headers = { 'content-type': 'application/json', [SESSION_ID_HEADER]: sessionId };
-      if (init.traceContext !== undefined) propagation.inject(init.traceContext, headers);
       return runtimeFetch(runtime, options.bearer, url, {
         method: 'POST',
-        headers,
+        headers: invocationHeaders(sessionId, init),
         body,
         signal: init.signal,
         dispatcher,
@@ -106,13 +119,9 @@ export function localAgentUpstream(baseUrl: string, options: UpstreamOptions = {
   return {
     label: 'Local Harness',
     async invoke(body, sessionId, init = {}) {
-      const headers: Record<string, string> = {
-        'content-type': 'application/json',
-        accept: init.accept ?? 'text/event-stream',
-        [SESSION_ID_HEADER]: sessionId,
-      };
+      const headers = invocationHeaders(sessionId, init);
+      headers.accept = init.accept ?? 'text/event-stream';
       if (options.bearer !== undefined) headers.authorization = `Bearer ${await options.bearer()}`;
-      if (init.traceContext !== undefined) propagation.inject(init.traceContext, headers);
       return await dispatcherFetch(`${baseUrl}/invocations`, {
         method: 'POST',
         headers,

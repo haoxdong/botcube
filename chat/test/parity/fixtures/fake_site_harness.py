@@ -19,21 +19,16 @@ _SKILL = Path(__file__).resolve().parent / 'skills' / 'fake-site' / 'SKILL.md'
 _SKILLS = '/skills/'
 
 
-def prepare_invocation(input_data: Any) -> InvocationAuth:
+def prepare_invocation(input_data: Any, token: str | None) -> InvocationAuth:
     props = input_data.get('forwardedProps', {}) if isinstance(input_data, dict) else input_data.forwarded_props
+    url = props.get('credentialServiceUrl')
     environment = {}
-    for prop, key in (
-        ('credentialServiceUrl', 'FAKE_SITE_CREDENTIAL_SERVICE_URL'),
-        ('credentialServiceInvocationToken', 'FAKE_SITE_CREDENTIAL_INVOCATION'),
-    ):
-        value = props.get(prop)
-        if isinstance(value, str) and value:
-            environment[key] = value
+    if url and token:
+        environment.update(FAKE_SITE_CREDENTIAL_SERVICE_URL=url, FAKE_SITE_CREDENTIAL_INVOCATION=token)
     session = input_data.get('threadId') if isinstance(input_data, dict) else input_data.thread_id
     relay = None
     if isinstance(session, str):
         environment['FAKE_SITE_CREDENTIAL_SESSION'] = session
-        url, token = environment.get('FAKE_SITE_CREDENTIAL_SERVICE_URL'), environment.get('FAKE_SITE_CREDENTIAL_INVOCATION')
         if url and token:
             relay = openai_model_relay(url, token, session)
         elif url or token:

@@ -195,6 +195,7 @@ test('names every resource from identity.json and builds the session API from th
   const template = Template.fromStack(onlyStack(app));
   template.hasResourceProperties('AWS::BedrockAgentCore::Runtime', {
     AgentRuntimeName: identity.aws.agentCore.runtime,
+    RequestHeaderConfiguration: { RequestHeaderAllowlist: ['X-BotCube-Credential-Invocation'] },
   });
   template.hasResourceProperties('AWS::BedrockAgentCore::Memory', { Name: identity.aws.agentCore.memory });
   template.hasResourceProperties('AWS::ECR::Repository', { RepositoryName: identity.aws.ecr.repository });
