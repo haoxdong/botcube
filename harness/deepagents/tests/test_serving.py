@@ -399,7 +399,7 @@ def service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.Fix
 
 def _replay(user: str, thread: str) -> list[tuple[str, str]]:
     session_api._GRAPH = None
-    messages = asyncio.run(session_api.get_session(user, thread))
+    messages = asyncio.run(session_api.handle({'operation': 'get', 'userId': user, 'sessionId': thread}))['messages']
     return [(message['role'], message.get('content', '')) for message in messages]
 
 
@@ -910,7 +910,7 @@ def test_a_proposal_records_its_turn_model_key_for_confirmation_after_a_model_sw
 
     service.turn('hello', model='sonnet-4.6')
     session_api._GRAPH = None
-    messages = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    messages = asyncio.run(session_api.handle({'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1'}))['messages']
     [result] = [message['content'] for message in messages if message['role'] == 'tool']
     assert json.loads(result) == expected
 
@@ -1302,7 +1302,7 @@ def test_a_long_tool_using_turn_runs_to_its_answer(service: _Service) -> None:
 def _times(user: str, thread: str) -> list[tuple[str, int, int]]:
     """Each replayed message the Turn produced, with when it started and ended."""
     session_api._GRAPH = None
-    messages = asyncio.run(session_api.get_session(user, thread))
+    messages = asyncio.run(session_api.handle({'operation': 'get', 'userId': user, 'sessionId': thread}))['messages']
     return [
         (message['role'], message['metadata']['started_at'], message['metadata']['ended_at'])
         for message in messages if message['role'] != 'user'
@@ -1336,7 +1336,7 @@ def test_a_reopened_failed_tool_step_knows_when_it_started_and_ended(
     # The tool node answers both failures with a result, which the step's times reach.
     assert events[-1]['type'] == 'RUN_FINISHED'
     session_api._GRAPH = None
-    [_, _, tool, _] = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    [_, _, tool, _] = asyncio.run(session_api.handle({'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1'}))['messages']
     assert tool['role'] == 'tool' and failure in tool['content']
     [call, result, _] = _times('user-1', 'thread-1')
     assert result[0] == 'tool' and result[1] == call[1] <= call[2] <= result[2]
@@ -1473,7 +1473,7 @@ def test_stopping_the_parent_reply_keeps_subagent_reasoning_out_of_its_replay(
 ) -> None:
     events = _parallel_reasoning_run(service, monkeypatch, stopped=True)
     assert events[-1]['code'] == 'TURN_STOPPED', events[-1]
-    replay = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    replay = asyncio.run(session_api.handle({'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1'}))['messages']
     assert [message['content'] for message in replay if message['role'] == 'reasoning'] == ['Delegate the work.', 'Root conclusion.']
     assert replay[-1]['content'] == 'Both lanes returned.'
 
@@ -1513,7 +1513,7 @@ def test_a_recorded_bedrock_thought_spans_its_first_words_to_public_output_and_a
     events = service.turn('Use the execute tool to run `echo one`, then `echo two`.')
 
     assert events[-1]['type'] == 'RUN_FINISHED'
-    replay = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    replay = asyncio.run(session_api.handle({'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1'}))['messages']
     # Only the first of the three model calls reasoned in words; the other two show no thought at all.
     [thought] = [message for message in replay if message['role'] == 'reasoning']
     assert thought['content']
@@ -1571,7 +1571,7 @@ def test_a_reopened_question_keeps_when_its_turn_started(service: _Service) -> N
     assert next(event for event in first_events if event['type'] == 'RUN_STARTED')['timestamp'] == 1793739600250
     assert 'timestamp' not in next(event for event in next_events if event['type'] == 'RUN_STARTED')
 
-    replay = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    replay = asyncio.run(session_api.handle({'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1'}))['messages']
     [first, second] = [message for message in replay if message['role'] == 'user']
     started = 1793739600250
     assert first['metadata'] == {'started_at': started, 'ended_at': started}
@@ -1603,7 +1603,7 @@ def test_a_reasoning_deepseek_turn_streams_and_replays_its_thought_in_words(
     streamed = ''.join(event['delta'] for event in events if event['type'] == 'REASONING_MESSAGE_CONTENT')
     assert '17*23' in streamed
     assert _said(events) == 'No, 391 is not prime because it equals 17 \u00d7 23.'
-    replay = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    replay = asyncio.run(session_api.handle({'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1'}))['messages']
     [thought] = [message for message in replay if message['role'] == 'reasoning']
     assert thought['content'] == streamed
     assert thought['metadata']['started_at'] <= thought['metadata']['ended_at']
@@ -1685,7 +1685,7 @@ def test_a_summaryless_model_streams_and_replays_no_thought(service: _Service) -
         events = service.turn('Say exactly: hello', model='openai-plan:gpt-6-astra', relay=relay.url)
     assert events[-1]['type'] == 'RUN_FINISHED'
     assert not [event for event in events if event['type'].startswith('REASONING')]
-    replay = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    replay = asyncio.run(session_api.handle({'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1'}))['messages']
     assert not [message for message in replay if message['role'] == 'reasoning']
     assert _said(events) == 'hello'
 
@@ -1745,7 +1745,7 @@ def test_a_plan_turn_streams_its_reasoning_summary_before_its_answer_and_replays
         events = service.turn('Say exactly: hello', model='openai-plan:gpt-6-astra', relay=relay.url)
 
     starts = [event['messageId'] for event in events if event['type'] == 'REASONING_MESSAGE_START']
-    replayed = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    replayed = asyncio.run(session_api.handle({'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1'}))['messages']
     assert len(starts) == 2
     assert starts == [message['id'] for message in replayed if message['role'] == 'reasoning']
     for snapshot in [event for event in events if event['type'] == 'MESSAGES_SNAPSHOT']:
@@ -3935,7 +3935,7 @@ def test_a_plan_turn_keeps_every_part_when_reasoning_items_restart_the_summary_i
             key = event['messageId']
             streamed[key] = streamed.get(key, '') + event['delta']
     assert list(streamed.values()) == expected
-    replay = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    replay = asyncio.run(session_api.handle({'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1'}))['messages']
     thoughts = [message for message in replay if message['role'] == 'reasoning']
     assert [message['content'] for message in thoughts] == expected
     assert [message['id'] for message in thoughts] == list(streamed)

@@ -17,8 +17,6 @@ const threadSummary = ({ session_id, title, created_at, updated_at, scheduled_ta
   ...(scheduled_task_id === undefined ? {} : { scheduled: true }),
 });
 
-type ReplayQuery = { before?: string; limit?: number };
-
 export const MAX_RUNNING_TURN_AGE_MS = 3_600_000;
 
 const runningTurn = ({ turn_running_since, turn_run_id, turn_preparing }: SessionSummary) =>
@@ -44,15 +42,15 @@ export function sessionOperations(
       throw new HttpError(409, `The Main Chat cannot be ${action}`);
     }
   };
-  const replayState = async (owner: string, sessionId: string, metadata: SessionSummary, query: ReplayQuery) => {
+  const replayState = async (owner: string, sessionId: string, metadata: SessionSummary, before: string | undefined) => {
     let absence: SessionNotFoundError;
     try {
       const { messages, nextBefore } = await invokeSessionApi({
-        operation: 'get', sessionId, userId: metadata.filing_user_id, ...query,
+        operation: 'get', sessionId, userId: metadata.filing_user_id, ...(before === undefined ? {} : { before }),
       });
       return { messages, nextBefore, failure: metadata.turn_failure?.code === 'SESSION_OPENING_ALREADY_STARTED' ? undefined : metadata.turn_failure };
     } catch (error) {
-      if (query.before !== undefined || !(error instanceof SessionNotFoundError)) throw error;
+      if (before !== undefined || !(error instanceof SessionNotFoundError)) throw error;
       absence = error;
     }
     const running = runningTurn(metadata).running;
@@ -88,11 +86,11 @@ export function sessionOperations(
         ...(main?.turn_completed_at === undefined ? {} : { mainChat: threadSummary(main) }),
       };
     },
-    async mainChat(owner: string, query: ReplayQuery = {}) {
+    async mainChat(owner: string, before?: string) {
       const id = await sessionMetadata.mainChat(owner, filingUserId(owner));
       const metadata = await sessionMetadata.get(owner, id);
       if (metadata === null || (metadata.title === undefined && metadata.turn_latest_run_id === undefined && metadata.latest_message_id === undefined)) return { id, messages: [], running: false };
-      const state = await replayState(owner, id, metadata, query);
+      const state = await replayState(owner, id, metadata, before);
       return { id, provider: metadata.provider, ...state, ...runningTurn(metadata) };
     },
     /** The finished Turns of the account's Sessions, from Session Metadata alone, newest first. */
@@ -111,10 +109,10 @@ export function sessionOperations(
         });
       return tasks.sort((a, b) => Date.parse(b.completedAt) - Date.parse(a.completedAt));
     },
-    async replay(owner: string, sessionId: string, query: ReplayQuery = {}) {
+    async replay(owner: string, sessionId: string, before?: string) {
       const metadata = await sessionMetadata.get(owner, sessionId);
       if (metadata === null) throw new HttpError(404, 'Session not found');
-      const state = await replayState(owner, sessionId, metadata, query);
+      const state = await replayState(owner, sessionId, metadata, before);
       return { ...threadSummary(metadata), provider: metadata.provider, ...state, ...runningTurn(metadata), ...(oneIdSession(metadata) ? {} : { readOnly: true }) };
     },
     async renameSideChat(owner: string, sessionId: string, title: string) {

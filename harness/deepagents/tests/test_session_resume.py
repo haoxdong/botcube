@@ -143,7 +143,7 @@ def test_a_session_written_turn_by_turn_by_the_harness_replays_fully(
         return messages
 
     streamed = asyncio.run(run_turns())
-    replayed = asyncio.run(session_api.get_session('user-1', 'session-1'))
+    replayed = asyncio.run(session_api.handle({'operation': 'get', 'userId': 'user-1', 'sessionId': 'session-1'}))['messages']
 
     assert len(streamed) == 2 * TURNS
     assert [(m['role'], m['content']) for m in replayed] == [
@@ -153,7 +153,7 @@ def test_a_session_written_turn_by_turn_by_the_harness_replays_fully(
     # A restarted Harness continues the Session from the record.
     restarted = _graph(turn_checkpointer(), tmp_path, ['Answer after restart'])
     continued = asyncio.run(restarted.ainvoke({'messages': [HumanMessage('Question after restart')]}, config=CONFIG))
-    replayed = asyncio.run(session_api.get_session('user-1', 'session-1'))
+    replayed = asyncio.run(session_api.handle({'operation': 'get', 'userId': 'user-1', 'sessionId': 'session-1'}))['messages']
 
     assert len(continued['messages']) == 2 * TURNS + 2
     assert [m['content'] for m in replayed] == [m.content for m in continued['messages']]

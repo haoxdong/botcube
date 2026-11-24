@@ -13,6 +13,7 @@ import {
   markChatRead,
   isUnread,
   openConversation,
+  prependOlderMessages,
   renameSideChat,
   stopFailure,
   stopTurn,
@@ -159,9 +160,8 @@ export function useSessionNavigation({
     try {
       const older = await openConversation({ id: activeId, chatServiceUrl, before: page.before });
       if (page !== replay.current || shownRef.current.agent !== agent || changed()) return;
-      const visible = new Set(agent.messages.map(({ id }) => id));
       entrances.history(older.messages);
-      agent.setMessages([...older.messages.filter(({ id }) => !visible.has(id)), ...agent.messages]);
+      agent.setMessages(prependOlderMessages(agent.messages, older.messages));
       page.before = older.nextBefore;
       page.extended = true;
       setHasOlder(page.before !== undefined);

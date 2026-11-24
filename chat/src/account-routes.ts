@@ -153,15 +153,11 @@ export function accountRoutes(
     return c.json(await sessions.chatList(owner));
   });
 
-  const replayQuery = ({ before, limit }: Record<string, string>) => ({
-    ...(before === undefined ? {} : { before }),
-    ...(limit === undefined ? {} : { limit: Number(limit) }),
-  });
   app.get('/main-chat', async (c) => {
     const started = performance.now();
     const { owner } = await bot.requester(c);
     const authenticated = performance.now();
-    const history = await sessions.mainChat(owner, replayQuery(c.req.query()));
+    const history = await sessions.mainChat(owner, c.req.query('before'));
     const replayed = performance.now();
     const response = c.json(history);
     const encoded = performance.now();
@@ -249,7 +245,7 @@ export function accountRoutes(
   app.get('/threads/:id', async (c) => {
     const { owner } = await bot.requester(c);
     const sessionId = c.req.param('id');
-    return c.json(await sessions.replay(owner, sessionId, replayQuery(c.req.query())));
+    return c.json(await sessions.replay(owner, sessionId, c.req.query('before')));
   });
 
   app.patch('/threads/:id', async (c) => {

@@ -7,12 +7,12 @@ Service container, invoked only by the Chat Service's role; locally
 Service's local mode.
 
 Operations:
-- ``{"operation": "get", "sessionId", "userId", "before"?, "limit"?}`` -> ``{"messages": [...], "nextBefore"?}``,
+- ``{"operation": "get", "sessionId", "userId", "before"?}`` -> ``{"messages": [...], "nextBefore"?}``,
   the Session's conversation in AG-UI message shape, read from its latest
   checkpoint through LangGraph's state API. Each agent, reasoning and tool
   message the Harness timed carries ``metadata`` ``{"started_at", "ended_at"}``,
-  in epoch milliseconds (message_times.py). Pages are newest first, with an
-  exclusive message ID cursor and a limit of 1–80 (default 80). A Session with no record is
+  in epoch milliseconds (message_times.py). Pages are newest first, with up to 80 messages and
+  an exclusive message ID cursor. A Session with no record is
   ``SESSION_NOT_FOUND`` (HTTP 404).
 - ``{"operation": "post", "sessionId", "userId", "content", "messageId"?, "scheduledRun"?}`` -> ``{}``,
   after adding ``content`` to the Session as the agent's message, under
@@ -190,10 +190,6 @@ async def _session_messages(user_id: str, session_id: str, phases: dict[str, flo
     return messages
 
 
-async def get_session(user_id: str, session_id: str) -> list[dict[str, Any]]:
-    return conversation(await _session_messages(user_id, session_id, {}))
-
-
 REPLAY_PAGE_MESSAGES = 80
 INLINE_MESSAGE_BYTES = 64_000  # 80 × 64 KB leaves room for the Lambda response envelope.
 
@@ -216,7 +212,7 @@ def _replay_message(message: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _read_replay(
-    user_id: str, session_id: str, before: str | None, limit: int, phases: dict[str, float]
+    user_id: str, session_id: str, before: str | None, phases: dict[str, float]
 ) -> dict[str, Any]:
     messages = await _session_messages(user_id, session_id, phases)
     with _phase(phases, 'conversation'):
@@ -225,7 +221,7 @@ async def _read_replay(
             replay = dropwhile(lambda row: row['id'] != before, replay)
             if next(replay, None) is None:
                 raise StaleReplayCursor('The replay changed. Reopen the chat to read its history.')
-        page = [_replay_message(row) for row in islice(replay, limit)]
+        page = [_replay_message(row) for row in islice(replay, REPLAY_PAGE_MESSAGES)]
         cursor = {'nextBefore': page[-1]['id']} if next(replay, None) is not None else {}
         return {'messages': page[::-1], **cursor}
 
@@ -359,10 +355,7 @@ async def _handle(event: Mapping[str, Any], phases: dict[str, float]) -> dict[st
     if operation == 'get':
         user_id, session_id = _required(event, 'userId'), _required(event, 'sessionId')
         before = _optional(event, 'before')
-        limit = event.get('limit', REPLAY_PAGE_MESSAGES)
-        if type(limit) is not int or not 1 <= limit <= REPLAY_PAGE_MESSAGES:
-            raise SessionApiError(f'limit must be an integer from 1 to {REPLAY_PAGE_MESSAGES}')
-        return await _read(session_id, _read_replay(user_id, session_id, before, limit, phases))
+        return await _read(session_id, _read_replay(user_id, session_id, before, phases))
     if operation == 'post':
         user_id, session_id = _required(event, 'userId'), _required(event, 'sessionId')
         content, message_id = _required(event, 'content'), _optional(event, 'messageId')

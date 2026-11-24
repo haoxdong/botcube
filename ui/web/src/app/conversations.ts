@@ -90,14 +90,11 @@ export class ModelCatalogError extends Error {
   }
 }
 
-/** A replayed Session: its messages, and its model provider once it has a model Turn. */
 export interface ReplayedSession {
   provider?: string;
   messages: Message[];
   nextBefore?: string;
-  /** The Session's latest Turn still runs on the server, as after a reload mid-Turn. */
   running?: boolean;
-  /** That running Turn's run ID, which its Stop names. */
   runId?: string;
   /** When that running Turn started, an ISO time. */
   runningSince?: string;
@@ -107,7 +104,6 @@ export interface ReplayedSession {
   readOnly?: boolean;
 }
 
-/** Why a Turn failed, as the Chat Service recorded it. */
 export interface SavedTurnFailure {
   runId: string;
   code?: string;
@@ -195,6 +191,11 @@ function withRunningCallsUnanswered<T extends ReplayedSession>(read: T): T {
   return { ...read, messages: [...read.messages.slice(0, end), ...read.messages.slice(end).filter((message) => !isPlaceholder(message))] };
 }
 
+export function prependOlderMessages(messages: Message[], older: Message[]): Message[] {
+  const visible = new Set(messages.map(({ id }) => id));
+  return [...older.filter(({ id }) => !visible.has(id)), ...messages];
+}
+
 export async function openConversation({
   id,
   chatServiceUrl,
@@ -218,7 +219,7 @@ export async function openConversation({
   while (at != null && session.nextBefore !== undefined && !session.messages.some(({ id }) => id === at)) {
     // eslint-disable-next-line no-await-in-loop -- each page supplies the cursor for the next one
     const earlier = await page(session.nextBefore);
-    session.messages = [...earlier.messages, ...session.messages];
+    session.messages = prependOlderMessages(session.messages, earlier.messages);
     if (earlier.nextBefore === undefined) delete session.nextBefore;
     else session.nextBefore = earlier.nextBefore;
   }

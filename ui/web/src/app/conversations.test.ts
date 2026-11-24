@@ -107,6 +107,18 @@ describe('Chat Service requests', () => {
     ]);
   });
 
+  it('prepends older replay pages until the requested message is found', async () => {
+    const message = (id: string) => ({ id, role: 'user', content: id });
+    const pages = [
+      { messages: [message('newest')], nextBefore: 'newest' },
+      { messages: [message('target')], nextBefore: 'target' },
+    ];
+    const { calls, fetchImpl } = recordingFetch(() => json(pages.shift())());
+    const session = await openConversation({ id: 'thread-42', chatServiceUrl: SERVICE, at: 'target', fetchImpl });
+    expect(session).toEqual({ messages: [message('target'), message('newest')], nextBefore: 'target' });
+    expect(calls).toHaveLength(2);
+  });
+
   describe('a call the running Turn still makes', () => {
     // The thread read of a Turn mid-tool, as production answered it: the checkpoint saver answers every call without a
     // result on load, the running one included.

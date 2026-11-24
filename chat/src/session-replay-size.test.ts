@@ -44,23 +44,16 @@ it('reopens a chat larger than Lambda’s 6 MB response limit and reads older hi
     expect(newest.messages).toHaveLength(80);
     expect(newest.nextBefore).toBe('m21');
 
-    const older = await stack.app.request(`/threads/large-replay?before=${encodeURIComponent(newest.nextBefore)}&limit=1`);
+    const older = await stack.app.request(`/threads/large-replay?before=${encodeURIComponent(newest.nextBefore)}`);
     expect(older.status).toBe(200);
-    const middle = await older.json();
-    expect(middle.messages).toHaveLength(1);
-    expect(middle.nextBefore).toBe('m20');
-
-    const oldest = await stack.app.request('/threads/large-replay?before=m20');
-    expect(oldest.status).toBe(200);
-    const earlier = await oldest.json();
-    expect([...earlier.messages, ...middle.messages, ...newest.messages].map(({ id }: { id: string }) => id))
+    const earlier = await older.json();
+    expect([...earlier.messages, ...newest.messages].map(({ id }: { id: string }) => id))
       .toEqual([...Array.from({ length: 100 }, (_, i) => `m${i}`), 'result']);
     expect(earlier.nextBefore).toBeUndefined();
 
     const stale = await stack.app.request('/threads/large-replay?before=missing');
     expect(stale.status).toBe(409);
     expect(await stale.json()).toMatchObject({ code: 'STALE_REPLAY_CURSOR' });
-    expect((await stack.app.request('/threads/large-replay?limit=81')).status).toBe(400);
   } finally {
     await stack.stop();
   }
