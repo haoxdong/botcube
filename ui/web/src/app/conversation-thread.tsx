@@ -1,6 +1,6 @@
 "use client";
 
-import { cloneElement, isValidElement, useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode, type Ref, type RefObject } from "react";
+import { cloneElement, isValidElement, useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode, type Ref, type RefObject } from "react";
 import { CopilotChatView } from "@copilotkit/react-core/v2";
 import type { StickToBottomContext } from "use-stick-to-bottom";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ui/conversation";
@@ -18,21 +18,21 @@ const boxOf = (contentRef: StickToBottomContext["contentRef"]) => {
   return box;
 };
 
+const pageScroller = (box: HTMLElement) => getComputedStyle(box).overflowY === "visible" ? document.documentElement : box;
+
 function PageScroll({ stick }: { stick: StickToBottomContext }) {
   const { scrollRef, contentRef } = stick;
-  // The phone CSS lets the page scroll instead of the box. Rotating past the phone breakpoint (viewport.ts) changes which one scrolls in the
-  // resize frame, a frame before React hears of it, so the swap happens in the resize event: the library's
-  // ResizeObserver runs later that frame and would otherwise find the page unscrollable, so "at the bottom".
-  // Document scroll events target Document, and the library listens on its scroll element.
+  // Phone CSS switches between the page and the box before React hears the resize.
   useLayoutEffect(() => {
     const box = boxOf(contentRef);
     const root = document.documentElement;
     const swap = () => {
-      const scroller = getComputedStyle(box).overflowY === "visible" ? root : box;
+      const scroller = pageScroller(box);
       if (scrollRef.current !== scroller) scrollRef(scroller);
     };
     swap();
     window.addEventListener("resize", swap);
+    // Document scroll events target Document, and the library listens on its scroll element.
     const scrolled = (event: Event) => {
       if (event.target === document && scrollRef.current === root) root.dispatchEvent(new Event("scroll"));
     };
@@ -46,12 +46,13 @@ function PageScroll({ stick }: { stick: StickToBottomContext }) {
   return null;
 }
 
-function Follow({ stick }: { stick: StickToBottomContext }) {
+function Follow({ stick, page }: { stick: StickToBottomContext; page: boolean }) {
   const { contentRef, scrollRef, state, scrollToBottom, stopScroll } = stick;
   // use-stick-to-bottom follows a resize a frame late, and not its scroll box's own; a ResizeObserver runs before paint.
   useLayoutEffect(() => {
     const content = contentRef.current;
     if (content === null) throw new Error("The thread's follow needs Conversation's content box");
+    const box = boxOf(contentRef);
     // The composer's room below the rows can shrink, clamping the scroll in a forced layout, in the frame a row grows
     // by as much: the content box ends the frame unchanged and only the rows' box resizes.
     let rows: Element | null = null;
@@ -62,11 +63,20 @@ function Follow({ stick }: { stick: StickToBottomContext }) {
       seen = room === null || rows === null ? null : { top, written, real, below: room, rows };
     };
     let height: number | null = null;
+    let pinnedResizeUntil = 0;
     const observer = new ResizeObserver((entries) => {
+      // WebKit can lay out the new scroll box before delivering the window resize event.
+      const scroller = page ? pageScroller(box) : scrollRef.current;
+      const handedOff = scroller !== scrollRef.current;
+      if (handedOff) {
+        scrollRef(scroller);
+        pinnedResizeUntil = state.isAtBottom ? performance.now() + ROTATION_HOLD_MS : 0;
+      }
       // The library locks to the end on any shrink that leaves the scroll within 70 px of it, and the write below then
       // jumps a reader who had scrolled up, as a folding Worklog nears its end: one the shrink leaves short of it stays.
       const resized = entries.find(({ target }) => target === content)?.contentRect.height;
-      if (resized !== undefined && height !== null && resized < height && state.isAtBottom && state.scrollDifference > 1) stopScroll();
+      const shrank = resized !== undefined && height !== null && resized < height;
+      if (shrank && state.isAtBottom && state.scrollDifference > 1 && performance.now() >= pinnedResizeUntil) stopScroll();
       height = resized ?? height;
       // WebKit can clamp this write to the page's previous height and report it later, as a scroll up from it: the
       // reader is judged from where the scroll was before the write, a clamp from the write.
@@ -75,7 +85,7 @@ function Follow({ stick }: { stick: StickToBottomContext }) {
       saw(Math.min(before, state.scrollTop), state.scrollTop, seen?.real ?? before);
     });
     observer.observe(content);
-    observer.observe(boxOf(contentRef));
+    observer.observe(box);
     // The room is padding on a box between the content and the rows, so only that box's border box shows it change.
     let watched: Element[] = [];
     const watchRows = () => {
@@ -90,14 +100,9 @@ function Follow({ stick }: { stick: StickToBottomContext }) {
     watchRows();
     const joined = new MutationObserver(watchRows);
     joined.observe(content, { childList: true, subtree: true });
-    // WebKit delivers that clamp's scroll event before the frame's ResizeObservers, sometimes after a row has grown the
-    // bottom back, and the library reads any scroll up as the reader leaving. A clamp ends at the bottom, or drops by
-    // no more than the room below the rows shrank; a reader's scroll, momentum included, leaves that room as it was.
-    // The library decides a touch escape a task later and skips it while content grows, so its next resize tick pulls
-    // a reader flicking up mid-stream back down. A scroll up over the same rows, with no room lost below them, is the
-    // reader's: that escape is decided here. Rows swapped in, as kept history hands over to the live chat, are left to
-    // the library. A row can also shrink and grow back, a mermaid block becoming its diagram, before the clamp's event
-    // arrives with the room as it was: a scroll up with no reader input lately is the browser's, and returns to the end.
+    // WebKit reports layout clamps as scroll events before ResizeObserver runs.
+    // A reader's scroll leaves the room below the rows intact. Recent input includes flick momentum.
+    // When rows are replaced, let the library decide whether to follow.
     let input = Number.NEGATIVE_INFINITY;
     const touched = () => {
       input = performance.now();
@@ -121,27 +126,22 @@ function Follow({ stick }: { stick: StickToBottomContext }) {
       } else if (state.isAtBottom && up && !swapped && state.animation?.ignoreEscapes !== true) stopScroll();
       saw(top);
     };
+    const resized = () => {
+      pinnedResizeUntil = state.isAtBottom ? performance.now() + ROTATION_HOLD_MS : 0;
+      void scrollToBottom({ animation: "instant", preserveScrollPosition: true, ignoreEscapes: true, duration: ROTATION_HOLD_MS });
+    };
+    window.addEventListener("resize", resized);
+    window.visualViewport?.addEventListener("resize", resized);
     document.addEventListener("scroll", scrolled, { capture: true, passive: true });
     return () => {
+      window.removeEventListener("resize", resized);
+      window.visualViewport?.removeEventListener("resize", resized);
       document.removeEventListener("scroll", scrolled, { capture: true });
       for (const name of READER_INPUTS) window.removeEventListener(name, touched, { capture: true });
       joined.disconnect();
       observer.disconnect();
     };
-  }, [contentRef, scrollRef, state, stopScroll]);
-  // A rotated phone's composer settles over several frames, each clamping the scroll, which the library reads as the
-  // reader leaving the bottom.
-  useEffect(() => {
-    const resized = () => {
-      void scrollToBottom({ animation: "instant", preserveScrollPosition: true, ignoreEscapes: true, duration: ROTATION_HOLD_MS });
-    };
-    window.addEventListener("resize", resized);
-    window.visualViewport?.addEventListener("resize", resized);
-    return () => {
-      window.removeEventListener("resize", resized);
-      window.visualViewport?.removeEventListener("resize", resized);
-    };
-  }, [scrollToBottom]);
+  }, [contentRef, scrollRef, state, stopScroll, scrollToBottom, page]);
   return null;
 }
 
@@ -255,7 +255,7 @@ export function ConversationThread({ children, page, opensAt, room, overlay, cla
         <>
           <ConversationContent className="block gap-0 p-0">{children}</ConversationContent>
           {page && <PageScroll stick={stick} />}
-          <Follow stick={stick} />
+          <Follow stick={stick} page={page} />
           <ReadLine stick={stick} opensAt={opensAt} room={room} onLanded={() => setLanded(true)} />
           {overlay?.(stick)}
         </>
