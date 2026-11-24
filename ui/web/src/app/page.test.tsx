@@ -26,7 +26,17 @@ const copilot = vi.hoisted(() => ({
   chat: undefined as Record<string, unknown> | undefined,
   renderTool: undefined as ((props: Record<string, unknown>) => ReactElement) | undefined,
   sendCellShown: true,
-  running: false,
+  // Whether the open agent runs, as CopilotKit reads it from the agent.
+  shownRunning: false,
+  get running() { return this.shownRunning; },
+  set running(running: boolean) {
+    this.shownRunning = running;
+    for (const kit of this.kits) for (const agent of Object.values(kit.selfManagedAgents)) {
+      agent.isRunning = running;
+      const params = { messages: agent.messages, state: {}, agent, input: {} } as never;
+      for (const subscriber of [...agent.subscribers]) void (running ? subscriber.onRunInitialized : subscriber.onRunFinalized)?.(params);
+    }
+  },
   reply: '',
   messages: [] as Message[],
   // Whether the message view lays out a row for each of the open agent's messages, as CopilotKit's does.
@@ -58,7 +68,7 @@ vi.mock('./kept-chat', async (importOriginal) => {
 
 vi.mock('@copilotkit/react-core/v2', async () => {
   const { Streamdown } = await import('streamdown');
-  const copilotkit = { runAgent: (options: { agent: HttpAgent | undefined; forwardedProps?: Record<string, unknown> }) =>
+  const copilotkit = { stopAgent: () => copilot.stopAgent(), runAgent: (options: { agent: HttpAgent | undefined; forwardedProps?: Record<string, unknown> }) =>
     options.forwardedProps?.opening === true ? copilot.openingTurn(options) : copilot.runAgent(options) };
   // Like CopilotChatMessageView: an assistant message slot renders its markdown. It virtualizes a long chat's rows
   // unless a `children` render prop lays out its
@@ -173,6 +183,7 @@ vi.mock('@copilotkit/react-core/v2', async () => {
   return {
     CopilotKit: ({ children, ...props }: { children: ReactNode } & (typeof copilot.kits)[number]) => {
       copilot.kits.push(props);
+      if (copilot.running) for (const agent of Object.values(props.selfManagedAgents)) agent.isRunning = true;
       useEffect(() => {
         copilot.mounts += 1;
       }, []);
@@ -3328,7 +3339,10 @@ describe('warming a chat as the user composes', () => {
 
   it('leaves a running Turn alone', async () => {
     await renderPage();
-    agent().isRunning = true;
+    await act(async () => {
+      agent().isRunning = true;
+      await Promise.all([...agent().subscribers].map((subscriber) => subscriber.onRunInitialized?.({ messages: agent().messages, state: {}, agent: agent(), input: {} } as never)));
+    });
 
     await type();
 

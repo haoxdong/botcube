@@ -29,7 +29,7 @@ import { endOpeningMoment, type HistoryMoment } from "./latency";
 import { forgetMainChatCopy, type StoredMainChatCopy } from "./main-chat-copy";
 import { forgetSteering } from "./steering";
 import { useModelSelection } from "./model-selection";
-import { useAgentRunning } from "./agent-running";
+import { useTurn } from "./turn";
 import { ChatLoadState, LoadingSkeleton } from "./load-state";
 import { MenuButton } from "./menu-icon";
 import { webUiPlugin } from "@bot-ui";
@@ -104,6 +104,7 @@ export default function App({
     messageSubmitted,
     turnStarting,
   } = useSessionNavigation({ ready, accountId, chatServiceUrl: CHAT_SERVICE_URL, agentId: AGENT_ID, opening, reading: !screenOpen && !(isPhone && (agentProfileOpen || swipe.expanded)) });
+  const turn = useTurn({ agent, runsOnServer: turnRunsOnServer, stopOnServer: stopServerTurn });
   const surfaceKey = useChatSurfaceKey(accountId, activeId, artifactWorkspace);
   const { catalog: models, picker, properties, choiceError } = useModelSelection({
     ready, accountId, chatServiceUrl: CHAT_SERVICE_URL,
@@ -172,7 +173,7 @@ export default function App({
     if (isPhone) swipe.close();
   };
 
-  const { error: warmupError, turnStarting: resetWarmup, composing } = useAgentWarmup({ auth, ready, accountId, activeId, activeAccountId, mainChatId, newChat, models, offeredModel, effort, turnRunsOnServer, agent });
+  const { error: warmupError, turnStarting: resetWarmup, composing } = useAgentWarmup({ auth, ready, accountId, activeId, activeAccountId, mainChatId, newChat, models, offeredModel, effort, turnRuns: turn.phase !== "idle" });
 
   useEffect(() => {
     const subscription = agent.subscribe({
@@ -185,8 +186,7 @@ export default function App({
     return () => subscription.unsubscribe();
   }, [agent, accountId]);
 
-  const [agentRunning] = useAgentRunning(agent);
-  const working = useHeaderWorking(activeId, turnRunsOnServer || agentRunning);
+  const working = useHeaderWorking(activeId, turn.phase !== "idle");
 
   const headerInPane = !isPhone;
   const composerAccessory = auth.guest === true ? <><GuestNotice onSignIn={auth.login} />{auth.composerAccessory}</> : auth.composerAccessory;
@@ -199,7 +199,7 @@ export default function App({
   const covered = keptChatShown || (activeId !== null && openAt == null && openedChat !== activeId);
   const keptChat = (
     <div className="kept-chat" role="status" aria-label="Loading chat controls">
-      <KeptChat messages={agent.messages} running={turnRunsOnServer} disclaimer={UI_CONFIG.disclaimer} composerAccessory={composerAccessory} latestShown={keptChatLatestShown} onOpenRun={({ sideChat, title, messageId }) => void handleSelectConversation({ id: sideChat, title }, messageId)} />
+      <KeptChat messages={agent.messages} running={turn.phase === "started" || turn.phase === "onServer"} disclaimer={UI_CONFIG.disclaimer} composerAccessory={composerAccessory} latestShown={keptChatLatestShown} onOpenRun={({ sideChat, title, messageId }) => void handleSelectConversation({ id: sideChat, title }, messageId)} />
     </div>
   );
 

@@ -20,7 +20,7 @@ import { useDefaultRenderTool } from "@copilotkit/react-core/v2";
 import { z } from "zod";
 import type { AbstractAgent } from "@ag-ui/client";
 import { holdEnter, stopOnEscapeNoMenuTook } from "./composer-keys";
-import { runStarted, stoppedHere, toolCancellationStore, type SavedTurnFailure } from "./conversations";
+import { stoppedHere, toolCancellationStore, type SavedTurnFailure } from "./conversations";
 import { endMoment, startMoment, type Moment } from "./latency";
 import type { ModelList } from "./model-selection";
 import { agentFiles } from "./agent-files";
@@ -42,7 +42,7 @@ import { PlotlyPrefetch } from "../components/plotly-bundle";
 import { shows, useSteering, type PendingMessage, type Withdrawal } from "./steering";
 import { WaitingMessages } from "./waiting-steering";
 import { MessageEntranceRow, MessageEntranceHistory, type MessageEntrances } from "./message-entrance";
-import { useAgentRunning, useRunEnded } from "./agent-running";
+import { useTurn, type Turn } from "./turn";
 import { ThreadScrollView } from "./conversation-thread";
 
 const MotionButton = motionElement.create(Button);
@@ -99,7 +99,7 @@ const ComposerPicker = createContext<{ picker: ReactNode; autoFocus: boolean }>(
 const SubmitTurn = createContext<((message: string, submit: Submit, retry?: () => void) => boolean) | null>(null);
 const ComposerSubmit = createContext<{ current: Submit | null } | null>(null);
 const ComposerStop = createContext<{ current: (() => void) | null } | null>(null);
-const ServerTurn = createContext<{ running: boolean; stop: (() => void) | null }>({ running: false, stop: null });
+const SessionTurn = createContext<Turn>({ phase: "idle", stop: null, ask: async (run) => { await run(); } });
 const SteeringDrop = createContext<{ current: (() => void) | null } | null>(null);
 const SteeringWaiting = createContext<{ waiting: PendingMessage[]; withdraw: (id: string) => Promise<Withdrawal>; sendNow: (id: string) => Promise<Withdrawal> } | null>(null);
 type LentComposer = { edit: (content: string) => void; stopTurn: (() => void) | undefined };
@@ -161,7 +161,7 @@ function ComposerInput(props: CopilotChatInputProps) {
   const accessory = useContext(ComposerAccessory);
   const { picker: modelPicker, autoFocus } = useContext(ComposerPicker);
   const submitTurn = useContext(SubmitTurn);
-  const { stop: stopServerTurn } = useContext(ServerTurn);
+  const turn = useContext(SessionTurn);
   const dropSteering = useDropSteering();
   const attached = useContext(AttachedFiles);
   const attachedRef = useRef(attached);
@@ -173,9 +173,8 @@ function ComposerInput(props: CopilotChatInputProps) {
   const value = props.value ?? draft;
   const fileOnly = !value.trim() && (attached?.files.length ?? 0) > 0;
   const sendFiles = fileOnly && submit && submitTurn ? () => sendWithFiles("", attachedRef, submitTurn, submit) : undefined;
-  const stopsServerTurn = !props.isRunning && stopServerTurn !== null;
-  const isRunning = props.isRunning || stopsServerTurn;
-  const stopTurn = stopsServerTurn ? stopServerTurn : props.onStop;
+  const isRunning = turn.stop !== null;
+  const stopTurn = turn.stop ?? undefined;
   const stop = stopTurn && (() => {
     dropSteering();
     stopTurn();
@@ -241,10 +240,6 @@ interface TurnFailure {
 }
 
 const RunError = createContext<TurnFailure | null>(null);
-
-const RunStarted = createContext(false);
-/** The current run has sent its end; its stream may still be closing. */
-const RunEnded = createContext(false);
 
 const OpensAt = createContext<string | null>(null);
 
@@ -350,25 +345,23 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
     };
   }, []);
   const runError = useContext(RunError);
-  const started = useContext(RunStarted);
-  const { running: onServer } = useContext(ServerTurn);
-  const ended = useContext(RunEnded);
+  const { phase } = useContext(SessionTurn);
   const loadOlder = useContext(LoadOlder);
   return (
     <>
       <CopilotChatMessageView {...props} {...props.messages && { messages: props.messages.filter(shows) }} assistantMessage={ASSISTANT_MESSAGE_SLOT} userMessage={USER_MESSAGE} reasoningMessage={REASONING_MESSAGE}>
-        {({ messageElements, messages, isRunning: streaming, interruptElement }) => {
+        {({ messageElements, messages, interruptElement }) => {
           // The Worklog, the Artifact cards and the finished answer settle together at the run's end event, not at its stream close.
-          const isRunning = streaming && !ended;
+          const replying = phase === "opening" || phase === "started";
           const last = messages.at(-1);
           return (
             <div ref={attachList} data-copilotkit data-testid="copilot-message-list" className="copilotKitMessages cpk:flex cpk:flex-col">
-              <ReplyTurnRunning.Provider value={isRunning}>
-                <MessageRows rows={worklogRows(messageElements, messages, isRunning || onServer, { started: isRunning ? started : onServer })} messages={messages} loadOlder={loadOlder} />
+              <ReplyTurnRunning.Provider value={replying}>
+                <MessageRows rows={worklogRows(messageElements, messages, replying || phase === "onServer", { started: phase === "started" || phase === "onServer" })} messages={messages} loadOlder={loadOlder} />
               </ReplyTurnRunning.Provider>
               {interruptElement}
-              <Presence>{isRunning && last?.role !== "reasoning" && (last?.role ?? "user") === "user" && !started && <motionElement.div {...presenceMotion} className="chat-pending-cursor"><CopilotChatMessageView.Cursor /></motionElement.div>}</Presence>
-              {isRunning && last?.role !== "reasoning" && <MomentEnds moment="send-acknowledged" />}
+              <Presence>{phase === "opening" && last?.role !== "reasoning" && (last?.role ?? "user") === "user" && <motionElement.div {...presenceMotion} className="chat-pending-cursor"><CopilotChatMessageView.Cursor /></motionElement.div>}</Presence>
+              {replying && last?.role !== "reasoning" && <MomentEnds moment="send-acknowledged" />}
               <ThreadWaiting />
 
             </div>
@@ -507,15 +500,8 @@ function ChatThread({
   const accountRef = useRef({ models, isAccountCurrent, selectedModel });
   accountRef.current = { models, isAccountCurrent, selectedModel };
   const modelsReady = () => accountRef.current.isAccountCurrent() && accountRef.current.models.loaded;
-  const [agentRunning] = useAgentRunning(agent);
-  const runEnded = useRunEnded(agent);
-  const [openingRunning, setOpeningRunning] = useState(false);
-  const running = turnRunsOnServer || agentRunning || openingRunning;
-  const subscribeRun = useCallback((listener: () => void) => {
-    const subscription = agent.subscribe({ onRunStartedEvent: listener, onRunFinalized: listener });
-    return () => subscription.unsubscribe();
-  }, [agent]);
-  const started = useSyncExternalStore(subscribeRun, () => runStarted(agent), () => false);
+  const turn = useTurn({ agent, runsOnServer: turnRunsOnServer, stopOnServer: stopServerTurn, stopHere: () => copilotkit.stopAgent({ agent }) });
+  const running = turn.phase !== "idle";
   const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
   const runningRef = useRef(running);
   runningRef.current = running;
@@ -527,18 +513,15 @@ function ChatThread({
     openingAttempted.current = true;
     onTurnStarting(selected.provider);
     runningRef.current = true;
-    setOpeningRunning(true);
     const firstName = userName?.split(" ")[0];
-    void (async () => {
+    void turn.ask(async () => {
       try {
         await copilotkit.runAgent({ agent, forwardedProps: { opening: true, ...(firstName ? { openingFirstName: firstName } : {}) } });
       } catch (error) {
         setRunError(couldNotAnswer(error instanceof Error ? error.message : String(error)));
-      } finally {
-        setOpeningRunning(false);
       }
-    })();
-  }, [agent, accountId, replayLoaded, isMainChat, showWelcome, running, savedFailure, online, models, selectedModel, userName, isAccountCurrent, copilotkit, onTurnStarting]);
+    });
+  }, [agent, accountId, replayLoaded, isMainChat, showWelcome, running, savedFailure, online, models, selectedModel, userName, isAccountCurrent, copilotkit, onTurnStarting, turn.ask]);
   const composerSubmit = useRef<Submit | null>(null);
   const refreshSideChatsOnce = () => {
     if (firedRef.current) return;
@@ -621,7 +604,7 @@ function ChatThread({
       <SubmitTurn.Provider value={submitTurn}>
       <ComposerSubmit.Provider value={composerSubmit}>
       <ComposerStop.Provider value={composerStop}>
-      <ServerTurn.Provider value={{ running: turnRunsOnServer, stop: stopServerTurn }}>
+      <SessionTurn.Provider value={turn}>
       <ComposerAccessory.Provider value={composerAccessory}>
       <ComposerPicker.Provider value={{ picker: children, autoFocus: newChat && showWelcome }}>
       <SteeringWaiting.Provider value={{ waiting, withdraw, sendNow }}>
@@ -633,8 +616,6 @@ function ChatThread({
       <LoadOlder.Provider value={loadOlder}>
       <ReadOnlyChat.Provider value={startNewChat}>
         <RunError.Provider value={runError}>
-        <RunStarted.Provider value={started}>
-        <RunEnded.Provider value={runEnded}>
           <CopilotChat
             agentId={AGENT_ID}
             threadId={threadId}
@@ -658,8 +639,6 @@ function ChatThread({
               });
             }}
           />
-        </RunEnded.Provider>
-        </RunStarted.Provider>
         </RunError.Provider>
       </ReadOnlyChat.Provider>
       </LoadOlder.Provider>
@@ -671,7 +650,7 @@ function ChatThread({
       </SteeringWaiting.Provider>
       </ComposerPicker.Provider>
       </ComposerAccessory.Provider>
-      </ServerTurn.Provider>
+      </SessionTurn.Provider>
       </ComposerStop.Provider>
       </ComposerSubmit.Provider>
       </SubmitTurn.Provider>
