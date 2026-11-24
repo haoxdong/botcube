@@ -29,7 +29,7 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import TypeAdapter
 
 from . import message_times, turn_timing
-from .conversation import conversation, reasoning_chunk
+from .conversation import OPENING_INSTRUCTION, conversation, reasoning_chunk
 from .graph_stream import answering_model_step, clock_events, drain_after_answer
 from .turn_state import observe_reply_model
 
@@ -126,6 +126,12 @@ class SessionAgent(LangGraphAgent):
             run = cast(dict[str, Any], self.active_run)
             yield self._emit_success_finish(thread_id=run['thread_id'], run_id=run['id'])
 
+    def _thought_start(self, lane: str, thought: _Thinking) -> list[Any]:
+        thought.open = True
+        message_id = f'{lane}-reasoning-{thought.block}'
+        return [self._dispatch_event(ReasoningStartEvent(message_id=message_id)),
+                self._dispatch_event(ReasoningMessageStartEvent(message_id=message_id, role='reasoning'))]
+
     def _thought_end(self, lane: str, thought: _Thinking) -> list[Any]:
         if not thought.open:
             return []
@@ -137,16 +143,12 @@ class SessionAgent(LangGraphAgent):
     def _reasoning_chunk(self, lane: str, thought: _Thinking, reasoning: ReasoningContentBlock) -> list[Any]:
         events = []
         index = reasoning.get('index', 0)
-        if thought.open and thought.index != index:
+        if thought.open and thought.index is not None and thought.index != index:
             events.extend(self._thought_end(lane, thought))
             thought.block += 1
         message_id = f'{lane}-reasoning-{thought.block}'
         if not thought.open:
-            events.extend([
-                self._dispatch_event(ReasoningStartEvent(message_id=message_id)),
-                self._dispatch_event(ReasoningMessageStartEvent(message_id=message_id, role='reasoning')),
-            ])
-            thought.open = True
+            events.extend(self._thought_start(lane, thought))
         thought.index = index
         if text := reasoning.get('reasoning'):
             events.append(self._dispatch_event(ReasoningMessageContentEvent(
@@ -219,6 +221,9 @@ class SessionAgent(LangGraphAgent):
         )
 
     async def _model_output(self, event: Any, state: Any, lane: str, thought: _Thinking | None) -> AsyncGenerator[Any, None]:
+        if event['event'] == 'on_chat_model_start' and thought is not None:
+            for opened in self._thought_start(lane, thought):
+                yield opened
         async with aclosing(super()._handle_single_event(event, state)) as events:
             async for emitted in events:
                 if thought is not None and emitted.type in {EventType.TEXT_MESSAGE_START, EventType.TOOL_CALL_START}:
@@ -301,4 +306,19 @@ class SessionAgent(LangGraphAgent):
             )
         ]
         message_times.resume_clock(merged['messages'])
+        merged['messages'].extend(_opening_messages(input))
         return merged
+
+
+def _opening_messages(input: RunAgentInput) -> list[HumanMessage]:
+    forwarded = input.forwarded_props or {}
+    if forwarded.get('opening') is not True:
+        return []
+    first_name = forwarded.get('opening_first_name')
+    name = f"The user's first name is {json.dumps(first_name)}.\n" if first_name else ''
+    return [HumanMessage(
+        id=f'{input.run_id}-opening',
+        content=f'{name}The user opened this empty chat. Apply the opening greeting instruction in <writing>. '
+                'If Memory is empty, skip the Memory pitch; never invent one.',
+        additional_kwargs={OPENING_INSTRUCTION: True},
+    )]

@@ -37,12 +37,14 @@ from typing import Any, NoReturn, TypedDict
 
 import boto3
 import httpx
+import httpx2
 import pytest
 import uvicorn
 from botocore.exceptions import ClientError
 from deepagents.middleware.filesystem import EXECUTE_TOOL_DESCRIPTION
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
 from fastapi.testclient import TestClient
+from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessageChunk,
@@ -151,6 +153,8 @@ class _ScriptedModel(BaseChatModel):
 
     def _reply(self, messages: list[BaseMessage], turn_start: int) -> ChatGenerationChunk:
         text = str(messages[turn_start].content)
+        if 'opening greeting instruction in <writing>' in text:
+            return _text('Hi! I can remember what matters to you.')
         if text == 'narrated work':
             return self._narrated_reply(messages, turn_start)
         if text.startswith('steps: '):
@@ -1478,7 +1482,7 @@ def test_stopping_the_parent_reply_keeps_subagent_reasoning_out_of_its_replay(
     assert replay[-1]['content'] == 'Both lanes returned.'
 
 
-def test_a_recorded_bedrock_thought_spans_its_first_words_to_public_output_and_a_wordless_call_has_none(
+def test_bedrock_thoughts_span_dispatch_to_public_output_with_or_without_words(
     service: _Service, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: _RecordedBedrockModel(recorder=service.recorder))
@@ -1486,8 +1490,8 @@ def test_a_recorded_bedrock_thought_spans_its_first_words_to_public_output_and_a
     def now() -> int:
         return tick
     monkeypatch.setattr(message_times, 'now', now)
-    starts = iter([1000, 10000, 20000])
-    words: list[int] = []
+    dispatches = [1000, 10000, 20000]
+    starts = iter(dispatches)
     boundaries: list[int] = []
     start = message_times._ModelClock.on_chat_model_start
     token = message_times._ModelClock.on_llm_new_token
@@ -1502,8 +1506,6 @@ def test_a_recorded_bedrock_thought_spans_its_first_words_to_public_output_and_a
         token(clock, *args, **kwargs)
         chunk = kwargs['chunk'].message
         reasoning = next(iter(reasoning_blocks(chunk)), None)
-        if reasoning and reasoning.get('reasoning') and not words:
-            words.append(tick)
         if (chunk.text or chunk.tool_call_chunks) and not reasoning and clock not in seen:
             seen.add(clock)
             boundaries.append(tick)
@@ -1514,14 +1516,16 @@ def test_a_recorded_bedrock_thought_spans_its_first_words_to_public_output_and_a
 
     assert events[-1]['type'] == 'RUN_FINISHED'
     replay = asyncio.run(session_api.handle({'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1'}))['messages']
-    # Only the first of the three model calls reasoned in words; the other two show no thought at all.
-    [thought] = [message for message in replay if message['role'] == 'reasoning']
-    assert thought['content']
-    assert (thought['metadata']['started_at'], thought['metadata']['ended_at']) == (words[0], boundaries[0])
-    assert [thought['id']] == [event['messageId'] for event in events if event['type'] == 'REASONING_MESSAGE_START']
+    thoughts = [message for message in replay if message['role'] == 'reasoning']
+    assert [bool(thought['content']) for thought in thoughts] == [True, False, False]
+    assert [thought['metadata']['started_at'] for thought in thoughts] == dispatches
+    assert [thought['metadata']['ended_at'] for thought in thoughts] == boundaries
+    assert [thought['id'] for thought in thoughts] == [
+        event['messageId'] for event in events if event['type'] == 'REASONING_MESSAGE_START'
+    ]
 
 
-def test_stopping_a_model_before_it_reasons_or_answers_leaves_no_thought(
+def test_stopping_a_model_at_dispatch_closes_the_wordless_thought(
     service: _Service, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.INFO, logger='botcube_harness_deepagents.turn_timing')
@@ -1548,7 +1552,9 @@ def test_stopping_a_model_before_it_reasons_or_answers_leaves_no_thought(
                and json.loads(record.message).get('event') == 'harness_turn_timing']
     assert sorted((line['runId'], line['status']) for line in timings) == [('run-0', 'finished'), ('run-0', 'stopped')]
     types = [event['type'] for event in events]
-    assert 'TEXT_MESSAGE_START' not in types and not [kind for kind in types if kind.startswith('REASONING')]
+    assert 'TEXT_MESSAGE_START' not in types
+    assert types.count('REASONING_MESSAGE_START') == types.count('REASONING_MESSAGE_END') == 1
+    assert 'REASONING_MESSAGE_CONTENT' not in types
 
 
 def test_a_reopened_bedrock_turn_times_its_reasoning_tools_and_answer(
@@ -1560,8 +1566,8 @@ def test_a_reopened_bedrock_turn_times_its_reasoning_tools_and_answer(
 
     assert events[-1]['type'] == 'RUN_FINISHED'
     times = _times('user-1', 'thread-1')
-    assert [role for role, _, _ in times] == ['reasoning', 'assistant', 'tool', 'assistant', 'tool', 'assistant']
-    [reasoning, call, result, _, _, _] = times
+    assert [role for role, _, _ in times] == ['reasoning', 'assistant', 'tool', 'reasoning', 'assistant', 'tool', 'reasoning', 'assistant']
+    reasoning, call, result = times[:3]
     assert reasoning[1] <= reasoning[2] <= call[1] == result[1] <= call[2] <= result[2]
 
 
@@ -1645,7 +1651,8 @@ def test_a_plan_usage_error_ends_the_turn_with_its_classified_error_and_no_other
 
     assert events[-1] == {'type': 'RUN_ERROR', 'message': REVOKED['error']['message'], 'code': 'PLAN_USAGE_REVOKED'}
     types = [event['type'] for event in events]
-    assert not [kind for kind in types if kind.startswith('REASONING')]
+    assert types.count('REASONING_MESSAGE_START') == types.count('REASONING_MESSAGE_END') == 1
+    assert 'REASONING_MESSAGE_CONTENT' not in types
     assert 'RUN_FINISHED' not in [event['type'] for event in events]
     assert [build['model'] for build in service.recorder.builds] == ['openai-plan:gpt-6-astra']
     assert service.recorder.prompts == []
@@ -1680,13 +1687,18 @@ def test_invocation_credential_authenticates_a_plan_turn(
 
 
 @pytest.mark.integration
-def test_a_summaryless_model_streams_and_replays_no_thought(service: _Service) -> None:
+def test_a_summaryless_model_streams_and_replays_a_timed_thought(service: _Service) -> None:
     with serving_relay() as relay:
-        events = service.turn('Say exactly: hello', model='openai-plan:gpt-6-astra', relay=relay.url)
+        events = service.turn('Say exactly: hello', model='openai-plan:gpt-6-astra', relay=relay.url,
+                              turnStartedAt=datetime.now(UTC).isoformat(), worklog_clock=1)
     assert events[-1]['type'] == 'RUN_FINISHED'
-    assert not [event for event in events if event['type'].startswith('REASONING')]
+    [started] = [event['messageId'] for event in events if event['type'] == 'REASONING_MESSAGE_START']
     replay = asyncio.run(session_api.handle({'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1'}))['messages']
-    assert not [message for message in replay if message['role'] == 'reasoning']
+    [thought] = [message for message in replay if message['role'] == 'reasoning']
+    assert (thought['id'], thought['content']) == (started, '')
+    frames = [op['value'] for event in events if event['type'] == 'STATE_DELTA'
+              for op in event['delta'] if op['path'] == '/worklog_clock']
+    assert frames[-1]['steps'][started] == thought['metadata']
     assert _said(events) == 'hello'
 
 
@@ -1698,7 +1710,7 @@ def test_checkpoint_snapshot_keeps_streamed_reasoning_ids(service: _Service, sum
             relay.reply = RelayReply(body=REASONING_STREAM)
         events = service.turn('Say exactly: hello', model='openai-plan:gpt-6-astra', relay=relay.url)
     starts = [event['messageId'] for event in events if event['type'] == 'REASONING_MESSAGE_START']
-    assert len(starts) == (2 if summary else 0)
+    assert len(starts) == (2 if summary else 1)
     agent = next(iter(serving._AGENTS.values()))
     assert isinstance(agent, SessionAgent)
     agent._graph_ended_at = None
@@ -1712,7 +1724,7 @@ def test_checkpoint_snapshot_keeps_streamed_reasoning_ids(service: _Service, sum
     assert [event.type.value for event in snapshot_events] == ['STATE_SNAPSHOT', 'MESSAGES_SNAPSHOT']
     thoughts = [message for message in snapshot_events[1].messages if message.role == 'reasoning']
     assert [message.id for message in thoughts] == starts
-    assert [message.content for message in thoughts] == (SUMMARY if summary else [])
+    assert [message.content for message in thoughts] == (SUMMARY if summary else [''])
     assert all(message.metadata['started_at'] <= message.metadata['ended_at'] for message in thoughts)
 
 
@@ -3628,6 +3640,48 @@ def test_a_recorded_warmup_with_local_memory_prepares(service: _Service) -> None
     assert events[-1]['value']['outcome'] == 'prepared'
 
 
+def test_opening_turn_reaches_the_anthropic_messages_endpoint(service: _Service, monkeypatch: pytest.MonkeyPatch) -> None:
+    requests = []
+
+    def messages(request: httpx2.Request) -> httpx2.Response:
+        payload = json.loads(request.content)
+        requests.append((request.url.path, payload))
+        if not payload['messages']:
+            return httpx2.Response(400, json={'type': 'error', 'error': {
+                'type': 'invalid_request_error', 'message': 'messages: at least one message is required',
+            }})
+        frames = [
+            ('message_start', {'message': {'id': 'message-1', 'type': 'message', 'role': 'assistant',
+                                            'content': [], 'model': 'claude-test', 'usage': {'input_tokens': 10, 'output_tokens': 0}}}),
+            ('content_block_start', {'index': 0, 'content_block': {'type': 'text', 'text': 'Welcome!'}}),
+            ('content_block_stop', {'index': 0}),
+            ('message_stop', {}),
+        ]
+        return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=''.join(
+            f'event: {kind}\ndata: {json.dumps(dict(data, type=kind))}\n\n' for kind, data in frames
+        ))
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(messages))
+    monkeypatch.setattr("langchain_anthropic.chat_models._get_default_async_httpx_client", lambda **_kwargs: client)
+    monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: ChatAnthropic(
+        model_name='claude-test', base_url='https://messages.test', api_key='fixture',
+    ))
+    events = service.post({
+        'threadId': 'opening-messages', 'runId': 'opening-messages-1', 'messages': [], 'tools': [],
+        'context': [], 'state': {},
+        'forwardedProps': {'actorId': 'actor-1', 'sessionUserId': 'user-1', 'opening': True},
+    })
+    assert events[-1]['type'] == 'RUN_FINISHED', events[-1]
+    assert _said(events) == 'Welcome!'
+    [(path, payload)] = requests
+    assert path == '/v1/messages'
+    [instruction] = payload['messages']
+    assert instruction['role'] == 'user'
+    assert 'opening greeting instruction in <writing>' in str(instruction['content'])
+    assert '<chat_opened>' not in str(payload['system'])
+    assert _replay('user-1', 'opening-messages') == [('assistant', 'Welcome!')]
+
+
 def test_opening_turn_streams_without_a_user_message_and_cannot_reopen_saved_history(service: _Service) -> None:
     run = {
         'threadId': 'opening-chat', 'runId': 'opening-1', 'messages': [], 'tools': [],
@@ -3638,10 +3692,10 @@ def test_opening_turn_streams_without_a_user_message_and_cannot_reopen_saved_his
     assert events[0]['type'] == 'RUN_STARTED'
     assert events[-1]['type'] == 'RUN_FINISHED'
     assert any(event.get('delta') == 'Hi! I can remember what matters to you.' for event in events)
-    assert service.recorder.heard == [[]]
+    [[instruction]] = service.recorder.heard
+    assert 'opening greeting instruction in <writing>' in instruction
     assert _replay('user-1', 'opening-chat') == [('assistant', 'Hi! I can remember what matters to you.')]
-    assert '<chat_opened>' in service.recorder.prompts[0]
-    assert 'opening greeting instruction in <writing>' in service.recorder.prompts[0]
+    assert 'opening greeting instruction in <writing>' not in service.recorder.prompts[0]
     reopened = service.post({**run, 'runId': 'opening-2'})
     assert reopened[-1] == {'type': 'RUN_ERROR', 'message': 'This Session already has a Turn',
                             'code': 'SESSION_OPENING_ALREADY_STARTED'}
@@ -3649,7 +3703,29 @@ def test_opening_turn_streams_without_a_user_message_and_cannot_reopen_saved_his
     continuing = service.turn('say: Thank you', thread='opening-chat')
     assert continuing[-1]['type'] == 'RUN_FINISHED'
     assert any(event.get('delta') == 'Thank you' for event in continuing)
-    assert '<chat_opened>' not in service.recorder.prompts[-1]
+    assert service.recorder.prompts[-1] == service.recorder.prompts[0]
+
+
+def test_opening_turn_keeps_its_instruction_out_of_memory(
+    service: _Service, agentcore_memory: _ScopedMemory,
+) -> None:
+    thread = 'opening-with-memory'
+    events = service.post({
+        'threadId': thread, 'runId': 'opening-1', 'messages': [], 'tools': [], 'context': [], 'state': {},
+        'forwardedProps': {'actorId': 'actor-1', 'sessionUserId': 'user-1', 'opening': True, 'memory': True,
+                           'turnIdentity': turn_identity('actor-1', 'user-1', thread)},
+    })
+    assert events[-1]['type'] == 'RUN_FINISHED', events[-1]
+    assert _said(events) == 'Hi! I can remember what matters to you.'
+    service.fed()
+    assert _fed_events(agentcore_memory, 'actor-1', thread) == []
+
+    events = service.turn('say: Thank you', thread=thread, memory=True)
+    assert events[-1]['type'] == 'RUN_FINISHED', events[-1]
+    service.fed()
+    assert _fed_events(agentcore_memory, 'actor-1', thread) == [
+        [('USER', 'say: Thank you')], [('ASSISTANT', 'Thank you')],
+    ]
 
 
 def test_opening_turn_rejects_a_synthetic_user_message(service: _Service) -> None:
@@ -3668,13 +3744,13 @@ def test_opening_uses_the_page_name_and_skips_a_pitch_without_memory(service: _S
                            **({'openingFirstName': first_name} if first_name is not None else {})},
     })
     assert events[-1]['type'] == 'RUN_FINISHED'
-    prompt = service.recorder.prompts[0]
-    assert '<agent_memory>' not in prompt
-    assert 'If Memory is empty, skip the Memory pitch; never invent one.' in prompt
+    [[instruction]] = service.recorder.heard
+    assert '<agent_memory>' not in service.recorder.prompts[0]
+    assert 'If Memory is empty, skip the Memory pitch; never invent one.' in instruction
     if first_name is not None:
-        assert 'The user\'s first name is "Ada".' in prompt
+        assert 'The user\'s first name is "Ada".' in instruction
     else:
-        assert 'The user\'s first name is' not in prompt
+        assert 'The user\'s first name is' not in instruction
 
 
 def test_the_files_bound_serving_graph_registers_no_publish_tool(

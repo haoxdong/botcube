@@ -514,6 +514,17 @@ function StepsChat({ messages, running = false, started = running }: { messages:
   return <>{worklogRows(rows, messages, running, { started })}</>;
 }
 
+it('shows the wait between dispatch and the first answer words as a Thought without a summary', () => {
+  render(<StepsChat messages={[
+    { id: 'silent-question', role: 'user', content: 'Compare exposures', ...stamp(0, 0) },
+    { id: 'silent-thought', role: 'reasoning', content: '', ...stamp(2, 8) },
+    { id: 'silent-answer', role: 'assistant', content: 'The exposures differ.', ...stamp(8, 9) },
+  ]} />);
+  expect(head()).toHaveTextContent(/^Worked for 9s$/);
+  fireEvent.click(head());
+  expect(stepRows()).toEqual([['Started up', '2s'], ['Thought', '6s'], ['Answered', '1s']]);
+});
+
 const longCommand = 'acme data query --dataset EQUITY_PRICES --ticker AAPL --start 2026-10-14T13:30:00Z --end 2026-10-14T20:00:00Z --fields open,high,low,close,volume';
 
 /** A replayed Turn: its question stamped at Send, a thought, a search, a thought with no words, a command, the answer. */

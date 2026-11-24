@@ -17,6 +17,8 @@ from langchain.agents.middleware.types import (
 from langchain_core.messages import AIMessage, BaseMessage
 from langgraph.store.base import BaseStore
 
+from .conversation import OPENING_INSTRUCTION
+
 # AgentCore's CreateEvent takes at most this many characters of conversational text.
 MESSAGE_TEXT_LIMIT = 100_000
 _FED_TYPES = ('human', 'ai', 'tool')
@@ -100,7 +102,10 @@ class TurnMemoryMiddleware(AnswerMiddleware):
 
 
 def latest_turn_messages(messages: Sequence[Any]) -> list[BaseMessage]:
-    typed = [message for message in messages if isinstance(message, BaseMessage)]
+    typed = [
+        message for message in messages
+        if isinstance(message, BaseMessage) and not message.additional_kwargs.get(OPENING_INSTRUCTION)
+    ]
     human_indexes = [index for index, message in enumerate(typed) if message.type == 'human']
     if not human_indexes:
         return []

@@ -24,7 +24,7 @@ def test_reads_a_resolved_example(tmp_path: Path, example: str) -> None:
     assert config['credentialServiceHttpPath'] == botcube_config.credential_service_http_path(current)
     routes = config['modelGateway']
     assert {provider for provider in ('anthropic', 'openai', 'deepseek', 'echo') if routes[provider]['route'] is not None} == (
-        set(botcube_config.gateway_providers()) if example == 'enterprise' else set()
+        {'anthropic', 'openai'} if example == 'enterprise' else set()
     )
 
 

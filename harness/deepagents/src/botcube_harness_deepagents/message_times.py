@@ -199,15 +199,17 @@ class _ModelClock(BaseCallbackHandler):
         self.ignored_runs: set[str] = set()
 
     def on_chat_model_start(self, serialized: dict[str, Any], messages: list[list[BaseMessage]], *, run_id: UUID, **kwargs: Any) -> None:
+        metadata = kwargs.get('metadata') or {}
         shared = _turn_clock.get()
         if shared is not None and shared.question_id is not None:
-            metadata = kwargs.get('metadata') or {}
             if metadata.get('lc_source') == 'summarization' or metadata.get('lc_agent_name'):
                 self.ignored_runs.add(str(run_id))
                 return
             self.turn_clock = shared
             shared.begin_model()
         self.model_id = str(run_id)
+        if metadata.get('botcube_thinking'):
+            self._open_reasoning(None, now())
 
     def on_llm_new_token(
         self,
@@ -269,8 +271,9 @@ class _ModelClock(BaseCallbackHandler):
                 raise RuntimeError('A tool call needs an ID before its clock starts')
             self.turn_clock.tool_started(call['id'], self.model_id, self.tool_calls.get(call['id'], at))
 
-    def _open_reasoning(self, index: int | str, at: int) -> None:
-        if self.reasoning_index == index:
+    def _open_reasoning(self, index: int | str | None, at: int) -> None:
+        if self.reasoning and len(self.reasoning[-1]) == 1 and self.reasoning_index in (None, index):
+            self.reasoning_index = index
             return
         self._close(at)
         self.reasoning.append([at])
@@ -281,16 +284,17 @@ class _ModelClock(BaseCallbackHandler):
     def _close(self, at: int) -> None:
         if self.reasoning and len(self.reasoning[-1]) == 1:
             self.reasoning[-1].append(at)
-            self.reasoning_index = None
             if self.turn_clock is not None and self.model_id is not None:
                 self.turn_clock.end(f'{self.model_id}-reasoning-{len(self.reasoning) - 1}', at)
 
     def stamped(self, message: AIMessage, ended: int) -> AIMessage:
         self._close(ended)
-        if len(self.reasoning) != len(reasoning_texts(message, include_empty=True)):
+        blocks = reasoning_texts(message, include_empty=True)
+        wordless = len(self.reasoning) == 1 and self.reasoning_index is None
+        if len(self.reasoning) != len(blocks) and not (wordless and not blocks):
             raise RuntimeError(
                 f'The model streamed {len(self.reasoning)} reasoning blocks but answered with '
-                f'{len(reasoning_texts(message, include_empty=True))}'
+                f'{len(blocks)}'
             )
         calls: list[str] = []
         for call in message.tool_calls:
@@ -318,7 +322,7 @@ class MessageTimesMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        thinking = bool(getattr(request.model, 'reasoning', None) or
+        thinking = bool(getattr(request.model, 'reasoning', None) or getattr(request.model, 'thinking', None) or
                         (getattr(request.model, 'additional_model_request_fields', None) or {}).get('thinking'))
         request.model.metadata = {**(request.model.metadata or {}), 'botcube_thinking': thinking}
         clock = _ModelClock()

@@ -11,6 +11,7 @@ from langchain_core.messages.content import ReasoningContentBlock
 
 # The additional_kwargs key a scheduled run's post keeps its run card under; history replays it as `metadata.scheduledRun`.
 SCHEDULED_RUN = 'scheduled_run'
+OPENING_INSTRUCTION = 'opening_instruction'
 # Where a recorded message keeps when it started and ended, in epoch ms, in its `response_metadata`; a replay
 # copies them into its AG-UI `metadata` as `started_at` and `ended_at`. An agent message's entry
 # also times each of its reasoning blocks, in order, and the start of each tool call it made: message_times.py
@@ -27,6 +28,7 @@ def conversation(messages: list[BaseMessage]) -> list[dict[str, Any]]:
     return [
         replayed.model_dump(by_alias=True, exclude_none=True)
         for message in messages
+        if not message.additional_kwargs.get(OPENING_INSTRUCTION)
         for replayed in _replayed(message)
         if replayed.role != 'system'
     ]

@@ -599,23 +599,11 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
         yield event
 
 
-def _opening_prompt(input_data: RunAgentInput, invocation_prompt: str) -> str:
-    if (input_data.forwarded_props or {}).get('opening') is not True:
-        return invocation_prompt
-    if input_data.messages:
+def _opening_turn(input_data: RunAgentInput, forwarded: dict[str, Any]) -> bool:
+    opening = forwarded.get('opening') is True
+    if opening and input_data.messages:
         raise SessionOpeningError('An opening Turn cannot contain messages')
-    first_name = (input_data.forwarded_props or {}).get('openingFirstName')
-    name = f'The user\'s first name is {json.dumps(first_name)}.\n' if first_name else ''
-    return invocation_prompt + (
-        f'\n\n<chat_opened>\n{name}The user opened this empty chat. Apply the opening greeting instruction in <writing>. '
-        'If Memory is empty, skip the Memory pitch; never invent one. '
-        'There is no user message to answer.\n</chat_opened>'
-    )
-
-
-def _require_empty_opening_checkpoint(checkpoint: object | None) -> None:
-    if checkpoint is not None:
-        raise SessionOpeningError('This Session already has a Turn')
+    return opening
 
 
 async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, forwarded: dict[str, Any],
@@ -624,7 +612,7 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
     session = (session_user_id, input_data.thread_id)
     persistent_memory = (auth.persistent_memory and auth.actor_id != ANONYMOUS_ACTOR_ID and 'agentSystemPrompt' not in forwarded
                          and forwarded.get('botMemory') is not False)
-    opening = forwarded.get('opening') is True
+    opening = _opening_turn(input_data, forwarded)
     build = partial(
         _agent_and_backend,
         actor_id=auth.actor_id,
@@ -633,7 +621,7 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
         model=forwarded.get('model') or _require_bot().default_model,
         effort=forwarded.get('effort'),
         thread_id=input_data.thread_id,
-        invocation_prompt=_opening_prompt(input_data, auth.system_prompt),
+        invocation_prompt=auth.system_prompt,
         agent_system_prompt=forwarded.get('agentSystemPrompt', AGENT_SYSTEM_PROMPT),
         bot_system_prompt=forwarded.get('botSystemPrompt'),
         environment=auth.environment,
@@ -704,8 +692,8 @@ async def _read_turn_checkpoint(
             )
         with turn_timing.phase('checkpoint_read'):
             saved = await saver.aget_tuple(_session_config(session))
-            if opening:
-                _require_empty_opening_checkpoint(saved)
+            if opening and saved is not None:
+                raise SessionOpeningError('This Session already has a Turn')
             return saved
 
 
