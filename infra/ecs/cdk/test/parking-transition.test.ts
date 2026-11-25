@@ -21,7 +21,7 @@ test('bundles the transition when cdk.out sits inside ecs/cdk, as in the deploy 
       fs.mkdirSync(path.dirname(path.join(infraRoot, file)), { recursive: true });
       fs.writeFileSync(path.join(infraRoot, file), '');
     }
-    for (const file of ['ecs/deploy_identity.py', 'ecs/transition.py', 'transition-requirements.txt']) fs.copyFileSync(path.resolve(__dirname, '../../..', file), path.join(infraRoot, file));
+    for (const file of ['ecs/deploy_guard.py', 'ecs/deploy_identity.py', 'ecs/transition.py', 'transition-requirements.txt']) fs.copyFileSync(path.resolve(__dirname, '../../..', file), path.join(infraRoot, file));
     const app = new App({ outdir: path.join(infraRoot, 'ecs/cdk/cdk.out') });
     const stack = new Stack(app, 'Parking', { env: { account: identity.aws.account, region: identity.aws.region } });
     parkingTransition(stack, infraRoot, identity, CONFIG);
@@ -54,6 +54,26 @@ test('bundles the transition when cdk.out sits inside ecs/cdk, as in the deploy 
       'import json, sys; sys.path[:0] = [sys.argv[1], sys.argv[1] + "/ecs"]; import deploy_identity; print(json.dumps(deploy_identity.load_deployment()))', bundle],
     { env: { PATH: process.env.PATH, BOTCUBE_CONFIG: path.join(bundle, 'botcube.resolved.json') }, encoding: 'utf8' }));
     expect(loaded).toMatchObject({ formatVersion: 1, config: { name: 'bot-cube' }, physicalNames: { clusterName: identity.aws.ecs.cluster } });
+    const guardStacks: string[] = JSON.parse(execFileSync('python3', ['-I', '-S', '-c', `
+import json, sys
+from types import SimpleNamespace
+sys.path[:0] = [sys.argv[1], sys.argv[1] + '/ecs']
+from deploy_guard import require_no_deploy
+
+calls = []
+def describe_stacks(*, StackName):
+    calls.append(StackName)
+    return {'Stacks': [{'StackStatus': 'UPDATE_COMPLETE'}]}
+
+require_no_deploy(SimpleNamespace(describe_stacks=describe_stacks), SimpleNamespace(list_objects_v2=lambda **_: {}), 0)
+print(json.dumps(calls))
+`, bundle], { env: { PATH: process.env.PATH, BOTCUBE_CONFIG: path.join(bundle, 'botcube.resolved.json') }, encoding: 'utf8' }));
+    expect(guardStacks).toEqual(deployedStacks(identity));
+    template.hasResourceProperties('AWS::IAM::Policy', { PolicyDocument: { Statement: Match.arrayWith([{
+      Action: 'cloudformation:DescribeStacks', Effect: 'Allow', Resource: stack.resolve(
+        guardStacks.map(name => stack.formatArn({ service: 'cloudformation', resource: 'stack', resourceName: `${name}/*` })),
+      ),
+    }]) } });
     const exports = JSON.parse(execFileSync('python3', ['-I', '-S', '-c',
       'import json, sys; sys.path[:0] = [sys.argv[1], sys.argv[1] + "/ecs"]; import transition; print(json.dumps(transition.agentcore_exports()))', bundle],
     { env: { PATH: process.env.PATH, BOTCUBE_CONFIG: path.join(bundle, 'botcube.resolved.json') }, encoding: 'utf8' }));
@@ -76,7 +96,7 @@ test('lets the transition register the Session API scalable target', () => {
   expect(actions).toEqual(expect.arrayContaining(['lambda:GetProvisionedConcurrencyConfig', 'cloudwatch:PutMetricAlarm', 'cloudwatch:DeleteAlarms', 'application-autoscaling:RegisterScalableTarget']));
 });
 
-test('lets the transition read only deploy leases and the deployed stacks it guards a park with', () => {
+test('lets the transition read only the deploy lease keys', () => {
   const stack = new Stack(new App(), 'Guard', { env: { account: identity.aws.account, region: identity.aws.region } });
   parkingTransition(stack, path.resolve(__dirname, '../../..'), identity, CONFIG);
   const statements = Object.values(Template.fromStack(stack).findResources('AWS::IAM::Policy'))
@@ -87,9 +107,6 @@ test('lets the transition read only deploy leases and the deployed stacks it gua
     { Action: 's3:ListBucket', Effect: 'Allow', Resource: `arn:aws:s3:::${bucket}`, Condition: { StringLike: { 's3:prefix': 'deploy-leases/*' } } },
     { Action: 's3:GetObject', Effect: 'Allow', Resource: `arn:aws:s3:::${bucket}/deploy-leases/*` },
   ]);
-  expect(deployedStacks(identity)).toEqual(['AgentCore-bot-cube-default', 'bot-cube-preview-origin', 'bot-cube-web-latency']);
-  expect(statements).toContainEqual({ Action: 'cloudformation:DescribeStacks', Effect: 'Allow',
-    Resource: stack.resolve(deployedStacks(identity).map(name => stack.formatArn({ service: 'cloudformation', resource: 'stack', resourceName: `${name}/*` }))) });
 });
 
 test('rechecks a transition stack every 5 seconds, so a finished update starts the next step promptly', () => {
