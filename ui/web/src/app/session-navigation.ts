@@ -31,14 +31,6 @@ const REFRESH_INTERVAL_MS = 30_000;
 /** How often the open chat reloads while its Turn runs on the server with no stream here, as after a reload mid-Turn. */
 const RUNNING_POLL_MS = 3_000;
 
-/** `load`, counted in `out` while it is out. */
-function counted<T>(out: { current: number }, load: Promise<T>): Promise<T> {
-  out.current += 1;
-  return load.finally(() => {
-    out.current -= 1;
-  });
-}
-
 /**
  * Owns which Session is open and reconciles navigation, deletion and background
  * replay with its agent. Callers render the view and submit user actions; they
@@ -92,12 +84,8 @@ export function useSessionNavigation({
   const awaitedRunId = useRef<string | undefined>(undefined);
   if (serverTurn === null) awaitedRunId.current = undefined;
   else if (serverTurn.runId !== undefined) awaitedRunId.current = serverTurn.runId;
-  // The refresh and the reload never load the open chat alongside each other: the 30 s refresh leaves it
-  // to the reload while a Turn runs on the server or a reload is still out, and a reload waits for any load still out.
-  const turnRunsOnServerNow = useRef(false);
-  turnRunsOnServerNow.current = turnRunsOnServer;
-  const refreshesOut = useRef(0);
-  const reloadsOut = useRef(0);
+  const replayLoads = useRef(new Set<{ detached: boolean }>());
+  const refreshOpenChat = useRef<((reconnected: boolean) => void) | null>(null);
   /** Why the open Session's latest Turn failed, as its last load said: a new value per load, so a repeated failure shows again. */
   const [turnFailure, setTurnFailure] = useState<SavedTurnFailure | null>(null);
   const { agent, selfManagedAgents, entrances } = useMemo(() => {
@@ -451,49 +439,24 @@ export function useSessionNavigation({
     return () => subscription.unsubscribe();
   }, [agent, accountId]);
 
-  // Scheduled runs can change Side Chats and the Main Chat. Refresh on return, reconnect,
-  // and every 30 s while visible unless a Turn is streaming. Keep the composer draft mounted.
-  const [mainChatRefreshError, setMainChatRefreshError] = useState<string | null>(null);
   useEffect(() => {
     if (!ready) return undefined;
-    let mounted = true;
-    // Focus and visibility can overlap; only the latest load may replace the transcript or report a failure.
-    let refreshSequence = 0;
-    const refresh = () => {
+    const refresh = (event?: Event) => {
       if (document.visibilityState !== "visible" || agent.isRunning) return;
-      // Stryker disable next-line ArithmeticOperator: any change of revision reloads the list, whichever way it counts
       setSideChatsRevision((revision) => revision + 1);
-      if (activeId === null || activeId !== mainChatId || turnRunsOnServerNow.current || reloadsOut.current > 0) return;
-      const sequence = ++refreshSequence;
-      const changed = changes();
-      counted(refreshesOut, fetchMainChat({ chatServiceUrl })).then(
-        (mainChat) => {
-          if (!mounted || sequence !== refreshSequence || changed()) return;
-          // Unchanged replay must avoid a periodic render.
-          showReplay(mainChat);
-          if (accountId !== undefined) withStorage(() => keepMainChatCopy(accountId, mainChat));
-          setMainChatRefreshError(null);
-        },
-        (error: Error) => {
-          if (mounted && sequence === refreshSequence) setMainChatRefreshError(`The Main Chat could not refresh: ${error.message}`);
-        },
-      );
+      refreshOpenChat.current?.(event?.type === "online");
     };
     window.addEventListener("focus", refresh);
-    // A load that failed offline is retried once the connection is back.
     window.addEventListener("online", refresh);
     document.addEventListener("visibilitychange", refresh);
-    // A user who stays on the page sees what lands meanwhile, such as a scheduled run's post.
-    const refreshTimer = window.setInterval(refresh, REFRESH_INTERVAL_MS);
+    const timer = window.setInterval(refresh, REFRESH_INTERVAL_MS);
     return () => {
-      mounted = false;
-      window.clearInterval(refreshTimer);
+      window.clearInterval(timer);
       window.removeEventListener("focus", refresh);
       window.removeEventListener("online", refresh);
       document.removeEventListener("visibilitychange", refresh);
-      setMainChatRefreshError(null);
     };
-  }, [agent, activeId, mainChatId, ready, accountId]);
+  }, [agent, ready]);
 
   // A Turn whose stream here fails short of a Stop may run on: the open chat reloads until the server says
   // it has ended.
@@ -528,46 +491,74 @@ export function useSessionNavigation({
     return () => subscription.unsubscribe();
   }, [agent]);
 
-  // A Turn on the server with no stream here lands within seconds: the chat reloads until it ends, 3 s after each load
-  // answers so loads never overlap, at once after a failed stream.
+  const [mainChatRefreshError, setMainChatRefreshError] = useState<string | null>(null);
   useEffect(() => {
-    if (!ready || !turnRunsOnServer || activeId === null) return undefined;
+    const detached = turnRunsOnServer;
+    const main = activeId === mainChatId;
+    if (!ready || activeId === null || (!detached && !main)) return undefined;
     let mounted = true;
-    let poll: number;
+    let timer: number | undefined;
+    let sequence = 0;
+    const loads = replayLoads.current;
+    const recovery = { detached: true };
     const next = () => {
-      if (mounted) poll = window.setTimeout(reload, RUNNING_POLL_MS);
+      if (mounted && detached) timer = window.setTimeout(reload, RUNNING_POLL_MS);
     };
-    const reload = () => {
-      if (document.visibilityState !== "visible" || agent.isRunning || refreshesOut.current + reloadsOut.current > 0) {
+    const canLoadReplay = () => {
+      if (document.visibilityState !== "visible" || agent.isRunning) return false;
+      return detached ? loads.size === 0 : ![...loads].some((load) => load.detached);
+    };
+    const acceptReplay = (session: ReplayedSession) => {
+      const { messages, running, runId, runningSince, failure } = session;
+      if (!(running && !replay.current.extended && messages.length < agent.messages.length)) showReplay(session);
+      setMainChatRefreshError(null);
+      if (running || detached) setServerTurn(running ? { runId, runningSince } : null);
+      if (detached) {
+        const awaited = awaitedRunId.current;
+        setTurnFailure(failure !== undefined && (awaited === undefined || failure.runId === awaited) ? failure : null);
+      }
+    };
+    const loadReplay = async () => {
+      if (loads.has(recovery)) return;
+      if (detached) window.clearTimeout(timer);
+      if (!canLoadReplay()) {
         next();
         return;
       }
+
+      const request = detached ? recovery : { detached: false };
+      loads.add(request);
+      const revision = ++sequence;
       const changed = changes();
-      const stale = () => !mounted || changed();
-      const load = activeId === mainChatId ? fetchMainChat({ chatServiceUrl }) : openConversation({ id: activeId, chatServiceUrl });
-      counted(reloadsOut, load).finally(next).then(
-        (session) => {
-          if (stale()) return;
-          const { messages, running, runId, runningSince, failure } = session;
-          if (!(running && !replay.current.extended && messages.length < agent.messages.length)) showReplay(session);
-          setMainChatRefreshError(null);
-          setServerTurn(running ? { runId, runningSince } : null);
-          // Only the awaited run's failure: a send that never reached the Chat Service leaves an earlier one on record.
-          const awaited = awaitedRunId.current;
-          setTurnFailure(failure !== undefined && (awaited === undefined || failure.runId === awaited) ? failure : null);
-        },
-        (error: Error) => {
-          if (stale()) return;
-          setMainChatRefreshError(`The chat could not refresh: ${error.message}`);
-        },
-      );
+      const stale = () => !mounted || shownRef.current.agent !== agent || changed() || revision !== sequence;
+      try {
+        const mainChat = main ? await fetchMainChat({ chatServiceUrl }) : null;
+        const session = mainChat ?? await openConversation({ id: activeId, chatServiceUrl });
+        if (stale()) return;
+        acceptReplay(session);
+        if (mainChat !== null && !detached && accountId !== undefined) withStorage(() => keepMainChatCopy(accountId, mainChat));
+      } catch (error) {
+        if (!stale()) setMainChatRefreshError(`The ${detached ? "chat" : "Main Chat"} could not refresh: ${(error as Error).message}`);
+      } finally {
+        loads.delete(request);
+        next();
+      }
     };
-    (serverTurn.unasked ? reload : next)();
+    const reload = () => { void loadReplay(); };
+    refreshOpenChat.current = (reconnected) => {
+      if (!detached || reconnected) reload();
+    };
+    if (detached) {
+      if (serverTurn.unasked) reload();
+      else next();
+    }
     return () => {
       mounted = false;
-      window.clearTimeout(poll);
+      window.clearTimeout(timer);
+      refreshOpenChat.current = null;
+      setMainChatRefreshError(null);
     };
-  }, [agent, activeId, mainChatId, turnRunsOnServer, serverTurn?.unasked, ready]);
+  }, [agent, activeId, mainChatId, accountId, chatServiceUrl, turnRunsOnServer, serverTurn?.unasked, ready]);
 
   // A Turn that runs on the server with no stream here stops from the page too. Its Stop goes while one is
   // asked, until the reload says the Turn ended; a failed Stop comes back for another try.

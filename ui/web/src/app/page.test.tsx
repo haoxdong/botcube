@@ -3553,6 +3553,51 @@ describe('a Turn that runs on the server after a reload', () => {
     await settle();
   }
 
+  it.each(['Main Chat', 'Side Chat'])('recovers a detached %s Turn as soon as the browser reconnects', async (chat) => {
+    vi.useFakeTimers();
+    const main = chat === 'Main Chat';
+    if (main) service.mainChat = { id: 'main-1', messages: [question], running: true, runId: 'server-run' };
+    else {
+      service.sideChats = [sideChat('side', 'Rates')];
+      service.replies.set('side', [question]);
+      service.running.add('side');
+      window.history.replaceState(null, '', '?chat=side');
+    }
+    await renderPage();
+    const endpoint = main ? '/main-chat' : '/threads/side';
+    service.failing.set(`GET ${endpoint}`, 503);
+    await threeSecondsPass();
+    expect(screen.getByRole('alert')).toHaveTextContent('The chat could not refresh');
+
+    service.failing.delete(`GET ${endpoint}`);
+    if (main) service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    else {
+      service.replies.set('side', [question, reply]);
+      service.running.delete('side');
+    }
+    await act(async () => { window.dispatchEvent(new Event('online')); });
+    await settle();
+
+    expect(agent().messages).toEqual([question, reply]);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+  });
+
+  it('follows a Turn discovered by a Main Chat refresh through completion', async () => {
+    vi.useFakeTimers();
+    service.mainChat = { id: 'main-1', messages: [question] };
+    await renderPage();
+
+    service.mainChat = { id: 'main-1', messages: [question], running: true, runId: 'server-run' };
+    await userComesBack();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeVisible();
+
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(agent().messages).toEqual([question, reply]);
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+  });
+
   it.each([
     ['Main Chat', 'replay'],
     ['Side Chat', 'replay'],
