@@ -7,7 +7,7 @@ the index of each user's Sessions. It stores no Session content: the Agent
 Service's record is the only copy (ADR 0067), and the Chat Service replays and
 purges a Session through the Harness's session API.
 
-`await startChatService()` reads the BotCube Config from S3 or a local file and builds BotCube's own Chat from the BotCube Config that
+`await serveChatService()` reads the BotCube Config from S3 or a local file and builds BotCube's own Chat from the BotCube Config that
 `BOTCUBE_CONFIG` names and `/bot/bot.yaml` ([`src/stock.ts`](src/stock.ts),
 ADR 0091): sign-in and account routes, the account that owns a request's Sessions,
 the user ID they are filed under, the Turn payload, and the Agent Computer. It holds

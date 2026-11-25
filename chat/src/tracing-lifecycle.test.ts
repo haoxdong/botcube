@@ -31,7 +31,7 @@ it.each([false, true])('waits for the single tracing shutdown before task-stop s
   let reject: ((error: Error) => void) | undefined;
   const flushed = new Promise<void>((ok, fail) => { resolve = ok; reject = fail; });
   lifecycle.shutdown.mockReset().mockReturnValue(flushed);
-  const server = serveChatService({ PORT: '0', BOTCUBE_CHAT_TABLE: 'trace-test', BOTCUBE_CONFIG: testBotCubeConfig() }, { overrides });
+  const server = await serveChatService({ PORT: '0', BOTCUBE_CHAT_TABLE: 'trace-test', BOTCUBE_CONFIG: testBotCubeConfig() }, { overrides });
   await once(server, 'listening');
   const closed = once(server, 'close');
   const stop = defined(lifecycle.stop, 'task-stop callback')();

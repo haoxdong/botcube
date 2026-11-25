@@ -55,7 +55,7 @@ function siteSignIn(owner: (c: Context) => Promise<string>, store: AccountStore)
   return routes;
 }
 
-serveChatService(env, {
+await serveChatService(env, {
   accountStore,
   ...(env.FAKE_SITE_URL ? { startPage: new URL('/login', env.FAKE_SITE_URL).href } : {}),
   overrides: (chat) => ({

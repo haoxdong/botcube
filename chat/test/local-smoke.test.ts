@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { afterAll, expect, it, vi } from 'vitest';
-import { startChatService } from '../src/server.js';
+import { serveChatService } from '../src/server.js';
 import { resolveConfigFile } from './stock-bot.js';
 import { fileURLToPath } from 'node:url';
 import { FakeAgentCore } from './fakes/fake-agentcore.js';
@@ -51,7 +51,7 @@ it('serves the stock Chat Service over HTTP with persisted thread metadata and c
     vi.unstubAllEnvs();
   });
   const taskStops = process.listenerCount('SIGTERM');
-  const server = await startChatService(env);
+  const server = await serveChatService(env);
   cleanup.push(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     expect(process.listenerCount('SIGTERM')).toBe(taskStops);

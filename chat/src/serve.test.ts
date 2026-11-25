@@ -86,7 +86,7 @@ async function allocatedTable(sessionId: string): Promise<string> {
 async function serve(env: NodeJS.ProcessEnv): Promise<string> {
   vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
-  const server: ServerType = serveChatService({ BOTCUBE_CONFIG: CONFIG, ...env }, { overrides });
+  const server: ServerType = await serveChatService({ BOTCUBE_CONFIG: CONFIG, ...env }, { overrides });
   closers.push(async () => {
     await new Promise((resolve) => server.close(resolve));
   });
@@ -123,7 +123,7 @@ describe('the Chat Service served from the environment', () => {
     });
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
-    const server = serveChatService({
+    const server = await serveChatService({
       PORT: '0', BOTCUBE_CONFIG: CONFIG, BOTCUBE_CHAT_TABLE: await newTable(),
       BOTCUBE_SCHEDULE_GROUP: 'test-group',
       BOTCUBE_SCHEDULER_ROLE_ARN: 'arn:aws:iam::123456789012:role/scheduler',
@@ -153,7 +153,7 @@ describe('the Chat Service served from the environment', () => {
       const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
       vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
       vi.spyOn(console, 'log').mockImplementation(() => undefined);
-      const server = serveChatService({ PORT: '0', BOTCUBE_CONFIG: CONFIG, BOTCUBE_CHAT_TABLE: await newTable(), ...env }, { overrides: botOverrides });
+      const server = await serveChatService({ PORT: '0', BOTCUBE_CONFIG: CONFIG, BOTCUBE_CHAT_TABLE: await newTable(), ...env }, { overrides: botOverrides });
       closers.push(async () => {
         if (server.listening) await new Promise((resolve) => server.close(resolve));
       });

@@ -1,3 +1,4 @@
+import { loadResolvedConfig } from 'botcube-config/resolved';
 import { TurnQuota, type TurnQuotaLimits } from '../src/turn-quota.js';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { SchedulerClient } from '@aws-sdk/client-scheduler';
@@ -80,10 +81,12 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
   const agentcore = await new FakeAgentCore().listen();
   const sessionApi = await new FakeSessionApi().listen();
   const botcubeConfig = testBotCubeConfig(undefined, options.botcube);
+  const env = { BOTCUBE_CONFIG: botcubeConfig, BOTCUBE_CHAT_TABLE: table, ...options.env };
+  const resolved = loadResolvedConfig(env.BOTCUBE_CONFIG);
   const config: ChatServiceConfig = {
     agentCore: { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: agentcore.url },
     localHarnessUrl: null,
-    corsOrigins: configAdapters({ BOTCUBE_CONFIG: botcubeConfig }).corsOrigins,
+    corsOrigins: configAdapters(env, resolved).corsOrigins,
     region: 'us-east-1',
     agentCoreEndpoint: agentcore.url,
     browserId: 'aws.browser.v1',
@@ -103,7 +106,8 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
   const accounts = new TestAccounts(table, DynamoDBDocumentClient.from(client));
   const { app: service, chat, history } = createChatService(
     {
-      env: { BOTCUBE_CONFIG: botcubeConfig, BOTCUBE_CHAT_TABLE: table, ...options.env },
+      env,
+      resolved,
       accountStore: accounts,
       // The Agent Computer is an External Service: these tests start no browser.
       agentComputer: (local) => ({ ...local, warmSession: async () => undefined, turnStarting: () => undefined }),

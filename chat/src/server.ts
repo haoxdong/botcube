@@ -1,4 +1,3 @@
-import { loadResolvedConfig } from 'botcube-config/resolved';
 import { chatAlarmEvents } from 'botcube-config/alarm-events';
 import { TurnQuota, TurnQuotaExceeded } from './turn-quota.js';
 import { startChatTracing } from './tracing.js';
@@ -25,7 +24,7 @@ import { DynamoDBSessionMetadata, SessionDispatchPendingError, type SessionMetad
 import type { ScheduledTasks } from './scheduled-tasks.js';
 import { chatScheduling } from './schedules.js';
 import type { TableSchedules } from './table-schedules.js';
-import { s3Config } from './config-locator.js';
+import { readChatConfig } from './config-locator.js';
 import { configAdapters, type ConfigAdapters, type AwsAccessAdapter } from './config-adapters.js';
 import { ssmParkHistory, type ParkHistory } from './park-history.js';
 import { isUserRequest, ProductionActivity } from './production-activity.js';
@@ -282,17 +281,9 @@ function parkHistory(parameter: string, productName: string | undefined): ParkHi
   return ssmParkHistory(parameter, productName);
 }
 
-/** Resolve the startup locator before opening the Chat Service's listener. */
-export async function startChatService(env: NodeJS.ProcessEnv = process.env, options: StockOptions = {}): Promise<ServerType> {
-  const locator = env.BOTCUBE_CONFIG;
-  if (!locator) throw new Error('BOTCUBE_CONFIG is not set: the stock Chat Service serves the BotCube Config it names');
-  const resolved = locator.startsWith('s3://') ? await s3Config(locator, env.AWS_REGION) : loadResolvedConfig(locator);
-  return serveChatService(env, { ...options, resolved });
-}
-
-/** Serve the Chat Service, configured from the environment and the BotCube Config it names, on $PORT. */
-export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: StockOptions = {}): ServerType {
-  const resolved = options.resolved ?? (env.BOTCUBE_CONFIG ? loadResolvedConfig(env.BOTCUBE_CONFIG) : undefined);
+/** Load the deployment's BotCube Config before opening the Chat Service listener on $PORT. */
+export async function serveChatService(env: NodeJS.ProcessEnv = process.env, options: Omit<StockOptions, 'resolved'> = {}): Promise<ServerType> {
+  const resolved = await readChatConfig(env);
   const adapters = configAdapters(env, resolved);
   const config = configFromEnv(env, adapters);
   if (config.agentCore === null && config.localHarnessUrl === null) {
