@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import type { HarnessAuth, TokenAudiences } from './seams.js';
-import { outsideIssuer, withClientSecret, type CredentialField } from 'botcube-config/credential-fields';
+import { commandFields, credentialFields } from 'botcube-config/credential-fields';
 import { proxiedFields } from 'botcube-config/proxied-fields';
-import { absolutePath, credentialSource, endpointHeaders, endpointTls, forwardProxy, gatewayModels, modelProvider, proxyReference, relayProviders, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource, type EndpointTls } from 'botcube-config/blocks';
+import { absolutePath, credentialSource, endpointHeaders, endpointTls, forwardProxy, gatewayModels, modelProvider, proxyReference, relayProviders, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource } from 'botcube-config/blocks';
 import { existing } from 'botcube-config/existing';
 import { agentCore, alarms, cloudflare, deploymentKeys, natGateways, natRouteTables, openEgress, parking, publicIp, RETIRED_FILES, services } from 'botcube-config/deployment';
 import { imageRegistry } from 'botcube-config/images';
@@ -243,42 +243,12 @@ export const configSections = z.strictObject({
 });
 
 
-/** Every Endpoint TLS block the BotCube Config names, by its path. */
-export function tlsFields({ integrations: { modelGateway: models, telemetry, proxy } }: z.output<typeof configSections>): [path: string[], tls: EndpointTls][] {
-  return [
-    ...(models.kind === 'openai-compatible' && models.tls ? [[['integrations','modelGateway', 'tls'], models.tls] satisfies [string[], EndpointTls]] : []),
-    ...(proxy.kind === 'forward' && proxy.tls ? [[['integrations','proxy', 'tls'], proxy.tls] satisfies [string[], EndpointTls]] : []),
-    ...(telemetry.kind === 'otlp' && telemetry.tls ? [[['integrations','telemetry', 'tls'], telemetry.tls] satisfies [string[], EndpointTls]] : []),
-  ];
-}
-
-/** Every command the BotCube Config may run, by its path: a command credential or client certificate. */
-export function commandFields(config: z.output<typeof configSections>): (string | number)[][] {
-  return [
-    ...credentialFields(config).filter(([, source]) => source.kind === 'command').map(([path]) => path),
-    ...tlsFields(config).filter(([, tls]) => tls.clientCertificate && 'command' in tls.clientCertificate).map(([path]) => [...path, 'clientCertificate']),
-  ];
-}
-
-/** Every Credential Source the BotCube Config names, by its path. */
-export function credentialFields({ integrations: { signIn: identity, modelGateway: models, harnessAuth, telemetry, proxy } }: z.output<typeof configSections>): CredentialField[] {
-  const fields: CredentialField[] = [
-    ...(outsideIssuer(harnessAuth) ? [[['integrations','harnessAuth', 'token'], harnessAuth.token] satisfies CredentialField] : []),
-    ...(proxy.kind === 'forward' && proxy.credential ? [[['integrations','proxy', 'credential'], proxy.credential] satisfies CredentialField] : []),
-    ...(telemetry.kind === 'otlp' && telemetry.credential ? [[['integrations','telemetry', 'credential'], telemetry.credential] satisfies CredentialField] : []),
-    ...(identity.kind === 'oidc' ? identity.clients.map(({ clientSecret }, index): CredentialField => [['integrations','signIn', 'clients', index, 'clientSecret'], clientSecret]) : []),
-    ...(models.kind === 'openai-compatible' ? [[['integrations','modelGateway', 'credential'], models.credential] satisfies CredentialField] : []),
-    ...(models.kind === 'openai-compatible' ? Object.entries<{ credential?: CredentialSource | undefined } | undefined>(models.providers ?? {}).flatMap(([provider, route]): CredentialField[] => route?.credential ? [[['integrations', 'modelGateway', 'providers', provider, 'credential'], route.credential]] : []) : []),
-  ];
-  return fields.flatMap(withClientSecret);
-}
-
 export const botcubeConfig = configSections.superRefine((config, context) => {
   for (const path of config.allowCommandCredentials ? [] : commandFields(config)) {
     const runs = path.at(-1) === 'clientCertificate' ? 'A command client certificate' : 'A command credential';
     context.addIssue({ code: 'custom', path, message: `${runs} runs only when allowCommandCredentials is true` });
   }
-  for (const [path, source] of credentialFields(config)) {
+  for (const { path, value: source } of credentialFields(config)) {
     if (source.kind === 'botcube') {
       context.addIssue({ code: 'custom', path, message: 'A botcube token is the Harness bearer, which the Chat Service signs for harnessAuth; no configured credential takes one' });
     }

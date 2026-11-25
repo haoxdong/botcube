@@ -1,4 +1,5 @@
-import { commandFields, type BotCubeConfig } from './schema.js';
+import { commandFields } from './credential-fields.js';
+import type { BotCubeConfig } from './schema.js';
 import { ALLOW_COMMAND_CREDENTIALS_ENV } from './blocks.js';
 
 /** The standard variables each runtime reads its trust roots from, all pointed at the BotCube Config's `caBundle`. */

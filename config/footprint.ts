@@ -1,5 +1,5 @@
 import { configStores } from './config-stores.js';
-import { outsideIssuer } from './credential-fields.js';
+import { credentialFields, outsideIssuer, tlsFields } from './credential-fields.js';
 import { physicalNames } from './deployment.js';
 import { footprintImages, sorted } from './footprint-images.js';
 import { modelLines, shellEnvironment } from './footprint-bot.js';
@@ -163,7 +163,7 @@ type AdapterSections = Omit<BotCubeConfig['integrations'], 'imageRegistry'> & Pi
 type Section = keyof AdapterSections;
 
 /** An adapter's need: fixed, or read from its section, such as the host it names. */
-type AdapterNeed<Config> = Need | ((config: Config) => Need | Need[]);
+type AdapterNeed<Config> = Need | ((config: Config) => Need);
 
 /** Each section's adapters by `kind`: a kind the schema adds without an entry here fails to type-check. */
 const ADAPTERS: { readonly [S in Section]: { readonly [K in AdapterSections[S]['kind']]: AdapterNeed<Extract<AdapterSections[S], { kind: K }>> } } = {
@@ -171,10 +171,7 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in AdapterSections[S]['
     // Accounts live in the chat table the Chat Service already holds.
     'botcube-accounts': {},
     // The Chat Service discovers the provider and redeems sign-in codes with the client secret it reads.
-    oidc: ({ issuer, clients }) => [
-      { egressHosts: [new URL(issuer).host] },
-      ...clients.map(({ clientSecret }, index) => credentialNeed(`integrations.signIn.clients.${index}.clientSecret`, clientSecret, ['chatService'])),
-    ],
+    oidc: ({ issuer }) => ({ egressHosts: [new URL(issuer).host] }),
   },
   modelGateway: {
     bedrock: {
@@ -183,15 +180,9 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in AdapterSections[S]['
       },
       egressHosts: aws('bedrock-runtime'),
     },
-    'openai-compatible': ({ url, credential, tls, providers = {} }) => {
-      const readers = ['credentialService'] as const;
-      const reached = (at: string): Need => ({ egressHosts: [new URL(at).host], egressFrom: { [new URL(at).host]: readers } });
-      return [
-        reached(url), credentialNeed('integrations.modelGateway.credential', credential, readers), ...tlsNeed('integrations.modelGateway.tls', tls, readers),
-        ...Object.entries(providers).flatMap(([provider, own]) => [
-          reached(own.url ?? url), ...(own.credential ? [credentialNeed(`integrations.modelGateway.providers.${provider}.credential`, own.credential, readers)] : []),
-        ]),
-      ];
+    'openai-compatible': ({ url, providers = {} }) => {
+      const hosts = [url, ...Object.values(providers).map(own => own.url ?? url)].map(at => new URL(at).host);
+      return { egressHosts: hosts, egressFrom: Object.fromEntries(hosts.map(host => [host, ['credentialService']])) };
     },
   },
   harnessAuth: {
@@ -199,10 +190,10 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in AdapterSections[S]['
       iam: { chatService: { actions: ['bedrock-agentcore:InvokeAgentRuntime', 'bedrock-agentcore:StopRuntimeSession', 'lambda:InvokeFunction'] } },
       egressHosts: aws('bedrock-agentcore', 'lambda'),
     },
-    'jwt-bearer': (auth) => [
-      { iam: { chatService: { actions: ['lambda:InvokeFunction'] } }, egressHosts: aws('bedrock-agentcore', 'lambda') },
-      ...(outsideIssuer(auth) ? [{ egressHosts: [new URL(auth.issuer).host] }, credentialNeed('integrations.harnessAuth.token', auth.token, ['chatService'])] : []),
-    ],
+    'jwt-bearer': (auth) => ({
+      iam: { chatService: { actions: ['lambda:InvokeFunction'] } },
+      egressHosts: [...aws('bedrock-agentcore', 'lambda'), ...(outsideIssuer(auth) ? [new URL(auth.issuer).host] : [])],
+    }),
   },
   awsAccess: {
     'web-identity': {
@@ -247,36 +238,27 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in AdapterSections[S]['
     },
     // Both services export straight to the Endpoint with the credential they read.
     // AgentCore's Runtime construct grants the Harness X-Ray unless telemetry is none.
-    otlp: ({ url, credential, tls }) => [
-      { egressHosts: [new URL(url).host], iam: { harness: { actions: XRAY } } },
-      ...(credential ? [credentialNeed('integrations.telemetry.credential', credential, ['chatService', 'harness'])] : []),
-      ...tlsNeed('integrations.telemetry.tls', tls, ['chatService', 'harness']),
-    ],
+    otlp: ({ url }) => ({ egressHosts: [new URL(url).host], iam: { harness: { actions: XRAY } } }),
     none: {},
   },
   proxy: {
     // Each Endpoint and network.openEgress that names it reach it, through a relay with its credential.
-    forward: ({ url, credential, tls }) => [
-      { egressHosts: [new URL(url).host] },
-      ...(credential ? [credentialNeed('integrations.proxy.credential', credential, ['chatService', 'credentialService', 'harness'])] : []),
-      ...tlsNeed('integrations.proxy.tls', tls, ['chatService', 'credentialService', 'harness']),
-    ],
+    forward: ({ url }) => ({ egressHosts: [new URL(url).host] }),
     none: {},
   },
 };
 
 /** What connecting with `tls` at `field` needs of its `readers`: its line, and a client certificate command they may run. */
-function tlsNeed(field: string, tls: EndpointTls | undefined, readers: readonly Principal[]): Need[] {
-  if (tls === undefined) return [];
+function tlsNeed(field: string, tls: EndpointTls, readers: readonly Principal[]): Need {
   const { clientCertificate, serverIdentity } = tls;
   const certificate = clientCertificate === undefined ? undefined : 'command' in clientCertificate
     ? 'client certificate from a command'
     : `client certificate ${clientCertificate.certificate}, key ${clientCertificate.key}`;
   const described = [...(serverIdentity ? [`server identity ${serverIdentity}`] : []), ...(certificate ? [certificate] : [])].join('; ');
-  return [{
+  return {
     tls: [`${field} (${readers.join(', ')}): ${described}`],
     ...(clientCertificate && 'command' in clientCertificate ? { commands: [`${field}.clientCertificate (${readers.join(', ')}): ${clientCertificate.command.join(' ')}`] } : {}),
-  }];
+  };
 }
 
 /** What reading `credential` at `field` needs of its `readers`: a secret grant, a command, or a token endpoint. */
@@ -291,10 +273,8 @@ function credentialNeed(field: string, credential: CredentialSource, readers: re
       return {};
     case 'command':
       return { commands: [`${field} (${readers.join(', ')}): ${credential.command.join(' ')}`] };
-    case 'oauth-client-credentials': {
-      const secret = credentialNeed(`${field}.clientSecret`, credential.clientSecret, readers);
-      return { ...secret, egressHosts: [new URL(credential.tokenEndpoint).host, ...(secret.egressHosts ?? [])] };
-    }
+    case 'oauth-client-credentials':
+      return { egressHosts: [new URL(credential.tokenEndpoint).host] };
   }
 }
 
@@ -304,7 +284,10 @@ export function footprint(config: BotCubeConfig, { filesAccessPointMode = 'runti
   const { need, created } = configStores(config);
   const sections: AdapterSections = { ...config.integrations, schedules: config.schedules, liveView: config.liveView };
   const needs = [BUILT_IN, config.existing.files ? {} : FILES_ACCESS_POINTS[filesAccessPointMode],
-    ...(Object.keys(ADAPTERS) as Section[]).flatMap(section => adapter(section, sections[section])), resources.need, need];
+    ...(Object.keys(ADAPTERS) as Section[]).map(section => adapter(section, sections[section])),
+    ...credentialFields(config).map(({ path, value, readers }) => credentialNeed(path.join('.'), value, readers)),
+    ...tlsFields(config).map(({ path, value, readers }) => tlsNeed(path.join('.'), value, readers)),
+    resources.need, need];
   const iam: Footprint['iam'] = {};
   for (const principal of Object.keys(PRINCIPALS) as Principal[]) {
     const grants = needs.flatMap(need => need.iam?.[principal] ?? []);
@@ -335,10 +318,10 @@ export function footprint(config: BotCubeConfig, { filesAccessPointMode = 'runti
   };
 }
 
-function adapter(section: Section, config: { kind: string }): Need[] {
+function adapter(section: Section, config: { kind: string }): Need {
   const need = (ADAPTERS[section] as Partial<Record<string, AdapterNeed<typeof config>>>)[config.kind];
   if (!need) throw new Error(`${section}.kind: no footprint for adapter "${config.kind}"`);
-  return [typeof need === 'function' ? need(config) : need].flat();
+  return typeof need === 'function' ? need(config) : need;
 }
 
 /** The footprint as a security reviewer reads it. */
