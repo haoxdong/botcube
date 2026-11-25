@@ -1,18 +1,41 @@
-/** AgentCore refuses a starting Session's second invocation (SESSION_BUSY), so a Turn awaits the Session's warmup. */
-export function warmingSessions() {
-  const warming = new Map<string, Promise<void>>();
+import { setTimeout as delay } from 'node:timers/promises';
+
+interface Warmup<T> {
+  agent: Promise<void>;
+  answer: Promise<T>;
+}
+
+/** A Turn waits for its Session's Runtime warmups, independent of the bot's warmup. */
+export function warmingSessions<T>() {
+  const sessions = new Map<string, Map<string, Warmup<T>>>();
   const key = (owner: string, sessionId: string) => JSON.stringify([owner, sessionId]);
   return {
-    until: (owner: string, sessionId: string, timeoutMs: number) =>
-      Promise.race([warming.get(key(owner, sessionId)), new Promise((resolve) => setTimeout(resolve, timeoutMs).unref())]),
-    begin(owner: string, sessionId: string): () => void {
-      let release = () => {};
-      const settled = new Promise<void>((resolve) => { release = resolve; });
-      warming.set(key(owner, sessionId), settled);
-      void settled.then(() => {
-        if (warming.get(key(owner, sessionId)) === settled) warming.delete(key(owner, sessionId));
+    async until(owner: string, sessionId: string, timeoutMs: number) {
+      const active = sessions.get(key(owner, sessionId));
+      if (active === undefined) return;
+      const timeout = new AbortController();
+      try {
+        await Promise.race([
+          Promise.allSettled([...active.values()].map(({ agent }) => agent)),
+          delay(timeoutMs, undefined, { signal: timeout.signal, ref: false }),
+        ]);
+      } finally {
+        timeout.abort();
+      }
+    },
+    run(owner: string, sessionId: string, options: string, start: () => Warmup<T>) {
+      const session = key(owner, sessionId);
+      const active = sessions.get(session) ?? new Map<string, Warmup<T>>();
+      const existing = active.get(options);
+      if (existing) return existing.answer;
+      const warmup = start();
+      active.set(options, warmup);
+      sessions.set(session, active);
+      void Promise.allSettled([warmup.agent, warmup.answer]).then(() => {
+        active.delete(options);
+        if (active.size === 0) sessions.delete(session);
       });
-      return release;
+      return warmup.answer;
     },
   };
 }

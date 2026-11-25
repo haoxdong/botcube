@@ -11,7 +11,7 @@ import { requireCandidatePrompts } from './candidate-prompt.js';
 import type { Requester } from './requester.js';
 import { warmingSessions, warmupTiming } from './warming-sessions.js';
 import { namedModel } from './models.js';
-import { SessionDeletedError, SessionOpeningError, SessionUnissuedError, type SessionMetadata, type PreparedTurn, type TurnFailure, type TurnActivity, type SessionPurge } from './session-metadata.js';
+import { SessionDeletedError, SessionOpeningError, SessionUnissuedError, type SessionMetadata, type PreparedTurn, type TurnFailure, type TurnActivity } from './session-metadata.js';
 import { assertIdleContinuable } from './sessions.js';
 import { SessionReadOnlyError } from './session-identity.js';
 import { forwardSnapshotEpoch, type sessionLifecycle } from './session-lifecycle.js';
@@ -65,11 +65,7 @@ function trafficMarker(sent: unknown, userAgent: string | undefined): { traffic?
   return userAgent?.includes(DEPLOY_CHECK_USER_AGENT) ? { traffic: 'test' } : {};
 }
 
-class WarmupFailure extends Error {
-  constructor(readonly answer: Response) {
-    super('AgentCore warmup failed');
-  }
-}
+class WarmupFailure extends Error {}
 
 interface TurnRoutesOptions {
   bot: TurnRouteSource;
@@ -86,7 +82,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
   const { sessionMetadata, agentDocuments } = stores;
   const { upstream, warmupTimeoutMs } = harness;
   const { turnQuota, awsAccess: credentialSource, userTokens } = turns;
-  const warming = warmingSessions();
+  const warming = warmingSessions<string | null>();
 
   const turnPayload = async (input: RunAgentInput, requester: Requester, model: AgentModel, captureCredentials?: (credentials: readonly string[]) => void, documents: Promise<AgentDocumentSet> = agentDocuments.get(requester.owner, bot.agentDocuments)) => {
     const forwardedProps = { ...(input.forwardedProps as Record<string, unknown>) };
@@ -251,18 +247,6 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
     return c.body(null, 204);
   });
 
-  const namedWarmupProps = async (input: RunAgentInput, requester: Requester, requestedModel: unknown, effort: unknown) => {
-    input.forwardedProps = {
-      ...(typeof effort === 'string' && { effort }),
-    };
-    const payload = await turnPayload(input, requester, await namedModel(bot, requester, requestedModel ?? undefined));
-    const recorded = await sessionMetadata.get(requester.owner, input.threadId);
-    return {
-      credentialServiceInvocationToken: payload.credentialServiceInvocationToken,
-      forwardedProps: { ...payload.forwardedProps, warmup: true, sessionUserId: recorded?.filing_user_id ?? bot.filingUserId(requester.owner) },
-    };
-  };
-
   app.post('/warmup', async (c) => {
     const { mark, log } = warmupTiming();
     if (upstream === null) {
@@ -280,86 +264,73 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
         return c.json({ error: 'Invalid warmup JSON', details: 'Expected JSON object.' }, 400);
       }
     }
-    let namedSession: { owner: string; accountActorId: string; session: SessionPurge } | undefined;
     const { threadId, mainChat, model: requestedModel, effort } = request as Record<string, unknown>;
+    const requester = mainChat === true || (typeof threadId === 'string' && threadId) ? await bot.requester(c) : undefined;
+    const sessionId = requester === undefined ? WARMUP_SESSION_ID
+      : mainChat === true ? await sessionMetadata.mainChat(requester.owner, bot.filingUserId(requester.owner)) : threadId as string;
     const input: RunAgentInput = {
-      threadId: WARMUP_SESSION_ID,
-      runId: '__warmup__',
-      messages: [],
-      tools: [],
-      context: [],
-      state: {},
-      forwardedProps: { warmup: true },
+      threadId: sessionId, runId: '__warmup__', messages: [], tools: [], context: [], state: {}, forwardedProps: { warmup: true },
     };
-    let credentialServiceInvocationToken: string | undefined;
-    let warmSession: () => Promise<void> = async () => undefined;
-    let endWarming = () => {};
-    if (mainChat === true || (typeof threadId === 'string' && threadId)) {
-      const requester = await bot.requester(c);
-      input.threadId = mainChat === true ? await sessionMetadata.mainChat(requester.owner, bot.filingUserId(requester.owner)) : (threadId as string);
-      endWarming = warming.begin(requester.owner, input.threadId);
-      const prepared = await namedWarmupProps(input, requester, requestedModel, effort).catch((error: unknown) => {
-        endWarming();
+    const prepare = async () => {
+      if (requester === undefined) return {};
+      input.forwardedProps = { ...(typeof effort === 'string' && { effort }) };
+      const model = await namedModel(bot, requester, requestedModel ?? undefined);
+      const { forwardedProps, credentialServiceInvocationToken } = await turnPayload(input, requester, model);
+      const recorded = await sessionMetadata.get(requester.owner, sessionId);
+      const filingUserId = recorded?.filing_user_id ?? bot.filingUserId(requester.owner);
+      input.forwardedProps = { ...forwardedProps, warmup: true, sessionUserId: filingUserId };
+      mark('props');
+      return { requester, session: { session_id: sessionId, filing_user_id: filingUserId }, credentialServiceInvocationToken };
+    };
+    const start = () => {
+      const prepared = prepare();
+      const agent = prepared.then(async ({ requester, session, credentialServiceInvocationToken }) => {
+        try {
+          const init = { signal: AbortSignal.timeout(warmupTimeoutMs), credentialServiceInvocationToken };
+          mark('dispatch');
+          const response = session === undefined ? await upstream.invoke(JSON.stringify(input), sessionId, init)
+            : await runRuntimeWriter(() => sessionMetadata.beginDispatch(requester.owner, sessionId, session.filing_user_id), { timeoutMs: 0 }, upstream, session, async (writer) => {
+              input.forwardedProps.sessionUserId = writer.session.filing_user_id;
+              await forwardTurnIdentity(credentialSource, input.forwardedProps, {
+                actorId: bot.filingUserId(requester.owner), filingActorId: writer.session.filing_user_id, sessionId, startedAt: new Date().toISOString(),
+              });
+              mark('identity');
+              forwardSnapshotEpoch(input.forwardedProps, writer);
+              return writer.invoke(JSON.stringify(input), sessionId, init);
+            });
+          mark('invoke');
+          if (response.status >= 400) {
+            await response.body?.cancel();
+            throw new WarmupFailure(`HTTP ${response.status}`);
+          }
+          const credentials = credentialValues(input.forwardedProps, bot.credentialProps, credentialServiceInvocationToken);
+          const text = await response.text();
+          mark('answer');
+          const failure = await runError(text, credentials);
+          if (failure !== null) throw new WarmupFailure(turnErrorDetails(failure, credentials));
+        } catch (error) {
+          if (error instanceof WarmupFailure || error instanceof SessionUnissuedError || error instanceof SessionReadOnlyError) throw error;
+          console.warn('warmup failed', error);
+          throw new WarmupFailure(String(error));
+        }
+      });
+      const botWarmup = prepared.then(async () => {
+        if (requester !== undefined) await bot.warmSession(requester, sessionId);
+        mark('session');
+      });
+      const answer = Promise.all([agent, botWarmup]).then(() => {
+        log(sessionId, 'ok');
+        return null;
+      }, (error: unknown) => {
+        log(sessionId, 'failed');
+        if (error instanceof WarmupFailure) return error.message;
         throw error;
       });
-      input.forwardedProps = prepared.forwardedProps;
-      credentialServiceInvocationToken = prepared.credentialServiceInvocationToken;
-      mark('props');
-      const sessionId = input.threadId;
-      namedSession = { owner: requester.owner, accountActorId: bot.filingUserId(requester.owner), session: { session_id: sessionId, filing_user_id: input.forwardedProps.sessionUserId as string } };
-      warmSession = () => bot.warmSession(requester, sessionId);
-    }
-    const warmAgent = async () => {
-      try {
-        const init = { signal: AbortSignal.timeout(warmupTimeoutMs), credentialServiceInvocationToken };
-        mark('dispatch');
-        const response = namedSession === undefined ? await upstream.invoke(JSON.stringify(input), input.threadId, init)
-          : await runRuntimeWriter(() => sessionMetadata.beginDispatch(namedSession.owner, namedSession.session.session_id, namedSession.session.filing_user_id), { timeoutMs: 0 }, upstream, namedSession.session, async (writer) => {
-            input.forwardedProps.sessionUserId = writer.session.filing_user_id;
-            await forwardTurnIdentity(credentialSource, input.forwardedProps, {
-              actorId: namedSession.accountActorId, filingActorId: writer.session.filing_user_id,
-              sessionId: input.threadId, startedAt: new Date().toISOString(),
-            });
-            mark('identity');
-            forwardSnapshotEpoch(input.forwardedProps, writer);
-            return writer.invoke(JSON.stringify(input), input.threadId, init);
-          });
-        mark('invoke');
-        if (response.status >= 400) {
-          await response.body?.cancel();
-          return c.json({ error: 'AgentCore warmup failed', details: `HTTP ${response.status}` }, 502);
-        }
-        const credentials = credentialValues(input.forwardedProps as Record<string, unknown>, bot.credentialProps, credentialServiceInvocationToken);
-        const text = await response.text();
-        mark('answer');
-        const failure = await runError(text, credentials);
-        if (failure !== null) {
-          return c.json({ error: 'AgentCore warmup failed', details: turnErrorDetails(failure, credentials) }, 502);
-        }
-      } catch (error) {
-        if (error instanceof SessionUnissuedError || error instanceof SessionReadOnlyError) throw error;
-        console.warn('warmup failed', error);
-        return c.json({ error: 'AgentCore warmup failed', details: String(error) }, 502);
-      }
-      return c.json({ status: 'ok' });
+      return { agent, answer };
     };
-    const agent = warmAgent().then((answer) => {
-      if (!answer.ok) throw new WarmupFailure(answer);
-      return answer;
-    });
-    void agent.then(endWarming, endWarming);
-    const session = warmSession().then(() => mark('session'));
-    let outcome = 'failed';
-    try {
-      const [answer] = await Promise.all([agent, session]);
-      outcome = 'ok';
-      return answer;
-    } catch (error) {
-      if (error instanceof WarmupFailure) return error.answer;
-      throw error;
-    } finally {
-      log(input.threadId, outcome);
-    }
+    const options = JSON.stringify([requestedModel, typeof effort === 'string' ? effort : null]);
+    const failure = await (requester === undefined ? start().answer : warming.run(requester.owner, sessionId, options, start));
+    return failure === null ? c.json({ status: 'ok' }) : c.json({ error: 'AgentCore warmup failed', details: failure }, 502);
   });
 
 }

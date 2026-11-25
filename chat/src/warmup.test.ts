@@ -103,6 +103,33 @@ describe('POST /warmup', () => {
     expect(logged?.chatMs.dispatch).toBeGreaterThanOrEqual(logged?.chatMs.warmupWaitEnd ?? Infinity);
   });
 
+  it('shares one Runtime warmup between simultaneous requests for the same chat and model', async () => {
+    const sessionId = 'duplicate-warmup';
+    await stack.allocate('acct_account-1', sessionId);
+    let release = () => {};
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    stack.agentcore.script(sessionId, { kind: 'stream', frames: ['data: {"type":"RUN_FINISHED"}'], hold });
+    const body = JSON.stringify({ threadId: sessionId, model: 'quick' });
+    const first = postWarmup(stack, body);
+    let second: ReturnType<typeof postWarmup> | undefined;
+    try {
+      await vi.waitFor(() => stack.agentcore.invocationFor(sessionId));
+      second = postWarmup(stack, body);
+      const earlyAnswer = await Promise.race([
+        second,
+        new Promise<undefined>((resolve) => setTimeout(resolve, 500)),
+      ]);
+      expect(earlyAnswer).toBeUndefined();
+    } finally {
+      release();
+      await Promise.all([first, second]);
+    }
+    const answers = await Promise.all([first, second]);
+    expect(answers.map((answer) => answer.status)).toEqual([200, 200]);
+    expect(await Promise.all(answers.map((answer) => answer.json()))).toEqual([{ status: 'ok' }, { status: 'ok' }]);
+    expect(stack.agentcore.invocations().filter(({ body }) => body.includes(sessionId))).toHaveLength(1);
+  });
+
   it('does not hold a Turn for a warmup that was refused', async () => {
     await stack.allocate('acct_account-1', 'warm-refused-then-send');
     expect((await postWarmup(stack, '{"threadId":"warm-refused-then-send","model":"other"}')).status).toBe(422);
