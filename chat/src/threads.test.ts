@@ -287,14 +287,18 @@ describe('GET /threads/{id}', () => {
     expect(await response.json()).toEqual({ detail: 'Session not found' });
   });
 
-  it('passes a session API failure through as its HttpError', async () => {
-    await chat('reader', 'events-gone');
-    stack.sessionApi.reply('events-gone', 404, { error: 'No events for the Session' });
+  it.each([
+    [404, 'No events for the Session', 404, 'No events for the Session'],
+    [500, 'boom', 503, 'Session API returned HTTP 500'],
+  ])('maps session API status %i to a classified response', async (upstreamStatus, error, status, detail) => {
+    const sessionId = `replay-failure-${upstreamStatus}`;
+    await chat('reader', sessionId);
+    stack.sessionApi.reply(sessionId, upstreamStatus, { error });
 
-    const response = await as('reader', '/threads/events-gone');
+    const response = await as('reader', `/threads/${sessionId}`);
 
-    expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ detail: 'No events for the Session' });
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual({ detail });
   });
 });
 

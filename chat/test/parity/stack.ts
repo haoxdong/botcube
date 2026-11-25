@@ -21,7 +21,6 @@ export { AWS_ACCESS_KEY_ID, createChatTable, RUNTIME_ARN };
 
 interface StackOptions {
   agentcore?: 'fake' | 'unreachable' | 'unconfigured';
-  table?: 'created' | 'missing';
   /** The web UI origins: the BotCube Config's `domains.web`, then its `domains.webAliases`. */
   corsOrigins?: string[];
   /** Bot settings over the parity bot's, as an Operator's bot.yaml gives them. */
@@ -31,7 +30,7 @@ interface StackOptions {
 export type Stack = Awaited<ReturnType<typeof startStack>>;
 
 /** The parity bot's settings: the template's identity on the Echo model. */
-export const PARITY_BOT = {
+const PARITY_BOT = {
   agentIdentity: { name: 'BotCube', character: 'A template agent', avatar: '🧊' },
   accountKey: 'template',
   models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
@@ -49,7 +48,7 @@ export async function startStack(options: StackOptions = {}) {
   const endpoint = motoEndpoint();
   const home = await mkdtemp(join(tmpdir(), 'chat-parity-'));
   const name = `chat-${Math.random().toString(36).slice(2)}`;
-  if (options.table !== 'missing') await createChatTable(endpoint, name);
+  await createChatTable(endpoint, name);
   const agentcore = await new FakeAgentCore().listen();
   const sessionApi = await new FakeSessionApi().listen();
   const files = await new FakeEfs(join(home, 'files')).listen();

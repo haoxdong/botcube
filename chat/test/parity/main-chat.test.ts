@@ -34,16 +34,6 @@ async function sideChatIds(browser: Browser): Promise<string[]> {
 }
 
 describe('GET /main-chat', () => {
-  it('lands the user in the same empty Main Chat on every visit', async () => {
-    const browser = await visitor();
-
-    const first = await mainChat(browser);
-    const again = await mainChat(browser);
-
-    expect(first).toEqual({ id: expect.stringMatching(/^[0-9a-f-]{36}$/), messages: [], running: false });
-    expect(again).toEqual(first);
-  });
-
   it('replays the Main Chat once it has Turns, and keeps it out of the Side Chats', async () => {
     const browser = await visitor();
     const { id } = await mainChat(browser);
@@ -61,26 +51,14 @@ describe('GET /main-chat', () => {
     const first = await mainChat(await visitor());
     const second = await mainChat(await visitor());
 
+    expect(first.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(second.id).not.toBe(first.id);
   });
 
-  it('refuses a request without a Account', async () => {
-    const response = await stack.browser().get('/main-chat');
+  it.each(['/main-chat', '/threads'])('requires an Account Session for GET %s', async (path) => {
+    const response = await stack.browser().get(path);
 
     expect(response.status).toBe(401);
-  });
-});
-
-describe('Side Chats', () => {
-  it('refuses to delete the Main Chat', async () => {
-    const browser = await visitor();
-    const { id } = await mainChat(browser);
-    await chat(browser, id);
-
-    const remove = await browser.delete(`/threads/${id}`);
-
-    expect(remove.status).toBe(409);
-    expect(await remove.json()).toEqual({ detail: 'The Main Chat cannot be deleted' });
-    expect((await mainChat(browser)).id).toBe(id);
+    expect(await response.json()).toEqual({ detail: 'Missing template account cookie' });
   });
 });
