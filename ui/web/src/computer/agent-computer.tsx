@@ -80,7 +80,6 @@ export function AgentComputer({
   agentName,
   BrowserFrame = BrowserLiveFrame,
   active = true,
-  chatId,
   app,
   files,
   computer,
@@ -104,7 +103,6 @@ export function AgentComputer({
   agentName: string;
   BrowserFrame?: ComponentType<BrowserLiveFrameProps> | undefined;
   active?: boolean;
-    chatId: string;
   app: DockApp;
     files: ReactNode;
   computer: AgentComputerState;
@@ -179,7 +177,7 @@ export function AgentComputer({
   const covered = !settled;
   const waited = useAfterMove(covered);
   const title = `${agentName}'s computer`;
-  const host = chatId.replaceAll('-', '').slice(0, 12);
+  const user = agentName.toLowerCase().replaceAll(' ', '-');
   const handBack = (sessionId: string) => {
     returning.current = true;
     onHandBack(sessionId);
@@ -262,9 +260,10 @@ export function AgentComputer({
             },
             {
               app: 'Terminal',
-              title: 'workspace — zsh',
+              title: `${user}@computer: ~`,
               dark: true,
-              children: <section className="agent-computer-app" aria-label="Terminal"><Terminal commands={commands} error={terminalError} prompt={`agent@${host} workspace %`} /></section>,
+              tabs: { disabledNote: "The agent's terminal is read-only" },
+              children: <section className="agent-computer-app" aria-label="Terminal"><Terminal commands={commands} error={terminalError} user={user} idle={!running} /></section>,
             },
           ]}
         />

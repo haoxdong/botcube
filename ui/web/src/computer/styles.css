@@ -128,22 +128,6 @@
 .agent-computer-app > * { flex: 1; min-height: 0; }
 .agent-computer-app .agent-computer-error { padding: var(--space-12); font-size: inherit; }
 
-/* Terminal: Windows draws it at Windows Terminal's own size (windows-desktop.tsx). */
-.agent-computer-terminal {
-  background: var(--color-text);
-  color: var(--color-line);
-  color-scheme: dark;
-  scrollbar-color: var(--color-text-muted) transparent;
-  font-family: var(--font-code);
-  font-size: var(--font-code-size);
-  line-height: var(--leading-loose);
-  white-space: pre-wrap;
-  /* Lines wrap between words; only a word longer than the line breaks. */
-  overflow-wrap: anywhere;
-}
-.agent-computer-terminal-content { padding: var(--space-8) var(--space-12); }
-.agent-computer-terminal-empty { color: var(--color-text-muted); }
-
 /* Take-over by touch: shown on phones only; desktops use their own keyboard and mouse. */
 .agent-computer-touch { display: none; }
 

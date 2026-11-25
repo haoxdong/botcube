@@ -41,7 +41,6 @@ const renderComputer = (control: 'agent' | 'user' = 'agent', props: Partial<Para
     root.render(
       React.createElement(AgentComputer, {
         agentName: 'Pebble',
-        chatId: 'chat-1',
         app: 'Chrome',
         files: React.createElement('div'),
         computer: { state: 'awake', browserSessionId: 'browser-1', control, screenshot: null },
@@ -439,13 +438,78 @@ describe('the Agent Computer on a phone, on Take over (dots Fig 8)', () => {
 });
 
 describe("the Agent Computer's Terminal", () => {
-  // Following the latest output is the stock Conversation's, proven with real layout in terminal-follow.stories.tsx.
+  const MENU_MOTION_MS = 500;
+  // Following the latest output is use-stick-to-bottom's, proven with real layout in terminal-follow.stories.tsx.
   const commands = (count: number) => Array.from({ length: count }, (_, index) => ({ command: `echo ${index}`, output: `${index}` }));
+  const log = () => container.querySelector<HTMLElement>('[role="log"][aria-label="Terminal"]');
+  const lines = () => [...container.querySelectorAll('.agent-computer-terminal-line, .agent-computer-terminal-output')].map((line) => line.textContent);
+  const prompt = () => container.querySelector('.agent-computer-terminal-prompt');
+  const menuItem = (name: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent.startsWith(name)) ?? null;
+  /** Fluent's menu opens and closes on its own motion, which a closing menu must not cut. */
+  const settled = () => act(() => new Promise<void>((resolve) => { setTimeout(resolve, MENU_MOTION_MS); }));
+  const openMenu = async () => {
+    await act(async () => void log()?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 })));
+    await settled();
+  };
 
   it('shows its failure in place of the log', () => {
     renderComputer('agent', { app: 'Terminal', commands: commands(10), terminalError: 'The commands could not load' });
 
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('The commands could not load');
+    expect(log()).toBeNull();
+  });
+
+  it("draws each command after the agent's prompt on the computer, then its output", () => {
+    renderComputer('agent', { app: 'Terminal', commands: [{ command: 'ls', output: 'a.txt\nb.txt' }, { command: 'cat a.txt', output: 'hello' }] });
+
+    expect(lines()).toEqual(['pebble@computer:~$ ls', 'a.txt\nb.txt', 'pebble@computer:~$ cat a.txt', 'hello']);
+    // Windows Terminal's tab strip: the session's tab, then New tab and the profiles menu, disabled and saying why.
+    expect(container.querySelector('[data-window="Terminal"] [role="tab"]')?.textContent).toBe('pebble@computer: ~');
+    for (const name of ['New tab', 'Open a profile']) {
+      const control = container.querySelector(`[data-window="Terminal"] button[aria-label="${name}"]`);
+      expect(control?.getAttribute('aria-disabled')).toBe('true');
+      expect(control?.getAttribute('aria-description')).toBe("The agent's terminal is read-only");
+    }
+    expect(log()?.querySelector('input, textarea, [contenteditable]')).toBeNull();
+  });
+
+  it("shows the agent's output as text, never as markup", () => {
+    renderComputer('agent', { app: 'Terminal', commands: [{ command: 'cat page.html', output: '<b>bold</b><img src=x onerror="alert(1)">' }] });
+
+    expect(lines()[1]).toBe('<b>bold</b><img src=x onerror="alert(1)">');
+    expect(log()?.querySelector('b, img')).toBeNull();
+  });
+
+  it('waits at a fresh prompt and cursor after the last command while the agent is idle, and not while it runs', () => {
+    renderComputer('agent', { app: 'Terminal', commands: commands(2) });
+    expect(prompt()?.textContent).toBe('pebble@computer:~$ ');
+    expect([...(log()?.querySelectorAll('.agent-computer-terminal-output, .agent-computer-terminal-prompt') ?? [])].at(-1)).toBe(prompt());
+
+    renderComputer('agent', { app: 'Terminal', commands: commands(2), running: true });
+    expect(prompt()).toBeNull();
+  });
+
+  it('says so while the agent has run no commands, with no prompt', () => {
+    renderComputer('agent', { app: 'Terminal' });
+
+    expect(log()?.textContent).toBe('No commands yet');
+    expect(prompt()).toBeNull();
+  });
+
+  it('copies the selected text from its context menu, and selects the whole log', async () => {
+    renderComputer('agent', { app: 'Terminal', commands: [{ command: 'ls', output: 'a.txt' }] });
+
+    await openMenu();
+    expect(menuItem('Copy')?.getAttribute('aria-disabled')).toBe('true');
+    await act(async () => menuItem('Select all')?.click());
+    const all = getSelection()?.toString();
+    expect(all).toBe(log()?.textContent);
+
+    await openMenu();
+    expect(menuItem('Copy')?.getAttribute('aria-disabled')).not.toBe('true');
+    await act(async () => menuItem('Copy')?.click());
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(await navigator.clipboard.readText()).toBe(all);
   });
 });
 

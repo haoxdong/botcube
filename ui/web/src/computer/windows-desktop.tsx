@@ -247,7 +247,6 @@ export function WindowsDesktop({ windows, front, interactive, onFront }: { windo
                   onMaximise={() => { if (!phoneLayout) toggleMax(app); }}
                   onClose={() => putAway(app, 'closed')}
                   onClosed={() => setClosing((set) => without(set, app))}
-                  phone={phoneLayout}
                 />
               );
             })}

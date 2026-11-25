@@ -86,7 +86,6 @@ const render = (props: Partial<Parameters<typeof AgentComputer>[0]>) =>
   renderToStaticMarkup(
     React.createElement(AgentComputer, {
       agentName: 'Template Bot',
-      chatId: 'a1b2c3d4-e5f6-4789-abcd-ef0123456789',
       app: 'Chrome',
       files: React.createElement('div', { 'data-files': '' }),
       computer: { state: 'awake', browserSessionId: 'browser-1', control: 'agent', screenshot: null },
@@ -108,8 +107,8 @@ const buttons = (html: string) =>
   );
 /** The way into the computer sheet: the whole preview. */
 const OPEN = 'View computer';
-/** The buttons Windows draws: the taskbar's, each window's tab and caption buttons. */
-const WINDOWS = /^(Start|Search|Files|Chrome|Terminal|workspace — zsh|(Minimise|Maximise|Restore|Close) \w+)$/;
+/** The buttons Windows draws: the taskbar's, each window's caption buttons, and Terminal's tab strip. */
+const WINDOWS = /^(Start|Search|Files|Chrome|Terminal|New tab|Open a profile|(Close )?[\w-]+@computer: ~|(Minimise|Maximise|Restore|Close) \w+)$/;
 /** The computer's own controls, outside Windows. */
 const controls = (html: string) => buttons(html).filter((name) => name === undefined || !WINDOWS.test(name));
 /** The taskbar's apps from the left, the front one pressed. */
@@ -162,33 +161,6 @@ describe('AgentComputer', () => {
 
   it('keeps the preview out of reach: a press anywhere opens the sheet', () => {
     expect(render({})).toMatch(/<div class="agent-computer-windows" data-layout="desktop" inert="">/);
-  });
-
-  it("shows the Terminal's commands and their output as a read-only log in place of the browser", () => {
-    const html = render({
-      app: 'Terminal',
-      commands: [
-        { command: 'ls', output: 'a.txt' },
-        { command: 'cat a.txt', output: 'hello' },
-      ],
-    });
-
-    // Each command after zsh's prompt on the chat's host, its output plain, in a window titled by the folder and shell alone.
-    expect(html).toMatch(/>workspace — zsh<\/span>/);
-    expect(html).toMatch(/<section class="agent-computer-app" aria-label="Terminal"><div class="[^"]*agent-computer-terminal" role="log"/);
-    // The log is the stock Conversation: its own scroll box, then the lines.
-    expect(html).toMatch(/<div class="[^"]*agent-computer-terminal" role="log" aria-label="Terminal"><div style="[^"]*"><div class="[^"]*agent-computer-terminal-content[^"]*">/);
-    expect(html).toContain(
-      '<div class="agent-computer-terminal-line">agent@a1b2c3d4e5f6 workspace % ls</div><div class="agent-computer-terminal-output">a.txt</div>' +
-        '<div class="agent-computer-terminal-line">agent@a1b2c3d4e5f6 workspace % cat a.txt</div><div class="agent-computer-terminal-output">hello</div></div></div></div></section>',
-    );
-    expect(taskbar(html)).toContain('Terminal pressed');
-  });
-
-  it('says so while the agent has run no commands', () => {
-    const html = render({ app: 'Terminal' });
-
-    expect(html).toContain('<div class="agent-computer-terminal-empty">No commands yet</div>');
   });
 
   it('brings the Files window in front of the browser while Files is open', () => {
@@ -262,15 +234,4 @@ describe("the Agent Computer's sheet", () => {
   it('fills the screen with Terminal and Files, Files at the page’s own sizes', () => {
     expect(css).toMatch(/\n\.agent-computer-app \{[^}]*position: absolute;[^}]*inset: 0;[^}]*font-size: var\(--font-small\);/);
   });
-
-  it('draws Terminal as a dark log in the code face', () => {
-    expect(css).toMatch(/\n\.agent-computer-terminal \{[^}]*background: var\(--color-text\);[^}]*font-family: var\(--font-code\);/);
-  });
-
-  it("wraps the Terminal's lines between words, breaking only a word longer than the line", () => {
-    expect(css).toMatch(/\n\.agent-computer-terminal \{[^}]*overflow-wrap: anywhere;/);
-    expect(css).not.toContain('word-break: break-all');
-  });
-
-
 });

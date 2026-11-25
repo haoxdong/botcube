@@ -10,7 +10,6 @@ const meta = {
   decorators: [(Story) => <div style={{ height: '100dvh' }}><Story /></div>],
   args: {
     agentName: 'BotCube',
-    chatId: 'example-chat',
     app: 'Chrome',
     files: <FilesWindow files={[]} error={null} onReload={() => {}} onDownload={() => {}} onDelete={() => {}} onRename={() => null} onMove={() => {}} onUpload={() => Promise.reject(new Error('The fixture has no uploads'))} thumbnailUrl={() => Promise.reject(new Error('The fixture has no pictures'))} />,
     computer: { state: 'asleep', screenshot: null },

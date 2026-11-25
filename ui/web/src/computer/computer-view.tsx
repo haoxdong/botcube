@@ -276,7 +276,6 @@ export function ComputerView({ agentName, conversation, shown, activity, onConne
           BrowserFrame={BrowserFrame ?? (computer.state === "awake" && computer.liveView === "screenshots" ? ScreenshotBrowserFrame : undefined)}
           agentName={agentName}
           active={shown && !checking}
-          chatId={conversation.id}
           app={app}
           files={<FilesApp chatServiceUrl={chatServiceUrl} onLoad={filesLoaded} />}
           computer={computer}

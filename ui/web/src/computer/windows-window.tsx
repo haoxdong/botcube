@@ -1,7 +1,7 @@
 // One Agent Computer window: react-rnd moves and resizes it, stock Fluent draws its frame (ADR 0093).
-import { Button, FluentProvider, makeStyles, mergeClasses, Text, tokens, webDarkTheme, webLightTheme } from '@fluentui/react-components';
-import { Dismiss16Regular, Maximize16Regular, SquareMultiple16Regular, Subtract16Regular } from '@fluentui/react-icons';
-import type { CSSProperties, ReactNode, TransitionEvent } from 'react';
+import { Button, FluentProvider, makeStyles, mergeClasses, Tab, TabList, Text, Tooltip, tokens, webDarkTheme, webLightTheme } from '@fluentui/react-components';
+import { Add16Regular, ChevronDown16Regular, Dismiss16Regular, Maximize16Regular, SquareMultiple16Regular, Subtract16Regular } from '@fluentui/react-icons';
+import { useId, type CSSProperties, type ReactNode, type TransitionEvent } from 'react';
 import { Rnd } from 'react-rnd';
 import chromium from './app-icons/chromium.svg';
 import folder from './app-icons/file-folder-3d.png';
@@ -27,6 +27,8 @@ export interface DesktopWindow {
   title: string;
   /** A dark window, as Windows Terminal draws itself: Fluent's own dark theme. */
   dark?: boolean;
+  /** Windows Terminal's tab strip: the one session as a tab, then + and ⌄, which stay disabled and say why. */
+  tabs?: { disabledNote: string };
   /** Not running until it is opened: closed, its contents unmount. */
   startsClosed?: boolean;
   /** Mounted even while closed, as the live view stays connected. */
@@ -64,11 +66,7 @@ const useStyles = makeStyles({
     position: 'relative',
     flex: 1,
     minHeight: 0,
-    // Today's Terminal at Windows Terminal's own size, until it is drawn in Fluent (PR (c)).
-    '& .agent-computer-terminal': { fontSize: '14px', lineHeight: '20px' },
-    '& .agent-computer-terminal-content': { padding: '6px 10px' },
   },
-  phoneContent: { '& .agent-computer-terminal': { fontSize: '13px', lineHeight: '18px' } },
   // Mica: the title area tints while its window is active.
   titleBar: {
     display: 'flex',
@@ -84,6 +82,9 @@ const useStyles = makeStyles({
   },
   titleBarActive: { backgroundColor: tokens.colorNeutralBackground2 },
   title: { minWidth: 0 },
+  tabs: { display: 'flex', alignItems: 'center', minWidth: 0, alignSelf: 'stretch' },
+  tabList: { minWidth: 0 },
+  sessionTab: { minWidth: 0, maxWidth: '240px' },
   captions: { display: 'flex', flexShrink: 0, marginLeft: 'auto' },
   appIcon: { display: 'block', flexShrink: 0, backgroundPosition: 'center', backgroundRepeat: 'no-repeat', backgroundSize: 'contain' },
 });
@@ -98,13 +99,32 @@ export function AppIcon({ app, size }: { app: DockApp; size: 16 | 24 }) {
   return <span className={styles.appIcon} style={{ width: size, height: size, backgroundImage: `url("${typeof image === 'string' ? image : image.src}")` }} aria-hidden="true" />;
 }
 
-function TitleBar({ window: { app, title }, active, full, onMinimise, onMaximise, onClose }: { window: DesktopWindow; active: boolean; full: boolean; onMinimise: () => void; onMaximise: () => void; onClose: () => void }) {
+function TitleBar({ window: { app, title, tabs }, panel, active, full, onMinimise, onMaximise, onClose }: { window: DesktopWindow; panel: string; active: boolean; full: boolean; onMinimise: () => void; onMaximise: () => void; onClose: () => void }) {
   const styles = useStyles();
   return (
     <div className={mergeClasses('window-titlebar', styles.titleBar, active && styles.titleBarActive)} onDoubleClick={onMaximise}>
-      {/* One document: the app's icon and title, as a Windows 11 title bar draws them. */}
-      <AppIcon app={app} size={16} />
-      <Text size={200} truncate wrap={false} className={styles.title}>{title}</Text>
+      {tabs === undefined ? (
+        <>
+          {/* One document: the app's icon and title, as a Windows 11 title bar draws them. */}
+          <AppIcon app={app} size={16} />
+          <Text size={200} truncate wrap={false} className={styles.title}>{title}</Text>
+        </>
+      ) : (
+        // Windows Terminal: its session as a tab with its close, then New tab and the profiles menu. The Tooltip is
+        // inaccessible as a description Tooltip would portal on the server; aria-description says the same.
+        <span className={styles.tabs}>
+          <TabList className={styles.tabList} size="small" selectedValue="session" aria-label={`${app} tabs`}>
+            <Tab id={`${panel}-tab`} aria-controls={panel} className={styles.sessionTab} value="session" icon={<AppIcon app={app} size={16} />}>{title}</Tab>
+          </TabList>
+          <Button appearance="subtle" size="small" aria-label={`Close ${title}`} icon={<Dismiss16Regular />} onClick={onClose} />
+          <Tooltip content={tabs.disabledNote} relationship="inaccessible">
+            <Button appearance="subtle" size="small" disabledFocusable aria-label="New tab" aria-description={tabs.disabledNote} icon={<Add16Regular />} />
+          </Tooltip>
+          <Tooltip content={tabs.disabledNote} relationship="inaccessible">
+            <Button appearance="subtle" size="small" disabledFocusable aria-label="Open a profile" aria-description={tabs.disabledNote} icon={<ChevronDown16Regular />} />
+          </Tooltip>
+        </span>
+      )}
       <span className={styles.captions}>
         <Button appearance="subtle" aria-label={`Minimise ${app}`} icon={<Subtract16Regular />} onClick={onMinimise} />
         <Button appearance="subtle" aria-label={full ? `Restore ${app}` : `Maximise ${app}`} icon={full ? <SquareMultiple16Regular /> : <Maximize16Regular />} onClick={onMaximise} />
@@ -129,7 +149,6 @@ export interface WindowFrameProps {
   interactive: boolean;
   layer: number;
   snapping: boolean;
-  phone: boolean;
   onRaise: () => void;
   onPlace: (place: Partial<Rect>) => void;
   onSnap: () => void;
@@ -155,8 +174,9 @@ function shrinkStyle(away: boolean, life: Life, toward: WindowFrameProps['toward
 }
 
 /** One window: react-rnd moves and resizes it, Fluent draws its frame in the window's own theme. */
-export function WindowFrame({ window: win, life, opening, active, away, place, full, toward, scale, interactive, layer, snapping, phone, onRaise, onPlace, onSnap, onSnapped, onMinimise, onMaximise, onClose, onClosed }: WindowFrameProps) {
+export function WindowFrame({ window: win, life, opening, active, away, place, full, toward, scale, interactive, layer, snapping, onRaise, onPlace, onSnap, onSnapped, onMinimise, onMaximise, onClose, onClosed }: WindowFrameProps) {
   const styles = useStyles();
+  const panel = useId();
   return (
     <Rnd
       data-window={win.app}
@@ -193,8 +213,9 @@ export function WindowFrame({ window: win, life, opening, active, away, place, f
             carries the theme and styles.css's shield alone, and the window is the div inside it; an inline style is not copied. */}
         <FluentProvider theme={win.dark === true ? webDarkTheme : webLightTheme} className="agent-computer-fluent" style={{ display: 'contents' }}>
           <div className={mergeClasses('agent-computer-windows-window', styles.window, opening && styles.opening, active && styles.windowActive, full && styles.windowFull)}>
-            <TitleBar window={win} active={active} full={full} onMinimise={onMinimise} onMaximise={onMaximise} onClose={onClose} />
-            <div className={mergeClasses(styles.content, phone && styles.phoneContent)}>{win.children}</div>
+            <TitleBar window={win} panel={panel} active={active} full={full} onMinimise={onMinimise} onMaximise={onMaximise} onClose={onClose} />
+            {/* A session's tab controls the window's contents, its tab panel. */}
+            <div className={styles.content} {...(win.tabs === undefined ? {} : { id: panel, role: 'tabpanel', 'aria-labelledby': `${panel}-tab` })}>{win.children}</div>
           </div>
         </FluentProvider>
       </div>
