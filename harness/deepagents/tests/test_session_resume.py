@@ -4,6 +4,9 @@ import asyncio
 import contextlib
 import gc
 import hashlib
+import json
+import os
+import sys
 from collections.abc import (
     AsyncIterator,
     Awaitable,
@@ -12,6 +15,7 @@ from collections.abc import (
     Iterator,
     Sequence,
 )
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple, NoReturn
@@ -51,6 +55,7 @@ from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.invocation import Invocation
 from botcube_harness_deepagents.memory import agentcore
 from botcube_harness_deepagents.session_agent import SessionAgent
+from botcube_harness_deepagents.shell_backend import WorkerShellBackend
 from conftest import ToolBindableFakeModel
 
 TURNS = 30
@@ -737,6 +742,50 @@ class _TextThenLsModel(_ToolCallingModel):
         yield ChatGenerationChunk(message=AIMessageChunk(content='Let me look.'))
         call = tool_call_chunk(name='ls', args='{"path": "/"}', id='call-1', index=0)
         yield ChatGenerationChunk(message=AIMessageChunk(content='', tool_call_chunks=[call]))
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(sys.platform != 'linux', reason='Linux runtime process ownership')
+def test_stopping_a_turn_reaps_detached_shell_descendants(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from botcube_harness_deepagents import serving
+
+    session = _serve_session(tmp_path, monkeypatch, _FakeAgentCoreMemory(), canonical=True)
+    monkeypatch.setattr(serving, '_bot', replace(
+        serving._require_bot(),
+        build_backend=lambda _env: WorkerShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
+    ))
+
+    async def stop_mid_shell() -> None:
+        child_pid = asyncio.get_running_loop().create_future()
+
+        async def register_child(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            try:
+                child_pid.set_result(int(await reader.readline()))
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        async with await asyncio.start_server(register_child, '127.0.0.1', 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            command = f"setsid bash -c 'echo $$ >/dev/tcp/127.0.0.1/{port}; exec sleep 10' & wait"
+
+            class ShellModel(_ToolCallingModel):
+                def _stream(self, messages: list[BaseMessage], *_args: Any, **_kwargs: Any) -> Iterator[ChatGenerationChunk]:
+                    args = json.dumps({'command': command, 'timeout': 5})
+                    call = tool_call_chunk(name='execute', args=args, id='shell-call', index=0)
+                    yield ChatGenerationChunk(message=AIMessageChunk(content='', tool_call_chunks=[call]))
+
+            monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: ShellModel())
+            async with asyncio.TaskGroup() as group:
+                running = group.create_task(session.events([{'id': 'user-message-1', 'role': 'user', 'content': 'Run the shell tool'}]))
+                pid = await child_pid
+                await _stop('run-1')
+                stopped = await running
+                assert (stopped[-1].type, stopped[-1].code) == ('RUN_ERROR', 'TURN_STOPPED')
+                with pytest.raises(ProcessLookupError):
+                    os.kill(pid, 0)
+
+    asyncio.run(asyncio.wait_for(stop_mid_shell(), timeout=10))
 
 
 def test_a_turn_stopped_while_its_tool_runs_keeps_the_recorded_tool_call(

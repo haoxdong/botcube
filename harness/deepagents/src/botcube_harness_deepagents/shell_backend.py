@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -135,14 +136,17 @@ def _err(error: Exception) -> ExecuteResponse:
     return ExecuteResponse(output=f'Error executing command ({type(error).__name__}): {error}', exit_code=1)
 
 
-def _run_worker(request: Request) -> Result:
+def _run_worker(request: Request, cancel_fd: int | None) -> Result:
+    args = [sys.executable, '-I', str(Path(__file__).with_name('_shell_process.py'))]
+    pass_fds = () if cancel_fd is None else (cancel_fd,)
     with subprocess.Popen(
-        [sys.executable, '-I', str(Path(__file__).with_name('_shell_process.py'))],
+        [*args, *map(str, pass_fds)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
         text=True,
         start_new_session=True,
+        pass_fds=pass_fds,
     ) as worker:
         try:
             stdout, _ = worker.communicate(json.dumps(request), timeout=request['timeout'] + 3)
@@ -155,6 +159,8 @@ def _run_worker(request: Request) -> Result:
         response = json.loads(stdout)
         if worker.returncode != 0:
             raise RuntimeError(response['error'])
+        if response is None:
+            raise asyncio.CancelledError
         return cast(Result, response)
 
 
@@ -202,7 +208,28 @@ class WorkerShellBackend(LocalShellBackend):
         return strip_literals(text, tokens) if tokens else text
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
-        response = self._execute(command, timeout=timeout)
+        return self._execute_logged(command, timeout)
+
+    async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        read_fd, write_fd = os.pipe()
+
+        def run() -> ExecuteResponse:
+            try:
+                return self._execute_logged(command, timeout, read_fd)
+            finally:
+                os.close(read_fd)
+
+        with os.fdopen(write_fd, 'wb') as cancel:
+            work = asyncio.create_task(asyncio.to_thread(run))
+            try:
+                return await asyncio.shield(work)
+            except asyncio.CancelledError:
+                cancel.close()
+                await asyncio.shield(work)
+                raise
+
+    def _execute_logged(self, command: str, timeout: int | None, cancel_fd: int | None = None) -> ExecuteResponse:
+        response = self._execute(command, timeout, cancel_fd)
         if command and isinstance(command, str):
             self._keep_output(command, response)
         return response
@@ -224,7 +251,7 @@ class WorkerShellBackend(LocalShellBackend):
             'spanId': format(context.span_id, '016x') if context.is_valid else None,
         }, separators=(',', ':')))
 
-    def _execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+    def _execute(self, command: str, timeout: int | None, cancel_fd: int | None) -> ExecuteResponse:
         if not command or not isinstance(command, str):
             return ExecuteResponse(output='Error: Command must be a non-empty string.', exit_code=1)
         name = self._command_name(command, environment_secrets(self._env))
@@ -237,7 +264,8 @@ class WorkerShellBackend(LocalShellBackend):
         try:
             # Linux orphan adoption must belong to this invocation, not the shared Harness process.
             result = _run_worker(
-                Request(command=command, cwd=str(self.cwd), env=self._command_env(), timeout=effective_timeout, max_output_bytes=self._max_output_bytes)
+                Request(command=command, cwd=str(self.cwd), env=self._command_env(), timeout=effective_timeout, max_output_bytes=self._max_output_bytes),
+                cancel_fd,
             )
             if result['timed_out']:
                 if timeout is not None:

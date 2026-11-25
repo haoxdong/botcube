@@ -10,7 +10,7 @@ import sys
 import time
 from contextlib import suppress
 from pathlib import Path
-from typing import BinaryIO, TypedDict, cast
+from typing import TypedDict, cast
 
 
 class Request(TypedDict):
@@ -81,47 +81,44 @@ def _cleanup(process: subprocess.Popen[bytes]) -> None:
         time.sleep(0.005)
 
 
-def _read_ready(selector: selectors.BaseSelector, buffers: dict[int, bytearray], limit: int) -> bool:
-    overflow = False
-    for key, _ in selector.select(timeout=0.02):
-        stream = cast(BinaryIO, key.fileobj)
-        chunk = os.read(stream.fileno(), 65536)
-        if not chunk:
-            selector.unregister(stream)
-            continue
-        buffer = buffers[stream.fileno()]
-        available = max(0, limit + 1 - len(buffer))
-        buffer.extend(chunk[:available])
-        overflow |= len(buffer) > limit
-    return overflow
+def _read_output(selector: selectors.BaseSelector, fd: int, buffer: bytearray, limit: int) -> None:
+    chunk = os.read(fd, 65536)
+    if not chunk:
+        selector.unregister(fd)
+    else:
+        buffer.extend(chunk[:max(0, limit + 1 - len(buffer))])
 
 
-def _capture(process: subprocess.Popen[bytes], request: Request) -> Result:
+def _capture(process: subprocess.Popen[bytes], request: Request, cancel_fd: int | None) -> Result | None:
     assert process.stdout is not None and process.stderr is not None
     buffers = {process.stdout.fileno(): bytearray(), process.stderr.fileno(): bytearray()}
     deadline = time.monotonic() + request['timeout']
-    overflow = False
     timed_out = False
     with selectors.DefaultSelector() as selector:
         for stream in (process.stdout, process.stderr):
             os.set_blocking(stream.fileno(), False)
             selector.register(stream, selectors.EVENT_READ)
-        while selector.get_map() or process.poll() is None:
+        if cancel_fd is not None:
+            selector.register(cancel_fd, selectors.EVENT_READ)
+        while process.poll() is None or any(fd in selector.get_map() for fd in buffers):
             if time.monotonic() >= deadline:
                 timed_out = True
                 break
-            overflow |= _read_ready(selector, buffers, request['max_output_bytes'])
+            for key, _ in selector.select(timeout=0.02):
+                if key.fd == cancel_fd:
+                    return None
+                _read_output(selector, key.fd, buffers[key.fd], request['max_output_bytes'])
         exit_code = process.poll()
     return Result(
         stdout=buffers[process.stdout.fileno()].decode('utf-8', errors='replace'),
         stderr=buffers[process.stderr.fileno()].decode('utf-8', errors='replace'),
         exit_code=exit_code if exit_code is not None else 124,
         timed_out=timed_out,
-        overflow=overflow,
+        overflow=any(len(buffer) > request['max_output_bytes'] for buffer in buffers.values()),
     )
 
 
-def run(request: Request) -> Result:
+def run(request: Request, cancel_fd: int | None) -> Result | None:
     _become_subreaper()
     process = subprocess.Popen(
         ['bash', '-c', request['command']],
@@ -134,8 +131,8 @@ def run(request: Request) -> Result:
     )
     cleanup_required = True
     try:
-        result = _capture(process, request)
-        cleanup_required = result['timed_out']
+        result = _capture(process, request, cancel_fd)
+        cleanup_required = result is None or result['timed_out']
     finally:
         if cleanup_required:
             _cleanup(process)
@@ -149,7 +146,8 @@ def run(request: Request) -> Result:
 def main() -> None:
     try:
         request = cast(Request, json.load(sys.stdin))
-        print(json.dumps(run(request)))
+        cancel_fd = int(sys.argv[1]) if len(sys.argv) > 1 else None
+        print(json.dumps(run(request, cancel_fd)))
     except Exception as error:
         print(json.dumps({'error': f'{type(error).__name__}: {error}'}))
         raise SystemExit(1) from error

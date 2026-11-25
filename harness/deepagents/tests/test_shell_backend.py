@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -32,6 +33,20 @@ def _backend(tmp_path: Path) -> WorkerShellBackend:
 @pytest.mark.integration
 def test_a_command_runs_in_the_backend_root(tmp_path: Path) -> None:
     assert _backend(tmp_path).execute('echo hello') == ExecuteResponse(output='hello\n', exit_code=0)
+
+
+@pytest.mark.integration
+def test_async_shell_completes_without_a_stop_request(tmp_path: Path) -> None:
+    result = asyncio.run(_backend(tmp_path).aexecute('printf "hello"'))
+    assert result == ExecuteResponse(output='hello', exit_code=0)
+
+
+@pytest.mark.integration
+def test_sync_shell_runs_from_an_active_event_loop(tmp_path: Path) -> None:
+    async def invoke() -> ExecuteResponse:
+        return _backend(tmp_path).execute('printf "hello"')
+
+    assert asyncio.run(invoke()) == ExecuteResponse(output='hello', exit_code=0)
 
 
 @pytest.mark.integration
