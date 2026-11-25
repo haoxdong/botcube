@@ -31,7 +31,11 @@ export function usePhoneProfileFocus({ open, expanded, profileRef, openerRef, cl
     if (open) opened.current = true;
   }, [open]);
   const closeRef = useCallback((button: HTMLButtonElement | null) => {
-    if (open) button?.focus({ focusVisible: keyboard.current });
+    if (!open || !button) return undefined;
+    // Focusing in the open commit forces style and layout of the just-shown profile inside the tap's task; the next
+    // frame's callback runs before that frame paints.
+    const frame = requestAnimationFrame(() => button.focus({ focusVisible: keyboard.current }));
+    return () => cancelAnimationFrame(frame);
   }, [open]);
   useEffect(() => {
     if (!open) return undefined;

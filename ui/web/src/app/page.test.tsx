@@ -5677,6 +5677,20 @@ describe('agent profile', () => {
       expect(avatar()).toHaveFocus();
     });
 
+    // Focus inside the tap's task forced style and layout of the just-shown profile there.
+    it('moves into the open profile on the next frame, not inside the tap', async () => {
+      await renderPage();
+      avatar().focus();
+      act(() => {
+        fireEvent.click(avatar());
+      });
+      expect(openProfile()).toBeInTheDocument();
+      expect(avatar()).toHaveFocus();
+
+      await act(() => new Promise((frame) => requestAnimationFrame(frame)));
+      expect(close()).toHaveFocus();
+    });
+
     // A fresh page's first open portaled the profile in some 330ms after it opened, as the chat rendered it, once the
     // open's focus had found no profile: focus stayed on the page. happy-dom mounts it at once, so here it mounts a tick
     // late.
