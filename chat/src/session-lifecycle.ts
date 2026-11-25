@@ -13,10 +13,6 @@ export class RuntimeAdmissionUnprovedError extends HttpError {
 
 const sessionKey = (session: SessionPurge) => JSON.stringify([session.filing_user_id, session.session_id]);
 
-/** Sandbox identity stays with its filing identity through Account Claim. */
-/** One Session ID per chat: a chat's Sandbox ID is its Session ID. */
-export const runtimeSessionId = (session: SessionPurge): string => session.session_id;
-
 export function forwardSnapshotEpoch(props: Record<string, unknown>, complete: { readonly snapshotEpoch?: string | undefined }): void {
   delete props.sessionSnapshotEpoch;
   const identity = props.turnIdentity;
@@ -42,7 +38,7 @@ export function sessionLifecycle(upstream: Upstream, stopRuntime?: Stop): Upstre
         catch (error) { await classify?.(error); throw error; }
       };
       const key = session === undefined ? JSON.stringify([null, sessionId]) : sessionKey(session);
-      const sandboxId = session === undefined ? sessionId : runtimeSessionId(session);
+      const sandboxId = session?.session_id ?? sessionId;
       if (fenced.has(key)) { await complete?.(); throw new HttpError(410, 'The Session was deleted'); }
       const pending = dispatches.get(key) ?? new Set<Promise<unknown>>();
       dispatches.set(key, pending);
@@ -128,11 +124,11 @@ export function sessionLifecycle(upstream: Upstream, stopRuntime?: Stop): Upstre
       fenced.add(key);
       // A request already sent can start a Sandbox after StopRuntimeSession. Wait for its headers first.
       await Promise.allSettled([...(dispatches.get(key) ?? [])]);
-      if (stopRuntime !== undefined) return stopRuntime(runtimeSessionId(session));
+      if (stopRuntime !== undefined) return stopRuntime(session.session_id);
       await Promise.all([...(producers.get(key) ?? [])].map((drain) => drain()));
     },
     async stopRejectedWriter(session: SessionPurge) {
-      if (stopRuntime === undefined || await stopRuntime(runtimeSessionId(session)) === 'absent') {
+      if (stopRuntime === undefined || await stopRuntime(session.session_id) === 'absent') {
         throw new RuntimeAdmissionUnprovedError();
       }
     },

@@ -261,7 +261,7 @@ describe('a scheduled run', () => {
         content: 'Scheduled task "Morning brief" skipped: the previous run was still going', userId: filed(account),
       }));
       // Its request was never written, so its card has nothing to open.
-      const skipped = stack.sessionApi.events().find((event) => event.operation === 'post' && event.sessionId === main && event.content?.includes('skipped'));
+      const skipped = stack.sessionApi.events().find((event) => event.operation === 'post' && event.sessionId === main && event.content.includes('skipped'));
       expect(skipped && 'scheduledRun' in skipped && skipped.scheduledRun).toEqual({
         title: 'Morning brief', ranAt: expect.any(String), status: 'skipped', text: 'the previous run was still going',
       });

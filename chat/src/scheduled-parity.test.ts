@@ -199,7 +199,7 @@ async function posted(sessionId: string): Promise<string[]> {
   for (;;) {
     const posts = stack.sessionApi
       .events()
-      .flatMap((event) => (event.operation === 'post' && event.sessionId === sessionId ? [event.content ?? ''] : []));
+      .flatMap((event) => (event.operation === 'post' && event.sessionId === sessionId ? [event.content] : []));
     if (posts.length > 0 || Date.now() > deadline) return posts;
     // eslint-disable-next-line no-await-in-loop -- polls until the queued run is done
     await new Promise((resolve) => setTimeout(resolve, 100));

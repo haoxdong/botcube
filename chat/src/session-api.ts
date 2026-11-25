@@ -21,6 +21,7 @@ type Shape<T> =
   } : T;
 
 type Args<O extends Operation> = Shape<Operations[O]['required']> & Partial<Shape<Operations[O]['optional']>>;
+export type SessionApiEvent = { [O in Operation]: { operation: O } & Args<O> }[Operation];
 type Result<O extends Operation> = Shape<Operations[O]['result']> & Partial<Shape<Operations[O]['optionalResult']>>;
 export type ScheduledRunCard = NonNullable<Args<'post'>['scheduledRun']> & {
   status: 'done' | 'failed' | 'sign-in' | 'skipped';

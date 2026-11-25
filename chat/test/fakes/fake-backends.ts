@@ -1,24 +1,9 @@
 import type { ServerResponse } from 'node:http';
-import type { ScheduledRunCard } from '../../src/session-api.js';
+import type { SessionApiEvent } from '../../src/session-api.js';
 import { HttpFake, sendJson } from './http-fake.js';
 
-type SessionOperation = 'get' | 'purge' | 'post';
-
-export type SessionApiEvent =
-  | {
-      operation: SessionOperation;
-      sessionId: string;
-      userId: string;
-      /** What a `post` adds to the Session as the agent's message. */
-      content?: string;
-      /** The ID a `post` gives that message. */
-      messageId?: string;
-      /** The run card a scheduled run's `post` carries. */
-      scheduledRun?: ScheduledRunCard;
-      /** The message a `get` names, which the history it reads must hold. */
-      contains?: string;
-    }
-  | { operation: 'forget'; userId: string };
+type SessionEvent = Extract<SessionApiEvent, { sessionId: string }>;
+type SessionOperation = SessionEvent['operation'];
 
 /** One record of a user's Extracted Memory and its text. */
 export interface MemoryRecord {
@@ -64,7 +49,7 @@ export class FakeSessionApi extends HttpFake {
     });
   }
 
-  private async answerSession(event: Extract<SessionApiEvent, { sessionId: string }>, response: ServerResponse): Promise<void> {
+  private async answerSession(event: SessionEvent, response: ServerResponse): Promise<void> {
     if (this.concurrencyLimit !== undefined) {
       if (this.inFlight >= this.concurrencyLimit) {
         sendJson(response, 429, { Reason: 'ConcurrentInvocationLimitExceeded', Type: 'User', message: 'Rate Exceeded.' });

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, TransactWriteCommand, UpdateCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
 import { HttpError } from './http-error.js';
+import type { TransactionWrite } from './named-transaction.js';
 import type { ScheduledTaskRun } from './scheduled-tasks.js';
 
 interface ScheduledPostIdentity {
@@ -153,25 +154,21 @@ export class ScheduledRunStore {
     ] }));
   }
 
-  async posting(record: ScheduledDelivery, complete: { session?: ScheduledPostIdentity; token?: string }, failed: boolean, status?: ScheduledTaskRun['status']): Promise<ScheduledDelivery> {
-    if (complete.session === undefined || complete.token === undefined || complete.session.session_id !== record.mainChat) {
+  async posting(record: ScheduledDelivery, receipt: { session: ScheduledPostIdentity; token: string }, proof: TransactionWrite, failed: boolean, status?: ScheduledTaskRun['status']): Promise<ScheduledDelivery> {
+    if (receipt.session.session_id !== record.mainChat) {
       throw new HttpError(503, 'Scheduled post registration identity is unavailable');
     }
     const postSession: ScheduledPostIdentity = {
-      session_id: complete.session.session_id, filing_user_id: complete.session.filing_user_id,
+      session_id: receipt.session.session_id, filing_user_id: receipt.session.filing_user_id,
     };
-    const next: ScheduledDelivery = { ...record, phase: 'posting', postSession, postToken: complete.token, failed, ...(status === undefined ? {} : { status }) };
+    const next: ScheduledDelivery = { ...record, phase: 'posting', postSession, postToken: receipt.token, failed, ...(status === undefined ? {} : { status }) };
     await this.documents.send(new TransactWriteCommand({ TransactItems: [
-      { ConditionCheck: { TableName: this.tableName,
-        Key: { pk: `DISPATCH#${JSON.stringify([complete.session.filing_user_id, complete.session.session_id])}`, sk: complete.token },
-        ConditionExpression: 'session_id = :session AND filing_user_id = :filing',
-        ExpressionAttributeValues: { ':session': complete.session.session_id, ':filing': complete.session.filing_user_id },
-      } },
+      proof,
       { Update: { TableName: this.tableName, Key: key(record.owner, record.deliveryId),
       UpdateExpression: `SET #phase = :posting, postSession = :session, postToken = :token, failed = :failed${status === undefined ? '' : ', #status = :status'}`,
       ConditionExpression: '#phase = :admitted AND attempt = :attempt AND taskId = :task AND postMessageId = :message',
       ExpressionAttributeNames: { '#phase': 'phase', ...(status === undefined ? {} : { '#status': 'status' }) },
-      ExpressionAttributeValues: { ':posting': 'posting', ':admitted': 'admitted', ':attempt': record.attempt, ':task': record.taskId, ':message': record.postMessageId, ':session': postSession, ':token': complete.token, ':failed': failed, ...(status === undefined ? {} : { ':status': status }) },
+      ExpressionAttributeValues: { ':posting': 'posting', ':admitted': 'admitted', ':attempt': record.attempt, ':task': record.taskId, ':message': record.postMessageId, ':session': postSession, ':token': receipt.token, ':failed': failed, ...(status === undefined ? {} : { ':status': status }) },
       } },
     ] }));
     return next;

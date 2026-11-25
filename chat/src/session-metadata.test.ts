@@ -12,7 +12,7 @@ import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../te
 import { DynamoDBSessionMetadata, SessionBusyError, SessionConcurrencyError, SessionDeletedError, SessionClaimError, SessionDispatchPendingError, SessionOpeningError } from './session-metadata.js';
 import { SessionReadOnlyError } from './session-identity.js';
 import { purgeQueue } from './purges.js';
-import { RuntimeAdmissionUnprovedError, runtimeSessionId, sessionLifecycle } from './session-lifecycle.js';
+import { RuntimeAdmissionUnprovedError, sessionLifecycle } from './session-lifecycle.js';
 import { motoEndpoint } from '../test/fakes/moto.js';
 import { memoryDocuments } from '../test/memory-documents.js';
 
@@ -1733,7 +1733,6 @@ describe('Main Chat admission through Claim', () => {
     await metadata.transferOwner('source', 'destination');
     const admitted = await metadata.beginDispatch('destination', id, 'original-filing');
     expect(admitted.session).toEqual({ session_id: id, filing_user_id: 'original-filing' });
-    expect(runtimeSessionId(defined(admitted.session, 'admitted Session identity'))).toBe(id);
     expect(await metadata.list('destination')).toEqual([]);
     await admitted();
     await expect(metadata.recordTurn('destination', id, { allocation: true, filingUserId: 'destination-filing', title: 'First Turn' })).resolves.toBe('original-filing');

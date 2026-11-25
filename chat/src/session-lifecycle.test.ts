@@ -5,7 +5,7 @@ import { runRuntimeWriter } from './session-writer-runtime.js';
 import { SessionWriters } from './session-writers.js';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { runtimeSessionId, sessionLifecycle } from './session-lifecycle.js';
+import { sessionLifecycle } from './session-lifecycle.js';
 import type { Upstream } from './upstream.js';
 
 const SESSION = { session_id: 'session', filing_user_id: 'filing-user' };
@@ -305,8 +305,4 @@ describe('Session deletion dispatch barrier', () => {
     expect(await aliceResponse.text()).toBe('');
   });
 
-});
-
-it('runs and stops every chat in the Sandbox named by its Session ID', () => {
-  expect(runtimeSessionId(SESSION)).toBe(SESSION.session_id);
 });

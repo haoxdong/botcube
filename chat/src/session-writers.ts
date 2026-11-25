@@ -1,7 +1,7 @@
 import { acquire, type WriterLease, type WriterWait } from './session-writer-runtime.js';
 import { createHash } from 'node:crypto';
-import { dispatchKey, dispatcherId, POST_LEASE_AVAILABLE, registerWriter, writerControlKey } from './session-writer-registration.js';
-import { ConditionalCheckFailedException, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
+import { dispatchKey, dispatcherId, postingProof, POST_LEASE_AVAILABLE, recoveryConditions, registerWriter, writerBusy, writerControlKey } from './session-writer-registration.js';
+import { type CancellationReason, ConditionalCheckFailedException, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, TransactWriteCommand, UpdateCommand, paginateQuery } from '@aws-sdk/lib-dynamodb';
 import { HttpError } from './http-error.js';
 import { namedTransaction, type TransactionWrite as TransactItem } from './named-transaction.js';
@@ -26,6 +26,7 @@ export interface RejectedWriterRecovery {
 
 // ADR 0029: one hour for the Sandbox, two more for task drain and stop.
 export const REGISTRATION_EXPIRY_MS = 3 * 3_600_000;
+const WRITER_TOKEN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const registrationExpired = (created: string, now: number) => Date.parse(created) + REGISTRATION_EXPIRY_MS < now;
 
 type WriterItem = { pk: string; sk: string; dispatcher?: string } & Record<string, unknown>;
@@ -44,7 +45,10 @@ export class SessionWriters {
     expiresAt: number; now: number; rejected: readonly RegisteredDispatch[]; target: string | undefined;
   }) {
     const [registration, control] = registerWriter(this.tableName, session, token, post?.now, post?.expiresAt, post?.rejected.length);
-    const checks = post?.target === undefined ? [] : this.recoveryConditions(session, post.target, post.rejected);
+    const checks = post?.target === undefined ? [] : recoveryConditions(this.tableName, session, post.target, post.rejected.map(({ token }) => {
+      if (token === undefined) throw new SessionDispatchPendingError('Rejected writer identity is unproved');
+      return token;
+    }));
     return namedTransaction([
       ...fences, ['registration', registration],
       ...(destination === undefined ? [] : [['destinationFence', destination]] as const),
@@ -65,6 +69,11 @@ export class SessionWriters {
     return Object.assign(this.acknowledgement(session, token, false, false, undefined, 'session-post'), { postLeaseExpiresAt: expiresAt });
   }
 
+  async refuseAdmission(session: SessionPurge, reason: CancellationReason, at?: number): Promise<true> {
+    if (at !== undefined && Number(reason.Item?.runtime_writers?.N) > 0 && await this.settleExpired(session, at, true)) return true;
+    throw writerBusy(reason, REGISTRATION_EXPIRY_MS);
+  }
+
   async completePurge(session: SessionPurge, completion: TransactItem): Promise<void> {
     const transaction = namedTransaction([['purge', completion], ['writerControl', { Delete: {
       TableName: this.tableName, Key: writerControlKey(session),
@@ -79,17 +88,6 @@ export class SessionWriters {
       }
       throw error;
     }
-  }
-
-  private recoveryConditions(session: SessionPurge, target: string, registrations: readonly RegisteredDispatch[]): TransactItem[] {
-    return registrations.map(({ token }) => {
-      if (token === undefined) throw new SessionDispatchPendingError('Rejected writer identity is unproved');
-      return { ConditionCheck: {
-      TableName: this.tableName, Key: dispatchKey(session, token),
-      ConditionExpression: 'writer_control = :kind AND rejected_runtime_binding = :binding AND rejected_runtime_target = :target',
-      ExpressionAttributeValues: { ':kind': 'runtime', ':binding': session.session_id, ':target': target },
-      } };
-    });
   }
 
   acknowledgement(session: SessionPurge, token: string, recovered = false, stopped = false, runtimeTarget?: string, writerKind?: 'runtime' | 'session-post', snapshotEpoch?: string): RegisteredSessionDispatch {
@@ -196,7 +194,7 @@ export class SessionWriters {
 
   async settlePostedWriter(session: SessionPurge, token: string): Promise<void> {
     const kind = 'session-post';
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(token)) throw new SessionDispatchPendingError('Successful writer identity is unproved');
+    if (!WRITER_TOKEN.test(token)) throw new SessionDispatchPendingError('Successful writer identity is unproved');
     const Key = dispatchKey(session, token);
     const { Item } = await this.documents.send(new GetCommand({ TableName: this.tableName, Key, ConsistentRead: true }));
     if (Item === undefined) return;
@@ -215,7 +213,7 @@ export class SessionWriters {
     await Promise.all(rows.filter((row) =>
       row.writer_succeeded === 'session-post' &&
       row.session_id === session.session_id && row.filing_user_id === session.filing_user_id &&
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(row.sk)
+      WRITER_TOKEN.test(row.sk)
     ).map((row) => this.settlePostedWriter(session, row.sk)));
   }
 
@@ -244,7 +242,7 @@ export class SessionWriters {
     let submitted = false;
     let posting: ScheduledDelivery;
     try {
-      posting = await store.posting(delivery, lease, outcome.failed, outcome.status);
+      posting = await store.posting(delivery, { session, token }, postingProof(this.tableName, session, token), outcome.failed, outcome.status);
       submitted = true;
       await post(session, postLeaseExpiresAt);
       await markSucceeded('session-post', store.postedTransaction(posting));
@@ -299,12 +297,13 @@ export class SessionWriters {
   }
 
   async assertNoDispatch(session: SessionPurge, failedAdmissionTokens: readonly string[] = []): Promise<void> {
-    await this.acknowledgeSuccessfulWriters(session, dispatchKey(session, '').pk);
+    const current = dispatchKey(session, '').pk;
+    await this.acknowledgeSuccessfulWriters(session, current);
     // Older tasks register under the public Session ID.
-    for (const pk of [dispatchKey(session, '').pk, `DISPATCH#${session.session_id}`]) {
+    for (const pk of [current, `DISPATCH#${session.session_id}`]) {
       // eslint-disable-next-line no-await-in-loop -- check both registry generations
       const items: { sk: string; dispatcher?: string }[] = await this.queryPartition(pk);
-      const pending = items.find((item) => pk !== dispatchKey(session, '').pk || !failedAdmissionTokens.includes(item.sk));
+      const pending = items.find((item) => pk !== current || !failedAdmissionTokens.includes(item.sk));
       if (pending !== undefined) throw new SessionDispatchPendingError(`Session dispatch is still registered; deletion is blocked. session_id=${session.session_id} filing_user_id=${session.filing_user_id} registration=${String(pending.sk)} dispatcher=${String(pending.dispatcher)}`);
     }
   }

@@ -1,3 +1,5 @@
+import type { CancellationReason } from '@aws-sdk/client-dynamodb';
+import { SessionBusyError } from './session-writer-runtime.js';
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import type { TransactionWrite } from './named-transaction.js';
@@ -23,4 +25,28 @@ export function registerWriter(TableName: string, session: SessionPurge, token: 
       ExpressionAttributeValues: postLeaseExpiresAt === undefined ? { ':one': 1, ':now': now } : { ':token': token, ':zero': rejectedCount, ':now': now, ':expiry': postLeaseExpiresAt },
     } },
   ];
+}
+
+export function postingProof(TableName: string, session: SessionPurge, token: string): TransactionWrite {
+  return { ConditionCheck: {
+    TableName, Key: dispatchKey(session, token),
+    ConditionExpression: 'session_id = :session AND filing_user_id = :filing',
+    ExpressionAttributeValues: { ':session': session.session_id, ':filing': session.filing_user_id },
+  } };
+}
+
+export function writerBusy({ Item }: CancellationReason, expiresAfter: number): SessionBusyError {
+  const token = Item?.external_token?.S;
+  const expiry = Number(Item?.lease_expires_at?.N);
+  return new SessionBusyError('Session persistence writer is still active', token === undefined ? undefined : {
+    token, createdAt: Number.isFinite(expiry) ? new Date(expiry - expiresAfter).toISOString() : 'unknown',
+  });
+}
+
+export function recoveryConditions(TableName: string, session: SessionPurge, target: string, tokens: readonly string[]): TransactionWrite[] {
+  return tokens.map((token) => ({ ConditionCheck: {
+    TableName, Key: dispatchKey(session, token),
+    ConditionExpression: 'writer_control = :kind AND rejected_runtime_binding = :binding AND rejected_runtime_target = :target',
+    ExpressionAttributeValues: { ':kind': 'runtime', ':binding': session.session_id, ':target': target },
+  } }));
 }

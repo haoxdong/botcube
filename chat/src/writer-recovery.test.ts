@@ -2,6 +2,7 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dyn
 import { expect, it } from 'vitest';
 import { defined } from '../test/defined.js';
 import { startInProcess } from '../test/in-process.js';
+import { postingProof } from './session-writer-registration.js';
 import { filed } from '../test/stock-bot.js';
 
 it('acknowledges only exact proved writers', async () => {
@@ -56,8 +57,8 @@ it.each(['ledger', 'registration'] as const)('rolls back both successful post fa
     const delivery = await store.claim('acct_account-1', 'scheduled-task', 'delivery-atomic', filed('original'), mainChat, 'scheduled-task');
     await store.admit(delivery);
     const writer = await stack.sessionMetadata.beginDispatch('acct_account-1', mainChat);
-    const posting = await store.posting(delivery, writer, false);
     const token = defined(writer.token, 'exact post token');
+    const posting = await store.posting(delivery, { session: writer.session, token }, postingProof(stack.table.name, writer.session, token), false);
     const writerKey = { pk: `DISPATCH#${JSON.stringify([filed('original'), mainChat])}`, sk: token };
     const ledgerKey = { pk: 'SESSIONS#acct_account-1', sk: 'SCHEDULED_DELIVERY#delivery-atomic' };
     const writerRow = defined((await documents.send(new GetCommand({ TableName: stack.table.name, Key: writerKey, ConsistentRead: true }))).Item, 'registered post writer');

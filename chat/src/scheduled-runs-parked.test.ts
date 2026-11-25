@@ -42,7 +42,7 @@ async function fireTask(account: string, prompt: string): Promise<void> {
 async function mainChatPosts(account: string): Promise<string[]> {
   const { id } = (await (await request(account, '/main-chat')).json()) as { id: string };
   for (;;) {
-    const posts = stack.sessionApi.events().flatMap((event) => (event.operation === 'post' && event.sessionId === id ? [event.content ?? ''] : []));
+    const posts = stack.sessionApi.events().flatMap((event) => (event.operation === 'post' && event.sessionId === id ? [event.content] : []));
     if (posts.length > 0) return posts;
     // eslint-disable-next-line no-await-in-loop -- polls until the queued run is done
     await new Promise((resolve) => setTimeout(resolve, 50));

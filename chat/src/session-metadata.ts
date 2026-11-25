@@ -8,7 +8,6 @@ import { REGISTRATION_EXPIRY_MS, SessionWriters, type RejectedWriterRecovery } f
 
 import {
   ConditionalCheckFailedException,
-  type CancellationReason,
   DescribeTableCommand,
   DynamoDBClient,
   TransactionCanceledException,
@@ -71,14 +70,6 @@ export type FencedSession = SessionSummary & SessionPurge;
 export class SessionDeletedError extends Error {}
 
 export class SessionUnissuedError extends Error {}
-
-function writerBusy({ Item }: CancellationReason): SessionBusyError {
-  const token = Item?.external_token?.S;
-  const expiry = Number(Item?.lease_expires_at?.N);
-  return new SessionBusyError('Session persistence writer is still active', token === undefined ? undefined : {
-    token, createdAt: Number.isFinite(expiry) ? new Date(expiry - REGISTRATION_EXPIRY_MS).toISOString() : 'unknown',
-  });
-}
 
 export class SessionConcurrencyError extends Error {}
 
@@ -576,11 +567,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
   private async writerAdmissionChanged(failed: FailedWrites<'ownerFence' | 'destinationFence' | 'writerControl' | 'session' | 'claimFence' | 'recovery'>, identity: DispatchIdentity, postAttemptAt?: number): Promise<boolean> {
     if (failed.has('ownerFence') || failed.has('destinationFence')) throw new SessionDeletedError(identity.session.session_id);
     const writerControl = failed.get('writerControl');
-    if (writerControl !== undefined) {
-      if (postAttemptAt !== undefined && Number(writerControl.Item?.runtime_writers?.N) > 0 &&
-        await this.writers.settleExpired(identity.session, postAttemptAt, true)) return true;
-      throw writerBusy(writerControl);
-    }
+    if (writerControl !== undefined) return this.writers.refuseAdmission(identity.session, writerControl, postAttemptAt);
     if (failed.has('session')) {
       const current = await this.getSessionItem(identity.dispatchOwner, identity.session.session_id);
       return current !== null && current.snapshot_epoch !== identity.snapshotEpoch;
@@ -712,11 +699,8 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     const token = randomUUID();
     const epoch = snapshotEpoch ?? randomUUID();
     const fallback = () => this.beginDispatch(owner, session.session_id, undefined, acceptedTurn, 'runtime', undefined, session);
-    const transaction = this.writers.dispatchTransaction(session, token, [
-      ['ownerFence', { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
-      ['claimFence', { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } }],
-      ['session', this.dispatchSessionWrite(owner, session, epoch, snapshotEpoch)],
-    ]);
+    const identity = { session, snapshotEpoch, dispatchOwner: owner, claimDestination: null };
+    const transaction = this.writers.dispatchTransaction(session, token, this.dispatchFences(owner, identity, epoch));
     try {
       await this.documents.send(transaction.command);
     } catch (error) {
@@ -728,7 +712,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
   private async refusedTurnDispatch(error: unknown, failed: FailedWrites<'ownerFence' | 'writerControl' | 'claimFence' | 'session'>, owner: string, session: Readonly<SessionPurge>, snapshotEpoch: string | undefined, accepted: boolean, fallback: () => ReturnType<SessionWriters['registered']>) {
     if (failed.has('ownerFence')) throw new SessionDeletedError(session.session_id);
     const writerControl = failed.get('writerControl');
-    if (writerControl !== undefined) throw writerBusy(writerControl);
+    if (writerControl !== undefined) await this.writers.refuseAdmission(session, writerControl);
     if (failed.has('claimFence')) {
       if (accepted) return fallback();
       throw new SessionClaimError(owner);

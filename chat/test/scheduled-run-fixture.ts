@@ -88,7 +88,7 @@ export async function posted(sessionId: string, api: InProcessStack['sessionApi'
     const posts = api
       .events()
       .flatMap((event) =>
-        event.operation === 'post' && event.sessionId === sessionId ? [{ content: event.content ?? '', userId: event.userId }] : [],
+        event.operation === 'post' && event.sessionId === sessionId ? [{ content: event.content, userId: event.userId }] : [],
       );
     expect(posts).not.toEqual([]);
     return posts;
