@@ -30,7 +30,7 @@ interface StackOptions {
 export type Stack = Awaited<ReturnType<typeof startStack>>;
 
 /** The parity bot's settings: the template's identity on the Echo model. */
-const PARITY_BOT = {
+export const PARITY_BOT = {
   agentIdentity: { name: 'BotCube', character: 'A template agent', avatar: '🧊' },
   accountKey: 'template',
   models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
