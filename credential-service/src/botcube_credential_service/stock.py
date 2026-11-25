@@ -4,25 +4,24 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from functools import partial
 
 import uvicorn
 from fastapi import FastAPI
 
 from .audit import CredentialAuditRecorder, StdoutCredentialAuditSink
 from .aws import env_vault
-from .models import models_provider_from_config
+from .compose import credential_service_app
 from .openai import OpenAIProvider
 from .resolved_config import resolved_config_from_env
-from .server import CredentialServiceSettings, create_app, plan_usage_owner
 from .vault import RotatingCredentialVault
 
 
 def stock_credential_service(openai_vault: Callable[[], RotatingCredentialVault], invocation_secret: Callable[[], str]) -> FastAPI:
     audit = CredentialAuditRecorder(sink=StdoutCredentialAuditSink())
-    config = resolved_config_from_env()
-    models = models_provider_from_config(audit, config)
-    settings = CredentialServiceSettings('stock', invocation_secret, plan_usage_owner_account_id=plan_usage_owner(config['config']))
-    return create_app(settings, [OpenAIProvider(openai_vault, audit=audit), *([models] if models else [])], config=config['config'])
+    return credential_service_app(
+        'stock', invocation_secret, partial(OpenAIProvider, openai_vault), audit=audit, resolved=resolved_config_from_env(),
+    )
 
 
 def main() -> None:

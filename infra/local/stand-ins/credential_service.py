@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from functools import partial
 
 import uvicorn
 from fake_site_provider import FakeSiteProvider
@@ -15,11 +16,8 @@ from botcube_credential_service.audit import (
 )
 from botcube_credential_service.aws import env_vault
 from botcube_credential_service.compose import credential_service_app
+from botcube_credential_service.openai import OpenAIProvider
 from botcube_credential_service.resolved_config import resolved_config_from_env
-from botcube_credential_service.server import (
-    CredentialServiceSettings,
-    plan_usage_owner,
-)
 from botcube_credential_service.vault import DynamoDbCredentialVault
 
 
@@ -28,13 +26,8 @@ def local_credential_service(
 ) -> FastAPI:
     audit = CredentialAuditRecorder(sink=StdoutCredentialAuditSink())
     return credential_service_app(
-        CredentialServiceSettings(
-            'local', invocation_secret,
-            plan_usage_owner_account_id=plan_usage_owner(resolved_config_from_env()['config']),
-        ),
-        FakeSiteProvider(vault, site_url, audit),
-        vault,
-        audit=audit,
+        'local', invocation_secret, partial(OpenAIProvider, vault), FakeSiteProvider(vault, site_url, audit),
+        audit=audit, resolved=resolved_config_from_env(),
     )
 
 
