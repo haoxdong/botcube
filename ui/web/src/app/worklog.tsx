@@ -301,7 +301,9 @@ function TimedToolStep({ id, name, params, status: reported, output: result }: T
   // transcript would each hold a drawer's observers.
   const [opened, setOpened] = useState(false);
   const argument = argumentOf(name, params);
-  useEffect(preloadStepSheet, []);
+  useEffect(() => {
+    preloadStepSheet();
+  }, []);
   const look = lookOf(name);
   const { title, done, running, icon, prose } = look;
   const exit = status === "complete" ? FAILED_COMMAND.exec(output ?? "")?.[1] : undefined;

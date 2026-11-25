@@ -98,6 +98,13 @@ export function accountRoutes(
     return c.body(null, 204);
   });
 
+  app.post('/agent/extracted-memory/forget', async (c) => {
+    const { owner, anonymous } = await bot.requester(c);
+    if (anonymous) throw new HttpError(403, 'Sign in to use Forget');
+    sessions.startForgettingExtractedMemory(owner);
+    return c.body(null, 202);
+  });
+
   app.post('/threads', async (c) => {
     const { owner } = await bot.requester(c);
     return c.json(await sessions.createSideChat(owner), 201);

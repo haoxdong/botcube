@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { chatAlarmEvents } from 'botcube-config/alarm-events';
 import { SessionConcurrencyError, SessionBusyError, SessionClaimError, SessionDeletedError, SessionUnissuedError } from './session-metadata.js';
 import { assertContinuable, oneIdSession, SessionReadOnlyError, sessionUserIds } from './session-identity.js';
 import type { AgentDocuments } from './agent-documents.js';
@@ -38,9 +39,14 @@ export function sessionOperations(
   filingUserId: (owner: string) => string = (owner) => owner,
 ) {
   const forgetExtractedMemory = async (owner: string): Promise<void> => {
-    const purges = await sessionMetadata.ownerPurges(owner, filingUserId);
-    for (const userId of new Set([filingUserId(owner), ...purges.flatMap((session) => sessionUserIds(session, filingUserId))])) {
-      // eslint-disable-next-line no-await-in-loop -- stops at the first failure, leaving the deletion pending
+    const [live, purges] = await Promise.all([sessionMetadata.list(owner), sessionMetadata.ownerPurges(owner, filingUserId)]);
+    const userIds = new Set([
+      filingUserId(owner),
+      ...live.map((session) => session.filing_user_id),
+      ...purges.flatMap((session) => sessionUserIds(session, filingUserId)),
+    ]);
+    for (const userId of userIds) {
+      // eslint-disable-next-line no-await-in-loop -- stops at the first failure; account deletion's sweep or the User's next Forget retries
       await invokeSessionApi('forget', { userId });
     }
   };
@@ -80,6 +86,11 @@ export function sessionOperations(
     return { messages: [], failure: settled.turn_failure };
   };
   return {
+    startForgettingExtractedMemory(owner: string): void {
+      void forgetExtractedMemory(owner).catch((error: unknown) => {
+        console.error(chatAlarmEvents.extractedMemoryForgetFailed, owner, error);
+      });
+    },
     async createSideChat(owner: string) {
       const id = randomUUID();
       await sessionMetadata.recordTurn(owner, id, { filingUserId: filingUserId(owner), title: '', warmup: true, allocation: true });

@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
@@ -125,4 +125,86 @@ it('opens the current Written Memory after it changes in Files', async () => {
   expect(editButton).toBeEnabled();
   fireEvent.click(editButton);
   expect(current.getByRole('textbox', { name: 'Memory' })).toHaveValue('- Lives in London\n');
+});
+
+/** Counts the Forget requests the Chat Service gets, answering each with `status`. */
+function forgetting(status = 202, detail?: string) {
+  const requests = { count: 0 };
+  chatService.use(http.post('http://chat.test/agent/extracted-memory/forget', () => {
+    requests.count += 1;
+    return detail === undefined ? new HttpResponse(null, { status }) : HttpResponse.json({ detail }, { status });
+  }));
+  return requests;
+}
+
+const CAPTION = 'Your agent also picks up things from your chats, kept apart from this file.';
+const FORGET = 'Forget what it picked up…';
+
+/** The line just above Forget: the caption, or what became of the last Forget in its place. */
+const forgetLine = () => screen.getByRole('button', { name: FORGET }).previousElementSibling?.firstElementChild;
+
+async function askToForget() {
+  const memory = await openMemory('- Trades copper');
+  fireEvent.click(memory.getByRole('button', { name: FORGET }));
+  const ask = await screen.findByRole('alertdialog', { name: 'Forget what your agent picked up?' });
+  expect(ask).toHaveTextContent('This deletes what your agent learned from your chats. Your Memory text stays as it is.');
+  expect(within(ask).getAllByRole('button').map((button) => button.textContent)).toEqual(['Cancel', 'Forget']);
+  return { memory, ask };
+}
+
+it('keeps the header to Back and Edit, and offers Forget under the Memory card beneath its caption', async () => {
+  writtenMemory('- Trades copper\n');
+  renderProfile();
+  const memory = await openMemory('- Trades copper');
+
+  const header = memory.getByRole('heading', { name: 'Memory' }).closest('header');
+  expect(within(header as HTMLElement).getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual(['Back', 'Edit Memory']);
+  const forget = memory.getByRole('button', { name: FORGET });
+  expect(memory.getByText('- Trades copper').compareDocumentPosition(forget) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(forgetLine()).toHaveTextContent(new RegExp(`^${CAPTION}$`));
+});
+
+it('forgets what the agent picked up once the User confirms, once however often they tap, says it started in place of the caption, and leaves Written Memory as it was', async () => {
+  const stored = writtenMemory('- Trades copper\n');
+  const requests = forgetting();
+  renderProfile();
+  const { memory, ask } = await askToForget();
+
+  fireEvent.click(within(ask).getByRole('button', { name: 'Forget' }));
+  fireEvent.click(within(ask).getByRole('button', { name: 'Forget' }));
+
+  expect(await screen.findByRole('status')).toHaveTextContent(/^Forgetting started\. It can take a few minutes\.$/);
+  expect(forgetLine()).toHaveTextContent(/^Forgetting started\. It can take a few minutes\.$/);
+  expect(screen.queryByText(CAPTION)).toBeNull();
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  expect(requests.count).toBe(1);
+  expect(memory.getByText('- Trades copper')).toBeVisible();
+  expect(stored.content).toBe('- Trades copper\n');
+});
+
+it('forgets nothing when the User cancels', async () => {
+  writtenMemory('- Trades copper\n');
+  const requests = forgetting();
+  renderProfile();
+  const { ask } = await askToForget();
+
+  fireEvent.click(within(ask).getByRole('button', { name: 'Cancel' }));
+
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  expect(requests.count).toBe(0);
+  expect(forgetLine()).toHaveTextContent(new RegExp(`^${CAPTION}$`));
+});
+
+it('says why Forget failed on the caption\'s line', async () => {
+  writtenMemory('- Trades copper\n');
+  forgetting(503, 'Session API returned HTTP 503');
+  renderProfile();
+  const { ask } = await askToForget();
+
+  fireEvent.click(within(ask).getByRole('button', { name: 'Forget' }));
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(/^Couldn't start forgetting\. Try again\.$/);
+  expect(screen.queryByText(/HTTP 503/)).toBeNull();
+  expect(forgetLine()).toHaveRole('alert');
+  expect(screen.queryByText(/Forgetting started/)).toBeNull();
 });

@@ -6,5 +6,6 @@ export const chatAlarmEvents: Readonly<{
   accountEraseProgress: string;
   accountDeletionCompleted: string;
   agentComputerStopSleepFailed: string;
+  extractedMemoryForgetFailed: string;
   runErrorCodeField: string;
 }>;

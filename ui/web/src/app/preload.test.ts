@@ -26,3 +26,13 @@ it('falls back to a timer where the browser has no idle callback', () => {
   vi.runAllTimers();
   expect(load).toHaveBeenCalledOnce();
 });
+
+it('never loads once its scheduled run is cancelled before the timer fires', () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('requestIdleCallback', undefined);
+  const load = vi.fn(() => Promise.resolve());
+  const cancel = idlePreload(load)();
+  cancel();
+  vi.runAllTimers();
+  expect(load).not.toHaveBeenCalled();
+});

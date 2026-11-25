@@ -16,6 +16,8 @@ import { Avatar } from "./avatar";
 import { LoadFailed, LoadingSkeleton, useLoad, type LoadState } from "./load-state";
 import { PictureField } from "./picture-field";
 import { throwIfRefused } from "./refusal";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Button as StockButton } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Item } from "@/components/ui/item";
 import { Textarea } from "@/components/ui/textarea";
@@ -75,6 +77,10 @@ const send = (url: string, method: string, body?: unknown) =>
 
 async function saveAgentFile<File extends AgentFile>(chatServiceUrl: string, file: File, body: AgentFiles[File]) {
   await throwIfRefused(await send(`${chatServiceUrl}/${FILE_PATH[file]}`, "PUT", body), `Couldn't save ${file}.`, " ");
+}
+
+async function forgetExtractedMemory(chatServiceUrl: string) {
+  await throwIfRefused(await send(`${chatServiceUrl}/agent/extracted-memory/forget`, "POST"), "Forgetting failed");
 }
 
 /** Keeps this picture as the agent's, or clears it with null; a refusal names the Chat Service's reason. */
@@ -275,13 +281,62 @@ function IdentityFile({
   );
 }
 
-function TextFile({ file, text, empty, refreshing, onSave, onBack }: {
+/** What became of the last Forget: nothing yet, sending, started, or failed (the reason goes to the console, not the User). */
+type Forgetting = { kind: "idle" | "sending" | "started" | "failed" };
+
+/** Forget for Extracted Memory, under the Memory card: its caption's line reports how the last Forget went, so nothing moves. */
+function ForgetExtractedMemory({ chatServiceUrl }: { chatServiceUrl: string }) {
+  const [asking, setAsking] = useState(false);
+  const [forgetting, setForgetting] = useState<Forgetting>({ kind: "idle" });
+  const sending = forgetting.kind === "sending";
+  const forget = async () => {
+    setForgetting({ kind: "sending" });
+    try {
+      await forgetExtractedMemory(chatServiceUrl);
+      setForgetting({ kind: "started" });
+    } catch (failure) {
+      console.error(failure);
+      setForgetting({ kind: "failed" });
+    }
+    setAsking(false);
+  };
+  const line = forgetting.kind === "started" ? (
+    <AlertLine tone="notice">Forgetting started. It can take a few minutes.</AlertLine>
+  ) : forgetting.kind === "failed" ? (
+    <AlertLine>Couldn't start forgetting. Try again.</AlertLine>
+  ) : (
+    <p className="agent-file-forget-caption">Your agent also picks up things from your chats, kept apart from this file.</p>
+  );
+  return (
+    <section className="agent-file-forget" aria-label="Forget">
+      <div className="agent-file-forget-line">{line}</div>
+      <AlertDialog open={asking} onOpenChange={setAsking}>
+        <AlertDialogTrigger render={<StockButton type="button" variant="ghost" size="sm" className="agent-file-forget-button" disabled={sending} />}>
+          Forget what it picked up…
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Forget what your agent picked up?</AlertDialogTitle>
+            <AlertDialogDescription>This deletes what your agent learned from your chats. Your Memory text stays as it is.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" disabled={sending} onClick={() => void forget()}>Forget</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </section>
+  );
+}
+
+function TextFile({ file, text, empty, refreshing, onSave, onBack, after }: {
   file: TextFileName;
   text: string;
   empty: string;
   refreshing: boolean;
   onSave: (text: string) => Promise<void>;
   onBack: () => void;
+  after?: ReactNode;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -321,6 +376,7 @@ function TextFile({ file, text, empty, refreshing, onSave, onBack }: {
           <Textarea id={id} rows={12} value={draft} onChange={(event) => setDraft(event.target.value)} />
         </Field>
       )}</Fades>
+      {draft === null && after}
     </FileDocument>
   );
 }
@@ -421,7 +477,7 @@ function PersonalizationPanel({ chatServiceUrl, revision, onSaved, memory }: { c
     <div className="agent-files">
       {open ? (
         <LoadedFile file={open} load={files[open]} onBack={back}>
-          {(text) => <TextFile key={open} file={open} text={text} refreshing={files[open].refreshing} empty="No memories yet." onSave={(content) => save(open, content)} onBack={back} />}
+          {(text) => <TextFile key={open} file={open} text={text} refreshing={files[open].refreshing} empty="No memories yet." onSave={(content) => save(open, content)} onBack={back} after={open === "Memory" ? <ForgetExtractedMemory chatServiceUrl={chatServiceUrl} /> : undefined} />}
         </LoadedFile>
       ) : (
         <div className="agent-file-cards">

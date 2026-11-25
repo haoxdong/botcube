@@ -136,7 +136,8 @@ export default function App({
   }, [profileSwipe.visible]);
   // Builds the hidden profile while idle, so its first open only slides it in, as a reopen does.
   useEffect(() => {
-    if (ready) idlePreload(async () => setProfileKept(true))();
+    if (!ready) return undefined;
+    return idlePreload(async () => setProfileKept(true))();
   }, [ready]);
   const profileVisible = profileSwipe.visible || profileKept;
   const agentProfileOpenerRef = useRef<HTMLButtonElement>(null);

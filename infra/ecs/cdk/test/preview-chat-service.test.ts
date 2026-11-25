@@ -180,6 +180,21 @@ test('a failed sleep of Agent Computer browsers at task stop alarms on the exist
   });
 });
 
+test('a failed Forget of Extracted Memory alarms on the existing alert owner', () => {
+  const template = synth();
+  template.hasResourceProperties('AWS::Logs::MetricFilter', {
+    FilterPattern: '"Forgetting Extracted Memory failed"',
+    MetricTransformations: [{ MetricNamespace: 'BotCube/ChatService', MetricName: 'ExtractedMemoryForgetFailures', MetricValue: '1' }],
+  });
+  template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+    AlarmName: 'test-extracted-memory-forget-failures',
+    Namespace: 'BotCube/ChatService', MetricName: 'ExtractedMemoryForgetFailures', Statistic: 'Sum',
+    Threshold: 0, ComparisonOperator: 'GreaterThanThreshold', EvaluationPeriods: 1, DatapointsToAlarm: 1, TreatMissingData: 'notBreaching',
+    AlarmActions: [{ 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':sns:us-east-1:123456789012:existing-alerts']] }],
+    OKActions: [{ 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':sns:us-east-1:123456789012:existing-alerts']] }],
+  });
+});
+
 test('every error line counts on one Errors metric, whose filter the error grouper reads its matcher from', () => {
   const template = synth();
   template.hasResourceProperties('AWS::Logs::MetricFilter', {

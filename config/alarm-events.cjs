@@ -8,5 +8,6 @@ exports.chatAlarmEvents = Object.freeze({
   accountEraseProgress: 'Account history erase purged',
   accountDeletionCompleted: 'Account deletion completed',
   agentComputerStopSleepFailed: 'Agent Computer sleep at task stop failed',
+  extractedMemoryForgetFailed: 'Forgetting Extracted Memory failed',
   runErrorCodeField: 'code=',
 });

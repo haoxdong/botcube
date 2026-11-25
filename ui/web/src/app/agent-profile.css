@@ -429,6 +429,30 @@
   overflow-wrap: anywhere;
 }
 
+/* Forget, under the Memory card: one line that holds the caption or how the last Forget went, then the button. */
+.agent-file-forget {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+/* Two lines tall, so the button stays put when a one-line notice replaces the two-line caption. */
+.agent-file-forget-line {
+  min-height: 2lh;
+  font-size: var(--font-small);
+}
+
+.agent-file-forget-caption {
+  margin: 0;
+  font-size: var(--font-small);
+  color: var(--color-text-muted);
+}
+
+.agent-file-forget-button {
+  color: var(--color-red);
+}
+
 .agent-file-form {
   display: flex;
   flex-direction: column;
