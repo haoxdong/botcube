@@ -1,7 +1,7 @@
 export type SessionIdentity = {
   session_id: string;
   filing_user_id: string;
-  /** Set on every chat from before the one Session ID cutover, by the cutover's one-off mark_read_only.py script. */
+  /** Set on every chat from before the one Session ID cutover. */
   read_only?: true;
 };
 
@@ -22,7 +22,7 @@ export function sessionUserIds(session: SessionPurge, userId: (owner: string) =>
 export class SessionReadOnlyError extends Error {}
 
 type StoredSession = Partial<Record<'session_id' | 'read_only', unknown>>;
-/** Every chat from before the one Session ID cutover carries `read_only: true` (the cutover's one-off mark_read_only.py script). */
+/** Every chat from before the one Session ID cutover carries `read_only: true`. */
 export const oneIdSession = (session: StoredSession) => session.read_only !== true;
 
 export const readOnlyError = (sessionId: unknown) =>
