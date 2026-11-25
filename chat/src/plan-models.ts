@@ -1,13 +1,13 @@
 import type { AccountStore } from './account-store.js';
 import { isPlanModelKey, PLAN_MODEL_PREFIX, type AgentModel } from './models.js';
 import { HttpError } from './http-error.js';
+import { fetchCredentialService } from './credential-service-request.js';
 import { signCredentialServiceInvocation } from './credential-service-token.js';
 import { isRecord } from './payload.js';
 import { planUsageRoutes, type OperatorInvocation, type PlanUsageSink } from './plan-usage.js';
 
 // The Session a catalog fetch is signed for: it belongs to the plan, not to any one chat.
 const PLAN_CATALOG_SESSION = 'plan-catalog';
-const CREDENTIAL_SERVICE_TIMEOUT_MS = 30_000;
 
 export interface PlanModelsConfig {
   /** The Credential Service: its OpenAI provider vaults the owner's Sign-in and relays the plan's catalog. */
@@ -72,23 +72,8 @@ export function planModels(config: PlanModelsConfig) {
 function openaiProvider(url: string) {
   const root = `${new URL(url).origin}/openai`;
 
-  function request(path: string, { token, accountId, sessionId }: OperatorInvocation, init: RequestInit = {}) {
-    return fetch(`${root}${path}`, {
-      ...init,
-      headers: {
-        authorization: `Bearer ${token}`,
-        'x-botcube-account-id': accountId,
-        'x-botcube-session-id': sessionId,
-        'content-type': 'application/json',
-      },
-      signal: AbortSignal.timeout(CREDENTIAL_SERVICE_TIMEOUT_MS),
-    }).catch((error: unknown) => {
-      throw new HttpError(503, `Credential Service request failed: ${String(error)}`);
-    });
-  }
-
-  async function call(step: string, path: string, operator: OperatorInvocation, init?: RequestInit) {
-    const response = await request(path, operator, init);
+  async function call(step: string, path: string, operator: OperatorInvocation, init?: Pick<RequestInit, 'method' | 'body'>) {
+    const response = await fetchCredentialService(`${root}${path}`, operator, init);
     const body: unknown = await response.json().catch(() => {
       throw new HttpError(503, `Credential Service ${step} returned HTTP ${response.status} with a non-JSON body`);
     });

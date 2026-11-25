@@ -1,8 +1,7 @@
-import { QueryCommand, ScanCommand, type TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
-import { AccountResources, nowSeconds, type Lease } from './account-resources.js';
+import { ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { nowSeconds, type Item, type Operation, type PutOperation } from './account-record.js';
+import { AccountResources, type Lease } from './account-resources.js';
 
-export type Operation = NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]['TransactItems']>[number];
-export type PutOperation = { Put: NonNullable<Operation['Put']> };
 interface GuestAccount {
   accountId: string;
   status: string;
@@ -16,7 +15,6 @@ const GUEST_EXPIRY_SESSION_STAND_IN = 'guest-expiry';
 const GUEST_ACTIVITY = 'GUEST_ACTIVITY';
 const GUEST_ACTIVITY_BACKFILL = { pk: 'GUEST_ACTIVITY_BACKFILL', sk: 'META' };
 const ACCOUNT_PK_PREFIX = 'ACCOUNT#';
-type Item = Record<string, unknown>;
 
 const guestActivity = {
   key: (accountId: string, lastActiveAt: number) => ({ pk: GUEST_ACTIVITY, sk: `${String(lastActiveAt).padStart(12, '0')}#${accountId}` }),
@@ -59,12 +57,10 @@ export abstract class GuestExpiry<A extends GuestAccount> extends AccountResourc
   async expireGuests(): Promise<void> {
     await this.backfillGuestActivity();
     const cutoff = guestActivity.key('', nowSeconds() - GUEST_EXPIRY_SECONDS).sk;
-    const inactive = this.pages('Query', (ExclusiveStartKey) => new QueryCommand({
-      TableName: this.tableName, ConsistentRead: true,
+    const inactive = this.queryPages({
       KeyConditionExpression: 'pk = :pk AND sk <= :cutoff',
       ExpressionAttributeValues: { ':pk': GUEST_ACTIVITY, ':cutoff': cutoff },
-      ExclusiveStartKey,
-    }));
+    });
     for await (const page of inactive) {
       for (const item of page) {
         // eslint-disable-next-line no-await-in-loop -- each expiry commits under the one mutation lease

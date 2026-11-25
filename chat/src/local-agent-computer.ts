@@ -7,7 +7,7 @@ import { agentComputerCdp } from './agent-computer-cdp.js';
 import { AGENT_COMPUTER_IDLE_SECONDS } from './agent-computer.js';
 import type { AgentComputerStarted } from './agent-computer-started.js';
 import type { TaskStopSleep } from './task-stop.js';
-import { agentComputerCdpUrls } from './agent-computer-token.js';
+import { agentComputerAccess, defaultAgentComputerCdpUrl } from './agent-computer-token.js';
 import type { BotCubeConfig } from 'botcube-config';
 import { ComputerStartupCancelled, findChromium, refuseProxyCredentials, startLocalChromium, type LocalChromium } from './local-chromium.js';
 import { proxyUrl } from './proxy-relay.js';
@@ -55,10 +55,7 @@ export function localAgentComputer({
 }) {
   refuseProxyCredentials(proxy);
   const through = proxyUrl(proxy, env);
-  const cdpUrls = agentComputerCdpUrls(
-    new URL(env.BOTCUBE_AGENT_COMPUTER_CDP_URL?.trim() || `ws://127.0.0.1:${env.PORT || '8123'}/agent-computer/cdp`).href,
-    env
-  );
+  const cdpUrl = new URL(env.BOTCUBE_AGENT_COMPUTER_CDP_URL?.trim() || defaultAgentComputerCdpUrl(env)).href;
   const startUrl = new URL(startPage).href;
   const idleMs = AGENT_COMPUTER_IDLE_SECONDS * 1000;
   const running = new Map<string, RunningComputer>();
@@ -69,6 +66,13 @@ export function localAgentComputer({
   /** Each computer's stop at task stop, settling on its own. */
   let shutdowns: Promise<void>[] = [];
   const keyOf = (owner: string, threadId: string) => JSON.stringify([owner, threadId]);
+  const { authorized, requireOwner, verify, forwardedProps } = agentComputerAccess(history, env, {
+    cdpUrl,
+    assertAvailable(owner, threadId) {
+      const failure = cleanupFailures.get(keyOf(owner, threadId));
+      if (failure) throw failure;
+    },
+  });
   const touch = (computer: RunningComputer) => {
     const key = keyOf(computer.owner, computer.threadId);
     if (stopping || running.get(key) !== computer) return;
@@ -149,13 +153,6 @@ export function localAgentComputer({
     touch(computer);
     return computer;
   };
-  const authorized = async (owner: string, threadId: string) =>
-    (await history.owns(owner, threadId)) || (await history.ownsMainChat(owner, threadId));
-  const requireOwner = async (owner: string, threadId: string) => {
-    if (!(await authorized(owner, threadId))) throw new HttpError(404, 'This account does not own the Session');
-    const failure = cleanupFailures.get(keyOf(owner, threadId));
-    if (failure) throw failure;
-  };
   const state = async (computer: RunningComputer | undefined): Promise<LocalComputerState> => {
     if (!computer || stopping) return ASLEEP;
     const browser = await computer.ready;
@@ -210,7 +207,7 @@ export function localAgentComputer({
         },
         control: async () => 'agent',
       }),
-      verify: cdpUrls.verify,
+      verify,
     })
   );
   routes.get('/browser-live-view-url', async (c) => {
@@ -286,11 +283,7 @@ export function localAgentComputer({
       await Promise.all(threads.map((threadId) => stopThread(accountId, threadId)));
     },
     stopThread,
-    /** The Turn's `agentComputerCdpUrl`, tokened for the Session; the agent's connection wakes its computer. */
-    async forwardedProps(owner: string, threadId: string) {
-      await requireOwner(owner, threadId);
-      return { agentComputerCdpUrl: await cdpUrls.issue(owner, threadId) };
-    },
+    forwardedProps,
     /** A Turn starts its Session's computer without waiting for it, so the agent's first command joins it. */
     turnStarting({ owner }: Requester, threadId: string) {
       start(owner, threadId);

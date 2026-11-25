@@ -1,4 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import type { AccountHistory } from './account-history.js';
+import { HttpError } from './http-error.js';
 import { onThisTask } from './task-address.js';
 
 /** How long the agent has, from its Turn's start, to connect to its Agent Computer. */
@@ -34,11 +36,18 @@ export function agentComputerTokens(key: Buffer = randomBytes(32)) {
   };
 }
 
-/**
- * The tokened CDP URLs a Turn's agent reaches its Session's Agent Computer at: `cdpUrl` with
- * this ECS task's own address, looked up when first needed, and a token only this process verifies.
- */
-export function agentComputerCdpUrls(cdpUrl: string, env: NodeJS.ProcessEnv) {
+export const defaultAgentComputerCdpUrl = (env: NodeJS.ProcessEnv) =>
+  `ws://127.0.0.1:${env.PORT || '8123'}/agent-computer/cdp`;
+
+/** Session ownership and the CDP handoff shared by both Agent Computer adapters. */
+export function agentComputerAccess(
+  history: Pick<AccountHistory, 'owns' | 'ownsMainChat'>,
+  env: NodeJS.ProcessEnv,
+  { cdpUrl = defaultAgentComputerCdpUrl(env), assertAvailable }: {
+    cdpUrl?: string;
+    assertAvailable?: (owner: string, threadId: string) => void;
+  } = {},
+) {
   const tokens = agentComputerTokens();
   let taskCdpUrl: Promise<string> | undefined;
   const ownCdpUrl = () =>
@@ -49,13 +58,21 @@ export function agentComputerCdpUrls(cdpUrl: string, env: NodeJS.ProcessEnv) {
         throw error;
       }
     ));
+  const authorized = async (owner: string, threadId: string) =>
+    (await history.owns(owner, threadId)) || (await history.ownsMainChat(owner, threadId));
+  const requireOwner = async (owner: string, threadId: string) => {
+    if (!(await authorized(owner, threadId))) throw new HttpError(404, 'This account does not own the Session');
+    assertAvailable?.(owner, threadId);
+  };
   return {
+    authorized,
+    requireOwner,
     verify: tokens.verify,
-    /** The Turn's `agentComputerCdpUrl`, tokened for the owner's Session. */
-    async issue(owner: string, threadId: string): Promise<string> {
+    async forwardedProps(owner: string, threadId: string) {
+      await requireOwner(owner, threadId);
       const url = new URL(await ownCdpUrl());
       url.searchParams.set('token', tokens.issue(owner, threadId));
-      return url.href;
+      return { agentComputerCdpUrl: url.href };
     },
   };
 }

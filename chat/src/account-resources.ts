@@ -5,6 +5,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes } from 'node:crypto';
 import { ConditionalCheckFailedException, TransactionConflictException, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, DeleteCommand, TransactWriteCommand, UpdateCommand, type QueryCommandInput } from '@aws-sdk/lib-dynamodb';
+import { itemKey as key, nowSeconds, type Item } from './account-record.js';
+
 export class AccountStoreError extends Error {}
 export class ScheduledBrowserAdmissionError extends AccountStoreError {}
 export class BrowserSessionDeniedError extends AccountStoreError {}
@@ -26,9 +28,6 @@ export interface AgentComputerStream {
 }
 const LOCK_SECONDS = 60;
 const RENEW_SECONDS = LOCK_SECONDS / 3;
-export const nowSeconds = () => Math.floor(Date.now() / 1000);
-type Item = Record<string, unknown>;
-const key = (pk: string, sk = 'META') => ({ pk, sk });
 /** A conditional lease with renewal, fencing transactions after a takeover. */
 export class Lease {
   active = false;
@@ -250,13 +249,16 @@ export class AccountResources {
     }
   }
 
-  /** Every page of a strongly consistent Query. */
   protected async query(input: Pick<QueryCommandInput, 'KeyConditionExpression' | 'ExpressionAttributeValues'>): Promise<Item[]> {
     const items: Item[] = [];
-    for await (const page of this.pages('Query', (ExclusiveStartKey) => new QueryCommand({ ...input, TableName: this.tableName, ConsistentRead: true, ExclusiveStartKey }))) {
-      items.push(...page);
-    }
+    for await (const page of this.queryPages(input)) items.push(...page);
     return items;
+  }
+
+  protected queryPages(input: Pick<QueryCommandInput, 'KeyConditionExpression' | 'ExpressionAttributeValues'>) {
+    return this.pages('Query', (ExclusiveStartKey) => new QueryCommand({
+      ...input, TableName: this.tableName, ConsistentRead: true, ExclusiveStartKey,
+    }));
   }
 
   protected async *pages(operation: 'Query' | 'Scan', command: (ExclusiveStartKey: Item | undefined) => { input: object }): AsyncGenerator<Item[]> {

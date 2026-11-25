@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import type { TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import type { AgentModel } from './models.js';
 
 /** How a bot names its accounts: `key` names its cookies and session records, `product` its messages. */
@@ -48,7 +49,8 @@ export interface AccountDeletionIntent {
 /** A token item's `record`: a session of kind `naming.key`, or a bot's own kind of token. */
 export type TokenRecord = { accountId: string; createdAt: number; expiresAt: number; kind: string } & Record<string, unknown>;
 
-export type { Operation, PutOperation } from './guest-expiry.js';
+export type Operation = NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]['TransactItems']>[number];
+export type PutOperation = { Put: NonNullable<Operation['Put']> };
 export type Item = Record<string, unknown>;
 
 export const nowSeconds = () => Math.floor(Date.now() / 1000);

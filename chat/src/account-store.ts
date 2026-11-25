@@ -3,7 +3,6 @@ import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import {
   type DynamoDBDocumentClient,
   PutCommand,
-  QueryCommand,
   TransactWriteCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { AccountStoreError, OpenAIIdentityTaken, Lease } from './account-resources.js';
@@ -308,21 +307,13 @@ export class AccountStore<A extends Account = Account> extends GuestExpiry<A> {
   }
 
   protected async cleanTokens(lease: Lease, accountId: string, { expiredOnly = false } = {}): Promise<void> {
-    let exclusiveStartKey: Item | undefined;
-    do {
-      // eslint-disable-next-line no-await-in-loop -- pagination: each page starts after the previous page's LastEvaluatedKey
-      const page = await this.call<{ Items?: Item[]; LastEvaluatedKey?: Item }>(
-        'Query',
-        new QueryCommand({
-          TableName: this.tableName,
-          ConsistentRead: true,
-          KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
-          ExpressionAttributeValues: { ':pk': `ACCOUNT#${accountId}`, ':prefix': 'TOKEN#' },
-          ExclusiveStartKey: exclusiveStartKey,
-        }),
-      );
+    const pages = this.queryPages({
+      KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
+      ExpressionAttributeValues: { ':pk': `ACCOUNT#${accountId}`, ':prefix': 'TOKEN#' },
+    });
+    for await (const items of pages) {
       let operations: Operation[] = [];
-      for (const item of page.Items ?? []) {
+      for (const item of items) {
         if (!expiredOnly || (item.expiresAt as number) <= nowSeconds()) {
           operations.push(this.delete(item.sk as string), this.delete(item.pk as string, item.sk as string));
         }
@@ -332,10 +323,8 @@ export class AccountStore<A extends Account = Account> extends GuestExpiry<A> {
           operations = [];
         }
       }
-      // eslint-disable-next-line no-await-in-loop -- commits one batch at a time under the account lease
       if (operations.length > 0) await this.commit(lease, operations);
-      exclusiveStartKey = page.LastEvaluatedKey;
-    } while (exclusiveStartKey !== undefined);
+    }
   }
 
   /** A new session for the account. */

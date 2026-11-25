@@ -3,7 +3,7 @@ import type { AccountStore } from './account-store.js';
 import { AGENT_COMPUTER_IDLE_SECONDS, agentComputerBrowserFromEnv, agentComputers } from './agent-computer.js';
 import { agentComputerCdp } from './agent-computer-cdp.js';
 import type { AgentComputerStarted } from './agent-computer-started.js';
-import { agentComputerCdpUrls } from './agent-computer-token.js';
+import { agentComputerAccess } from './agent-computer-token.js';
 import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
 import type { Requester } from './requester.js';
@@ -37,15 +37,10 @@ export function managedAgentComputer({ history, requester, env, store, files, st
     idleSeconds: AGENT_COMPUTER_IDLE_SECONDS,
     draining: ecsTaskDraining(env.ECS_CONTAINER_METADATA_URI_V4),
   });
-  const cdpUrls = agentComputerCdpUrls(`ws://127.0.0.1:${env.PORT || '8123'}/agent-computer/cdp`, env);
-  const authorized = async (owner: string, threadId: string) =>
-    (await history.owns(owner, threadId)) || (await history.ownsMainChat(owner, threadId));
-  const requireOwner = async (owner: string, threadId: string) => {
-    if (!(await authorized(owner, threadId))) throw new HttpError(404, 'This account does not own the Session');
-  };
+  const { requireOwner, verify, forwardedProps } = agentComputerAccess(history, env);
   return {
     /** The `/agent-computer/cdp` route; the Chat Service's own routes serve the live view and Take-over. */
-    routes: new Hono().get('/agent-computer/cdp', agentComputerCdp({ computers, browser, verify: cdpUrls.verify })),
+    routes: new Hono().get('/agent-computer/cdp', agentComputerCdp({ computers, browser, verify })),
     async state(owner: string, threadId: string) {
       await requireOwner(owner, threadId);
       return computers.state(owner, threadId);
@@ -56,11 +51,7 @@ export function managedAgentComputer({ history, requester, env, store, files, st
     },
     erase: computers.erase,
     stopThread: computers.stopThread,
-    /** The Turn's `agentComputerCdpUrl`, tokened for the Session; the agent's connection wakes its computer. */
-    async forwardedProps(owner: string, threadId: string) {
-      await requireOwner(owner, threadId);
-      return { agentComputerCdpUrl: await cdpUrls.issue(owner, threadId) };
-    },
+    forwardedProps,
     /** A Turn starts its Session's computer without waiting for it, so the agent's first command joins it. */
     turnStarting({ owner }: Requester, threadId: string) {
       computers.warm(owner, threadId);

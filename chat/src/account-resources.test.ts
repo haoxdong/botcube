@@ -1,7 +1,8 @@
 import { PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { expect, it, vi } from 'vitest';
 import { agentComputers } from './agent-computer.js';
-import { AccountResources, Lease, nowSeconds } from './account-resources.js';
+import { nowSeconds } from './account-record.js';
+import { AccountResources, Lease } from './account-resources.js';
 import { memoryDocuments } from '../test/memory-documents.js';
 it('deletes Agent Computer screenshots across every DynamoDB page while leaving another account alone', async () => {
   const documents = memoryDocuments();

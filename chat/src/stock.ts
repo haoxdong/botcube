@@ -22,6 +22,7 @@ import type { ScheduledRunSource } from './scheduled-runs.js';
 import { computerFilesRoutes } from './computer-files-routes.js';
 import { chatTable } from './config.js';
 import { allowedOrigins } from './cors.js';
+import { fetchCredentialService } from './credential-service-request.js';
 import { signCredentialServiceInvocation, signTurnCredential } from './credential-service-token.js';
 import { accountFilesFromEnv, filesConfigured } from './files.js';
 import { filingUserId } from './filing-user-id.js';
@@ -34,7 +35,6 @@ import { tokenIntrospectionRoutes } from './token-introspection.js';
 
 const ACCOUNT_DELETION_SESSION = 'account-deletion';
 const ACCOUNT_SESSION = 'account-session';
-const CREDENTIAL_SERVICE_TIMEOUT_MS = 30_000;
 
 /** POST to the Credential Service as the account, under an invocation of the given scope. */
 async function credentialServiceCall(url: string, secret: string, accountId: string, sessionId: string, scope: string, failure: string): Promise<void> {
@@ -43,19 +43,7 @@ async function credentialServiceCall(url: string, secret: string, accountId: str
 
 async function credentialServiceResponse(url: string, secret: string, accountId: string, sessionId: string, scope: string, failure: string): Promise<Response> {
   const token = signCredentialServiceInvocation(secret, accountId, sessionId, { scope });
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${token}`,
-      'x-botcube-account-id': accountId,
-      'x-botcube-session-id': sessionId,
-      'content-type': 'application/json',
-    },
-    body: '{}',
-    signal: AbortSignal.timeout(CREDENTIAL_SERVICE_TIMEOUT_MS),
-  }).catch((error: unknown) => {
-    throw new HttpError(503, `Credential Service request failed: ${String(error)}`);
-  });
+  const response = await fetchCredentialService(url, { token, accountId, sessionId }, { method: 'POST', body: '{}' });
   if (!response.ok) throw new HttpError(503, `${failure} failed with HTTP ${response.status}`);
   return response;
 }
