@@ -18,7 +18,7 @@ import {
 import { useDefaultRenderTool } from "@copilotkit/react-core/v2";
 import { z } from "zod";
 import type { AbstractAgent } from "@ag-ui/client";
-import { holdEnter, stopOnEscapeNoMenuTook } from "./composer-keys";
+import { stopOnEscapeNoMenuTook } from "./composer-keys";
 import { stoppedHere, toolCancellationStore, type SavedTurnFailure } from "./conversations";
 import { endMoment, startMoment, type Moment } from "./latency";
 import type { ModelList } from "./model-selection";
@@ -165,12 +165,11 @@ function ComposerInput(props: CopilotChatInputProps) {
   const attachedRef = useRef(attached);
   attachedRef.current = attached;
   const picker = useRef<HTMLInputElement>(null);
-  const held = attached?.sendable === false;
   const submit = props.onSubmitMessage;
   const [draft, setDraft] = useState(props.value ?? "");
   const value = props.value ?? draft;
-  const fileOnly = !value.trim() && (attached?.files.length ?? 0) > 0;
-  const sendFiles = fileOnly && submit && submitTurn ? () => sendWithFiles("", attachedRef, submitTurn, submit) : undefined;
+  const message = value.trim();
+  const hasFiles = (attached?.files.length ?? 0) > 0;
   const isRunning = turn.stop !== null;
   const stopTurn = turn.stop ?? undefined;
   const stop = stopTurn && (() => {
@@ -183,17 +182,11 @@ function ComposerInput(props: CopilotChatInputProps) {
   text.current = value;
   const onChange = (next: string) => { setDraft(next); props.onChange?.(next); if (next) compose(); };
   useLendComposer(text, onChange, stopTurn);
-  const send = () => {
-    if (sendFiles) {
-      sendFiles();
-      return;
-    }
-    const trimmed = value.trim();
-    if (!trimmed || !submit) return;
-    if (submitTurn) sendWithFiles(trimmed, attachedRef, submitTurn, submit);
-    else submit(trimmed);
-    onChange("");
-  };
+  const send = submit && attached?.sendable !== false && (message !== "" || (submitTurn !== null && hasFiles)) ? () => {
+    if (submitTurn) sendWithFiles(message, attachedRef, submitTurn, submit);
+    else submit(message);
+    if (message !== "") onChange("");
+  } : undefined;
   return (
     <>
       {attached && <ComposerFilePicker picker={picker} add={attached.add} />}
@@ -208,14 +201,12 @@ function ComposerInput(props: CopilotChatInputProps) {
         onSend={send}
         onStop={stop}
         running={isRunning}
-        canSend={!held && (sendFiles !== undefined || (value.trim() !== "" && submit !== undefined))}
-        hasFiles={(attached?.files.length ?? 0) > 0}
+        hasFiles={hasFiles}
         autoFocus={autoFocus}
         addMenu={attached && <AddMenu picker={picker} />}
         files={attached && <ComposerFileChips files={attached.files} onRetry={attached.retry} onRemove={attached.remove} />}
         picker={modelPicker}
         disclaimer={UI_CONFIG.disclaimer}
-        onKeyDownCapture={holdEnter(held, isRunning, sendFiles)}
         onPaste={attached ? attachPastedImages(attached.add) : undefined}
       />
     </>

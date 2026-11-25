@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ClipboardEvent, type ReactNode } from "react";
 import { Arrives } from "./motion";
 import { ArrowUp, Square } from "lucide-react";
 import { submitOnEnter } from "./composer-keys";
@@ -43,32 +43,27 @@ export function Composer({
   onSend,
   onStop,
   running,
-  canSend,
   hasFiles,
   autoFocus,
   addMenu,
   files,
   picker,
   disclaimer,
-  onKeyDownCapture,
   onPaste,
   className,
   replica = false,
 }: {
   value: string;
   onChange: (value: string) => void;
-  /** Sends the draft; Enter and Send call it only when `canSend`. */
-  onSend: () => void;
+  onSend?: (() => void) | undefined;
   onStop: (() => void) | undefined;
   running: boolean;
-  canSend: boolean;
   hasFiles: boolean;
   autoFocus?: boolean | undefined;
   addMenu: ReactNode;
   files?: ReactNode;
   picker?: ReactNode;
   disclaimer: ReactNode;
-  onKeyDownCapture?: ((event: KeyboardEvent<HTMLTextAreaElement>) => void) | undefined;
   onPaste?: ((event: ClipboardEvent<HTMLTextAreaElement>) => void) | undefined;
   className?: string | undefined;
   /** An inert copy, as the kept chat draws: read-only and unnamed, so only the live composer is "Message". */
@@ -96,6 +91,7 @@ export function Composer({
           data-layout={layout}
           onSubmit={(event) => {
             event.preventDefault();
+            if (!onSend) return;
             onSend();
             text.current?.focus();
           }}
@@ -114,7 +110,6 @@ export function Composer({
               rows={1}
               value={value}
               onChange={(event) => onChange(event.currentTarget.value)}
-              onKeyDownCapture={onKeyDownCapture}
               onKeyDown={submitOnEnter}
               onPaste={onPaste}
             />
@@ -126,7 +121,7 @@ export function Composer({
                 variant="default"
                 data-testid="copilot-send-button"
                 aria-label={running ? "Stop" : "Send"}
-                disabled={running ? !stoppable : !canSend}
+                disabled={running ? !stoppable : !onSend}
                 {...(running ? { type: "button" as const, onClick: () => onStop?.() } : { type: "submit" as const })}
               >
                 <Arrives as="span" state={running ? "stop" : "send"}>{running ? <Square className="size-3 fill-current" aria-hidden /> : <ArrowUp aria-hidden />}</Arrives>

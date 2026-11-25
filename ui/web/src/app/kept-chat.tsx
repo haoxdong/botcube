@@ -191,10 +191,8 @@ export function KeptChat({ messages, running = false, disclaimer, composerAccess
             <Composer
               value=""
               onChange={ignore}
-              onSend={ignore}
               onStop={undefined}
               running={false}
-              canSend={false}
               hasFiles={false}
               addMenu={<AddButton />}
               disclaimer={disclaimer}
