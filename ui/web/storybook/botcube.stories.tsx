@@ -5,7 +5,8 @@ import Page from 'botcube-ui-web/storybook-page';
 import { animationsSettled } from '../.storybook/animations-settled';
 import { CHAT_SERVICE_ORIGIN } from '../.storybook/chat-origin';
 import { LiveBrowserWindow } from '../src/computer/live-browser-window';
-import { awakeComputer, noLiveViewComputer, reply } from './chat-service';
+import { reply } from './chat-service';
+import { awakeComputer, noLiveViewComputer } from './example-chat-fixtures';
 
 const meta = {
   title: 'BotCube/App',

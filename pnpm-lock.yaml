@@ -723,6 +723,9 @@ importers:
       micromark-util-types:
         specifier: ^2.0.3
         version: 2.0.3
+      mockdate:
+        specifier: 3.0.5
+        version: 3.0.5
       msw:
         specifier: ^2.15.0
         version: 2.15.0(@types/node@24.19.2)(@typescript/typescript6@6.0.2)
@@ -8133,6 +8136,9 @@ packages:
   mnth@2.0.0:
     resolution: {integrity: sha512-3ZH4UWBGpAwCKdfjynLQpUDVZWMe6vRHwarIpMdGLUp89CVR9hjzgyWERtMyqx+fPEqQ/PsAxFwvwPxLFxW40A==}
     engines: {node: '>=12.13.0'}
+
+  mockdate@3.0.5:
+    resolution: {integrity: sha512-iniQP4rj1FhBdBYS/+eQv7j1tadJ9lJtdzgOpvsOHng/GbcDh2Fhdeq+ZRldrPYdXvCyfFUmFeEwEGXZB5I/AQ==}
 
   module-alias@2.3.4:
     resolution: {integrity: sha512-bOclZt8hkpuGgSSoG07PKmvzTizROilUTvLNyrMqvlC9snhs7y7GzjNWAVbISIOlhCP1T14rH1PDAV9iNyBq/w==}
@@ -19375,6 +19381,8 @@ snapshots:
   mnth@2.0.0:
     dependencies:
       '@babel/runtime': 7.29.7
+
+  mockdate@3.0.5: {}
 
   module-alias@2.3.4: {}
 

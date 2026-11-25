@@ -7,7 +7,7 @@ module.exports = ({ appRoot }) => ({
   stories: [
     path.relative(
       path.join(appRoot, '.storybook'),
-      path.join(__dirname, 'storybook/**/*.stories.tsx')
+      path.join(__dirname, 'storybook/*.stories.tsx')
     ),
   ],
   previewAnnotations: [path.join(__dirname, 'storybook/preview.ts')],

@@ -428,7 +428,7 @@ describe('the components list', () => {
   // checkout that holds botcube alone (its public mirror) can't check their names.
   const repository = path.join(web, '../../..');
   // scripts/ci/reader-tests.mjs selects this test when any of these change.
-  const stories = globSync('*/ui/web/storybook/*.stories.tsx', { cwd: repository });
+  const stories = globSync('*/ui/web/storybook/**/*.stories.tsx', { cwd: repository });
 
   it.skipIf(new Set(stories.map((file) => file.split('/')[0])).size < 2)("names only stories a bot's Storybook has", () => {
     const named = new Set(stories.flatMap((file) => [...readFileSync(path.join(repository, file), 'utf8').matchAll(/\bname: '([^']+)'/g)].map(([, name = '']) => name)));

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Page from 'botcube-ui-web/storybook-page';
 import { FluentInPage, FluentReference } from '@/computer/fluent-check';
-import { awakeComputer } from './chat-service';
+import { awakeComputer } from './example-chat-fixtures';
 
 /**
  * ADR 0093: the Agent Computer draws with Fluent UI inside the app, and neither side's CSS reaches the other. Each

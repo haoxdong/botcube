@@ -123,6 +123,7 @@
     "mdast-util-from-markdown": "^2.1.0",
     "mdast-util-math": "^3.0.0",
     "micromark-util-types": "^2.0.3",
+    "mockdate": "3.0.5",
     "msw": "^2.15.0",
     "msw-storybook-addon": "^3.0.3",
     "postal-mime": "4.1.4",
