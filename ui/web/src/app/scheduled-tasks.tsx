@@ -9,7 +9,7 @@ import { Item, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "../com
 import { Sheet } from "../components/ui/sheet";
 import { Badge } from "../components/ui/badge";
 import { Empty, EmptyDescription } from "../components/ui/empty";
-import { fetchAgentModels, ModelCatalogError, type AgentModel } from "./conversations";
+import { fetchAgentModels, type AgentModel } from "./agent-models";
 import { AlertLine } from "./alert-line";
 import { LoadingSkeleton } from "./load-state";
 import { Arrives, Fades } from "./motion";
@@ -196,10 +196,7 @@ export function ScheduledPanel({
   useEffect(
     () => {
       listTasks(chatServiceUrl).then(setTasks, (failure: Error) => setError(failure.message));
-      fetchAgentModels({ chatServiceUrl }).then(setModels, (failure: Error) => {
-        setModelsError(failure.message);
-        if (failure instanceof ModelCatalogError) setModels(failure.botModels);
-      });
+      fetchAgentModels({ chatServiceUrl }).then(setModels, (failure: Error) => setModelsError(failure.message));
     },
     // Stryker disable next-line ArrayDeclaration: the Chat Service URL never changes, so any list loads once per open
     [chatServiceUrl],

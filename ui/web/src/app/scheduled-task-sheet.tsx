@@ -6,7 +6,7 @@ import { ChevronDown } from "lucide-react";
 import { useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Button } from "../components/pill-button";
 import { Badge } from "../components/ui/badge";
-import type { AgentModel } from "./conversations";
+import type { AgentModel } from "./agent-models";
 import { DAY_NAMES, WEEKDAYS, clock, dayName, dayTime, stopInstant, unitOf, wallWords, zoneName, type Weekday } from "./schedule";
 import { RUN_STATUS, type ScheduledTask, type TaskChanges } from "./scheduled-task";
 import { ownWords, pickedSchedule, draftOf, endingOf, edited, modelChoices, countedWall, type Repeat, type Frequency, type Ends, type Draft } from "./scheduled-task-draft";
@@ -78,7 +78,7 @@ function TaskDetails({ task, models, modelsFailed, runsOn }: {
           )}</Fades>
           {/* Edit's select names the model while the catalog loads; the sheet says only that it loads. */}
           <Detail term="Model">
-            {models === null && !modelsFailed ? "Loading…" : modelChoices(task, models, modelsFailed, runsOn).find(({ value }) => value === model)?.label}
+            {models === null && !modelsFailed ? "Loading…" : modelChoices(task, models, runsOn).find(({ value }) => value === model)?.label}
           </Detail>
         </dl>
       </More>
@@ -299,10 +299,9 @@ function EndsRow({ value, counted, timezone, disabled, onChange }: {
   );
 }
 
-function TaskEditForm({ task, models, modelsFailed, runsOn, notices, onChange, onDone }: {
+function TaskEditForm({ task, models, runsOn, notices, onChange, onDone }: {
   task: ScheduledTask;
   models: AgentModel[] | null;
-  modelsFailed: boolean;
   /** The model its runs use; unknown while the catalog failed and it names none. */
   runsOn: string | undefined;
   notices: ReactNode;
@@ -349,7 +348,7 @@ function TaskEditForm({ task, models, modelsFailed, runsOn, notices, onChange, o
             <EndsRow value={draft.ends} counted={countedWall("ending" in save ? save.ending : undefined, task.timezone)} timezone={task.timezone} disabled={saving} onChange={(ends) => set({ ends })} />
           </Fold>
           <SelectRow label="Model" value={draft.model} disabled={saving || models === null} onChange={(model) => set({ model })}
-            choices={modelChoices(task, models, modelsFailed, runsOn)} />
+            choices={modelChoices(task, models, runsOn)} />
         </div>
       </More>
       <Fades>{"why" in save && (
@@ -393,7 +392,7 @@ export function ScheduledTaskSheet({
   /** Showing the Edit form, which the sheet's title names Edit task. */
   editing: boolean;
   onEditing: (editing: boolean) => void;
-  /** The account's models, the default first; null until they load; only the bot's, or null, when the catalog failed. */
+  /** The account's models, the default first; null while loading or after a failure. */
   models: AgentModel[] | null;
   /** The account's catalog failed (`notices` say why): the task stays editable on the model it names. */
   modelsFailed: boolean;
@@ -414,7 +413,6 @@ export function ScheduledTaskSheet({
         <TaskEditForm
           task={task}
           models={models}
-          modelsFailed={modelsFailed}
           runsOn={runsOn}
           notices={notices}
           onChange={onChange}

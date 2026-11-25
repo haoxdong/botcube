@@ -74,22 +74,6 @@ async function request(
   return response;
 }
 
-/** A model the account may run its Turns on, as `GET /agent/models` lists it. */
-export interface AgentModel {
-  key: string;
-  label: string;
-  description?: string;
-  /** The provider of the last Turn. */
-  provider: string;
-}
-
-/** A failed account catalog, with independently available server-owned bot choices. */
-export class ModelCatalogError extends Error {
-  constructor(message: string, readonly botModels: AgentModel[] | null) {
-    super(message);
-  }
-}
-
 export interface ReplayedSession {
   provider?: string;
   messages: Message[];
@@ -108,33 +92,6 @@ export interface SavedTurnFailure {
   runId: string;
   code?: string;
   message: string;
-}
-
-/** The models the account may run its Turns on; the first is the default. */
-export async function fetchAgentModels({
-  chatServiceUrl,
-  fetchImpl = fetch,
-}: {
-  chatServiceUrl: string;
-  fetchImpl?: typeof fetch;
-}): Promise<AgentModel[]> {
-  const response = await fetchImpl(`${chatServiceUrl}/agent/models`, { cache: "no-store", credentials: "include" });
-  if (!response.ok) {
-    if (response.status === 502 || response.status === 503) {
-      let body: { detail?: string; botModels?: AgentModel[] } | undefined;
-      try {
-        body = await response.json() as typeof body;
-      } catch (cause) {
-        throw new Error(`Failed to load the models: ${response.status}: invalid catalog error response`, { cause });
-      }
-      throw new ModelCatalogError(
-        `Failed to load the models: ${response.status}${body?.detail ? `: ${body.detail}` : ""}`,
-        Array.isArray(body?.botModels) ? body.botModels : null,
-      );
-    }
-    throw new Error(`Failed to load the models: ${response.status}`);
-  }
-  return ((await response.json()) as { models: AgentModel[] }).models;
 }
 
 /** The chat list and its server-owned read state. */

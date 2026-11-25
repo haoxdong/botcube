@@ -6728,14 +6728,19 @@ describe('agent profile', () => {
   it.each([undefined, 'plan', 'sonnet'])('keeps scheduled prompt edits available after the model catalog fails with model %s', async (model) => {
     service.scheduled = [{ ...MORNING_BRIEF, ...(model === undefined ? {} : { model }) }];
     await renderPage();
-    service.failing.set('GET /agent/models', 503);
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      url === 'http://chat.test/agent/models' ? answer(409, {
+        detail: 'OpenAI Sign-in changed while fetching the plan catalog',
+      }) : chatService(url, init),
+    );
+    const refusal = 'Failed to load the models: OpenAI Sign-in changed while fetching the plan catalog';
     const task = await openScheduled();
     const panel = within(openProfile());
-    await panel.findByText('Failed to load the models: 503');
+    await panel.findByText(refusal);
     const sheet = await openTask(task);
     const inSheet = within(sheet);
     // The open sheet covers the tab, so it says why the models failed itself.
-    expect(inSheet.getByText('Failed to load the models: 503')).toBeInTheDocument();
+    expect(inSheet.getByText(refusal)).toBeInTheDocument();
     expect(inSheet.getByRole('button', { name: 'Edit' })).toBeEnabled();
     // The sheet's Model reads as Edit's does.
     const words = `${model ?? 'Account default'} (models unavailable)`;
@@ -6752,60 +6757,7 @@ describe('agent profile', () => {
     ]);
     expect(sheet.querySelector('.scheduled-task-prompt')).toHaveTextContent('Brief me on FX');
     expect(service.scheduled[0]?.model).toBe(model);
-    expect(panel.getByText('Failed to load the models: 503')).toBeInTheDocument();
-  });
-
-  it.each([undefined, 'plan', 'sonnet'])('selects a server-provided bot model during a catalog outage from %s', async (model) => {
-    service.scheduled = [{ ...MORNING_BRIEF, ...(model === undefined ? {} : { model }) }];
-    await renderPage();
-    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
-      url === 'http://chat.test/agent/models' ? answer(503, {
-        detail: 'Plan Usage was revoked',
-        botModels: [{ key: 'sonnet', label: 'Sonnet', provider: 'anthropic' }],
-      }) : chatService(url, init),
-    );
-    const task = await openScheduled();
-    const panel = within(openProfile());
-    await panel.findByText(/Failed to load the models: 503/);
-    const inSheet = within(await openTask(task));
-    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await more(inSheet);
-    const chooser = inSheet.getByLabelText('Model');
-    expect(chooser).toBeEnabled();
-    expect(shownChoice(chooser)).toBe(model === undefined ? 'Account default (models unavailable)' : model === 'plan' ? 'plan (models unavailable)' : 'Sonnet');
-    expect(await choicesOf(chooser)).not.toContain('GPT');
-    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
-    expect(sent('PATCH', '/scheduled-tasks/task-1')[0]).not.toHaveProperty('model');
-    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await more(inSheet);
-    await choose(inSheet.getByLabelText('Model'), 'Sonnet');
-    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await more(inSheet);
-    expect(shownChoice(inSheet.getByLabelText('Model'))).toBe('Sonnet');
-    if (model !== 'sonnet') expect(sent('PATCH', '/scheduled-tasks/task-1')[1]).toHaveProperty('model', 'sonnet');
-    expect(panel.getByText('Failed to load the models: 503: Plan Usage was revoked')).toBeInTheDocument();
-  });
-
-  it('keeps the account default after choosing then undoing a bot choice during an outage', async () => {
-    service.scheduled = [MORNING_BRIEF];
-    await renderPage();
-    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
-      url === 'http://chat.test/agent/models' ? answer(503, {
-        detail: 'Plan Usage was revoked',
-        botModels: [{ key: 'sonnet', label: 'Sonnet', provider: 'anthropic' }],
-      }) : chatService(url, init),
-    );
-    const task = await openScheduled();
-    await within(openProfile()).findByText(/Failed to load the models: 503/);
-    const inSheet = within(await openTask(task));
-    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await more(inSheet);
-    await choose(inSheet.getByLabelText('Model'), 'Sonnet');
-    await choose(inSheet.getByLabelText('Model'), 'Account default (models unavailable)');
-    expect(shownChoice(inSheet.getByLabelText('Model'))).toBe('Account default (models unavailable)');
-    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
-    expect(sent('PATCH', '/scheduled-tasks/task-1')[0]).not.toHaveProperty('model');
+    expect(panel.getByText(refusal)).toBeInTheDocument();
   });
 
   it('reports a task edit failure separately from the unavailable model catalog', async () => {
@@ -8109,17 +8061,26 @@ describe('model and effort picker', () => {
   });
 
   it('says so when the models could not load, offering none and sending no Turn', async () => {
-    service.failing.set('GET /agent/models', 503);
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      url === 'http://chat.test/agent/models' ? answer(409, {
+        detail: 'OpenAI Sign-in changed while fetching the plan catalog',
+      }) : chatService(url, init),
+    );
     await renderPage();
 
-    expect(pill()).toHaveAccessibleName('Model Models could not load: Failed to load the models: 503, reasoning Medium');
+    expect(pill()).toHaveAccessibleName('Model Models unavailable, reasoning Medium');
+    await userEvent.click(pill());
+    const picker = within(await screen.findByRole('dialog', { name: 'Model and effort' }));
+    expect(picker.getByText(/OpenAI Sign-in changed while fetching the plan catalog/)).toBeVisible();
+    expect(picker.getByRole('combobox')).toBeDisabled();
+    expect(picker.queryAllByRole('option')).toEqual([]);
+    await userEvent.keyboard('{Escape}');
     await sendMessage('What is 2+2? One word.');
     expect(copilot.runAgent).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent(
-      /^Models could not load: Failed to load the models: 503\. Reload the page to send a message\.$/,
+      /^Models could not load: Failed to load the models: OpenAI Sign-in changed while fetching the plan catalog\. Reload the page to send a message\.$/,
     );
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
-    expect(await modelOptions()).toEqual([]);
   });
 
   it('picks a model', async () => {

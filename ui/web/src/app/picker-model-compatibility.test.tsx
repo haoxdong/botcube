@@ -25,7 +25,7 @@ it("shows models in server order and lets the user pick Bedrock", async () => {
 
 it("shows an older task's removed model as unavailable", () => {
   const task = { id: "task", title: "Brief", prompt: "Brief me", schedule: "rate(1 day)", timezone: "UTC", paused: false, ended: false, sideChat: null, proposalId: "proposal", model: "sonnet-4.6" };
-  expect(modelChoices(task, models, false, task.model)).toEqual([
+  expect(modelChoices(task, models, task.model)).toEqual([
     { value: "sonnet-4.6", label: "sonnet-4.6 (unavailable)", disabled: true },
     ...models.map(({ key, label }) => ({ value: key, label })),
   ]);

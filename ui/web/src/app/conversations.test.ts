@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { relayTurn } from '../../../../chat/src/turn-stream.js';
+import { fetchAgentModels } from './agent-models';
 
 import {
   buildDirectAgent,
@@ -9,8 +10,6 @@ import {
   createSideChat,
   deleteConversation,
   fetchMainChat,
-  fetchAgentModels,
-  ModelCatalogError,
   fetchChatList,
   openConversation,
   toolCancellationStore,
@@ -683,26 +682,16 @@ describe('a Stop', () => {
 
 
 describe('model catalog refusals', () => {
-  it.each([502, 503])('retains HTTP %s and its cause with explicit bot choices', async (status) => {
-    const choices = [{ key: 'quick', label: 'Quick', provider: 'anthropic' }];
-    const failure = await fetchAgentModels({ chatServiceUrl: SERVICE, fetchImpl: async () =>
-      Response.json({ detail: 'Plan Usage was revoked', botModels: choices }, { status }),
-    }).catch((error: unknown) => error);
-    expect(failure).toBeInstanceOf(ModelCatalogError);
-    expect((failure as ModelCatalogError).message).toBe(`Failed to load the models: ${status}: Plan Usage was revoked`);
-    expect((failure as ModelCatalogError).botModels).toEqual([{ key: 'quick', label: 'Quick', provider: 'anthropic' }]);
-  });
-
-  it('keeps an unauthenticated refusal separate from catalog choices', async () => {
+  it('reports when the Sign-in changes during catalog refresh', async () => {
     await expect(fetchAgentModels({ chatServiceUrl: SERVICE, fetchImpl: async () =>
-      Response.json({ detail: 'Sign in first' }, { status: 401 }),
-    })).rejects.toThrow('Failed to load the models: 401');
+      Response.json({ detail: 'OpenAI Sign-in changed while fetching the plan catalog' }, { status: 409 }),
+    })).rejects.toThrow('Failed to load the models: OpenAI Sign-in changed while fetching the plan catalog');
   });
 
-  it('classifies an unreadable catalog refusal instead of turning it into a model list', async () => {
+  it('reports the status when a catalog refusal has no service detail', async () => {
     await expect(fetchAgentModels({ chatServiceUrl: SERVICE, fetchImpl: async () =>
       new Response('invalid JSON', { status: 503 }),
-    })).rejects.toThrow('Failed to load the models: 503: invalid catalog error response');
+    })).rejects.toThrow('Failed to load the models: 503');
   });
 });
 

@@ -26,7 +26,7 @@ export function ModelSelector({ models, model, effort, loadingLabel, onModelChan
   const effortName = useId();
   const [open, setOpen] = useState(false);
   const catalog = models.loaded ? models.models : [];
-  const modelLabel = models.loaded ? catalog.find((item) => item.key === model)?.label : (models.error ?? loadingLabel ?? "Loading models…");
+  const modelLabel = models.loaded ? catalog.find((item) => item.key === model)?.label : (models.error === null ? loadingLabel ?? "Loading models…" : "Models unavailable");
   const effortLabel = EFFORT_LEVELS.find((item) => item.key === effort)?.label ?? effort;
   const step = Math.max(0, EFFORT_LEVELS.findIndex((item) => item.key === effort));
   const last = EFFORT_LEVELS.length - 1;
@@ -54,7 +54,7 @@ export function ModelSelector({ models, model, effort, loadingLabel, onModelChan
         <div className="relative flex flex-col items-center">
           <div role="status" className="flex h-8 items-center text-lg font-semibold"><span id={effortName} className="sr-only">Effort</span>{effortLabel}</div>
           <Button variant="ghost" size="icon" aria-label="Reset effort" className="absolute top-0 right-0 text-(--color-text-muted) focus-visible:bg-(--color-fill) focus-visible:text-(--color-text)" onClick={() => onEffortChange(DEFAULT_EFFORT)}><RotateCcw /></Button>
-          <Select value={model ?? null} onValueChange={(selected: string | null) => { if (selected !== null) onModelChange(selected); }}>
+          <Select value={model ?? null} disabled={!models.loaded} onValueChange={(selected: string | null) => { if (selected !== null) onModelChange(selected); }}>
             <SelectTrigger
               aria-label={`Model ${modelLabel}`}
               size="sm"
@@ -71,6 +71,7 @@ export function ModelSelector({ models, model, effort, loadingLabel, onModelChan
               </SelectItem>)}
             </SelectContent>
           </Select>
+          {!models.loaded && models.error !== null && <p role="status" className="text-small text-(--color-text-muted)">{models.error}</p>}
         </div>
         <div className="relative mt-1">
           <Slider

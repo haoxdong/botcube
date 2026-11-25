@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchAgentModels, type AgentModel } from "./conversations";
+import { fetchAgentModels, type AgentModel } from "./agent-models";
 
 /** The account's models, or why they could not load (no reason while they load). */
 export type ModelList = { loaded: true; accountId: string | undefined; models: AgentModel[] } | { loaded: false; error: string | null };
