@@ -15,12 +15,12 @@ export const DISPATCH = 'DISPATCH#';
  * @typedef {{
  *   now(): number,
  *   transition(): Promise<WakeTransition>,
- *   claim(claim: Claim, cap: number, debounceMs: number): Promise<'claimed' | 'debounced' | 'capped'>,
- *   release(claim: Claim): Promise<void>,
- *   lastClaim(kind: Claim['kind'], day: string): Promise<number | null>,
- *   requestDispatch(action: Action, claim: Claim): Promise<void>,
+ *   claimWake(day: string, at: number, cap: number, debounceMs: number): Promise<'claimed' | 'debounced' | 'capped'>,
+ *   lastClaim(day: string): Promise<number | null>,
  * }} WakePorts
- * @typedef {WakePorts & {
+ * @typedef {Pick<WakePorts, 'now'> & {
+ *   claimPark(day: string, at: number, debounceMs: number): Promise<boolean>,
+ *   release(claim: Claim): Promise<void>,
  *   state(): Promise<'live' | 'parked' | 'egress' | 'credential' | 'transition incomplete'>,
  *   originClaimed(): Promise<boolean>,
  *   heartbeats(): Promise<Heartbeat[]>,
@@ -36,7 +36,7 @@ export function wakeService(/** @type {WakePorts} */ ports) {
     const transition = await ports.transition();
     if (transition.state === 'live' || transition.state === 'waking') return transition;
     const now = ports.now();
-    const last = await ports.lastClaim('wake', day(now));
+    const last = await ports.lastClaim(day(now));
     return last !== null && now - last < WAKE_DEBOUNCE_MS && (transition.state !== 'failed' || last > transition.stoppedAt) ? { state: 'waking', since: new Date(last).toISOString() } : { state: 'parked' };
   };
   return {
@@ -45,11 +45,8 @@ export function wakeService(/** @type {WakePorts} */ ports) {
       const transition = await ports.transition();
       if (transition.state === 'live' || transition.state === 'waking') return transition;
       const now = ports.now();
-      /** @type {Claim} */
-      const claim = { kind: 'wake', day: day(now), at: now };
-      const claimed = await ports.claim(claim, WAKES_PER_DAY, WAKE_DEBOUNCE_MS);
+      const claimed = await ports.claimWake(day(now), now, WAKES_PER_DAY, WAKE_DEBOUNCE_MS);
       if (claimed === 'capped') return { state: 'limit', limit: WAKES_PER_DAY };
-      if (claimed === 'claimed') await ports.requestDispatch('unpark', claim);
       return status();
     },
   };
@@ -97,7 +94,7 @@ export function dispatcherService(/** @type {DispatcherPorts} */ ports) {
       const now = ports.now();
       /** @type {Claim} */
       const claim = { kind: 'park', day: day(now), at: now };
-      if (await ports.claim(claim, Number.POSITIVE_INFINITY, PARK_DEBOUNCE_MS) !== 'claimed') {
+      if (!(await ports.claimPark(claim.day, claim.at, PARK_DEBOUNCE_MS))) {
         return { action: 'none', reason: 'a park was asked for in the last 10 minutes' };
       }
       await dispatchUnder('park', claim);

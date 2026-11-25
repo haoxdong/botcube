@@ -1,6 +1,5 @@
-import { DynamoDBClient, GetItemCommand, PutItemCommand } from '@aws-sdk/client-dynamodb';
+import { DynamoDBClient, GetItemCommand, PutItemCommand, TransactWriteItemsCommand, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import { S3Client } from '@aws-sdk/client-s3';
-import { PutParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createChatTable } from '../../../chat/test/fakes/stack.js';
 import { motoAws, motoEndpoint } from '../../../chat/test/fakes/moto.js';
@@ -8,45 +7,51 @@ import { motoAws, motoEndpoint } from '../../../chat/test/fakes/moto.js';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { ProductionActivity } from '../../../chat/src/production-activity.js';
 // @ts-expect-error -- the parking Lambdas are plain JavaScript the ProductionParking stack packages as-is.
-import { dispatcherPorts } from './aws-ports.mjs';
+import { dispatcherPorts, wakePorts } from './aws-ports.mjs';
+// @ts-expect-error -- see above.
+import { wakeService } from './parking.mjs';
 
 const endpoint = motoEndpoint();
 const aws = motoAws();
 const table = `chat-${Math.random().toString(36).slice(2)}`;
-const parameter = `/park-state-${Math.random().toString(36).slice(2)}`;
 const saved = { ...process.env };
 const dynamodb = new DynamoDBClient(aws);
 
 beforeAll(async () => {
   await createChatTable(endpoint, table);
-  Object.assign(process.env, { BOTCUBE_CHAT_TABLE: table, PARK_STATE_PARAMETER: parameter, TRANSITION_FUNCTION: 'transition' });
+  Object.assign(process.env, { BOTCUBE_CHAT_TABLE: table, TRANSITION_FUNCTION: 'transition' });
 });
 afterAll(() => { process.env = saved; });
 
-const ports = () => dispatcherPorts({ lambda: { async send() { return { Payload: Buffer.from('{"state":"parked"}') }; } }, dynamodb, ssm: new SSMClient(aws), s3: new S3Client({ ...aws, forcePathStyle: true }) });
+const lambda = { async send() { return { Payload: Buffer.from('{"state":"parked"}') }; } };
+const ports = (client = dynamodb) => ({
+  ...dispatcherPorts({ lambda, dynamodb: client, s3: new S3Client({ ...aws, forcePathStyle: true }) }),
+  ...wakePorts({ lambda, dynamodb: client }),
+});
 
-describe('the parking Lambda over DynamoDB and SSM', () => {
+describe('the parking Lambda over DynamoDB', () => {
   it('claims at most the cap a day, and debounces a claim inside its window', async () => {
     const parking = ports();
     const day = `2026-11-${Math.random().toString(36).slice(2)}`;
 
-    expect(await parking.claim({ kind: 'wake', day, at: 1_000 }, 2, 100)).toBe('claimed');
-    expect(await parking.claim({ kind: 'wake', day, at: 1_050 }, 2, 100)).toBe('debounced');
-    expect(await parking.lastClaim('wake', day)).toBe(1_000);
-    expect(await parking.claim({ kind: 'wake', day, at: 1_101 }, 2, 100)).toBe('claimed');
-    expect(await parking.claim({ kind: 'wake', day, at: 1_300 }, 2, 100)).toBe('capped');
-    expect(await parking.claim({ kind: 'park', day, at: 1_300 }, Number.POSITIVE_INFINITY, 100)).toBe('claimed');
+    expect(await parking.claimWake(day, 1_000, 2, 100)).toBe('claimed');
+    expect(await parking.claimWake(day, 1_000, 2, 100)).toBe('debounced');
+    expect(await parking.claimWake(day, 1_050, 2, 100)).toBe('debounced');
+    expect(await parking.lastClaim(day)).toBe(1_000);
+    expect(await parking.claimWake(day, 1_101, 2, 100)).toBe('claimed');
+    expect(await parking.claimWake(day, 1_300, 2, 100)).toBe('capped');
+    expect(await parking.claimPark(day, 1_300, 100)).toBe(true);
   });
 
   it('gives a claim back so the next one goes ahead', async () => {
     const parking = ports();
     const day = `2026-11-${Math.random().toString(36).slice(2)}`;
-    await parking.claim({ kind: 'wake', day, at: 1_000 }, 1, 100);
+    await parking.claimWake(day, 2_000, 1, 100);
 
-    await parking.release({ kind: 'wake', day, at: 1_000 });
+    await parking.release({ kind: 'wake', day, at: 2_000 });
 
-    expect(await parking.lastClaim('wake', day)).toBeNull();
-    expect(await parking.claim({ kind: 'wake', day, at: 1_010 }, 1, 100)).toBe('claimed');
+    expect(await parking.lastClaim(day)).toBeNull();
+    expect(await parking.claimWake(day, 2_010, 1, 100)).toBe('claimed');
   });
 
   it('reads every Chat Service heartbeat and forgets the named ones', async () => {
@@ -79,7 +84,7 @@ describe('the parking Lambda over DynamoDB and SSM', () => {
 
   it('records a dispatch request for the dispatcher and forgets it once dispatched', async () => {
     const parking = ports();
-    await parking.requestDispatch('unpark', { kind: 'wake', day: '2026-11-04', at: 4_242 });
+    expect(await parking.claimWake('2026-11-04', 4_242, 20, 100)).toBe('claimed');
     const key = { pk: { S: 'PRODUCTION_PARKING' }, sk: { S: 'DISPATCH#4242' } };
 
     expect((await dynamodb.send(new GetItemCommand({ TableName: table, Key: key }))).Item).toEqual({
@@ -89,11 +94,39 @@ describe('the parking Lambda over DynamoDB and SSM', () => {
     expect((await dynamodb.send(new GetItemCommand({ TableName: table, Key: key }))).Item).toBeUndefined();
   });
 
-  it('reads the stored park state, failing loud on anything but live or parked', async () => {
-    const ssm = new SSMClient(aws);
-    await ssm.send(new PutParameterCommand({ Name: parameter, Value: 'parked', Type: 'String', Overwrite: true }));
-    expect(await ports().state()).toBe('parked');
-    await ssm.send(new PutParameterCommand({ Name: parameter, Value: 'asleep', Type: 'String', Overwrite: true }));
-    await expect(ports().state()).rejects.toThrow('Park state is "asleep", not a production mode');
+  it('keeps production parked if a Wake dispatch cannot be recorded, allowing the next press', async () => {
+    const parking = ports();
+    const at = Date.parse('2026-11-05T12:00:00Z');
+    const existing = { pk: { S: 'PRODUCTION_PARKING' }, sk: { S: `DISPATCH#${at}` } };
+    await dynamodb.send(new PutItemCommand({ TableName: table, Item: existing }));
+    const wake = wakeService({ ...parking, now: () => at });
+
+    await expect(wake.wake()).rejects.toThrow();
+    expect(await wake.status()).toEqual({ state: 'parked' });
+    expect(await parking.lastClaim('2026-11-05')).toBeNull();
+    expect((await dynamodb.send(new GetItemCommand({ TableName: table, Key: existing }))).Item).toEqual(existing);
+
+    await parking.forgetRequest(at);
+    expect(await wake.wake()).toEqual({ state: 'waking', since: '2026-11-05T12:00:00.000Z' });
+    expect((await dynamodb.send(new GetItemCommand({ TableName: table, Key: existing }))).Item?.action).toEqual({ S: 'unpark' });
+  });
+
+  it('debounces a second Wake whose transaction conflicts with the first', async () => {
+    const now = () => Date.parse('2026-11-06T12:00:00Z');
+    const first = wakeService({ ...ports(), now });
+    const competing = new DynamoDBClient(aws);
+    competing.middlewareStack.add((next, context) => async (args) => {
+      if (context.commandName === TransactWriteItemsCommand.name) {
+        await first.wake();
+        throw new TransactionCanceledException({
+          $metadata: {}, message: 'Transaction cancelled',
+          CancellationReasons: [{ Code: 'TransactionConflict' }, { Code: 'None' }],
+        });
+      }
+      return next(args);
+    }, { step: 'initialize' });
+
+    const second = wakeService({ ...ports(competing), now });
+    await expect(second.wake()).resolves.toEqual({ state: 'waking', since: '2026-11-06T12:00:00.000Z' });
   });
 });

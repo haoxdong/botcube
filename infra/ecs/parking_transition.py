@@ -93,7 +93,7 @@ def operate(event, context, *, cloudformation=None, ssm=None, verify=None, capac
     if event.get('op') == 'backstop':
         return backstop(event, ssm or boto3.client('ssm'), executions or boto3.client('stepfunctions'), cloudformation, leases or boto3.client('s3'))
     if event.get('op') == 'state':
-        stored = event.get('stored') or (ssm or boto3.client('ssm')).get_parameter(Name=PARK_STATE)['Parameter']['Value']
+        stored = (ssm or boto3.client('ssm')).get_parameter(Name=PARK_STATE)['Parameter']['Value']
         return production_state(cloudformation, stored, EFFECTIVE_MODES)
     action = event.get('mode') or {'park': 'parked', 'unpark': 'live'}.get(event.get('action'))
     if action not in STEPS or event.get('op') not in ('start', 'advance'):

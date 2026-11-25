@@ -22,7 +22,6 @@ export interface ProductionParkingProps extends StackProps {
   chatTable: ITable;
   /** The operator existing the chat table with its grants: the functions are granted nothing on it or its stream. */
   chatTableExisting: boolean;
-  parkStateParameter: string;
   parking: { slotBucket: string; originSlotKey: string };
   functionName: string;
   autoPark: boolean;
@@ -59,15 +58,11 @@ export class ProductionParkingStack extends Stack {
     const url = wake.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });
 
     const dispatcher = fn(props.functionName, 'dispatcher', {
-      PARK_STATE_PARAMETER: props.parkStateParameter,
       SLOT_BUCKET: props.parking.slotBucket,
       ORIGIN_SLOT_KEY: props.parking.originSlotKey,
       TRANSITION_FUNCTION: transition.functionName,
     });
     grantItems(dispatcher, ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem']);
-    dispatcher.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['ssm:GetParameter'], resources: [this.formatArn({ service: 'ssm', resource: `parameter${props.parkStateParameter}` })],
-    }));
     dispatcher.addToRolePolicy(new iam.PolicyStatement({
       actions: ['s3:GetObject'], resources: [`arn:${this.partition}:s3:::${props.parking.slotBucket}/${props.parking.originSlotKey}`],
     }));
@@ -102,6 +97,6 @@ export function createProductionParking(scope: Construct, cubeRoot: string, chat
   return new ProductionParkingStack(scope, 'ProductionParking', {
     env: { account: identity.aws.account, region: identity.aws.region },
     parkingPath: join(cubeRoot, 'infra/ecs/parking'),
-    chatTable, chatTableExisting, parkStateParameter: identity.ssm.parkState, parking: { slotBucket, originSlotKey }, functionName, autoPark, identity, config, imageRegistry,
+    chatTable, chatTableExisting, parking: { slotBucket, originSlotKey }, functionName, autoPark, identity, config, imageRegistry,
   });
 }

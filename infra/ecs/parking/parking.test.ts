@@ -18,25 +18,32 @@ function production({ state = 'live', paused = state === 'parked', heartbeats = 
     requests: [] as { action: string; claim: Claim }[],
     dispatched: [] as string[],
   };
+  const claim = ({ kind, day, at }: Claim, cap: number, debounceMs: number) => {
+    const item = world.claims.get(`${kind}#${day}`) ?? { claims: 0 };
+    if (item.lastAt !== undefined && item.lastAt >= at - debounceMs) return 'debounced';
+    if (item.claims >= cap) return 'capped';
+    world.claims.set(`${kind}#${day}`, { claims: item.claims + 1, lastAt: at });
+    return 'claimed';
+  };
   const wakePorts = {
     now: () => world.now,
     transition: async () => ({ state: world.paused ? 'parked' : 'live' }),
-    claim: async ({ kind, day, at }: Claim, cap: number, debounceMs: number) => {
-      const item = world.claims.get(`${kind}#${day}`) ?? { claims: 0 };
-      if (item.lastAt !== undefined && item.lastAt >= at - debounceMs) return 'debounced';
-      if (item.claims >= cap) return 'capped';
-      world.claims.set(`${kind}#${day}`, { claims: item.claims + 1, lastAt: at });
-      return 'claimed';
+    claimWake: async (day: string, at: number, cap: number, debounceMs: number) => {
+      const request = { kind: 'wake', day, at };
+      const result = claim(request, cap, debounceMs);
+      if (result === 'claimed') world.requests.push({ action: 'unpark', claim: request });
+      return result;
     },
+    lastClaim: async (day: string) => world.claims.get(`wake#${day}`)?.lastAt ?? null,
+  };
+  const dispatcherPorts = {
+    now: () => world.now,
+    claimPark: async (day: string, at: number, debounceMs: number) =>
+      claim({ kind: 'park', day, at }, Number.POSITIVE_INFINITY, debounceMs) === 'claimed',
     release: async ({ kind, day, at }: Claim) => {
       const item = world.claims.get(`${kind}#${day}`);
       if (item?.lastAt === at) world.claims.set(`${kind}#${day}`, { claims: item.claims - 1 });
     },
-    lastClaim: async (kind: string, day: string) => world.claims.get(`${kind}#${day}`)?.lastAt ?? null,
-    requestDispatch: async (action: string, claim: Claim) => { world.requests.push({ action, claim }); },
-  };
-  const dispatcherPorts = {
-    ...wakePorts,
     state: async () => world.state,
     originClaimed: async () => world.claimed,
     heartbeats: async () => world.heartbeats,

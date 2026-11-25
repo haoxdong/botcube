@@ -42,12 +42,10 @@ it('a stack mismatch is reported as transition incomplete by the dispatcher chec
 
 it('the dispatcher reads transition incomplete through its AWS boundary', async () => {
   vi.stubEnv('BOTCUBE_CHAT_TABLE', 'chat');
-  vi.stubEnv('PARK_STATE_PARAMETER', '/state');
   vi.stubEnv('TRANSITION_FUNCTION', 'transition');
   const ports = dispatcherPorts({
-    ssm: { async send() { return { Parameter: { Value: 'parked' } }; } },
     lambda: { async send(command: InvokeCommand) {
-      expect(JSON.parse(Buffer.from(command.input.Payload ?? []).toString())).toEqual({ op: 'state', stored: 'parked' });
+      expect(JSON.parse(Buffer.from(command.input.Payload ?? []).toString())).toEqual({ op: 'state' });
       return { Payload: Buffer.from('{"state":"transition incomplete"}') };
     } },
   });

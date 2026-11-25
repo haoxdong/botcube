@@ -1,7 +1,6 @@
-import { ConditionalCheckFailedException, DeleteItemCommand, DynamoDBClient, GetItemCommand, PutItemCommand, QueryCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
+import { ConditionalCheckFailedException, DeleteItemCommand, DynamoDBClient, GetItemCommand, QueryCommand, TransactWriteItemsCommand, TransactionCanceledException, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import { GetObjectCommand, NoSuchKey, S3Client } from '@aws-sdk/client-s3';
 import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
-import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { ACTIVITY, DISPATCH, PARTITION } from './parking.mjs';
 
 const env = (/** @type {string} */ name) => {
@@ -19,33 +18,66 @@ async function invokeTransition(/** @type {LambdaClient} */ lambda, /** @type {o
   return JSON.parse(payload);
 }
 
+const claimKey = (/** @type {Claim['kind']} */ kind, /** @type {string} */ day) => ({ pk: { S: PARTITION }, sk: { S: `${kind.toUpperCase()}#${day}` } });
+
+function claimUpdate(/** @type {string} */ TableName, /** @type {Claim} */ { kind, day, at }, /** @type {number} */ debounceMs) {
+  return {
+    TableName, Key: claimKey(kind, day),
+    UpdateExpression: 'SET lastAt = :at ADD claims :one',
+    ConditionExpression: '(attribute_not_exists(lastAt) OR lastAt < :edge)',
+    ExpressionAttributeValues: { ':one': { N: '1' }, ':at': { N: String(at) }, ':edge': { N: String(at - debounceMs) } },
+  };
+}
+
 export function wakePorts({ dynamodb = new DynamoDBClient({}), lambda = new LambdaClient({}) } = {}) {
   const TableName = env('BOTCUBE_CHAT_TABLE');
-  const claimKey = (/** @type {string} */ kind, /** @type {string} */ day) => ({ pk: { S: PARTITION }, sk: { S: `${kind.toUpperCase()}#${day}` } });
-  const lastClaim = async (/** @type {string} */ kind, /** @type {string} */ day) => {
-    const { Item } = await dynamodb.send(new GetItemCommand({ TableName, Key: claimKey(kind, day), ConsistentRead: true }));
+  const lastClaim = async (/** @type {string} */ day) => {
+    const { Item } = await dynamodb.send(new GetItemCommand({ TableName, Key: claimKey('wake', day), ConsistentRead: true }));
     return Item?.lastAt?.N === undefined ? null : Number(Item.lastAt.N);
   };
   return {
-    now: () => Date.now(),
+    now: Date.now,
     transition: () => invokeTransition(lambda, { op: 'wake-state' }),
-    async claim(/** @type {Claim} */ { kind, day, at }, /** @type {number} */ cap, /** @type {number} */ debounceMs) {
-      const capped = Number.isFinite(cap);
+    async claimWake(/** @type {string} */ day, /** @type {number} */ at, /** @type {number} */ cap, /** @type {number} */ debounceMs) {
+      const update = claimUpdate(TableName, { kind: 'wake', day, at }, debounceMs);
       try {
-        await dynamodb.send(new UpdateItemCommand({
-          TableName, Key: claimKey(kind, day),
-          UpdateExpression: 'SET claims = if_not_exists(claims, :zero) + :one, lastAt = :at',
-          ConditionExpression: `(attribute_not_exists(lastAt) OR lastAt < :edge)${capped ? ' AND (attribute_not_exists(claims) OR claims < :cap)' : ''}`,
-          ExpressionAttributeValues: {
-            ':zero': { N: '0' }, ':one': { N: '1' }, ':at': { N: String(at) }, ':edge': { N: String(at - debounceMs) },
-            ...(capped ? { ':cap': { N: String(cap) } } : {}),
-          },
-        }));
+        await dynamodb.send(new TransactWriteItemsCommand({ TransactItems: [
+          { Update: {
+            ...update,
+            ConditionExpression: `${update.ConditionExpression} AND (attribute_not_exists(claims) OR claims < :cap)`,
+            ExpressionAttributeValues: { ...update.ExpressionAttributeValues, ':cap': { N: String(cap) } },
+          } },
+          { Put: {
+            TableName, ConditionExpression: 'attribute_not_exists(sk)',
+            Item: { pk: { S: PARTITION }, sk: { S: `${DISPATCH}${at}` },
+              action: { S: 'unpark' }, kind: { S: 'wake' }, day: { S: day }, at: { N: String(at) } },
+          } },
+        ] }));
         return 'claimed';
       } catch (error) {
-        if (!(error instanceof ConditionalCheckFailedException)) throw error;
-        const last = await lastClaim(kind, day);
+        if (!(error instanceof TransactionCanceledException)) throw error;
+        const [claim, dispatch] = error.CancellationReasons?.map(reason => reason.Code) ?? [];
+        if (claim === 'TransactionConflict' || dispatch === 'TransactionConflict') return 'debounced';
+        if (claim !== 'ConditionalCheckFailed' || (dispatch !== 'None' && dispatch !== 'ConditionalCheckFailed')) throw error;
+        const last = await lastClaim(day);
         return last !== null && last >= at - debounceMs ? 'debounced' : 'capped';
+      }
+    },
+    lastClaim,
+  };
+}
+
+export function dispatcherPorts({ dynamodb = new DynamoDBClient({}), s3 = new S3Client({}), lambda = new LambdaClient({}) } = {}) {
+  const TableName = env('BOTCUBE_CHAT_TABLE');
+  return {
+    now: Date.now,
+    async claimPark(/** @type {string} */ day, /** @type {number} */ at, /** @type {number} */ debounceMs) {
+      try {
+        await dynamodb.send(new UpdateItemCommand(claimUpdate(TableName, { kind: 'park', day, at }, debounceMs)));
+        return true;
+      } catch (error) {
+        if (error instanceof ConditionalCheckFailedException) return false;
+        throw error;
       }
     },
     async release(/** @type {Claim} */ { kind, day, at }) {
@@ -55,24 +87,7 @@ export function wakePorts({ dynamodb = new DynamoDBClient({}), lambda = new Lamb
         ExpressionAttributeValues: { ':one': { N: '1' }, ':at': { N: String(at) } },
       }));
     },
-    lastClaim,
-    async requestDispatch(/** @type {'park' | 'unpark'} */ action, /** @type {Claim} */ { kind, day, at }) {
-      await dynamodb.send(new PutItemCommand({ TableName, Item: {
-        pk: { S: PARTITION }, sk: { S: `${DISPATCH}${at}` }, action: { S: action }, kind: { S: kind }, day: { S: day }, at: { N: String(at) },
-      } }));
-    },
-  };
-}
-
-export function dispatcherPorts({ dynamodb = new DynamoDBClient({}), ssm = new SSMClient({}), s3 = new S3Client({}), lambda = new LambdaClient({}) } = {}) {
-  const TableName = env('BOTCUBE_CHAT_TABLE');
-  return {
-    ...wakePorts({ dynamodb, lambda }),
-    async state() {
-      const { Parameter } = await ssm.send(new GetParameterCommand({ Name: env('PARK_STATE_PARAMETER') }));
-      if (!['parked', 'egress', 'credential', 'live'].includes(Parameter?.Value ?? '')) throw new Error(`Park state is ${JSON.stringify(Parameter?.Value)}, not a production mode`);
-      return (await invokeTransition(lambda, { op: 'state', stored: Parameter.Value })).state;
-    },
+    state: async () => (await invokeTransition(lambda, { op: 'state' })).state,
     async mode(/** @type {string | undefined} */ mode) {
       if (!['parked', 'egress', 'credential', 'live'].includes(mode ?? '')) throw new Error('Invalid production mode');
       return invokeTransition(lambda, { mode, op: 'start' });
