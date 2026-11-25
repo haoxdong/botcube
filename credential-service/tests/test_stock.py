@@ -37,6 +37,7 @@ def test_the_stock_image_runs_the_stock_service_from_the_package_and_the_example
     dockerfile = STOCK_DOCKERFILE.read_text()
     copies = [line.split()[1] for line in dockerfile.splitlines() if line.startswith('COPY ') and '--from=' not in line]
     assert copies == [
+        '${BOTCUBE_ROOT}/credential-source/',
         '${BOTCUBE_ROOT}/credential-service/',
         '${BOTCUBE_ROOT}/examples/enterprise/botcube.yaml',
         '${BOTCUBE_ROOT}/examples/public/botcube.yaml',

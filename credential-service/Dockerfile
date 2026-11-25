@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 RUN --mount=type=secret,id=build_ca \
   if [ -f /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi; \
   pip install --no-cache-dir uv==0.12.19
+COPY ${BOTCUBE_ROOT}/credential-source/ /opt/botcube/credential-source/
 COPY ${BOTCUBE_ROOT}/credential-service/ /opt/botcube/credential-service/
 # The examples' BotCube Configs, which BOTCUBE_CONFIG names (ADR 0091).
 COPY ${BOTCUBE_ROOT}/examples/enterprise/botcube.yaml /opt/botcube/examples/enterprise/botcube.yaml

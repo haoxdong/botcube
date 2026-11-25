@@ -5,6 +5,7 @@ description = "Deep Agents implementation of the BotCube Harness contract."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "botcube-credential-source",
   "aiosqlite>=0.22.1",
   "aws-opentelemetry-distro>=0.21.0",
   "opentelemetry-instrumentation-langchain>=0.62.4",
@@ -76,6 +77,9 @@ include = ["tests/test_session_resume.py", "tests/test_warm_session.py"]
 [tool.ty.overrides.rules]
 # ty rejects real TypedDict state parameters against LangGraph's TypedDictLike bound: https://github.com/astral-sh/ty/issues/2826
 invalid-type-arguments = "ignore"
+
+[tool.uv.sources]
+botcube-credential-source = { path = "../../credential-source" }
 
 [build-system]
 requires = ["hatchling>=1.32.4"]

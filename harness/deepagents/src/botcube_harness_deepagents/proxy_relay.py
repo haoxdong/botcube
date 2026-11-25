@@ -19,7 +19,9 @@ from threading import Lock, Thread
 from typing import Any
 from urllib.parse import urlsplit
 
-from .credential_source import CredentialSource, credential_source
+from botcube_credential_source import CredentialSource, credential_source
+
+from . import aws_clients
 from .endpoint_tls import (
     EndpointTls,
     EndpointTlsError,
@@ -54,7 +56,7 @@ def proxy_url_from_config(config: Mapping[str, Any], env: Mapping[str, str] = os
     if not {'credential', 'headers', 'tls'} & proxy.keys():
         return lambda: proxy['url']
     key = json.dumps(proxy, sort_keys=True)
-    credential = credential_source('proxy', proxy['credential'], env=env) if 'credential' in proxy else None
+    credential = credential_source('proxy', proxy['credential'], env=env, aws_session=aws_clients.session) if 'credential' in proxy else None
     tls = endpoint_tls('proxy', proxy['tls'], env=env) if 'tls' in proxy else None
 
     def relay() -> str:

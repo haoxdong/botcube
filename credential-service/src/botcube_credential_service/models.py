@@ -12,14 +12,14 @@ from typing import TYPE_CHECKING, Any
 import anyio
 import httpcore
 import httpx
-from fastapi import APIRouter, HTTPException, WebSocket
-from fastapi.responses import JSONResponse, Response, StreamingResponse
-
-from .credential_source import (
+from botcube_credential_source import (
     CredentialSource,
     CredentialSourceError,
     credential_source,
 )
+from fastapi import APIRouter, HTTPException, WebSocket
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+
 from .endpoint_tls import EndpointTls, EndpointTlsError, endpoint_tls
 from .proxy_relay import proxy_url_from_config
 

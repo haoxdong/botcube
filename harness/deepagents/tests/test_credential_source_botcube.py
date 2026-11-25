@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import pytest
-
-from botcube_harness_deepagents.credential_source import (
+from botcube_credential_source import (
     CredentialSourceError,
     credential_source,
 )

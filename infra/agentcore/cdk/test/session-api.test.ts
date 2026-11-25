@@ -244,6 +244,6 @@ test('the session API image builds from the Harness source with its own Dockerfi
   const images = Object.values(manifest.dockerImages);
 
   expect(images.map(image => image.source)).toContainEqual(
-    expect.objectContaining({ dockerFile: 'session-api.Dockerfile', platform: 'linux/arm64' })
+    expect.objectContaining({ dockerFile: 'harness/deepagents/session-api.Dockerfile', platform: 'linux/arm64' })
   );
 });

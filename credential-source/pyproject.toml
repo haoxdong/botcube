@@ -1,0 +1,9 @@
+[project]
+name = "botcube-credential-source"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["boto3>=1.43.108", "httpx>=0.28.1", "pydantic>=2"]
+
+[build-system]
+requires = ["hatchling>=1.32.4"]
+build-backend = "hatchling.build"

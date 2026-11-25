@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -125,6 +125,7 @@ version = "0.1.0"
 source = { editable = "../credential-service" }
 dependencies = [
     { name = "awslambdaric" },
+    { name = "botcube-credential-source" },
     { name = "boto3" },
     { name = "certifi" },
     { name = "cryptography" },
@@ -141,6 +142,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "awslambdaric", specifier = ">=4.2.3" },
+    { name = "botcube-credential-source", directory = "../credential-source" },
     { name = "boto3", specifier = ">=1.43.108" },
     { name = "certifi", specifier = ">=2026.7.22" },
     { name = "cryptography", specifier = ">=49.0.0" },
@@ -160,6 +162,23 @@ dev = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ty", specifier = "==0.0.99" },
     { name = "types-boto3", extras = ["dynamodb", "kms", "logs", "secretsmanager"], specifier = ">=1.43.108" },
+]
+
+[[package]]
+name = "botcube-credential-source"
+version = "0.1.0"
+source = { directory = "../credential-source" }
+dependencies = [
+    { name = "boto3" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "boto3", specifier = ">=1.43.108" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "pydantic", specifier = ">=2" },
 ]
 
 [[package]]

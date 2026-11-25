@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { IgnoreMode } from 'aws-cdk-lib';
 import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
 import { DockerImageCode } from 'aws-cdk-lib/aws-lambda';
@@ -10,19 +10,26 @@ export function sessionApiTimeout(codeLocation: string): number {
 }
 
 export function sessionApiCode(codeLocation: string, buildArgs: Record<string, string>) {
-  return DockerImageCode.fromImageAsset(codeLocation, {
-    file: 'session-api.Dockerfile',
+  const context = resolve(codeLocation, '../..');
+  const harness = relative(context, codeLocation);
+  const dockerfile = `${harness}/session-api.Dockerfile`;
+  return DockerImageCode.fromImageAsset(context, {
+    file: dockerfile,
     buildArgs,
-    ignoreMode: IgnoreMode.DOCKER,
+    ignoreMode: IgnoreMode.GIT,
     exclude: [
-      '**',
-      '!session-api.Dockerfile',
-      '!pyproject.toml',
-      '!uv.lock',
-      '!src/',
-      '!src/**',
-      '!.tool-dist/',
-      '.tool-dist/*',
+      '/*',
+      '!/credential-source',
+      '!/harness',
+      '/harness/*',
+      `!/${harness}`,
+      `/${harness}/*`,
+      `!/${dockerfile}`,
+      `!/${harness}/pyproject.toml`,
+      `!/${harness}/uv.lock`,
+      `!/${harness}/src`,
+      '**/.venv',
+      '**/.pytest_cache',
       '**/__pycache__',
       '**/*.pyc',
     ],

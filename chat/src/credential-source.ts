@@ -5,6 +5,7 @@ import { ALLOW_COMMAND_CREDENTIALS_ENV, type CredentialSource as CredentialSourc
 import { decodeJwt } from 'jose';
 import * as oidc from 'openid-client';
 import { z } from 'zod';
+import refreshWindowsSeconds from '../../credential-source/src/botcube_credential_source/refresh-windows.json' with { type: 'json' };
 import { signedAwsHeaders } from './aws.js';
 
 export interface Credential {
@@ -18,8 +19,8 @@ export interface CredentialSource {
 }
 
 const REREAD_AFTER_MS = 5 * 60_000;
-const MANDATORY_REFRESH_WINDOW_MS = 60_000;
-const ADVISORY_REFRESH_WINDOW_MAX_MS = 15 * 60_000;
+const MANDATORY_REFRESH_WINDOW_MS = refreshWindowsSeconds.mandatorySeconds * 1000;
+const ADVISORY_REFRESH_WINDOW_MAX_MS = refreshWindowsSeconds.advisoryMaxSeconds * 1000;
 /** How long STS accepts a SigV4 signature. */
 const SIGV4_VALID_MS = 15 * 60_000;
 /** The header an `aws` source signs its audience into, as Google's signs x-goog-cloud-target-resource. */

@@ -4,8 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from botcube_credential_service.credential_source import (
+from botcube_credential_source import (
     CredentialSourceError,
     credential_source,
 )

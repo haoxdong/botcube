@@ -8,9 +8,8 @@ from urllib.parse import unquote
 
 import pytest
 import requests
+from botcube_credential_source import credential_source
 from moto import mock_aws
-
-from botcube_harness_deepagents.credential_source import credential_source
 
 START = 1_795_000_000.0
 SOURCE = {'kind': 'aws', 'audience': 'collector.example.com'}

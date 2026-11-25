@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -441,6 +441,23 @@ wheels = [
 ]
 
 [[package]]
+name = "botcube-credential-source"
+version = "0.1.0"
+source = { directory = "../../credential-source" }
+dependencies = [
+    { name = "boto3" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "boto3", specifier = ">=1.43.108" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "pydantic", specifier = ">=2" },
+]
+
+[[package]]
 name = "botcube-harness-deepagents"
 version = "0.1.0"
 source = { editable = "." }
@@ -449,6 +466,7 @@ dependencies = [
     { name = "ag-ui-protocol" },
     { name = "aiosqlite" },
     { name = "aws-opentelemetry-distro" },
+    { name = "botcube-credential-source" },
     { name = "boto3" },
     { name = "cryptography" },
     { name = "deepagents" },
@@ -490,6 +508,7 @@ requires-dist = [
     { name = "ag-ui-protocol", specifier = ">=1.0.0" },
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "aws-opentelemetry-distro", specifier = ">=0.21.0" },
+    { name = "botcube-credential-source", directory = "../../credential-source" },
     { name = "boto3", specifier = ">=1.43.108" },
     { name = "cryptography", specifier = ">=48.0.1" },
     { name = "deepagents", specifier = "==0.7.22" },

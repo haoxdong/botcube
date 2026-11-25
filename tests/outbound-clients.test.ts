@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const CHAT = 'chat/src';
+const CREDENTIAL_SOURCE = 'credential-source/src/botcube_credential_source/__init__.py';
 const CREDENTIAL_SERVICE = 'credential-service/src/botcube_credential_service';
 
 /** Why a client goes direct, never through the proxy: no Endpoint of the BotCube Config names its destination. */
@@ -67,7 +68,7 @@ const CLIENTS: Readonly<Record<string, readonly { client: string; route: Route }
       reads: [[`${CREDENTIAL_SERVICE}/compose.py`, 'relay_provider_proxy(config, OPENAI_PROVIDER)'], [`${CREDENTIAL_SERVICE}/openai.py`, 'proxy=self._proxy() if self._proxy else None']],
     },
   }],
-  [`${CREDENTIAL_SERVICE}/credential_source.py`]: [
+  [CREDENTIAL_SOURCE]: [
     { client: 'a secret Credential Source: Secrets Manager', route: { direct: 'aws' } },
     { client: 'an OAuth token grant for the model gateway', route: { reference: 'integrations.modelGateway.proxy', reads: [[`${CREDENTIAL_SERVICE}/models.py`, "route['credential'], env=env, now=now, proxy=proxy"]] } },
   ],
@@ -101,7 +102,7 @@ function schemaAt(path: string): unknown {
 }
 
 describe('every outbound client of the Chat Service and the Credential Service', () => {
-  const files = [...sources(CHAT, '.ts'), ...sources(CREDENTIAL_SERVICE, '.py')];
+  const files = [...sources(CHAT, '.ts'), ...sources(CREDENTIAL_SERVICE, '.py'), CREDENTIAL_SOURCE];
 
   it('is listed with its route, and every listed file builds one', () => {
     expect(files.filter(buildsClient).sort()).toEqual(Object.keys(CLIENTS).sort());

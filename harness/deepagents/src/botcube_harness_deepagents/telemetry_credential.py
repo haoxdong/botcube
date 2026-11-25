@@ -12,10 +12,11 @@ import threading
 from typing import Any
 
 import requests
+from botcube_credential_source import CredentialSource, credential_source
 from requests.adapters import HTTPAdapter
 from requests.auth import AuthBase
 
-from .credential_source import CredentialSource, credential_source
+from . import aws_clients
 from .deployment import deployed_config
 from .endpoint_tls import EndpointTls, EndpointTlsError, endpoint_tls
 from .proxy_relay import proxy_url_from_config
@@ -100,7 +101,7 @@ def telemetry_session() -> requests.Session:
 def telemetry_credential() -> CredentialSource | None:
     """The BotCube Config's `otlp` Endpoint credential, or None."""
     telemetry = deployed_config()['config']['integrations']['telemetry']
-    return credential_source('telemetry.credential', telemetry['credential']) if 'credential' in telemetry else None
+    return credential_source('telemetry.credential', telemetry['credential'], aws_session=aws_clients.session) if 'credential' in telemetry else None
 
 
 def telemetry_proxy() -> str | None:

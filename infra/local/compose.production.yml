@@ -5,8 +5,8 @@ services:
     image: botcube-production-harness
     # BotCube's Harness image, with no bot; the harness service builds the example bot FROM it.
     build:
-      context: ../../harness/deepagents
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: harness/deepagents/Dockerfile
       target: harness
   chat-service:
     image: botcube-production-chat
@@ -27,8 +27,8 @@ services:
   session-api:
     image: botcube-production-session-api
     build:
-      context: ../../harness/deepagents
-      dockerfile: session-api.Dockerfile
+      context: ../..
+      dockerfile: harness/deepagents/session-api.Dockerfile
     # Production uses Lambda's adapter; locally exercise that same installed
     # package's HTTP entrypoint against the Harness checkpoints.
     entrypoint: ["python", "-m", "botcube_harness_deepagents.session_api"]

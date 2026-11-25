@@ -41,9 +41,9 @@ Run each CDK package's build and tests from its directory. For synthesis, set `B
 From the public repository root, build BotCube's Harness image, your bot's image on it, and the session API, Chat Service, and Credential Service images:
 
 ```bash
-docker build -f harness/deepagents/Dockerfile --target harness -t botcube-harness harness/deepagents
+docker build -f harness/deepagents/Dockerfile --target harness -t botcube-harness .
 docker build --build-context harness=docker-image://botcube-harness -f examples/bot/Dockerfile -t bot .
-docker build -f harness/deepagents/session-api.Dockerfile -t session-api harness/deepagents
+docker build -f harness/deepagents/session-api.Dockerfile -t session-api .
 docker build -f chat/Dockerfile --build-arg BOTCUBE_ROOT=. -t chat .
 docker build -f credential-service/Dockerfile --build-arg BOTCUBE_ROOT=. -t credential .
 ```

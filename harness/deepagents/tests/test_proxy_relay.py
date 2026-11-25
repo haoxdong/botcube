@@ -9,9 +9,9 @@ from threading import Thread
 from typing import Any, ClassVar
 
 import pytest
+from botcube_credential_source import credential_source
 
 from botcube_harness_deepagents import endpoint_tls, restore_prime
-from botcube_harness_deepagents.credential_source import credential_source
 from botcube_harness_deepagents.proxy_relay import (
     proxy_url_from_config,
     shell_proxy_environment,

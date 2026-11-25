@@ -57,7 +57,7 @@ test("a bot's own Credential Service Dockerfile, which its ECS app names, builds
 test('the public example, with no Credential Service of its own, builds the stock one from the package and the example BotCube Configs it copies', () => {
   const file = productionCredentialImage(botcubeRoot);
   expect(file).toBe('credential-service/Dockerfile');
-  expect(repositoryImageProps(botcubeRoot, file).exclude).toEqual(['*', '!credential-service/Dockerfile', '!credential-service', '!examples/enterprise/botcube.yaml', '!examples/public/botcube.yaml', '**/*.test.ts']);
+  expect(repositoryImageProps(botcubeRoot, file).exclude).toEqual(['*', '!credential-service/Dockerfile', '!credential-source', '!credential-service', '!examples/enterprise/botcube.yaml', '!examples/public/botcube.yaml', '**/*.test.ts']);
 });
 
 /** The task's container image and execution role grants, and the audit-copy function's image, the images give. */

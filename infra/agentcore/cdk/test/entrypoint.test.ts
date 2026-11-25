@@ -66,14 +66,14 @@ function repository(): string {
   const repo = tempDir();
   const deployRoot = path.join(repo, 'bot/deploy');
   fs.mkdirSync(deployRoot, { recursive: true });
-  fs.mkdirSync(path.join(repo, 'harness/src/botcube_harness_deepagents'), { recursive: true });
+  fs.mkdirSync(path.join(repo, 'harness/deepagents/src/botcube_harness_deepagents'), { recursive: true });
   fs.writeFileSync(
-    path.join(repo, 'harness/src/botcube_harness_deepagents/session-api.json'),
+    path.join(repo, 'harness/deepagents/src/botcube_harness_deepagents/session-api.json'),
     JSON.stringify({ deadlines: { invocation: 900 } })
   );
-  mockHarness.codeLocation = path.join(repo, 'harness');
+  mockHarness.codeLocation = path.join(repo, 'harness/deepagents');
   fs.copyFileSync(path.join(PUBLIC_EXAMPLE, 'botcube.yaml'), path.join(repo, 'bot/botcube.yaml'));
-  fs.writeFileSync(path.join(repo, 'harness/session-api.Dockerfile'), 'FROM scratch\n');
+  fs.writeFileSync(path.join(repo, 'harness/deepagents/session-api.Dockerfile'), 'FROM scratch\n');
   git(repo, 'init', '--quiet');
   git(repo, 'add', '.');
   git(repo, '-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '--quiet', '-m', 'repository');
@@ -145,7 +145,7 @@ test('loads a nested deploy root from the checkout that holds it', async () => {
 
 test('marks the deployed commit dirty when tracked files differ from it', async () => {
   const repo = repository();
-  fs.appendFileSync(path.join(repo, 'harness/session-api.Dockerfile'), '# local edit\n');
+  fs.appendFileSync(path.join(repo, 'harness/deepagents/session-api.Dockerfile'), '# local edit\n');
   setDeployRoot(path.join(repo, 'bot/deploy'));
   const outdir = (process.env.CDK_OUTDIR = tempDir());
 

@@ -17,6 +17,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
   cp "/opt/browser/$BIN" /usr/local/bin/agent-browser && chmod +x /usr/local/bin/agent-browser
 
 WORKDIR /opt/harness
+COPY credential-source/ /credential-source/
 COPY harness/deepagents/ ./
 RUN --mount=type=secret,id=build_ca \
   if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \

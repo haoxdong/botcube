@@ -38,7 +38,7 @@ it('deploys nothing for models on Bedrock, the default', () => {
 
 describe('the Credential Service, which relays the models Endpoint', () => {
   it('knows every credential kind the BotCube Config accepts', () => {
-    const relay = readFileSync(new URL('../credential-service/src/botcube_credential_service/credential_source.py', import.meta.url), 'utf8');
+    const relay = readFileSync(new URL('../credential-source/src/botcube_credential_source/__init__.py', import.meta.url), 'utf8');
     const known = [...relay.matchAll(/kind: Literal\['([^']+)'\]/g)].map(([, kind]) => kind);
 
     expect(known.sort()).toEqual(credentialSource.options.map((option) => option.shape.kind.value).sort());

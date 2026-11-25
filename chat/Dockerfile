@@ -12,6 +12,7 @@ COPY ${BOTCUBE_ROOT}/examples/bot/bot.yaml /bot/bot.yaml
 COPY ${BOTCUBE_ROOT}/examples/enterprise/botcube.yaml examples/enterprise/botcube.yaml
 COPY ${BOTCUBE_ROOT}/examples/public/botcube.yaml examples/public/botcube.yaml
 COPY ${BOTCUBE_ROOT}/harness/deepagents/artifact-check/package.json harness/deepagents/artifact-check/
+COPY ${BOTCUBE_ROOT}/credential-source/src/botcube_credential_source/refresh-windows.json credential-source/src/botcube_credential_source/refresh-windows.json
 COPY ${BOTCUBE_ROOT}/harness/deepagents/artifact-check/src/ harness/deepagents/artifact-check/src/
 COPY ${BOTCUBE_ROOT}/harness/deepagents/src/botcube_harness_deepagents/session-api.json harness/deepagents/src/botcube_harness_deepagents/session-api.json
 RUN --mount=type=secret,id=build_ca \

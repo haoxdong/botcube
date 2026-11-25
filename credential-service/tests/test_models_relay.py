@@ -11,10 +11,10 @@ from typing import Any
 
 import httpx
 import pytest
+from botcube_credential_source import CredentialSourceError
 from fastapi.testclient import TestClient
 
 from botcube_credential_service.audit import CredentialAuditRecorder
-from botcube_credential_service.credential_source import CredentialSourceError
 from botcube_credential_service.invocation import sign_credential_service_invocation
 from botcube_credential_service.models import models_provider_from_config
 from botcube_credential_service.resolved_config import (

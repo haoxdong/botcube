@@ -1,4 +1,4 @@
-# Build context: botcube/harness/deepagents/
+# Build context: botcube/
 # The session API function (ADR 0067 §5): the Harness package without the
 # Sandbox's tools, served by Lambda's Python runtime interface.
 ARG REGISTRY=public.ecr.aws
@@ -10,12 +10,13 @@ RUN --mount=type=secret,id=build_ca \
 
 ENV PYTHONPATH=/opt/session-api/.venv/lib/python3.13/site-packages
 WORKDIR /opt/session-api
-COPY pyproject.toml uv.lock ./
+COPY harness/deepagents/pyproject.toml harness/deepagents/uv.lock ./
+COPY credential-source/ /credential-source/
 RUN --mount=type=secret,id=build_ca \
     if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \
     uv export --frozen --no-dev --no-editable --no-emit-project --no-hashes -o requirements.txt && \
     uv pip install --no-cache --target "$PYTHONPATH" -r requirements.txt
-COPY src/ ./src/
+COPY harness/deepagents/src/ ./src/
 RUN --mount=type=secret,id=build_ca \
     if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \
     touch README.md && uv pip install --no-cache --no-deps --target "$PYTHONPATH" .

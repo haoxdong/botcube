@@ -6,13 +6,12 @@ from typing import Any
 
 import boto3
 import pytest
-from moto import mock_aws
-
-from botcube_harness_deepagents.credential_source import (
+from botcube_credential_source import (
     Credential,
     CredentialSourceError,
     credential_source,
 )
+from moto import mock_aws
 
 START = 1_795_000_000.0
 

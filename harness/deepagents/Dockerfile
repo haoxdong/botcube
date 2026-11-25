@@ -1,4 +1,4 @@
-# Build context: botcube/harness/deepagents/
+# Build context: botcube/
 ARG REGISTRY=public.ecr.aws
 FROM ${REGISTRY}/docker/library/rust:1.88-slim-bookworm AS efs-utils
 RUN --mount=type=secret,id=build_ca,mode=0444 \
@@ -41,11 +41,11 @@ RUN --mount=type=secret,id=build_ca \
 ENV UV_COMPILE_BYTECODE=1
 
 WORKDIR /opt/python-tools
-COPY tools/pyproject.toml tools/uv.lock ./
+COPY harness/deepagents/tools/pyproject.toml harness/deepagents/tools/uv.lock ./
 RUN --mount=type=secret,id=build_ca \
     if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \
     uv sync --frozen --no-dev --no-cache
-COPY tools/smoke.py tools/botcube_plotly.py ./
+COPY harness/deepagents/tools/smoke.py harness/deepagents/tools/botcube_plotly.py ./
 # Every figure the agent saves carries BotCube's chart look as plotly.py's default template (DESIGN.md, Charts).
 RUN SITE=$(.venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))') && \
     mv botcube_plotly.py "$SITE"/ && echo 'import botcube_plotly' > "$SITE"/botcube_plotly.pth && \
@@ -57,8 +57,8 @@ RUN /opt/python-tools/.venv/bin/python -c "import matplotlib.pyplot" && \
     ls "$MPLCONFIGDIR"/fontlist-*.json && chmod -R a+rwX "$MPLCONFIGDIR"
 
 WORKDIR /opt/browser
-COPY browser/package.json browser/package-lock.json ./
-COPY browser/install.mjs ./
+COPY harness/deepagents/browser/package.json harness/deepagents/browser/package-lock.json ./
+COPY harness/deepagents/browser/install.mjs ./
 RUN --mount=type=secret,id=build_ca \
     if [ -f /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
     npm ci --omit=dev --ignore-scripts && node install.mjs /opt/browser && \
@@ -68,25 +68,26 @@ RUN --mount=type=secret,id=build_ca \
     rm -rf /opt/browser/node_modules
 
 # The checker the Artifact tool runs on publish (artifact-check), and the `artifacts` skill beside it that the agent
-# reads through the Harness (artifact.SKILLS). package-lock.json is held to the workspace's botcube/pnpm-lock.yaml, which
-# this build context cannot see (scripts/checks/artifact-check-lock.mjs), so the image runs the versions the tests do.
+# reads through the Harness (artifact.SKILLS). scripts/checks/artifact-check-lock.mjs checks package-lock.json
+# against botcube/pnpm-lock.yaml so the image runs the same versions as the tests.
 WORKDIR /opt/artifact-check
-COPY artifact-check/package.json artifact-check/package-lock.json ./
+COPY harness/deepagents/artifact-check/package.json harness/deepagents/artifact-check/package-lock.json ./
 RUN --mount=type=secret,id=build_ca \
     if [ -f /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
     npm ci --omit=dev --ignore-scripts
-COPY artifact-check/src/ ./src/
-COPY artifact-check/skills/ ./skills/
+COPY harness/deepagents/artifact-check/src/ ./src/
+COPY harness/deepagents/artifact-check/skills/ ./skills/
 
 # BotCube's Harness image, with no bot: a bot's image builds FROM it with its settings and skills (examples/bot/Dockerfile).
 FROM base AS harness
 
 WORKDIR /opt/harness
-COPY pyproject.toml uv.lock ./
+COPY harness/deepagents/pyproject.toml harness/deepagents/uv.lock ./
+COPY credential-source/ /credential-source/
 RUN --mount=type=secret,id=build_ca \
     if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \
     touch README.md && uv sync --frozen --no-dev --no-install-project
-COPY src/ ./src/
+COPY harness/deepagents/src/ ./src/
 RUN --mount=type=secret,id=build_ca \
     if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \
     uv sync --frozen --no-dev --no-editable

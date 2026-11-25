@@ -11,8 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
-from botcube_harness_deepagents.credential_source import (
+from botcube_credential_source import (
     CredentialSource,
     CredentialSourceError,
     credential_source,
@@ -124,7 +123,7 @@ def test_keeps_serving_its_credential_when_an_advisory_refresh_fails_logging_the
     helper.release(3, _iso(START + 480))
     clock[0] = START + 180
 
-    with caplog.at_level(logging.WARNING, logger='botcube_harness_deepagents.credential_source'):
+    with caplog.at_level(logging.WARNING, logger='botcube_credential_source'):
         assert [source.get().value for _ in range(3)] == ['token-1'] * 3
         assert _eventually(lambda: len(caplog.records) == 1)
         assert _eventually(lambda: source.get().value == 'token-3')

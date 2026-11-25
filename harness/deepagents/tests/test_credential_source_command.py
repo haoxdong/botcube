@@ -6,8 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
-
-from botcube_harness_deepagents.credential_source import (
+from botcube_credential_source import (
     Credential,
     CredentialSourceError,
     credential_source,
@@ -101,7 +100,7 @@ def test_rejects_malformed_output_without_echoing_it(tmp_path: Path, output: str
 def test_never_passes_the_commands_stderr_on_to_the_services_own(tmp_path: Path) -> None:
     command = _helper(tmp_path, f'import sys; print("sk-on-stderr", file=sys.stderr); sys.stdout.write({_exec_credential({"token": "gw-token"})!r})')
     service = (
-        'from botcube_harness_deepagents.credential_source import credential_source\n'
+        'from botcube_credential_source import credential_source\n'
         f'print(credential_source("models", {_source(command)!r}, env={OPTED_IN!r}).get().value)\n'
     )
 

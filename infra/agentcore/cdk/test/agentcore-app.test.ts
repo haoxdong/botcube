@@ -5,7 +5,7 @@ import { Template } from 'aws-cdk-lib/assertions';
 import { setSessionProjectRoot } from '@aws/agentcore-cdk';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { resolve } from 'path';
+import { dirname, resolve } from 'path';
 import { addAgentCoreStacks } from '../lib/agentcore-app';
 import type { AgentCoreStack } from '../lib/cdk-stack';
 import {
@@ -334,7 +334,8 @@ test('the deployed runtime role keeps no Memory, log-read or configuration-bundl
 test('stages the session API source without the Sandbox tools virtualenv', () => {
   const fixture = mkdtempSync(resolve(tmpdir(), 'session-api-staging-'));
   try {
-    const source = resolve(fixture, 'source');
+    const harness = 'harness/deepagents';
+    const source = resolve(fixture, harness);
     mkdirSync(resolve(source, 'tools/.venv/lib'), { recursive: true });
     mkdirSync(resolve(source, 'src/botcube_harness_deepagents'), { recursive: true });
     const contractPath = 'src/botcube_harness_deepagents/session-api.json';
@@ -344,6 +345,9 @@ test('stages the session API source without the Sandbox tools virtualenv', () =>
     writeFileSync(resolve(source, 'artifact-check/node_modules/installed.js'), 'installed dependency');
     writeFileSync(resolve(source, 'session-api.Dockerfile'), 'FROM scratch\nCOPY src/ /src/\n');
     writeFileSync(resolve(source, 'src/session_api.py'), 'source fixture');
+    const refreshWindows = 'credential-source/src/botcube_credential_source/refresh-windows.json';
+    mkdirSync(dirname(resolve(fixture, refreshWindows)), { recursive: true });
+    writeFileSync(resolve(fixture, refreshWindows), '{}');
     writeFileSync(resolve(source, 'tools/.venv/lib/numpy-fixture.py'), 'installed dependency');
     mkdirSync(resolve(source, '.tool-dist/bot/cli'), { recursive: true });
     writeFileSync(resolve(source, '.tool-dist/bot/cli/tool.js'), 'unrelated staged CLI');
@@ -355,20 +359,25 @@ test('stages the session API source without the Sandbox tools virtualenv', () =>
     addAgentCoreStacks(app, deployConfig(), COMMIT, { harnessCodeLocation: source });
 
     const assets = readdirSync(app.outdir).filter(name => name.startsWith('asset.'));
-    const sessionAsset = assets.find(name => existsSync(resolve(app.outdir, name, 'src/session_api.py')));
+    const sessionAsset = assets.find(name => existsSync(resolve(app.outdir, name, harness, 'src/session_api.py')));
     if (sessionAsset === undefined) throw new Error('Session API asset missing');
     Template.fromStack(onlyStack(app)).hasResourceProperties('AWS::Lambda::Function', { Timeout: 840 });
-    expect(readFileSync(resolve(app.outdir, sessionAsset, contractPath), 'utf8')).toBe(contract);
-    expect(readFileSync(resolve(app.outdir, sessionAsset, 'src/session_api.py'), 'utf8')).toBe('source fixture');
+    expect(readFileSync(resolve(app.outdir, sessionAsset, harness, contractPath), 'utf8')).toBe(contract);
+    expect(readFileSync(resolve(app.outdir, sessionAsset, harness, 'src/session_api.py'), 'utf8')).toBe(
+      'source fixture'
+    );
+    expect(readFileSync(resolve(app.outdir, sessionAsset, refreshWindows), 'utf8')).toBe('{}');
     for (const file of ['pyproject.toml', 'uv.lock']) {
-      expect(readFileSync(resolve(app.outdir, sessionAsset, file), 'utf8')).toBe(file);
+      expect(readFileSync(resolve(app.outdir, sessionAsset, harness, file), 'utf8')).toBe(file);
     }
-    expect(readFileSync(resolve(app.outdir, sessionAsset, 'session-api.Dockerfile'), 'utf8')).toBe(
+    expect(readFileSync(resolve(app.outdir, sessionAsset, harness, 'session-api.Dockerfile'), 'utf8')).toBe(
       'FROM scratch\nCOPY src/ /src/\n'
     );
-    expect(existsSync(resolve(app.outdir, sessionAsset, 'tools/.venv/lib/numpy-fixture.py'))).toBe(false);
-    expect(existsSync(resolve(app.outdir, sessionAsset, 'artifact-check/node_modules/installed.js'))).toBe(false);
-    expect(existsSync(resolve(app.outdir, sessionAsset, '.tool-dist/bot/cli/tool.js'))).toBe(false);
+    expect(existsSync(resolve(app.outdir, sessionAsset, harness, 'tools/.venv/lib/numpy-fixture.py'))).toBe(false);
+    expect(existsSync(resolve(app.outdir, sessionAsset, harness, 'artifact-check/node_modules/installed.js'))).toBe(
+      false
+    );
+    expect(existsSync(resolve(app.outdir, sessionAsset, harness, '.tool-dist/bot/cli/tool.js'))).toBe(false);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

@@ -10,8 +10,7 @@ from typing import Any
 from urllib.parse import parse_qsl
 
 import pytest
-
-from botcube_harness_deepagents.credential_source import (
+from botcube_credential_source import (
     Credential,
     CredentialSourceError,
     credential_source,

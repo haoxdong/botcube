@@ -18,6 +18,13 @@ from collections.abc import Callable, Generator, Mapping
 from time import time
 from typing import Annotated, Literal
 
+from botcube_credential_source import (
+    ALLOW_COMMAND_CREDENTIALS_ENV,
+    Credential,
+    CredentialSource,
+    CredentialSourceError,
+    stdout_of,
+)
 from cryptography import x509
 from pydantic import (
     AfterValidator,
@@ -28,14 +35,6 @@ from pydantic import (
     Field,
     ValidationError,
     model_validator,
-)
-
-from .credential_source import (
-    ALLOW_COMMAND_CREDENTIALS_ENV,
-    Credential,
-    CredentialSource,
-    CredentialSourceError,
-    stdout_of,
 )
 
 log = logging.getLogger(__name__)

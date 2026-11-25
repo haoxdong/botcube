@@ -18,7 +18,8 @@ from threading import Lock, Thread
 from typing import Any
 from urllib.parse import urlsplit
 
-from .credential_source import CredentialSource, credential_source
+from botcube_credential_source import CredentialSource, credential_source
+
 from .endpoint_tls import (
     EndpointTls,
     EndpointTlsError,
