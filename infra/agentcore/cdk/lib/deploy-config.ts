@@ -12,6 +12,7 @@ import {
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import type { RuntimeNetwork } from './runtime-network';
 import type { RuntimePlatformVersion } from './runtime-platform';
 
 const manifest = findPackageJSON('.', pathToFileURL(__filename));
@@ -52,15 +53,6 @@ const MEMORY_DEFAULTS = {
   ],
 };
 
-export interface PrivateNatBrowserIdentity {
-  name: string;
-  id: string;
-  vpcId: string;
-  browserSecurityGroupId: string;
-  extension: { bucket: string; prefix: string; versionId: string };
-  subnets: Array<{ id: string; availabilityZone: string; cidrBlock: string }>;
-}
-
 export interface DeployIdentity {
   aws: {
     account: string;
@@ -74,12 +66,8 @@ export interface DeployIdentity {
       maxLifetime?: number;
       idleRuntimeSessionTimeout?: number;
       rollbackVersion?: string;
-    } &
-      // The runtime network places the runtime in the private NAT browser's subnets.
-      (
-        | { runtimeNetworkParameter?: undefined; privateNatBrowser?: PrivateNatBrowserIdentity }
-        | { runtimeNetworkParameter: string; privateNatBrowser: PrivateNatBrowserIdentity }
-      );
+      runtimeNetwork?: RuntimeNetwork | undefined;
+    };
     ecr: { repository: string };
     codeBuild: { project: string };
     lambda: { family: string };
@@ -126,27 +114,12 @@ export function readDeployIdentity(deployRoot: string, config = readDeployment(d
         platformVersion: config.agentCore?.runtime?.platformVersion ?? 'V2',
         maxLifetime: config.agentCore?.runtime?.maxLifetime,
         idleRuntimeSessionTimeout: config.agentCore?.runtime?.idleRuntimeSessionTimeout,
-        runtimeNetworkParameter: config.existing.browsers?.link
-          ? `/${config.name}/agentcore/security-group-id`
-          : undefined,
         memory: names.memoryName,
         sessionApiFunction: names.sessionApiFunctionName,
-        privateNatBrowser: config.existing.browsers?.link
+        runtimeNetwork: config.existing.browsers?.link
           ? {
-              name: names.linkBrowserName,
-              id: config.existing.browsers.link.browserId,
-              vpcId: config.existing.vpc.vpcId,
-              browserSecurityGroupId: config.existing.browsers.link.securityGroupId,
-              extension: {
-                bucket: config.agentCore?.browsers?.link?.extension.bucket,
-                prefix: config.agentCore?.browsers?.link?.extension.key,
-                versionId: config.agentCore?.browsers?.link?.extension.versionId,
-              },
-              subnets: config.existing.vpc.privateSubnets.map(item => ({
-                id: item.subnetId,
-                availabilityZone: item.availabilityZone,
-                cidrBlock: item.ipv4CidrBlock,
-              })),
+              securityGroupParameterName: `/${config.name}/agentcore/security-group-id`,
+              subnetIds: config.existing.vpc.privateSubnets.map(subnet => subnet.subnetId),
             }
           : undefined,
         rollbackVersion: config.agentCore?.runtime?.rollbackEndpoint?.agentRuntimeVersion,

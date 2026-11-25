@@ -20,18 +20,6 @@ const COMMIT = 'abc123';
 const DEPLOY_ROOT = resolve(__dirname, '../../../../examples/public/deploy');
 setSessionProjectRoot(agentCoreProjectRoot(readProjectSpec(DEPLOY_ROOT)));
 
-const PRIVATE_NAT_BROWSER = {
-  name: 'template_private_browser',
-  id: 'template_private_browser-AbCdEfGhIj',
-  vpcId: 'vpc-fixture0123456789abcdef0',
-  browserSecurityGroupId: 'sg-fixture0123456789abcdef1',
-  extension: { bucket: 'browser-assets', prefix: 'extensions/template.zip', versionId: 'version-1' },
-  subnets: [
-    { id: 'subnet-fixture0123456789abcdef0', availabilityZone: 'us-east-1a', cidrBlock: '192.0.2.0/24' },
-    { id: 'subnet-fixture0123456789abcdef1', availabilityZone: 'us-east-1b', cidrBlock: '198.51.100.0/24' },
-  ],
-};
-
 function deployConfig(agentCore: Record<string, unknown> = {}): DeployConfig {
   const identity = readDeployIdentity(DEPLOY_ROOT);
   const spec = readProjectSpec(DEPLOY_ROOT);
@@ -245,7 +233,7 @@ test('under assume-role, refuses a deploy identity that names no Chat Service ta
 test('keeps the runtime on the public network without a runtime network parameter', () => {
   const app = new App();
 
-  addAgentCoreStacks(app, deployConfig({ runtimeNetworkParameter: undefined }), COMMIT);
+  addAgentCoreStacks(app, deployConfig({ runtimeNetwork: undefined }), COMMIT);
 
   Template.fromStack(onlyStack(app)).hasResourceProperties('AWS::BedrockAgentCore::Runtime', {
     NetworkConfiguration: { NetworkMode: 'PUBLIC' },
@@ -258,8 +246,10 @@ test('puts the runtime in the private NAT browser subnets behind the parameteriz
   addAgentCoreStacks(
     app,
     deployConfig({
-      runtimeNetworkParameter: '/template/agentcore/security-group-id',
-      privateNatBrowser: PRIVATE_NAT_BROWSER,
+      runtimeNetwork: {
+        securityGroupParameterName: '/template/agentcore/security-group-id',
+        subnetIds: ['subnet-fixture0123456789abcdef0', 'subnet-fixture0123456789abcdef1'],
+      },
     }),
     COMMIT
   );
@@ -277,7 +267,16 @@ test('puts the runtime in the private NAT browser subnets behind the parameteriz
       },
     },
   });
-  template.hasOutput('PrivateNatBrowserId', { Value: PRIVATE_NAT_BROWSER.id });
+  template.resourceCountIs('AWS::EC2::Subnet', 0);
+  template.resourceCountIs('AWS::EC2::EIP', 0);
+  template.resourceCountIs('AWS::EC2::NatGateway', 0);
+  template.resourceCountIs('AWS::EC2::Route', 0);
+  template.resourceCountIs('Custom::AWS', 0);
+  template.resourceCountIs('AWS::BedrockAgentCore::BrowserCustom', 0);
+  const synthesized = JSON.stringify(template.toJSON());
+  expect(synthesized).not.toContain('modifyInstanceAttribute');
+  expect(synthesized).not.toContain('SourceDestCheck');
+  expect(synthesized).not.toContain('ec2:ModifyInstanceAttribute');
 });
 
 test('a custom app publishes config and grants its separately imported execution role a read', async () => {

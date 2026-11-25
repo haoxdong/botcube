@@ -42,21 +42,6 @@ const PHYSICAL_IDENTITY = {
     sessionApi: DEPLOY_IDENTITY.aws.iam.sessionApiRole,
   },
 };
-const PRIVATE_NAT_BROWSER = {
-  name: 'test_private_browser',
-  id: 'test_private_browser-AbCdEfGhIj',
-  vpcId: 'vpc-fixture0123456789abcdef0',
-  browserSecurityGroupId: 'sg-fixture0123456789abcdef1',
-  extension: {
-    bucket: 'browser-assets',
-    prefix: 'extensions/provider-v1.zip',
-    versionId: 'version-1',
-  },
-  subnets: [
-    { id: 'subnet-fixture0123456789abcdef0', availabilityZone: 'us-east-1a', cidrBlock: '192.0.2.0/24' },
-    { id: 'subnet-fixture0123456789abcdef1', availabilityZone: 'us-east-1b', cidrBlock: '198.51.100.0/24' },
-  ],
-};
 setSessionProjectRoot(agentCoreProjectRoot(readProjectSpec(DEPLOY_ROOT)));
 
 test('AgentCoreStack synthesizes with empty spec', () => {
@@ -123,48 +108,6 @@ test('runtime maxLifetime cap is ~1h and within the AgentCore API bound (60..288
 // Over a week of production Turns, 1 in 1,628 came more than 300 s after its microVM's last activity.
 test('an idle runtime microVM is reaped after five minutes', () => {
   expect(RUNTIME_IDLE_TIMEOUT_SECONDS).toBe(300);
-});
-
-test('private browser adopts pre-provisioned network identity without recreating it', () => {
-  const app = new cdk.App();
-  const stack = new AgentCoreStack(app, 'PrivateNatBrowserStack', {
-    spec: {
-      name: 'testproject',
-      version: 1,
-      managedBy: 'CDK' as const,
-      runtimes: [],
-      memories: [],
-      credentials: [],
-      evaluators: [],
-      onlineEvalConfigs: [],
-      configBundles: [],
-      policyEngines: [],
-      payments: [],
-      agentCoreGateways: [],
-      mcpRuntimeTools: [],
-      unassignedTargets: [],
-      datasets: [],
-      knowledgeBases: [],
-    },
-    physicalIdentity: PHYSICAL_IDENTITY,
-    privateNatBrowser: PRIVATE_NAT_BROWSER,
-  });
-  const template = Template.fromStack(stack);
-
-  template.resourceCountIs('AWS::EC2::Subnet', 0);
-  // The ECS app owns the NAT Gateway, Elastic IP and default route.
-  template.resourceCountIs('AWS::EC2::EIP', 0);
-  template.resourceCountIs('AWS::EC2::NatGateway', 0);
-  template.resourceCountIs('AWS::EC2::Route', 0);
-  template.resourceCountIs('Custom::AWS', 0);
-  template.resourceCountIs('AWS::BedrockAgentCore::BrowserCustom', 0);
-  template.hasOutput('PrivateNatBrowserId', {
-    Description: 'AgentCore browser ID using private NAT egress',
-    Value: PRIVATE_NAT_BROWSER.id,
-  });
-  expect(JSON.stringify(template.toJSON())).not.toContain('modifyInstanceAttribute');
-  expect(JSON.stringify(template.toJSON())).not.toContain('SourceDestCheck');
-  expect(JSON.stringify(template.toJSON())).not.toContain('ec2:ModifyInstanceAttribute');
 });
 
 test('botcube_harness_deepagents memory enables all built-in extraction strategies under actor-first namespaces', () => {
@@ -544,7 +487,6 @@ test("the runtime role reaches no account's Files: no S3 or S3 Files action (ADR
     env: { account: '123456789012', region: 'us-east-1' },
     spec: readProjectSpec(DEPLOY_ROOT),
     physicalIdentity: PHYSICAL_IDENTITY,
-    privateNatBrowser: PRIVATE_NAT_BROWSER,
   });
   const template = Template.fromStack(stack).toJSON() as {
     Resources: Record<

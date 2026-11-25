@@ -68,23 +68,6 @@ export interface AgentCorePhysicalIdentity {
   };
 }
 
-export interface PrivateNatBrowserConfig {
-  name: string;
-  id: string;
-  vpcId: string;
-  browserSecurityGroupId: string;
-  extension: {
-    bucket: string;
-    prefix: string;
-    versionId: string;
-  };
-  subnets: Array<{
-    id: string;
-    availabilityZone: string;
-    cidrBlock: string;
-  }>;
-}
-
 export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBoundary'> {
   executionRole?: iam.IRole;
   vpc?: ec2.IVpc;
@@ -119,8 +102,6 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
    */
   spec: AgentCoreProjectSpec;
   physicalIdentity: AgentCorePhysicalIdentity;
-  /** Dedicated browser egressing through the ECS app's private NAT Gateway. */
-  privateNatBrowser?: PrivateNatBrowserConfig | undefined;
   runtimeNetwork?: RuntimeNetwork | undefined;
   /** The Harness source, which also builds the session API function (ADR 0067 §5). */
   harnessCodeLocation?: string;
@@ -187,7 +168,7 @@ export class AgentCoreStack extends Stack {
     if (props.kmsKey && props.existingMemoryKeyArn) throw new Error('Choose kmsKey or existingMemoryKeyArn, not both');
     if (!props.vpc && (props.subnets || props.securityGroups))
       throw new Error('subnets and securityGroups require vpc');
-    const { physicalIdentity, privateNatBrowser } = props;
+    const { physicalIdentity } = props;
     const spec = configuredSpec(props);
 
     [this.application, this.runtimes] = runtimeApplication(this, spec, props.runtimeImage);
@@ -197,10 +178,6 @@ export class AgentCoreStack extends Stack {
       !!props.executionRole || spec.runtimes.some(runtime => !!runtime.executionRoleArn),
       !props.runtimeImage
     );
-
-    if (privateNatBrowser) {
-      this.addPrivateNatBrowser(privateNatBrowser);
-    }
 
     this.configureMemories(props);
     this.configureRuntimes(props);
@@ -365,13 +342,6 @@ export class AgentCoreStack extends Stack {
     const sessionApiAlias = sessionApiExports(this, identity.sessionApiFunction).addAlias(sessionApi);
     for (const env of this.runtimes) env.runtime.node.addDependency(sessionApiAlias);
     new CfnOutput(this, 'SessionApiFunctionArn', { value: sessionApi.functionArn });
-  }
-
-  private addPrivateNatBrowser(config: PrivateNatBrowserConfig): void {
-    new CfnOutput(this, 'PrivateNatBrowserId', {
-      value: config.id,
-      description: 'AgentCore browser ID using private NAT egress',
-    });
   }
 
   private applyPhysicalIdentity(

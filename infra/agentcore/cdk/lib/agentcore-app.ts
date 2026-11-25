@@ -75,7 +75,6 @@ export function addAgentCoreStacks(
         commit,
         chatServiceIssuer,
         userMemoryRole,
-        privateNatBrowser: agentCore.privateNatBrowser,
         platformVersion: agentCore.platformVersion,
         ...(agentCore.maxLifetime !== undefined ? { runtimeMaxLifetimeSeconds: agentCore.maxLifetime } : {}),
         ...(agentCore.idleRuntimeSessionTimeout !== undefined
@@ -86,12 +85,7 @@ export function addAgentCoreStacks(
         runtimeImage,
         botcubeConfigPath,
         ...memoryEncryption,
-        runtimeNetwork: agentCore.runtimeNetworkParameter
-          ? {
-              securityGroupParameterName: agentCore.runtimeNetworkParameter,
-              subnetIds: agentCore.privateNatBrowser.subnets.map(subnet => subnet.id),
-            }
-          : undefined,
+        runtimeNetwork: agentCore.runtimeNetwork,
         ...overrides,
         ...(overrides.vpc ? { runtimeNetwork: undefined } : {}),
         env: { account: target.account, region: target.region },
