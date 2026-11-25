@@ -559,7 +559,6 @@ interface RelayedTurn {
    * began, so this drains the upstream and calls `ended` itself.
    */
   client?: AbortSignal | undefined;
-  active?: () => void;
 }
 
 /** Persist edits before relay; withhold credential-bearing frames, including split deltas. */
@@ -825,7 +824,6 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
     let done = false;
     try {
       const chunk = await reader.read();
-      turn.active?.();
       readAt = Date.now();
       monotonicReadAt = performance.now();
       if (chunk.done) {

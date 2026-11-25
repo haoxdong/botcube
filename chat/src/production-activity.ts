@@ -26,9 +26,7 @@ export function isUserRequest(request: Request, webOrigins: readonly string[], a
   return ![DEPLOY_CHECK_USER_AGENT, ...automation].some((marker) => agent.includes(marker));
 }
 
-export const SILENT_TURN_MS = 10 * 60_000;
-
-type Running = { readonly id: string; readonly startedAt: number; readonly relayed: boolean; activeAt: number };
+type Running = { readonly id: string; readonly startedAt: number };
 
 export class ProductionActivity {
   readonly instance = randomUUID();
@@ -43,14 +41,8 @@ export class ProductionActivity {
     this.lastUserRequestAt = this.now();
   }
 
-  turnStarted(sessionKey: string, runId: string, relayed = true): void {
-    const now = this.now();
-    this.running.set(`${sessionKey}#${runId}`, { id: `${sessionKey.split('#').at(-1)}/${runId}`, startedAt: now, relayed, activeAt: now });
-  }
-
-  turnActive(sessionKey: string, runId: string): void {
-    const turn = this.running.get(`${sessionKey}#${runId}`);
-    if (turn !== undefined) turn.activeAt = this.now();
+  turnStarted(sessionKey: string, runId: string): void {
+    this.running.set(`${sessionKey}#${runId}`, { id: `${sessionKey.split('#').at(-1)}/${runId}`, startedAt: this.now() });
   }
 
   turnEnded(sessionKey: string, runId: string): void {
@@ -59,12 +51,10 @@ export class ProductionActivity {
 
   heartbeat() {
     const now = this.now();
-    for (const [key, { id, startedAt, relayed, activeAt }] of this.running) {
-      const reason = relayed && now - activeAt >= SILENT_TURN_MS ? `its Harness sent nothing for ${Math.round((now - activeAt) / 60_000)} min`
-        : now - startedAt >= MAX_RUNNING_TURN_AGE_MS ? `it started ${Math.round((now - startedAt) / 60_000)} min ago` : undefined;
-      if (reason === undefined) continue;
+    for (const [key, { id, startedAt }] of this.running) {
+      if (now - startedAt < MAX_RUNNING_TURN_AGE_MS) continue;
       this.running.delete(key);
-      console.warn(`Production activity stopped counting Turn ${id} as running: ${reason}`);
+      console.warn(`Production activity stopped counting Turn ${id} as running: it started ${Math.round((now - startedAt) / 60_000)} min ago`);
     }
     const runningTurnIds = [...this.running.values()].map(({ id }) => id);
     return {
@@ -76,20 +66,16 @@ export class ProductionActivity {
   observe(metadata: SessionMetadata): SessionMetadata {
     const prepareTurn: SessionMetadata['prepareTurn'] = async (owner, sessionId, turn) => {
       const prepared = await metadata.prepareTurn(owner, sessionId, turn);
-      if (turn.running !== undefined && turn.postAcceptance !== true) this.turnStarted(`${owner}#${sessionId}`, turn.running.runId, turn.scheduledTaskId === undefined);
+      if (turn.running !== undefined && turn.postAcceptance !== true) this.turnStarted(`${owner}#${sessionId}`, turn.running.runId);
       return prepared;
     };
     const turnEnded: SessionMetadata['turnEnded'] = async (owner, sessionId, running, failure, provider) => {
       this.turnEnded(`${owner}#${sessionId}`, running.runId);
       return metadata.turnEnded(owner, sessionId, running, failure, provider);
     };
-    const turnActive: NonNullable<SessionMetadata['turnActive']> = (owner, sessionId, running) => {
-      this.turnActive(`${owner}#${sessionId}`, running.runId);
-    };
     return new Proxy(metadata, {
       get(target, property, receiver) {
         if (property === 'prepareTurn') return prepareTurn;
-        if (property === 'turnActive') return turnActive;
         if (property === 'turnEnded') return turnEnded;
         const value: unknown = Reflect.get(target, property, receiver);
         return typeof value === 'function' ? value.bind(target) : value;

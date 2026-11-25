@@ -5,7 +5,7 @@ import { request as httpRequest } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
-import { isUserRequest, PARKING_PARTITION, ProductionActivity, SILENT_TURN_MS } from './production-activity.js';
+import { isUserRequest, PARKING_PARTITION, ProductionActivity } from './production-activity.js';
 import { MAX_RUNNING_TURN_AGE_MS } from './sessions.js';
 
 const web = ['https://bot.example.com'];
@@ -37,11 +37,14 @@ describe('production activity', () => {
   let stack: InProcessStack | undefined;
   afterEach(async () => { await stack?.stop(); });
 
-  it('reports a Turn running from its mark to its end, and none once it ends', async () => {
-    const activity = new ProductionActivity();
+  it('keeps a quiet Turn visible to parking until the Harness finishes it', async () => {
+    let now = 1_000;
+    const activity = new ProductionActivity(() => now);
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
     stack = await startInProcess({ activity });
     const during: number[] = [];
-    stack.agentcore.scriptPrompt('Brief me', { kind: 'stream', frames: () => {
+    stack.agentcore.scriptPrompt('Brief me', { kind: 'stream', hold, frames: () => {
       during.push(activity.heartbeat().runningTurns);
       return [{ type: 'RUN_STARTED' }, { type: 'TEXT_MESSAGE_CHUNK', messageId: 'a1', role: 'assistant', delta: 'Brief.' }, { type: 'RUN_FINISHED' }]
         .map((frame) => `data: ${JSON.stringify(frame)}`);
@@ -52,11 +55,16 @@ describe('production activity', () => {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-test-owner': 'acct_activity-owner' },
       body: JSON.stringify({ threadId: 'activity-chat', runId: 'activity-run', state: {}, messages: [{ id: 'm1', role: 'user', content: 'Brief me' }], tools: [], context: [], forwardedProps: { model: 'quick' } }),
     });
-    await response.text();
-
-    expect(response.status).toBe(200);
-    expect(during).toEqual([1]);
-    await vi.waitFor(() => expect(activity.heartbeat().runningTurns).toBe(0));
+    try {
+      expect(response.status).toBe(200);
+      expect(during).toEqual([1]);
+      now += 30 * 60_000;
+      expect(activity.heartbeat()).toMatchObject({ runningTurns: 1, runningTurnIds: ['activity-chat/activity-run'] });
+    } finally {
+      release();
+      await response.text();
+    }
+    expect(activity.heartbeat()).toMatchObject({ runningTurns: 0, runningTurnIds: [] });
   });
 
   it('stops counting a Turn whose client left before its response began, through the Node adapter', async () => {
@@ -102,35 +110,9 @@ describe('production activity', () => {
     expect(activity.heartbeat()).toMatchObject({ pk: PARKING_PARTITION, at: 1_000, lastUserRequestAt: 1_000, runningTurns: 1 });
 
     now += MAX_RUNNING_TURN_AGE_MS;
-    activity.turnActive('owner#chat', 'lost-run');
     activity.userRequest();
 
     expect(activity.heartbeat()).toMatchObject({ at: now, lastUserRequestAt: now, runningTurns: 0 });
-  });
-
-  it('leaves a scheduled run, which reads its answer at once, to the hour cap', () => {
-    let now = 1_000;
-    const activity = new ProductionActivity(() => now);
-    activity.turnStarted('owner#side-chat', 'scheduled-run', false);
-    now += SILENT_TURN_MS * 5;
-    expect(activity.heartbeat()).toMatchObject({ runningTurns: 1, runningTurnIds: ['side-chat/scheduled-run'] });
-  });
-
-  it('names the Turns it counts, keeps one its Harness still sends to, and drops one silent for ten minutes, with a log', () => {
-    let now = 1_000;
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const activity = new ProductionActivity(() => now);
-    activity.turnStarted('owner#busy-chat', 'busy-run');
-    activity.turnStarted('owner#abandoned-chat', 'abandoned-run');
-    expect(activity.heartbeat()).toMatchObject({ runningTurns: 2, runningTurnIds: ['busy-chat/busy-run', 'abandoned-chat/abandoned-run'] });
-
-    now += SILENT_TURN_MS - 1;
-    activity.turnActive('owner#busy-chat', 'busy-run');
-    expect(activity.heartbeat()).toMatchObject({ runningTurns: 2 });
-    now += 1;
-    expect(activity.heartbeat()).toMatchObject({ runningTurns: 1, runningTurnIds: ['busy-chat/busy-run'] });
-    expect(warn).toHaveBeenCalledWith('Production activity stopped counting Turn abandoned-chat/abandoned-run as running: its Harness sent nothing for 10 min');
-    warn.mockRestore();
   });
 
   it('writes its heartbeat to the chat table for the parking Lambda', async () => {

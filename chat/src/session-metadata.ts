@@ -181,7 +181,6 @@ export interface SessionMetadata {
   /** Clear this running Turn's mark, and record why it failed, unless another run replaced it. */
   turnEnded(owner: string, sessionId: string, running: RunningTurn, failure: TurnFailure | undefined, provider?: string): Promise<void>;
   /** The Harness sent this running Turn something. Only the production activity observer implements it. */
-  turnActive?(owner: string, sessionId: string, running: RunningTurn): void;
   /** The Harness emitted RUN_STARTED for this Turn; it can now be stopped by run ID. */
   turnStarted(owner: string, sessionId: string, running: RunningTurn, provider?: string): Promise<void>;
   /**

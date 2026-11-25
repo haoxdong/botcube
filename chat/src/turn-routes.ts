@@ -198,7 +198,6 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
             ended: end,
             started: () => sessionMetadata.turnStarted(requester.owner, input.threadId, running, model.provider),
             client: c.req.raw.signal,
-            active: () => sessionMetadata.turnActive?.(requester.owner, input.threadId, running),
           });
         });
       } catch (error) {
