@@ -3,13 +3,13 @@ from __future__ import annotations
 import os
 
 import uvicorn
+from botcube_config.resolved_config import resolved_config_from_env
 
 from botcube_credential_service.audit import (
     CredentialAuditRecorder,
     StdoutCredentialAuditSink,
 )
 from botcube_credential_service.models import models_provider_from_config
-from botcube_credential_service.resolved_config import resolved_config_from_env
 from botcube_credential_service.server import CredentialServiceSettings, create_app
 
 resolved = resolved_config_from_env()

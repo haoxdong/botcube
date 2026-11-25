@@ -35,8 +35,16 @@ def test_the_stock_service_is_unhealthy_while_its_vault_is_unconfigured() -> Non
 
 def test_the_stock_image_runs_the_stock_service_from_its_packages() -> None:
     dockerfile = STOCK_DOCKERFILE.read_text()
-    copies = [line.split()[1] for line in dockerfile.splitlines() if line.startswith('COPY ') and '--from=' not in line]
+    copies = [
+        source
+        for line in dockerfile.splitlines()
+        if line.startswith('COPY ') and '--from=' not in line
+        for source in line.split()[1:-1]
+    ]
     assert copies == [
+        '${BOTCUBE_ROOT}/config/pyproject.toml',
+        '${BOTCUBE_ROOT}/config/bot.schema.json',
+        '${BOTCUBE_ROOT}/config/src/',
         '${BOTCUBE_ROOT}/credential-source/',
         '${BOTCUBE_ROOT}/credential-service/',
     ]

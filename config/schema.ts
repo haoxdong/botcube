@@ -274,7 +274,3 @@ export const jsonSchemas = () => ({
   'bot.schema.json': { ...z.toJSONSchema(botSettings, { io: 'input' }), 'x-renamed-keys': renamedBotKeys },
   'botcube.schema.json': { ...z.toJSONSchema(botcubeConfig, { io: 'input' }), 'x-renamed-keys': renamedKeys, 'x-retired-files': RETIRED_FILES },
 });
-
-export const jsonSchemaCopies: Readonly<Partial<Record<string, readonly string[]>>> = {
-  'bot.schema.json': ['../harness/deepagents/src/botcube_harness_deepagents/bot.schema.json'],
-};

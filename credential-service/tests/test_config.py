@@ -4,11 +4,11 @@ import json
 from urllib.parse import parse_qs
 
 import httpx
+from botcube_config.resolved_config import load_resolved_config
 from fastapi.testclient import TestClient
 
 from botcube_credential_service.audit import CredentialAuditRecorder
 from botcube_credential_service.openai import OpenAIProvider
-from botcube_credential_service.resolved_config import load_resolved_config
 from botcube_credential_service.server import CredentialServiceSettings, create_app
 from botcube_credential_service.vault import DynamoDbCredentialVault
 from test_openai import SECRET, _stored, _turn

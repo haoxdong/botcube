@@ -25,10 +25,10 @@ from .endpoint_tls import EndpointTls, EndpointTlsError, endpoint_tls
 from .proxy_relay import proxy_url_from_config
 
 if TYPE_CHECKING:
+    from botcube_config.generated.resolved_config_types import ResolvedConfig
     from fastapi import Request
 
     from .audit import CredentialAuditRecorder
-    from .generated.resolved_config_types import ResolvedConfig
     from .invocation import CredentialServiceInvocation
     from .server import InvocationGuard
 

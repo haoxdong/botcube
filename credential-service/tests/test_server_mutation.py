@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from botcube_config.resolved_config import load_resolved_config
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -8,7 +9,6 @@ from botcube_credential_service.invocation import (
     CredentialServiceInvocation,
     sign_credential_service_invocation,
 )
-from botcube_credential_service.resolved_config import load_resolved_config
 from botcube_credential_service.server import (
     CredentialServiceSettings,
     InvocationGuard,

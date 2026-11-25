@@ -5,13 +5,13 @@ from typing import NoReturn
 
 import httpx
 import pytest
+from botcube_config.resolved_config import load_resolved_config
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 
 from botcube_credential_service.audit import CredentialAuditRecorder
 from botcube_credential_service.openai import OpenAIProvider
-from botcube_credential_service.resolved_config import load_resolved_config
 from botcube_credential_service.server import CredentialServiceSettings, create_app
 
 

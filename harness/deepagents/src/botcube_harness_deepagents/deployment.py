@@ -4,8 +4,8 @@ import os
 import ssl
 from functools import cache
 
-from .generated.resolved_config_types import Config, ResolvedConfig
-from .resolved_config import load_resolved_config
+from botcube_config.generated.resolved_config_types import Config, ResolvedConfig
+from botcube_config.resolved_config import load_resolved_config
 
 CONFIG_ENV = 'BOTCUBE_CONFIG'
 

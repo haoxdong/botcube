@@ -7,13 +7,13 @@ from collections.abc import Callable
 from functools import partial
 
 import uvicorn
+from botcube_config.resolved_config import resolved_config_from_env
 from fastapi import FastAPI
 
 from .audit import CredentialAuditRecorder, StdoutCredentialAuditSink
 from .aws import env_vault
 from .compose import credential_service_app
 from .openai import OpenAIProvider
-from .resolved_config import resolved_config_from_env
 from .vault import RotatingCredentialVault
 
 

@@ -5,10 +5,10 @@ from typing import Any
 
 import httpx
 import pytest
+from botcube_config.resolved_config import load_resolved_config
 from fake_site_provider import FakeSiteProvider
 from fastapi.testclient import TestClient
 
-from botcube_credential_service.resolved_config import load_resolved_config
 from botcube_credential_service.server import CredentialServiceSettings, create_app
 from botcube_credential_service.vault import DynamoDbCredentialVault
 from local_stand_in_support import (

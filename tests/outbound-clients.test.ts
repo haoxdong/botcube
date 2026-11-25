@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const CHAT = 'chat/src';
+const CONFIG_READER = 'config/src/botcube_config/resolved_config.py';
 const CREDENTIAL_SOURCE = 'credential-source/src/botcube_credential_source/__init__.py';
 const CREDENTIAL_SERVICE = 'credential-service/src/botcube_credential_service';
 const CREDENTIAL_CLIENT_FACTORY = `${CREDENTIAL_SERVICE}/cookies.py`;
@@ -59,7 +60,7 @@ const CLIENTS: Readonly<Record<string, readonly { client: string; route: Route }
     'park-history.ts', 'production-activity.ts', 'scheduled-execution.ts', 'scheduled-run-store.ts', 'scheduled-tasks.ts', 'scheduler.ts',
     'schedules.ts', 'session-metadata.ts', 'session-writers.ts', 'table-schedules.ts', 'turn-credentials.ts', 'turn-quota.ts',
   ].map((file) => [`${CHAT}/${file}`, [{ client: 'an AWS SDK client', route: { direct: 'aws' } }]])),
-  [`${CREDENTIAL_SERVICE}/resolved_config.py`]: [{ client: 'the resolved BotCube Config bucket', route: { direct: 'aws' } }],
+  [CONFIG_READER]: [{ client: 'the resolved BotCube Config bucket', route: { direct: 'aws' } }],
   [`${CREDENTIAL_SERVICE}/models.py`]: [{ client: "the models Relay provider's client", route: { reference: 'integrations.modelGateway.proxy', reads: [[`${CREDENTIAL_SERVICE}/models.py`, "proxy_url_from_config(config, env) if models.get('proxy')"]] } }],
   [`${CREDENTIAL_SERVICE}/openai.py`]: [{
     client: "the openai Relay provider's client: Plan Usage's calls and its sign-in's refresh",
@@ -106,7 +107,7 @@ function schemaAt(path: string): unknown {
 }
 
 describe('every outbound client of the Chat Service and the Credential Service', () => {
-  const files = [...sources(CHAT, '.ts'), ...sources(CREDENTIAL_SERVICE, '.py'), CREDENTIAL_SOURCE];
+  const files = [...sources(CHAT, '.ts'), ...sources(CREDENTIAL_SERVICE, '.py'), CREDENTIAL_SOURCE, CONFIG_READER];
 
   it('is listed with its route, and every listed file builds one', () => {
     expect(files.filter(buildsClient).sort()).toEqual(Object.keys(CLIENTS).sort());

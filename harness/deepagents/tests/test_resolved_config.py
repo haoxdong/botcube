@@ -7,10 +7,10 @@ from pathlib import Path
 
 import boto3
 import pytest
+from botcube_config.resolved_config import load_resolved_config
 from botocore.stub import Stubber
 
 from botcube_harness_deepagents.deployment import deployed_config
-from botcube_harness_deepagents.resolved_config import load_resolved_config
 from deployment_fixture import BOTCUBE, resolve
 
 

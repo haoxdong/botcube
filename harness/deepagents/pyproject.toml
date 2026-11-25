@@ -5,6 +5,7 @@ description = "Deep Agents implementation of the BotCube Harness contract."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "botcube-config",
   "botcube-credential-source",
   "aiosqlite>=0.22.1",
   "aws-opentelemetry-distro>=0.21.0",
@@ -80,6 +81,7 @@ include = ["tests/test_session_resume.py", "tests/test_warm_session.py"]
 invalid-type-arguments = "ignore"
 
 [tool.uv.sources]
+botcube-config = { path = "../../config" }
 botcube-credential-source = { path = "../../credential-source" }
 
 [build-system]

@@ -4,6 +4,8 @@ FROM ${REGISTRY}/docker/library/python:3.13-slim
 RUN --mount=type=secret,id=build_ca \
   if [ -f /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi; \
   pip install --no-cache-dir uv==0.12.19
+COPY config/pyproject.toml config/bot.schema.json /opt/config/
+COPY config/src/ /opt/config/src/
 COPY credential-source/ /opt/credential-source/
 COPY credential-service/ /opt/credential-service/
 WORKDIR /opt/credential-service

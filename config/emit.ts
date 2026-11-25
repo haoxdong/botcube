@@ -3,11 +3,11 @@ import { format } from 'prettier';
 import { writeFileSync } from 'node:fs';
 import './register-node-types.mjs';
 
-const { jsonSchemaCopies, jsonSchemas } = await import('./schema.ts');
+const { jsonSchemas } = await import('./schema.ts');
 
 await Promise.all(Object.entries(jsonSchemas()).map(async ([file, schema]) => {
   const text = await format(JSON.stringify(schema), { parser: 'json' });
-  for (const path of [file, ...(jsonSchemaCopies[file] ?? [])]) writeFileSync(new URL(path, import.meta.url), text);
+  writeFileSync(new URL(file, import.meta.url), text);
 }));
 
 const { resolvedArtifacts } = await import('./resolved-artifacts.mjs');

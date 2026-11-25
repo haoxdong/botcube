@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
 import { resolvedArtifacts } from './resolved-artifacts.mjs';
-import { jsonSchemaCopies, jsonSchemas } from './schema.js';
+import { jsonSchemas } from './schema.js';
 
-const committed = Object.entries(jsonSchemas()).flatMap(([file, schema]) => [file, ...(jsonSchemaCopies[file] ?? [])].map((path) => [path, schema] as const));
+const committed = Object.entries(jsonSchemas());
 
 it.each(committed)('commits %s as the schema emits it (regenerate: pnpm --filter botcube-config emit)', (file, schema) => {
   expect(JSON.parse(readFileSync(new URL(file, import.meta.url), 'utf8'))).toEqual(schema);
@@ -24,7 +24,7 @@ it.each(['parking.automationUserAgents', 'services.credentialService.http.public
   },
 );
 
-it('ships emitted resolved readers, types and section defaults in both Python packages', () => {
+it('ships emitted resolved types and section defaults in the Python package', () => {
   for (const [path, contents] of Object.entries(resolvedArtifacts())) {
     expect(readFileSync(new URL(path, import.meta.url), 'utf8'), path).toBe(contents);
   }

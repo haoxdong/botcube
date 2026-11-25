@@ -7,6 +7,7 @@ from collections.abc import Callable
 from functools import partial
 
 import uvicorn
+from botcube_config.resolved_config import resolved_config_from_env
 from fake_site_provider import FakeSiteProvider
 from fastapi import FastAPI
 
@@ -17,7 +18,6 @@ from botcube_credential_service.audit import (
 from botcube_credential_service.aws import env_vault
 from botcube_credential_service.compose import credential_service_app
 from botcube_credential_service.openai import OpenAIProvider
-from botcube_credential_service.resolved_config import resolved_config_from_env
 from botcube_credential_service.vault import DynamoDbCredentialVault
 
 

@@ -6,6 +6,7 @@ from functools import partial
 
 import boto3
 import uvicorn
+from botcube_config.resolved_config import resolved_config_from_env
 from fake_site_provider import FakeSiteProvider
 from moto import mock_aws
 
@@ -18,7 +19,6 @@ from botcube_credential_service.data_keys import (
     Boto3KmsDataKeyProvider,
 )
 from botcube_credential_service.openai import OpenAIProvider
-from botcube_credential_service.resolved_config import resolved_config_from_env
 from botcube_credential_service.vault import (
     DynamoDbCredentialVault,
 )

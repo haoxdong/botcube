@@ -16,6 +16,7 @@ from urllib.parse import parse_qs
 import boto3
 import httpx
 import pytest
+from botcube_config.resolved_config import load_resolved_config
 from botocore.client import BaseClient
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -28,7 +29,6 @@ from botcube_credential_service.data_keys import (
 )
 from botcube_credential_service.invocation import sign_credential_service_invocation
 from botcube_credential_service.openai import OpenAIProvider
-from botcube_credential_service.resolved_config import load_resolved_config
 from botcube_credential_service.rotating_access import (
     Grant,
     GrantedAccess,

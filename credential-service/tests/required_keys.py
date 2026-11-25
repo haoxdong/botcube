@@ -8,8 +8,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from botcube_credential_service.generated.resolved_config_types import ResolvedConfig
-from botcube_credential_service.resolved_config import load_resolved_config
+from botcube_config.generated.resolved_config_types import ResolvedConfig
+from botcube_config.resolved_config import load_resolved_config
 
 REQUIRED: dict[str, Any] = json.loads((Path(__file__).resolve().parents[2] / 'tests' / 'required-keys.json').read_text(encoding='utf8'))
 

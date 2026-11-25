@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from botcube_config.resolved_config import load_resolved_config
 from cryptography import x509
 
 from botcube_credential_service import endpoint_tls as tls_module
@@ -17,7 +18,6 @@ from botcube_credential_service.proxy_relay import (
     proxy_url_from_config,
     start_proxy_relay,
 )
-from botcube_credential_service.resolved_config import load_resolved_config
 from mtls_fake import (
     IMPOSTOR_IDENTITY,
     SERVER_IDENTITY,

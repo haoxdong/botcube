@@ -11,6 +11,7 @@ import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -33,7 +34,7 @@ from .memory.agentcore import turn_actor
 
 # The shell variable OpenTelemetry SDKs read resource attributes from, so a CLI's spans name the Turn's User and traffic.
 _RESOURCE_ATTRIBUTES = 'OTEL_RESOURCE_ATTRIBUTES'
-_SCHEMA = json.loads(Path(__file__).with_name('bot.schema.json').read_text(encoding='utf8'))
+_SCHEMA = json.loads(files('botcube_config').joinpath('bot.schema.json').read_text(encoding='utf8'))
 # Where the agent finds the bot's skills, one directory each.
 SKILLS = '/skills/'
 

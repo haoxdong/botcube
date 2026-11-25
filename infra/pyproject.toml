@@ -10,6 +10,7 @@ dependencies = [
 [dependency-groups]
 dev = [
   # The local stack's stand-ins (local/stand-ins/) run on the Credential Service package.
+  "botcube-config",
   "botcube-credential-service",
   "moto[dynamodb,server]>=5.2.3",
   "ty==0.0.99",
@@ -21,6 +22,7 @@ dev = [
 package = false
 
 [tool.uv.sources]
+botcube-config = { path = "../config" }
 botcube-credential-service = { path = "../credential-service", editable = true }
 
 [tool.ty.environment]

@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from botcube_config.generated.resolved_config_types import ResolvedConfig
 from fastapi import FastAPI
 
 from .audit import CredentialAuditRecorder
-from .generated.resolved_config_types import ResolvedConfig
 from .models import models_provider_from_config
 from .openai import OPENAI_PROVIDER, OpenAIProvider
 from .provider import CredentialProvider

@@ -8,10 +8,10 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from botcube_config.generated.resolved_config_types import Config
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, Response
 
-from .generated.resolved_config_types import Config
 from .invocation import (
     CredentialServiceInvocation,
     verify_credential_service_invocation,

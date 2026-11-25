@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
+from botcube_config.resolved_config import load_resolved_config
 from fastapi import APIRouter, Header, HTTPException, Request, WebSocket
 from fastapi.responses import Response
 from fastapi.testclient import TestClient
@@ -14,7 +15,6 @@ from botcube_credential_service.invocation import (
     CredentialServiceInvocation,
     sign_credential_service_invocation,
 )
-from botcube_credential_service.resolved_config import load_resolved_config
 from botcube_credential_service.server import (
     CredentialServiceSettings,
     InvocationGuard,

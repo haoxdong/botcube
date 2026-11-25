@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -441,6 +441,17 @@ wheels = [
 ]
 
 [[package]]
+name = "botcube-config"
+version = "0.1.0"
+source = { directory = "../../config" }
+dependencies = [
+    { name = "boto3" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "boto3", specifier = ">=1.43.108" }]
+
+[[package]]
 name = "botcube-credential-source"
 version = "0.1.0"
 source = { directory = "../../credential-source" }
@@ -467,6 +478,7 @@ dependencies = [
     { name = "aiosqlite" },
     { name = "anyio" },
     { name = "aws-opentelemetry-distro" },
+    { name = "botcube-config" },
     { name = "botcube-credential-source" },
     { name = "boto3" },
     { name = "cryptography" },
@@ -510,6 +522,7 @@ requires-dist = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "anyio", specifier = ">=4" },
     { name = "aws-opentelemetry-distro", specifier = ">=0.21.0" },
+    { name = "botcube-config", directory = "../../config" },
     { name = "botcube-credential-source", directory = "../../credential-source" },
     { name = "boto3", specifier = ">=1.43.108" },
     { name = "cryptography", specifier = ">=48.0.1" },
