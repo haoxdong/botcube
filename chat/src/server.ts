@@ -14,7 +14,7 @@ import { awsFetch, presignAwsUrl } from './aws.js';
 import { cspReportRoutes } from './csp-reports.js';
 import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
-import { sleepComputersAtTaskStop } from './task-stop.js';
+import { finishChatWork, sleepComputersAtTaskStop } from './task-stop.js';
 import { sessionAccessError, sessionOperations } from './sessions.js';
 import { purgeQueue } from './purges.js';
 import { sweepEvery } from './task-drain.js';
@@ -99,6 +99,8 @@ export interface ChatService {
   readonly chat: StockChat;
   /** The account-history hooks the Chat Service handed the Chat. */
   readonly history: AccountHistory;
+  readonly stopScheduledWork: () => Promise<void>;
+  readonly drainTurns: () => Promise<void>;
 }
 
 export function createChatService(
@@ -107,7 +109,7 @@ export function createChatService(
   sessionMetadata: SessionMetadata,
   agentDocuments: AgentDocuments,
   invokeSessionApi: SessionApi = sessionApi(config.sessionApi),
-  scheduled: { tasks: ScheduledTasks; queue: RunQueue; poll?: TableSchedules | undefined; draining: () => Promise<boolean>; parkHistory?: ParkHistory | undefined; onClose?: (stop: () => void) => void } | null = null,
+  scheduled: { tasks: ScheduledTasks; queue: RunQueue; poll?: TableSchedules | undefined; draining: () => Promise<boolean>; parkHistory?: ParkHistory | undefined } | null = null,
   turnQuota: TurnQuota | null = null,
   draining: () => Promise<boolean> = scheduled?.draining ?? (async () => false),
 ): ChatService {
@@ -158,6 +160,7 @@ export function createChatService(
   const awsAccess = config.awsAccess?.kind === 'assume-role' ? assumeRoleAwsAccess(config.awsAccess) : turnIdentity;
   const app = new Hono();
   let scheduledRunsUnavailable = false;
+  let stopScheduledWork = async () => {};
   if (scheduled !== null) {
     const deps = { bot, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, stopScheduledRuntime: config.localHarnessUrl ? undefined : runtime?.stop, turnIdentity: awsAccess, userTokens: turnIdentity, parkHistory: scheduled.parkHistory };
     const unavailable = () => { scheduledRunsUnavailable = true; };
@@ -167,10 +170,10 @@ export function createChatService(
       }
     });
     const stopPoll = scheduled.poll?.start(unavailable);
-    scheduled.onClose?.(() => {
-      stopRuns();
+    stopScheduledWork = () => {
       stopPoll?.();
-    });
+      return stopRuns();
+    };
   }
 
   app.use(cors({
@@ -200,7 +203,7 @@ export function createChatService(
   app.route('/', bot.routes);
 
 
-  turnRoutes(app, {
+  const drainTurns = turnRoutes(app, {
     bot,
     stores: { sessionMetadata, agentDocuments },
     harness: { upstream, warmupTimeoutMs: config.warmupTimeoutMs },
@@ -278,7 +281,7 @@ export function createChatService(
   app.post('/browser-take-over', browserControl('DISABLED'));
   app.post('/browser-hand-back', browserControl('ENABLED'));
 
-  return { app, chat: bot, history };
+  return { app, chat: bot, history, stopScheduledWork, drainTurns };
 }
 
 function parkHistory(parameter: string, productName: string | undefined): ParkHistory {
@@ -300,8 +303,7 @@ export async function serveChatService(env: NodeJS.ProcessEnv = process.env, opt
   const metadata = new DynamoDBSessionMetadata(table);
   const draining = ecsTaskDraining(env.ECS_CONTAINER_METADATA_URI_V4);
   const parkState = env.BOTCUBE_PARK_STATE_PARAMETER;
-  let stopScheduledRuns: (() => void) | undefined;
-  const { app, chat } = createChatService(
+  const { app, chat, stopScheduledWork, drainTurns } = createChatService(
     { ...options, env, resolved },
     config,
     activity.observe(metadata),
@@ -311,7 +313,6 @@ export async function serveChatService(env: NodeJS.ProcessEnv = process.env, opt
       ...scheduling,
       draining,
       parkHistory: parkState === undefined ? undefined : parkHistory(parkState, loadBotSettings('/bot/bot.yaml').productName),
-      onClose: (stop) => { stopScheduledRuns = stop; },
     },
     new TurnQuota(table),
     draining,
@@ -328,8 +329,6 @@ export async function serveChatService(env: NodeJS.ProcessEnv = process.env, opt
     console.error(`The Chat Service could not read a credential at startup: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   });
-  let shutdown: Promise<void> | undefined;
-  const stopTracing = () => shutdown ??= tracing?.shutdown() ?? Promise.resolve();
   const fetch: typeof app.fetch = (request, ...rest) => {
     if (isUserRequest(request, config.corsOrigins, adapters.automationUserAgents)) activity.userRequest();
     return app.fetch(request, ...rest);
@@ -338,20 +337,24 @@ export async function serveChatService(env: NodeJS.ProcessEnv = process.env, opt
   const server = serve({ fetch, port, hostname: '0.0.0.0', websocket }, () =>
     console.log(`Chat Service listening on :${port}`),
   );
-  const sleepAgentComputers = chat.sleepAgentComputers?.bind(chat);
-  const unregisterTaskStop = (sleepAgentComputers || tracing) && sleepComputersAtTaskStop(() => {
-    stopScheduledRuns?.();
-    const sleep = sleepAgentComputers?.() ?? { slept: Promise.resolve([]), sleeps: [] };
-    if (tracing === undefined) return sleep;
-    const drained = new Promise<void>((resolve, reject) => {
-      server.close((error?: Error) => error ? reject(error) : resolve());
-    }).then(stopTracing);
-    return { slept: Promise.all([sleep.slept, drained]).then(([sessions]) => sessions), sleeps: [...sleep.sleeps, drained] };
-  });
-  server.once('close', () => {
-    stopScheduledRuns?.();
-    void stopTracing().catch((error: unknown) => { console.error('Chat tracing shutdown failed', error); });
-    unregisterTaskStop?.();
-  });
+  const finish = (httpClosed = Promise.resolve()) => finishChatWork(
+    async () => { await Promise.all([httpClosed.then(drainTurns), stopScheduledWork()]); },
+    tracing?.shutdown,
+  );
+  const unregisterTaskStop = sleepComputersAtTaskStop(
+    () => chat.sleepAgentComputers?.() ?? { slept: Promise.resolve([]), sleeps: [] },
+    () => {
+      server.off('close', onClose);
+      const httpClosed = new Promise<void>((resolve, reject) => {
+        server.close((error?: Error) => error ? reject(error) : resolve());
+      });
+      return finish(httpClosed);
+    },
+  );
+  function onClose() {
+    unregisterTaskStop();
+    void finish();
+  }
+  server.once('close', onClose);
   return server;
 }

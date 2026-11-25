@@ -33,17 +33,11 @@ it('exports real OTLP HTTP protobuf with the fixed Chat service name on shutdown
   });
   await new Promise<void>((resolve) => collector.listen(0, '127.0.0.1', resolve));
   const child = spawn(process.execPath, ['--input-type=module', '-e', `${TS_IMPORTS}
-    const { startChatTracing, registerTracingTurn } = await import('./src/tracing.ts');
+    const { startChatTracing } = await import('./src/tracing.ts');
     const sdk = startChatTracing({ kind: 'xray' });
     const { trace } = await import('@opentelemetry/api');
-    const finish = registerTracingTurn();
     trace.getTracer('test').startSpan('startup export probe').end();
-    let ended = false;
-    const stopping = sdk.shutdown().then(() => { ended = true; });
-    await new Promise(resolve => setTimeout(resolve, 20));
-    if (ended) throw new Error('shutdown skipped a draining Turn');
-    finish();
-    await stopping;
+    await sdk.shutdown();
   `], {
     cwd: new URL('..', import.meta.url),
     env: { ...process.env, OTEL_TRACES_EXPORTER: 'otlp', OTEL_SERVICE_NAME: 'must-not-override-chat',

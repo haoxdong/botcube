@@ -1,6 +1,9 @@
 import { chatAlarmEvents } from 'botcube-config/alarm-events';
-/** ECS kills a stopping task 120 s after its SIGTERM (stopTimeout, preview-chat-service.ts): a sleep still running by then has failed. */
-const STOP_DEADLINE_MS = 110_000;
+
+// ECS gives the stopping task 120 s. The Turn drain leaves time for a separate tracing flush.
+const SLEEP_DEADLINE_MS = 110_000;
+const TURN_DRAIN_DEADLINE_MS = 105_000;
+const TRACING_DEADLINE_MS = 10_000;
 
 /** What putting every awake Agent Computer to sleep at task stop answers. */
 export interface TaskStopSleep {
@@ -10,44 +13,68 @@ export interface TaskStopSleep {
   sleeps: readonly Promise<void>[];
 }
 
-/**
- * On SIGTERM (ECS stopping the task) or SIGINT (Ctrl-C on a local run), sleep the Agent Computers,
- * then exit: 0 once they all slept, 1 on any failure or the deadline. Answers the unregister.
- */
-export function sleepComputersAtTaskStop(sleepAgentComputers: () => TaskStopSleep): () => void {
+async function beforeDeadline<T>(work: () => Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} did not finish within ${ms} ms`)), ms);
+  });
+  try {
+    return await Promise.race([Promise.resolve().then(work), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function finishChatWork(drain: () => Promise<void>, flushTracing?: () => Promise<void>): Promise<void> {
+  await beforeDeadline(drain, TURN_DRAIN_DEADLINE_MS, 'Chat Turn drain').catch((error: unknown) => {
+    console.error('Chat Turn drain failed', error);
+  });
+  if (flushTracing !== undefined) {
+    await beforeDeadline(flushTracing, TRACING_DEADLINE_MS, 'Chat tracing shutdown').catch((error: unknown) => {
+      console.error('Chat tracing shutdown failed', error);
+    });
+  }
+}
+
+async function sleepComputers(sleep: () => TaskStopSleep): Promise<number> {
+  let collecting = true;
+  const alarm = (error: unknown) => {
+    if (collecting) console.error(chatAlarmEvents.agentComputerStopSleepFailed, error);
+  };
+  try {
+    const sessions = await beforeDeadline(async () => {
+      const { slept, sleeps } = sleep();
+      try {
+        return await slept;
+      } catch (first) {
+        alarm(first);
+        await Promise.all(sleeps.map((operation) => operation.catch((later: unknown) => {
+          if (later !== first) alarm(later);
+        })));
+        return null;
+      }
+    }, SLEEP_DEADLINE_MS, 'Agent Computer sleep at task stop');
+    if (sessions === null) return 1;
+    console.log(`Agent Computers slept at task stop: ${sessions.join(', ') || 'none awake'}`);
+    return 0;
+  } catch (error) {
+    alarm(error);
+    return 1;
+  } finally {
+    collecting = false;
+  }
+}
+
+/** On SIGTERM or SIGINT, run bounded shutdown work and exit with the Agent Computer sleep result. */
+export function sleepComputersAtTaskStop(sleep: () => TaskStopSleep, finish?: () => Promise<void>): () => void {
   const stop = () => {
     unregister();
-    let exiting = false;
-    const exit = (code: number, stream: NodeJS.WriteStream) => {
-      if (exiting) return;
-      exiting = true;
-      clearTimeout(deadline);
-      stream.write('', () => process.exit(code));
-    };
-    const deadline = setTimeout(() => {
-      console.error(chatAlarmEvents.agentComputerStopSleepFailed, new Error(`Agent Computers still sleeping ${STOP_DEADLINE_MS} ms after SIGTERM`));
-      exit(1, process.stderr);
-    }, STOP_DEADLINE_MS).unref();
-    const { slept, sleeps } = sleepAgentComputers();
-    slept.then(
-      (sessions) => {
-        if (exiting) return;
-        console.log(`Agent Computers slept at task stop: ${sessions.join(', ') || 'none awake'}`);
-        exit(0, process.stdout);
-      },
-      (error: unknown) => {
-        if (exiting) return;
-        // The first failure alarms at once (ADR 0030), and each later one as it comes: the other browsers go on
-        // sleeping before the task exits.
-        console.error(chatAlarmEvents.agentComputerStopSleepFailed, error);
-        const logged = sleeps.map((sleep) =>
-          sleep.catch((later: unknown) => {
-            if (later !== error) console.error(chatAlarmEvents.agentComputerStopSleepFailed, later);
-          }),
-        );
-        void Promise.all(logged).then(() => exit(1, process.stderr));
-      },
-    );
+    void Promise.all([sleepComputers(sleep), finish?.()]).then(async ([code]) => {
+      await Promise.all([process.stdout, process.stderr].map((stream) =>
+        new Promise<void>((resolve) => { stream.write('', () => resolve()); }),
+      ));
+      process.exit(code);
+    });
   };
   const unregister = () => {
     process.off('SIGTERM', stop);

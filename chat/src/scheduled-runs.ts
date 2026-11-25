@@ -355,6 +355,7 @@ export function ecsTaskDraining(
  * Take runs off the queue one at a time until stopped, or until this task is
  * draining, so a deploy hands the runs to the new revision. A run that throws
  * stays on the queue and is delivered again; the queue's redrive policy bounds it.
+ * Stopping aborts receives and waits for the current delivery and maintenance to settle.
  */
 export function pollScheduledRuns(
   queue: RunQueue,
@@ -362,7 +363,7 @@ export function pollScheduledRuns(
   draining: () => Promise<boolean>,
   onFailure?: (error: unknown) => void,
   maintenance?: () => Promise<void>,
-): () => void {
+): () => Promise<void> {
   const stop = new AbortController();
   const stopped = () => stop.signal.aborted;
   let maintenancePending: Promise<void> | undefined;
@@ -417,7 +418,7 @@ export function pollScheduledRuns(
       await new Promise((resolve) => setTimeout(resolve, 5_000));
     }
   };
-  void (async () => {
+  const polling = (async () => {
     // Stryker disable next-line BlockStatement: an emptied loop spins synchronously forever, hanging any test as a timeout
     while (!stopped()) {
       // eslint-disable-next-line no-await-in-loop -- one receive batch at a time
@@ -427,7 +428,11 @@ export function pollScheduledRuns(
       await executeBatch(messages);
     }
   })();
-  return () => stop.abort();
+  return async () => {
+    stop.abort();
+    await polling;
+    await maintenancePending;
+  };
 }
 
 function outsideBounds(task: ScheduledTask): boolean {

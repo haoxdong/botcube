@@ -87,6 +87,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
   const { upstream, warmupTimeoutMs } = harness;
   const { turnQuota, awsAccess: credentialSource, userTokens } = turns;
   const warming = warmingSessions<string | null>();
+  const activeTurns = new Set<Promise<void>>();
 
   const turnPayload = async (input: RunAgentInput, requester: Requester, model: AgentModel, captureCredentials?: (credentials: readonly string[]) => void, documents: Promise<AgentDocumentSet> = agentDocuments.get(requester.owner, bot.agentDocuments)) => {
     const forwardedProps = { ...(input.forwardedProps as Record<string, unknown>) };
@@ -110,6 +111,8 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
     if (!parsed.success) return c.json({ detail: parsed.error.issues }, 422);
     if (upstream === null) return c.json({ error: 'AGENTCORE_RUNTIME_ARN is not configured' }, 503);
     const timing = new TurnTiming(receipt, parsed.data.runId, parsed.data.threadId, c.req.header('user-agent'));
+    activeTurns.add(timing.completed);
+    void timing.completed.then(() => activeTurns.delete(timing.completed));
     try {
       const requester = await bot.requester(c);
       timing.mark('requester');
@@ -331,6 +334,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
     return failure === null ? c.json({ status: 'ok' }) : c.json({ error: 'AgentCore warmup failed', details: failure }, 502);
   });
 
+  return async () => { await Promise.all(activeTurns); };
 }
 
 async function admissionResults<const T extends readonly Promise<unknown>[]>(tasks: T) {

@@ -11,17 +11,6 @@ import { credentialSource, type CredentialSource } from './credential-source.js'
 import { endpointTls, EndpointTlsError, type EndpointTls, type TlsConnectOptions } from './endpoint-tls.js';
 import { proxiedFetch, proxyUrl, type ProxyUrl } from './proxy-relay.js';
 
-let activeTurns: Set<Promise<void>> | undefined;
-
-export function registerTracingTurn(): (() => void) | undefined {
-  const pending = activeTurns;
-  if (pending === undefined) return undefined;
-  let finish: (() => void) | undefined;
-  const done = new Promise<void>((resolve) => { finish = resolve; });
-  pending.add(done);
-  return () => { pending.delete(done); finish?.(); };
-}
-
 /**
  * Export traces as the deploy's OTEL_* variables say, with the BotCube Config's telemetry credential and TLS, through
  * its `proxy` when the telemetry Endpoint names it and direct otherwise.
@@ -55,16 +44,7 @@ export function startChatTracing(
     metricReaders: [],
   });
   sdk.start();
-  const pending = new Set<Promise<void>>();
-  activeTurns = pending;
-  let shutdown: Promise<void> | undefined;
-  return {
-    credential: source,
-    shutdown: () => shutdown ??= Promise.all([...pending]).then(async () => {
-      await sdk.shutdown();
-      if (activeTurns === pending) activeTurns = undefined;
-    }),
-  };
+  return { credential: source, shutdown: () => sdk.shutdown() };
 }
 
 /** Node's tunnel to the proxy `through` names, for every destination. */

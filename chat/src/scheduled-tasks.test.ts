@@ -1103,8 +1103,7 @@ describe('ScheduledTasks', () => {
   const invalid = () => new ValidationException({ Message: 'Invalid Schedule Expression', message: 'Invalid Schedule Expression', $metadata: {} });
 
   function serviceForTasks(account: string, tasks: ScheduledTasks, queue: import("./scheduled-runs.js").RunQueue = { receive: () => new Promise(() => undefined), delete: async () => undefined }, runtime = false) {
-    let stop: () => void = () => undefined;
-    const { app, history } = createChatService(
+    const { app, history, stopScheduledWork } = createChatService(
       {
         env: { BOTCUBE_CONFIG: testBotCubeConfig(), BOTCUBE_CHAT_TABLE: table },
         overrides: {
@@ -1135,10 +1134,9 @@ describe('ScheduledTasks', () => {
         tasks,
         queue,
         draining: async () => false,
-        onClose: (close) => { stop = close; },
       },
     );
-    return { app, history, stop: () => stop() };
+    return { app, history, stop: stopScheduledWork };
   }
 
   it.each(['Scheduler refusal', 'unknown schedule group'] as const)('keeps scheduled work healthy across a persistent retirement failure from %s', async (failureKind) => {
@@ -1210,7 +1208,7 @@ describe('ScheduledTasks', () => {
       }
       await expect(normal.create(account, randomUUID(), MORNING_BRIEF)).rejects.toMatchObject({ status: 409 });
     } finally {
-      service.stop();
+      await service.stop();
       errors.mockRestore();
     }
   });
@@ -1275,7 +1273,7 @@ describe('ScheduledTasks', () => {
       expect((await row()).Item).toMatchObject({ id: { S: retiring.id }, mutation: { M: { kind: { S: 'retire' } } } });
       expect((await service.app.request('/health')).status).toBe(200);
     } finally {
-      service.stop();
+      await service.stop();
       errors.mockRestore();
     }
   });
@@ -1300,7 +1298,7 @@ describe('ScheduledTasks', () => {
       ));
       expect((await service.app.request('/health')).status).toBe(503);
     } finally {
-      service.stop();
+      await service.stop();
       errors.mockRestore();
       brokenStorage.destroy();
     }

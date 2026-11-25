@@ -38,6 +38,24 @@ describe('pollScheduledRuns', () => {
 
   const neverDraining = async () => false;
 
+  it('waits for the current delivery to finish and be acknowledged when stopped', async () => {
+    const { fake, deleted, receives } = queue('{"owner":"a","taskId":"t1"}');
+    let started!: () => void;
+    let finish!: () => void;
+    const running = new Promise<void>((resolve) => { started = resolve; });
+    const held = new Promise<void>((resolve) => { finish = resolve; });
+    const stop = pollScheduledRuns(fake, async () => {
+      started();
+      await held;
+    }, neverDraining);
+
+    await running;
+    const stopped = stop().then(() => [...deleted]);
+    finish();
+    expect(await stopped).toEqual(['receipt-0']);
+    expect(receives()).toBe(1);
+  });
+
   it('receives healthy deliveries while expiration maintenance is still pending', async () => {
     let releaseMaintenance!: () => void;
     const heldMaintenance = new Promise<void>((resolve) => { releaseMaintenance = resolve; });
@@ -64,7 +82,7 @@ describe('pollScheduledRuns', () => {
       });
     } finally {
       releaseMaintenance();
-      stop();
+      await stop();
     }
   });
 
@@ -93,7 +111,7 @@ describe('pollScheduledRuns', () => {
       expect(deleted).toEqual(['receipt-0']);
       expect(receives()).toBe(2);
     } finally {
-      stop();
+      await stop();
     }
   });
 
@@ -142,7 +160,7 @@ describe('pollScheduledRuns', () => {
       ]);
     } finally {
       releases.forEach((release) => release());
-      stop();
+      await stop();
     }
   });
 
@@ -158,7 +176,7 @@ describe('pollScheduledRuns', () => {
       delete: async () => undefined,
     }, async () => undefined, neverDraining, undefined, maintenance);
     await eventually(() => expect(events.slice(0, 2)).toEqual(['maintenance', 'receive']));
-    stop();
+    await stop();
   });
 
   it('stops and reports expiration maintenance failure without deleting queued work', async () => {
@@ -173,7 +191,7 @@ describe('pollScheduledRuns', () => {
     expect(deleted).toEqual([]);
     expect(receives()).toBe(0);
     expect(run).not.toHaveBeenCalled();
-    stop();
+    await stop();
   });
 
   it('finishes a message claimed while a long receive was in flight before stopping for drain', async () => {
@@ -191,7 +209,7 @@ describe('pollScheduledRuns', () => {
       expect(run).toHaveBeenCalledWith({ owner: 'a', taskId: 't1', deliveryId: 'claimed', firedAt: new Date(0) });
       expect(receive).toHaveBeenCalledTimes(1);
       expect(logs).toHaveBeenCalledWith('This Chat Service task is draining; it takes no more scheduled runs');
-    } finally { stop(); }
+    } finally { await stop(); }
   });
 
   it('stops and reports queue infrastructure failure', async () => {
@@ -205,7 +223,7 @@ describe('pollScheduledRuns', () => {
     expect(errors).toHaveBeenCalledWith('Scheduled runs stopped: queue receive failed', failure);
     expect(receive).toHaveBeenCalledTimes(1);
     expect(run).not.toHaveBeenCalled();
-    stop();
+    await stop();
   });
 
   it('runs each delivery and then deletes it', async () => {
@@ -225,7 +243,7 @@ describe('pollScheduledRuns', () => {
       { owner: 'a', taskId: 't1', deliveryId: 'delivery-0', firedAt: new Date(0) },
       { owner: 'b', taskId: 't2', deliveryId: 'delivery-1', firedAt: new Date(0) },
     ]);
-    stop();
+    await stop();
   });
 
   it('leaves a failed run on the queue, logs it, and receives again after five seconds', async () => {
@@ -249,7 +267,7 @@ describe('pollScheduledRuns', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(receives()).toBe(2);
     expect(deleted).toEqual([]);
-    stop();
+    await stop();
   });
 
   it('stops receiving, without logging, once stopped', async () => {
@@ -258,8 +276,7 @@ describe('pollScheduledRuns', () => {
 
     const stop = pollScheduledRuns(fake, async () => undefined, neverDraining);
     await eventually(() => expect(receives()).toBe(1));
-    stop();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await stop();
 
     expect(signals.map((signal) => signal.aborted)).toEqual([true]);
     expect(receives()).toBe(1);
@@ -296,7 +313,7 @@ describe('pollScheduledRuns', () => {
     expect(receives()).toBe(0);
     expect(run).not.toHaveBeenCalled();
     expect(errors).toHaveBeenCalledWith('Scheduled runs stopped: cannot tell whether this task is draining', failure);
-    stop();
+    await stop();
   });
 
 });
@@ -340,7 +357,7 @@ describe('ecsTaskDraining', () => {
       await eventually(() => expect(failed).toHaveBeenCalledWith(expect.objectContaining({ message })));
       expect(receive).not.toHaveBeenCalled();
     } finally {
-      stop();
+      await stop();
     }
   });
 

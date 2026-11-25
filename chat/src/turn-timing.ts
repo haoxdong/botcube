@@ -1,5 +1,4 @@
 import { runFinishedOutcome } from './run-outcome.js';
-import { registerTracingTurn } from './tracing.js';
 import { ROOT_CONTEXT, SpanKind, SpanStatusCode, trace, type Context, type Span } from '@opentelemetry/api';
 import { EventType } from '@ag-ui/client';
 
@@ -19,12 +18,13 @@ export class TurnTiming {
   model: string | undefined;
   readonly traceContext: Context;
   private readonly span: Span;
-  private readonly tracedTurnFinished = registerTracingTurn();
   private invokeSpan: Span | undefined;
   private invokeContext: Context | undefined;
   private readonly chatMs: Partial<Record<TurnStage, number>> = {};
   private status: 'finished' | 'failed' | 'stopped' = 'failed';
   private logged = false;
+  private complete!: () => void;
+  readonly completed = new Promise<void>((resolve) => { this.complete = resolve; });
 
   constructor(private readonly receipt: number, private readonly runId: string, private readonly sessionId: string,
     private readonly userAgent?: string) {
@@ -90,10 +90,10 @@ export class TurnTiming {
     const end = performance.timeOrigin + performance.now();
     this.invokeSpan?.end(end);
     this.span.end(end);
-    this.tracedTurnFinished?.();
     const chatMs = Object.fromEntries(STAGES.flatMap((stage) => this.chatMs[stage] === undefined ? [] : [[stage, this.chatMs[stage]]]));
     console.info(JSON.stringify({ event: 'chat_turn_timing', runId: this.runId, sessionId: this.sessionId, userAgent: this.userAgent, model: this.model,
       status: outcome,
       e2eMs: this.chatMs.lastToken ?? this.chatMs.end, chatMs }));
+    this.complete();
   }
 }

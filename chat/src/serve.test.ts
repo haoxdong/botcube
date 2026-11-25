@@ -105,8 +105,8 @@ const turn = (threadId: string) =>
     forwardedProps: {},
   });
 
-const postTurn = (url: string, threadId: string) =>
-  fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: turn(threadId) });
+const postTurn = (url: string, threadId: string, signal?: AbortSignal) =>
+  fetch(url, { ...(signal ? { signal } : {}), method: 'POST', headers: { 'content-type': 'application/json' }, body: turn(threadId) });
 
 describe('the Chat Service served from the environment', () => {
   it('aborts a blocked scheduled-run receive when the HTTP server closes', async () => {
@@ -140,6 +140,58 @@ describe('the Chat Service served from the environment', () => {
     await new Promise((resolve) => server.close(resolve));
 
     expect(signal.aborted).toBe(true);
+  });
+
+  it.each(['connected', 'disconnected'])('drains a %s Turn before exiting on task stop with tracing disabled', async (client) => {
+    const upstream = await fake(new FakeAgentCore());
+    const sessionId = 'drain-turn';
+    let finish!: () => void;
+    const held = new Promise<void>((resolve) => { finish = resolve; });
+    upstream.script(sessionId, {
+      kind: 'stream',
+      frames: ['data: {"type":"RUN_STARTED"}', 'data: {"type":"RUN_FINISHED"}'],
+      hold: held,
+    });
+    vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
+    const timing = vi.spyOn(console, 'info');
+    type Exit = { code: Parameters<typeof process.exit>[0]; outcome: string };
+    let exit!: (value: Exit) => void;
+    const exited = new Promise<Exit>((resolve) => { exit = resolve; });
+    const processExit = vi.spyOn(process, 'exit').mockImplementation((code) => {
+      const line = timing.mock.calls.find(([message]) => String(message).includes('"event":"chat_turn_timing"'));
+      exit({ code, outcome: line === undefined ? 'missing' : (JSON.parse(String(line[0])) as { status: string }).status });
+      return undefined as never;
+    });
+    const existing = process.rawListeners('SIGTERM');
+    const server = await serveChatService({
+      PORT: '0', BOTCUBE_CONFIG: CONFIG, BOTCUBE_CHAT_TABLE: await allocatedTable(sessionId),
+      AGENTCORE_RUNTIME_ARN: RUNTIME_ARN, AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: upstream.url,
+    }, { overrides });
+    closers.push(async () => {
+      if (server.listening) await new Promise((resolve) => server.close(resolve));
+    });
+    try {
+      await once(server, 'listening');
+      const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const browser = new AbortController();
+      const response = await postTurn(url, sessionId, browser.signal);
+      expect(response.status).toBe(200);
+      const closed = once(server, 'close');
+      const text = client === 'connected' ? response.text() : undefined;
+      if (client === 'disconnected') browser.abort();
+      const terminate = process.rawListeners('SIGTERM').find((listener) => !existing.includes(listener));
+      expect(terminate).toBeDefined();
+      terminate?.call(process);
+      const accepting = server.listening;
+      if (!accepting && client === 'disconnected') await closed;
+      finish();
+      if (text !== undefined) expect(await text).toContain('RUN_FINISHED');
+      expect(accepting).toBe(false);
+      expect(await exited).toEqual({ code: 0, outcome: client === 'connected' ? 'finished' : 'gone' });
+      expect(processExit).toHaveBeenCalledTimes(1);
+    } finally {
+      finish();
+    }
   });
 
   describe('stops at startup, naming the seam and the source, on a credential it cannot read', () => {
