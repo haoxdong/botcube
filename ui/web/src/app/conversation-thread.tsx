@@ -216,7 +216,8 @@ function ReadLine({ stick, opensAt, room, onLanded }: { stick: StickToBottomCont
       const read = rows.find(({ box }) => box.top >= view.top && box.top < view.bottom) ?? rows.find(({ box }) => box.bottom > view.top);
       line.current = read ? { row: read.row, top: read.box.top } : null;
     };
-    // Older transcript joins above the read line. WebKit has no scroll anchoring, and Chromium skips it at scrollTop 0.
+    // Older transcript joins above the read line, or an alert above the thread resizes the box or page. WebKit has no
+    // scroll anchoring, and Chromium skips it at scrollTop 0.
     const held = new ResizeObserver((entries) => {
       for (const entry of entries) if (entry.target === composer) composerHeight = entry.contentRect.height;
       land();
@@ -227,6 +228,8 @@ function ReadLine({ stick, opensAt, room, onLanded }: { stick: StickToBottomCont
       if (Math.abs(moved) >= 0.5) hold(scroller, scroller.scrollTop + moved, written, state);
     });
     held.observe(content);
+    held.observe(boxOf(contentRef));
+    held.observe(document.documentElement);
     if (composer !== null) held.observe(composer);
     window.addEventListener("resize", resized);
     document.addEventListener("scroll", scrolled, { capture: true, passive: true });

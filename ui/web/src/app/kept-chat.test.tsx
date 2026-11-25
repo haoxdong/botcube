@@ -234,8 +234,8 @@ it("lays out its scroll view and composer room as CopilotKit 1.77's chat view do
 
 it('stops observing as it unmounts', () => {
   const { view } = renderKept();
-  // The composer, the scroll view, its content, and the message list whose bubbles fit their lines.
-  expect(observed.size).toBe(4);
+  // The composer, the scroll view, its content, the page, and the message list whose bubbles fit their lines.
+  expect(observed.size).toBe(5);
 
   view.unmount();
 
