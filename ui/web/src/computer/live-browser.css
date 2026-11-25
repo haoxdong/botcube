@@ -86,20 +86,6 @@
   text-align: center;
 }
 
-.computer-screen-cover-icon {
-  width: 28px;
-  height: 28px;
-  margin-bottom: 2px;
-  color: var(--color-text-muted);
-}
-
-.computer-screen-cover-title {
-  margin: 0;
-  font-size: var(--font-body);
-  font-weight: var(--weight-semibold);
-  color: var(--color-text);
-}
-
 .computer-screen-cover-detail {
   max-width: 30ch;
   margin: 0;
