@@ -18,11 +18,6 @@ export async function jsonPayload(c: Context): Promise<Record<string, unknown> |
   return parsed as Record<string, unknown>;
 }
 
-/** Destructive account actions carry `{"confirmation": "<intent>"}`. */
-export function requireExplicitConfirmation(payload: Record<string, unknown> | null, intent: string): void {
-  if (payload?.confirmation !== intent) throw new HttpError(400, `Explicit ${intent} confirmation is required`);
-}
-
 export const isRecord =(value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 

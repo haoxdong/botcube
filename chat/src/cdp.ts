@@ -92,12 +92,6 @@ export class Cdp {
     return sessionId;
   }
 
-  /** Enable the network, runtime and page domains on a page session. */
-  async enablePageDomains(sessionId: string): Promise<void> {
-    // eslint-disable-next-line no-await-in-loop -- enables the domains in order on one CDP session
-    for (const method of ['Network.enable', 'Runtime.enable', 'Page.enable']) await this.send(method, { sessionId });
-  }
-
   /** Every cookie the browser holds, as CDP reports them. */
   async allCookies(sessionId: string): Promise<Record<string, unknown>[]> {
     const { cookies } = (await this.send('Network.getAllCookies', { sessionId })) as {

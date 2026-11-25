@@ -384,13 +384,6 @@ export class AccountStore<A extends Account = Account> extends GuestExpiry<A> {
     return account;
   }
 
-  /** The deletes of the account's session this token names, when it is the account's. */
-  protected async replacedSessionDeletes(sessionTokenToReplace: string | undefined, accountId: string): Promise<Operation[]> {
-    const replacing = (sessionTokenToReplace ?? '').trim();
-    const oldSession = replacing.startsWith('sess_') ? await this.session(replacing) : null;
-    return oldSession && oldSession.accountId === accountId ? this.tokenDeletes(replacing, oldSession) : [];
-  }
-
   /** Delete a session; true when it was still live. */
   async deleteTrustedSession(sessionToken: string | undefined): Promise<boolean> {
     const tokenValue = (sessionToken ?? '').trim();
