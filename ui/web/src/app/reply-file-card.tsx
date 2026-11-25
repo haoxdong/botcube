@@ -136,11 +136,11 @@ function PdfFirstPage({
       ).toString();
       task = pdfjs.getDocument({ url, disableRange: true, disableStream: true });
       const page = await (await task.promise).getPage(1);
-      // A card laid out with no width would draw a 0×0 page, blank with nothing to say why.
-      if (element.clientWidth === 0) throw new Error('the card has no width');
+      const width = element.clientWidth;
+      if (width === 0) throw new Error('the card has no width');
       const viewport = page.getViewport({
         scale:
-          (element.clientWidth * window.devicePixelRatio) /
+          (width * window.devicePixelRatio) /
           page.getViewport({ scale: 1 }).width,
       });
       element.width = Math.floor(viewport.width);
