@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 const CHAT = 'chat/src';
 const CREDENTIAL_SOURCE = 'credential-source/src/botcube_credential_source/__init__.py';
 const CREDENTIAL_SERVICE = 'credential-service/src/botcube_credential_service';
+const CREDENTIAL_CLIENT_FACTORY = `${CREDENTIAL_SERVICE}/cookies.py`;
 
 /** Why a client goes direct, never through the proxy: no Endpoint of the BotCube Config names its destination. */
 const DIRECT = {
@@ -79,7 +80,7 @@ const CLIENTS: Readonly<Record<string, readonly { client: string; route: Route }
 };
 
 const TYPESCRIPT_CLIENT = /(^|[^.\w])fetch\(|dispatcherFetch\(|awsFetch\(|new (Agent|ProxyAgent|Pool|EnvHttpProxyAgent|WebSocket)\(|tcpConnect\(|tlsConnect\(|client\.discovery\(|oidc\.\w+Grant\(|from '@aws-sdk\/client-/;
-const PYTHON_CLIENT = /httpx\.(AsyncClient|Client|post|get|put|delete|request|stream)\(|httpcore\.\w*Pool\(|boto3\.(client|resource|Session|session)\b|\.client\('|websockets|socket\.create_connection\(|urlopen\(/;
+const PYTHON_CLIENT = /stateless_http_client\(|httpx\.(AsyncClient|Client|post|get|put|delete|request|stream)\(|httpcore\.\w*Pool\(|boto3\.(client|resource|Session|session)\b|\.client\('|websockets|socket\.create_connection\(|urlopen\(/;
 
 const source = (file: string): string => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
 const sources = (directory: string, extension: string): string[] => readdirSync(new URL(`../${directory}`, import.meta.url))
@@ -87,7 +88,11 @@ const sources = (directory: string, extension: string): string[] => readdirSync(
   .map((name) => `${directory}/${name}`);
 const buildsClient = (file: string): boolean => {
   const client = file.endsWith('.py') ? PYTHON_CLIENT : TYPESCRIPT_CLIENT;
-  return source(file).split('\n').some((line) => !/^\s*(import type|#|\/\/|\*)/.test(line) && client.test(line));
+  return source(file).split('\n').some((line) => {
+    if (/^\s*(import type|#|\/\/|\*)/.test(line)) return false;
+    if (file === CREDENTIAL_CLIENT_FACTORY && /^\s*(def stateless_http_client|return httpx\.AsyncClient)\(/.test(line)) return false;
+    return client.test(line);
+  });
 };
 
 /** The node at `path` in the emitted BotCube Config schema, through each adapter's branch; `*` is any record key. */

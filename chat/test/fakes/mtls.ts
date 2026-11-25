@@ -82,9 +82,9 @@ export class FakeMtlsProxy {
     this.server.on('tlsClientError', () => undefined);
   }
 
-  async listen(): Promise<URL> {
-    await new Promise<void>((resolve) => this.server.listen(0, '127.0.0.1', resolve));
-    return new URL(`https://127.0.0.1:${(this.server.address() as AddressInfo).port}`);
+  async listen(host: '127.0.0.1' | '::1' = '127.0.0.1'): Promise<URL> {
+    await new Promise<void>((resolve) => this.server.listen(0, host, resolve));
+    return new URL(`https://${host === '::1' ? '[::1]' : host}:${(this.server.address() as AddressInfo).port}`);
   }
 
   close(): Promise<void> {

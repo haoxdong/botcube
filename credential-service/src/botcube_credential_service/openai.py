@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .answer_boundary import CredentialAnswerBoundary
 from .config import OpenAISettings
-from .cookies import isolated_cookie_jar
+from .cookies import stateless_http_client
 from .openai_errors import REVOKED, UNAVAILABLE, plan_usage_error, revoked, unavailable
 from .rotating_access import (
     Grant,
@@ -188,11 +188,10 @@ class OpenAIProvider:
 
     def _relay_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(
+            self._client = stateless_http_client(
                 transport=self._transport,
                 proxy=self._proxy() if self._proxy else None,
                 timeout=httpx.Timeout(self._read_timeout_seconds, connect=self._connect_timeout_seconds),
-                cookies=isolated_cookie_jar(),
             )
         return self._client
 

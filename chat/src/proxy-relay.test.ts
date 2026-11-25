@@ -9,11 +9,11 @@ class FakeUpstreamProxy {
   readonly heads: string[] = [];
   private readonly server: Server = createServer((socket) => this.serve(socket));
 
-  async listen(): Promise<URL> {
-    await new Promise<void>((resolve) => this.server.listen(0, '127.0.0.1', resolve));
+  async listen(host: '127.0.0.1' | '::1' = '127.0.0.1'): Promise<URL> {
+    await new Promise<void>((resolve) => this.server.listen(0, host, resolve));
     const address = this.server.address();
     if (address === null || typeof address === 'string') throw new Error('no port');
-    return new URL(`http://127.0.0.1:${address.port}`);
+    return new URL(`http://${host === '::1' ? '[::1]' : host}:${address.port}`);
   }
 
   close(): Promise<void> {
@@ -74,10 +74,10 @@ const values = (...tokens: string[]): CredentialSource & { calls: number } => {
 const opened: { close(): Promise<void> }[] = [];
 afterEach(() => Promise.all(opened.splice(0).map((resource) => resource.close())));
 
-async function relayTo(options: Omit<Parameters<typeof startProxyRelay>[0], 'upstream' | 'listen'>) {
+async function relayTo(options: Omit<Parameters<typeof startProxyRelay>[0], 'upstream' | 'listen'>, host?: Parameters<FakeUpstreamProxy['listen']>[0]) {
   const upstream = new FakeUpstreamProxy();
   opened.push(upstream);
-  const relay = await startProxyRelay({ ...options, upstream: await upstream.listen(), listen: { host: '127.0.0.1', port: 0 } });
+  const relay = await startProxyRelay({ ...options, upstream: await upstream.listen(host), listen: { host: '127.0.0.1', port: 0 } });
   opened.push(relay);
   return { upstream, relay };
 }
@@ -95,8 +95,8 @@ describe('the proxy relay', () => {
     expect(upstream.heads.map((head) => header(head, 'x-tenant'))).toEqual([['botcube-example'], ['botcube-example']]);
   });
 
-  it('authenticates a plain HTTP request it forwards, one request to a connection', async () => {
-    const { upstream, relay } = await relayTo({ credential: values('token'), headers: {} });
+  it.each(['127.0.0.1', '::1'] as const)('authenticates a plain HTTP request it forwards over %s', async (host) => {
+    const { upstream, relay } = await relayTo({ credential: values('token'), headers: {} }, host);
 
     const answer = await exchange(relay, 'POST http://collector.example.com:4318/v1/traces HTTP/1.1\r\nHost: collector.example.com:4318\r\nConnection: keep-alive\r\nContent-Length: 0\r\n\r\n');
 

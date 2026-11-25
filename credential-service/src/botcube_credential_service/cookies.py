@@ -2,13 +2,22 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from http.cookiejar import CookieJar, DefaultCookiePolicy
-from typing import Any
+from typing import Any, NotRequired, TypedDict, Unpack
+
+import httpx
 
 from .vault import CredentialServiceError
 
 
-def isolated_cookie_jar() -> CookieJar:
-    return CookieJar(policy=DefaultCookiePolicy(allowed_domains=()))
+class _HttpClientOptions(TypedDict):
+    timeout: httpx.Timeout | float
+    proxy: NotRequired[str | None]
+    transport: NotRequired[httpx.AsyncBaseTransport | None]
+
+
+def stateless_http_client(**options: Unpack[_HttpClientOptions]) -> httpx.AsyncClient:
+    """Pool connections for credential calls while keeping cookies scoped to each request."""
+    return httpx.AsyncClient(cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=())), **options)
 
 
 CookieEntry = Mapping[str, Any]

@@ -1,3 +1,5 @@
+/// <reference types="next/image-types/global" />
+
 declare module '*.css' {}
 
 /** plotly.js's prebuilt bundle, which ships no types; PlotlyChart types the slice it uses. */

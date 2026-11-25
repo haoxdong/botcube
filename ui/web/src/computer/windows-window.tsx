@@ -1,8 +1,11 @@
 // One Agent Computer window: react-rnd moves and resizes it, stock Fluent draws its frame (ADR 0093).
 import { Button, FluentProvider, makeStyles, mergeClasses, Text, tokens, webDarkTheme, webLightTheme } from '@fluentui/react-components';
-import { Dismiss16Regular, Folder16Filled, Folder24Filled, Globe20Color, Globe24Color, Maximize16Regular, SquareMultiple16Regular, Subtract16Regular, WindowConsole20Regular } from '@fluentui/react-icons';
+import { Dismiss16Regular, Maximize16Regular, SquareMultiple16Regular, Subtract16Regular } from '@fluentui/react-icons';
 import type { CSSProperties, ReactNode, TransitionEvent } from 'react';
 import { Rnd } from 'react-rnd';
+import chromium from './app-icons/chromium.svg';
+import folder from './app-icons/file-folder-3d.png';
+import terminal from './app-icons/windows-terminal.svg';
 
 /** The computer's apps, each in its own window and on the taskbar. */
 export type DockApp = 'Chrome' | 'Terminal' | 'Files';
@@ -14,7 +17,6 @@ const ACCELERATE = 'cubic-bezier(0.9, 0.1, 1, 0.2)';
 // Its curveEasyEase for close: an accelerate curve leaves the change to the last frames, so it reads as a cut.
 const EASY_EASE = 'cubic-bezier(0.33, 0, 0.67, 1)';
 // Windows 11's folder yellow: Fluent's icons ship no coloured folder.
-const FOLDER = '#f8c246';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export type Life = 'open' | 'minimised' | 'closed';
@@ -80,25 +82,17 @@ const useStyles = makeStyles({
   titleBarActive: { backgroundColor: tokens.colorNeutralBackground2 },
   title: { minWidth: 0 },
   captions: { display: 'flex', flexShrink: 0, marginLeft: 'auto' },
-  terminalIcon: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '24px',
-    height: '24px',
-    borderRadius: tokens.borderRadiusMedium,
-    backgroundColor: tokens.colorNeutralBackgroundInverted,
-    color: tokens.colorNeutralForegroundInverted,
-    fontSize: '18px',
-  },
-  terminalIconSmall: { width: '16px', height: '16px', fontSize: '12px' },
+  appIcon: { display: 'block', flexShrink: 0, backgroundPosition: 'center', backgroundRepeat: 'no-repeat', backgroundSize: 'contain' },
 });
+
+/** Each app's own icon, pinned in `app-icons/` with its licence (botcube/NOTICE). */
+const APP_ICON: Record<DockApp, string | { src: string }> = { Files: folder, Chrome: chromium, Terminal: terminal };
 
 export function AppIcon({ app, size }: { app: DockApp; size: 16 | 24 }) {
   const styles = useStyles();
-  if (app === 'Files') return size === 16 ? <Folder16Filled color={FOLDER} /> : <Folder24Filled color={FOLDER} />;
-  if (app === 'Chrome') return size === 16 ? <Globe20Color style={{ fontSize: 16 }} /> : <Globe24Color />;
-  return <span className={mergeClasses(styles.terminalIcon, size === 16 && styles.terminalIconSmall)}><WindowConsole20Regular /></span>;
+  const image = APP_ICON[app];
+  // Decorative, beside the app's name: a background, so no picture is read out or taken for the screen's own.
+  return <span className={styles.appIcon} style={{ width: size, height: size, backgroundImage: `url("${typeof image === 'string' ? image : image.src}")` }} aria-hidden="true" />;
 }
 
 function TitleBar({ window: { app, title }, active, full, onMinimise, onMaximise, onClose }: { window: DesktopWindow; active: boolean; full: boolean; onMinimise: () => void; onMaximise: () => void; onClose: () => void }) {

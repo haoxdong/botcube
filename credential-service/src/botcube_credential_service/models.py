@@ -20,6 +20,7 @@ from botcube_credential_source import (
 from fastapi import APIRouter, HTTPException, WebSocket
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from .cookies import stateless_http_client
 from .endpoint_tls import EndpointTls, EndpointTlsError, endpoint_tls
 from .proxy_relay import proxy_url_from_config
 
@@ -99,7 +100,7 @@ class ModelsEndpointProvider:
         self._routes = routes
         self._audit = audit
         self._clients = {
-            provider: httpx.AsyncClient(
+            provider: stateless_http_client(
                 transport=_EndpointTransport(route.url, tls, proxy) if tls is not None else transport,
                 proxy=None if tls is not None else proxy,
                 timeout=httpx.Timeout(_READ_TIMEOUT_SECONDS, connect=_CONNECT_TIMEOUT_SECONDS),

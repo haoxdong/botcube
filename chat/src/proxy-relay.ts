@@ -1,5 +1,6 @@
-import { connect as tcpConnect, createServer, type Socket } from 'node:net';
+import { connect as tcpConnect, createServer, isIP, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
+import { urlToHttpOptions } from 'node:url';
 import type { BotCubeConfig } from 'botcube-config';
 import type { CustomFetch } from 'openid-client';
 import { ProxyAgent } from 'undici';
@@ -39,7 +40,7 @@ export async function startProxyRelay({ upstream, listen, credential, headers, t
         const authorization = credential ? `Bearer ${(await credential.get()).value}` : undefined;
         relay(client, upstream, rewrite(head, authorization, headers), rest, await tls?.connectOptions());
       })
-      .catch((error: unknown) => refuse(client, upstream, `could not open a request through ${upstream.origin}`, error));
+      .catch((error: unknown) => refuse(client, `could not open a request through ${upstream.origin}`, error));
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -96,7 +97,6 @@ export function proxiedFetch(through: ProxyUrl): CustomFetch {
     dispatcherFetch(url, { method, headers, body: body ?? null, redirect, signal: signal ?? null, dispatcher: await built() });
 }
 
-/** The client's request head, up to its blank line, and any bytes after it. */
 function readHead(client: Socket): Promise<{ head: string; rest: Buffer }> {
   return new Promise((resolve, reject) => {
     let buffered = Buffer.alloc(0);
@@ -135,23 +135,22 @@ function rewrite(head: string, authorization: string | undefined, headers: Reado
   return [requestLine, ...kept, ...added, '', ''].join('\r\n');
 }
 
-/** Answer the client 502 with `error`'s message, which names no credential or key. */
-function refuse(client: Socket, upstream: URL, doing: string, error: unknown): void {
+function refuse(client: Socket, doing: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`Proxy relay ${doing}: ${message}`);
   client.end(`HTTP/1.1 502 Bad Gateway\r\ncontent-type: text/plain\r\ncontent-length: ${Buffer.byteLength(message)}\r\nconnection: close\r\n\r\n${message}`);
 }
 
-/** Send `head` and `rest` to the operator's proxy, then carry bytes both ways until either side closes. */
 function relay(client: Socket, upstream: URL, head: string, rest: Buffer, tls: TlsConnectOptions | undefined): void {
-  const secure = upstream.protocol === 'https:';
-  const port = Number(upstream.port) || (secure ? 443 : 80);
-  const proxy = secure
-    ? tlsConnect({ host: upstream.hostname, port, servername: upstream.hostname, ...tls })
-    : tcpConnect(port, upstream.hostname);
+  const { protocol, hostname, port } = urlToHttpOptions(upstream);
+  if (!hostname) throw new TypeError('The forward proxy URL must include a hostname');
+  const secure = protocol === 'https:';
+  const address = { host: hostname, port: Number(port ?? (secure ? 443 : 80)) };
+  const servername = isIP(hostname) === 0 ? hostname : undefined;
+  const proxy = secure ? tlsConnect({ ...address, servername, ...tls }) : tcpConnect(address);
   proxy.on('error', (error) => {
     if (error instanceof EndpointTlsError) {
-      refuse(client, upstream, `refused ${upstream.origin}`, error);
+      refuse(client, `refused ${upstream.origin}`, error);
       return;
     }
     console.error(`Proxy relay could not reach ${upstream.origin}: ${error.message}`);

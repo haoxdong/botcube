@@ -43,19 +43,19 @@ function tunnel(relay: ProxyRelay, tunnelled = 'hello'): Promise<string> {
   });
 }
 
-async function relayThrough(proxy: FakeMtlsProxy, tls: Parameters<typeof endpointTls>[1], env: NodeJS.ProcessEnv = {}) {
+async function relayThrough(proxy: FakeMtlsProxy, tls: Parameters<typeof endpointTls>[1], env: NodeJS.ProcessEnv = {}, host?: Parameters<FakeMtlsProxy['listen']>[0]) {
   opened.push(proxy);
   const relay = await startProxyRelay({
-    upstream: await proxy.listen(), listen: { host: '127.0.0.1', port: 0 }, headers: {}, tls: endpointTls('proxy', tls, { env }),
+    upstream: await proxy.listen(host), listen: { host: '127.0.0.1', port: 0 }, headers: {}, tls: endpointTls('proxy', tls, { env }),
   });
   opened.push(relay);
   return relay;
 }
 
 describe('the proxy relay to a proxy with TLS', () => {
-  it('presents the client certificate and tunnels to a proxy carrying the expected identity, which has no hostname SAN', async () => {
+  it.each(['127.0.0.1', '::1'] as const)('presents the client certificate and verifies the proxy URI identity on %s', async (host) => {
     const proxy = new FakeMtlsProxy(certificates);
-    const relay = await relayThrough(proxy, { clientCertificate: certificates.files.clientA, serverIdentity: SERVER_IDENTITY });
+    const relay = await relayThrough(proxy, { clientCertificate: certificates.files.clientA, serverIdentity: SERVER_IDENTITY }, {}, host);
 
     expect(await tunnel(relay)).toBe('HTTP/1.1 200 Connection Established\r\n\r\nhello');
     expect(proxy.clients()).toEqual(['client-a']);

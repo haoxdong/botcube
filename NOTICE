@@ -1,2 +1,12 @@
 BotCube
 Copyright 2026 Hao Dong
+
+Third-party icons in ui/web/src/computer/app-icons/, each kept unmodified with its licence beside it:
+
+- chromium.svg: the Chromium logo, chromium/src chrome/app/theme/chromium/product_logo.svg
+  @ 7aa67865a3f2. Copyright 2015 The Chromium Authors. BSD-3-Clause (chromium.LICENSE.txt).
+- windows-terminal.svg: Windows Terminal icon © Microsoft, CC BY-ND 4.0. microsoft/terminal
+  res/terminal/Terminal.svg @ 5f1b2214b318 (windows-terminal.LICENSE.txt).
+- file-folder-3d.png: Fluent Emoji "File folder" 3D, microsoft/fluentui-emoji
+  assets/File folder/3D/file_folder_3d.png @ 1ffb34c752ec. Copyright (c) Microsoft
+  Corporation. MIT (fluentui-emoji.LICENSE.txt).
