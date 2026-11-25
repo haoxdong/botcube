@@ -12,7 +12,6 @@ import tempfile
 import threading
 from collections.abc import (
     AsyncGenerator,
-    AsyncIterable,
     Awaitable,
     Callable,
     Coroutine,
@@ -573,8 +572,9 @@ async def invoke(input_data: Invocation, context: _RequestContext):
     turn_identity = input_data.turn_identity
     if AGENTCORE_MEMORY_ID and turn_identity is None:
         raise TurnIdentityError('Invocation carries no Turn identity; the Chat Service must forward turnIdentity')
-    async for event in _invoke_agent(input_data, context, auth, actor_id, session_user_id, turn_identity):
-        yield event
+    async with aclosing(_invoke_agent(input_data, context, auth, actor_id, session_user_id, turn_identity)) as events:
+        async for event in events:
+            yield event
 
 
 def _opening_turn(input_data: Invocation) -> bool:
@@ -720,26 +720,14 @@ def _is_assistant_text(event: Any) -> TypeGuard[TextMessageContentEvent]:
     return event.type == EventType.TEXT_MESSAGE_CONTENT and bool(event.delta.strip())
 
 
-async def _events_with_response_check(run_input: Invocation, context: _RequestContext):
-    saw_assistant_text = False
-    async for event in invoke(run_input, context):
-        saw_assistant_text |= _is_assistant_text(event)
-        if event.type == EventType.RUN_FINISHED and not saw_assistant_text:
-            event = RunErrorEvent(
-                message='Agent run completed without an assistant response',
-                code='AGENT_EMPTY_RESPONSE',
-                usage=event.usage,
-            )
-        yield event
-
-
 class _InvocationResponse(StreamingResponse):
     """Stamp the first nonempty ASGI send attempt; transport delivery is unobserved."""
 
-    def __init__(self, content: AsyncIterable[str | bytes], *, run_id: str,
+    def __init__(self, content: AsyncGenerator[str, None], *, run_id: str,
                  runtime_session_id: str | None, media_type: str,
                  diagnostic_hold: Callable[[], Awaitable[None]] | None = None) -> None:
         super().__init__(content, media_type=media_type)
+        self.frames = content
         self.run_id = run_id
         self.runtime_session_id = runtime_session_id
         self.diagnostic_hold = diagnostic_hold
@@ -758,7 +746,8 @@ class _InvocationResponse(StreamingResponse):
                                     separators=(',', ':')))
             await send(message)
 
-        await super().stream_response(observed_send)
+        async with aclosing(self.frames):
+            await super().stream_response(observed_send)
 
 
 @app.post('/invocations')
@@ -829,17 +818,26 @@ async def _invocation_frames(
     terminal_sent = False
     calls = FailedCalls()
     reply = ''
+    saw_assistant_text = False
     environment = {**os.environ, **run_input.redaction_environment, 'session_id': context.session_id or ''}
     try:
         with turn_timing.use(timing), counting_failed_calls(calls):
             try:
-                async for event in _events_with_response_check(run_input, context):
-                    reply = turn_output.reply_text(reply, event)
-                    frame = _timed_frame(event, encoder, timing)
-                    if isinstance(event, RunErrorEvent):
-                        stream_error = event
-                    terminal_sent |= event.type == EventType.RUN_FINISHED
-                    yield frame
+                async with aclosing(invoke(run_input, context)) as events:
+                    async for event in events:
+                        saw_assistant_text |= _is_assistant_text(event)
+                        if event.type == EventType.RUN_FINISHED and not saw_assistant_text:
+                            event = RunErrorEvent(
+                                message='Agent run completed without an assistant response',
+                                code='AGENT_EMPTY_RESPONSE',
+                                usage=event.usage,
+                            )
+                        reply = turn_output.reply_text(reply, event)
+                        frame = _timed_frame(event, encoder, timing)
+                        if isinstance(event, RunErrorEvent):
+                            stream_error = event
+                        terminal_sent |= event.type == EventType.RUN_FINISHED
+                        yield frame
                 finished = stream_error is None
             except (
                 MissingUserIdError,

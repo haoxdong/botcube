@@ -30,6 +30,7 @@ dependencies = [
   "langgraph-checkpoint-aws==1.2.6",
   "zstandard>=0.25.0",
   "ruamel-yaml>=0.18,<0.19",
+  "anyio>=4",
 ]
 
 [project.scripts]

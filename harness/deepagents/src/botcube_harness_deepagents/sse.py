@@ -1,43 +1,36 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
+
+from anyio import CancelScope, create_memory_object_stream, move_on_after
 
 _KEEPALIVE = ': keepalive\n\n'
 
 
-async def keep_alive(frames: AsyncIterator[str], interval: float) -> AsyncGenerator[str, None]:
-    """Yield frames and quiet-interval SSE comments from a single producer context."""
-    queue: asyncio.Queue[str | None] = asyncio.Queue()
+async def keep_alive(frames: AsyncGenerator[str, None], interval: float) -> AsyncGenerator[str, None]:
+    outgoing, incoming = create_memory_object_stream[str](1)
 
     async def read() -> None:
-        try:
-            async for frame in frames:
-                queue.put_nowait(frame)
-        finally:
-            queue.put_nowait(None)
+        with outgoing:
+            async with aclosing(frames):
+                async for frame in frames:
+                    await outgoing.send(frame)
 
     reading = asyncio.create_task(read())
-    waiting = asyncio.create_task(queue.get())
     try:
-        while True:
-            done, _pending = await asyncio.wait({waiting}, timeout=interval)
-            if not done:
-                yield _KEEPALIVE
-                continue
-            frame = waiting.result()
-            if frame is None:
-                break
-            yield frame
-            waiting = asyncio.create_task(queue.get())
-        await reading
+        with incoming:
+            while True:
+                frame = _KEEPALIVE
+                with move_on_after(interval):
+                    frame = await anext(incoming, None)
+                if frame is None:
+                    break
+                yield frame
     finally:
-        await _cancel_keepalive_tasks(reading, waiting)
-
-
-async def _cancel_keepalive_tasks(*tasks: asyncio.Task[object]) -> None:
-    cancelled = [task.cancel() for task in tasks]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    for result, requested in zip(results, cancelled, strict=True):
-        if isinstance(result, BaseException) and not (requested and isinstance(result, asyncio.CancelledError)):
+        cancelled_here = reading.cancel()
+        with CancelScope(shield=True):
+            [result] = await asyncio.gather(reading, return_exceptions=True)
+        if isinstance(result, BaseException) and not (cancelled_here and isinstance(result, asyncio.CancelledError)):
             raise result

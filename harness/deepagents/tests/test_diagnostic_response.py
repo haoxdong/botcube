@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -61,7 +61,7 @@ def run(run_id: str = 'diagnostic-run', forwarded: dict[str, object] | None = No
 
 async def respond(request: Invocation, sent: list[Message], produced: list[bool], *,
                   identity: str = 'owned-test-user', receipt: float = 100) -> None:
-    async def body() -> AsyncIterator[str]:
+    async def body() -> AsyncGenerator[str, None]:
         produced.append(True)
         yield FRAMES
 

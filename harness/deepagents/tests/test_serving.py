@@ -60,6 +60,7 @@ from langgraph.checkpoint.base import empty_checkpoint
 from langgraph_checkpoint_aws import AgentCoreMemorySaver
 from openai import APIStatusError
 from PIL import Image, PngImagePlugin
+from starlette.types import Message
 
 from agentcore_fake import (
     MEMORY_ID,
@@ -539,6 +540,62 @@ def test_a_quiet_turn_streams_keepalive_comments_until_its_answer(
     quiet = body[:body.index('"TEXT_MESSAGE_CONTENT"')]
     assert quiet.count(': keepalive\n\n') >= 3
     assert _said(_sse_events(body)) == 'Waited'
+
+
+def test_a_stalled_turn_stops_pulling_frames_and_closes_on_disconnect(
+    service: _Service, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        stalled = asyncio.Event()
+        disconnected = asyncio.Event()
+        closed = asyncio.Event()
+        produced = 0
+        received = False
+        request = httpx.Request('POST', 'http://testserver/invocations', json={
+            'threadId': 'thread-1', 'runId': 'run-1', 'messages': [],
+            'tools': [], 'context': [], 'state': {}, 'forwardedProps': {'actorId': 'actor-1', 'sessionUserId': 'user-1'},
+        })
+
+        async def frames(*args: Any) -> AsyncIterator[serving.CustomEvent]:
+            nonlocal produced
+            try:
+                for _ in range(100):
+                    produced += 1
+                    yield serving.CustomEvent(name='test-frame', value=produced)
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0)
+                closed.set()
+
+        async def receive() -> dict[str, Any]:
+            nonlocal received
+            if not received:
+                received = True
+                return {'type': 'http.request', 'body': request.content}
+            await disconnected.wait()
+            return {'type': 'http.disconnect'}
+
+        async def send(message: Message) -> None:
+            if message['type'] == 'http.response.body' and message.get('body'):
+                stalled.set()
+                await asyncio.Event().wait()
+
+        monkeypatch.setattr(serving, '_invoke_agent', frames)
+        scope = {
+            'type': 'http', 'method': 'POST', 'path': '/invocations', 'query_string': b'',
+            'headers': request.headers.raw, 'asgi': {'spec_version': '2.3'},
+        }
+        async with asyncio.timeout(1):
+            response = asyncio.create_task(serving.app(scope, receive, send))
+            try:
+                await stalled.wait()
+                assert produced <= 3
+            finally:
+                disconnected.set()
+                await response
+            assert closed.is_set()
+
+    asyncio.run(exercise())
 
 
 def test_a_turn_without_a_thread_id_is_the_default_conversation(service: _Service, caplog: pytest.LogCaptureFixture) -> None:

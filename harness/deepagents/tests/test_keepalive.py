@@ -1,6 +1,6 @@
 """Quiet stream and producer cleanup regressions."""
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 
 import pytest
 
@@ -12,7 +12,7 @@ def test_quiet_keepalive_retains_the_frame_order_and_producer_context() -> None:
         readers: set[asyncio.Task[object] | None] = set()
         answer = asyncio.Event()
 
-        async def frames() -> AsyncIterator[str]:
+        async def frames() -> AsyncGenerator[str, None]:
             readers.add(asyncio.current_task())
             yield 'first'
             await answer.wait()
@@ -38,7 +38,7 @@ def test_keepalive_propagates_the_producers_timeout_instead_of_treating_it_as_qu
     async def exercise() -> None:
         fail = asyncio.Event()
 
-        async def frames() -> AsyncIterator[str]:
+        async def frames() -> AsyncGenerator[str, None]:
             yield 'first'
             await fail.wait()
             raise failure
@@ -62,7 +62,7 @@ def test_keepalive_awaits_producer_cleanup_and_propagates_its_failure(fails: boo
     async def exercise() -> None:
         closed = asyncio.Event()
 
-        async def frames() -> AsyncIterator[str]:
+        async def frames() -> AsyncGenerator[str, None]:
             try:
                 yield 'first'
                 await asyncio.Event().wait()
