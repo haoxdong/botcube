@@ -240,9 +240,9 @@ def test_the_loopback_reaches_a_credential_service_the_ca_bundle_trusts(
     deploy(monkeypatch, tmp_path / 'trusting', caBundle=str(tmp_path / 'certs' / 'ca.pem'))
 
     config_reads = 0
-    read_config = serving.botcube_config_from_env
+    read_config = serving.deployed_config
 
-    def count_config_reads() -> dict[str, Any]:
+    def count_config_reads():
         nonlocal config_reads
         config_reads += 1
         return read_config()
@@ -255,7 +255,7 @@ def test_the_loopback_reaches_a_credential_service_the_ca_bundle_trusts(
         context_calls += 1
         return create_context(*args, **kwargs)
 
-    monkeypatch.setattr(serving, 'botcube_config_from_env', count_config_reads)
+    monkeypatch.setattr(serving, 'deployed_config', count_config_reads)
     monkeypatch.setattr(shell_relay.ssl, 'create_default_context', count_contexts)
     events = bot_service.turn('run: curl -sS "$PRODUCT_URL/items" "$PRODUCT_URL/more"', **_bound(tls_relay, 'invocation-1'))
 

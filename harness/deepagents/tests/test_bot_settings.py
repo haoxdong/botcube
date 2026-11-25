@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from agentcore_fake import turn_identity
 from botcube_harness_deepagents import serving, session_api, turn_lifecycle
 from botcube_harness_deepagents.bot_settings import BotSettingsError, load_bot_settings
-from deployment_fixture import ENDPOINT_MODELS, deploy
+from deployment_fixture import BOTCUBE, ENDPOINT_MODELS, deploy, resolve
 from test_serving import _Recorder, _ScriptedModel, _Service, _tool_output
 from test_serving import start as start
 
@@ -289,3 +289,39 @@ def test_gateway_reachability(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, c
         with pytest.raises(BotSettingsError) as raised:
             bot_settings.bot_from_env()
         assert str(raised.value) == f"BotCube Config {path}: the bot settings' model test-model is on provider {provider}, but {case['error']}"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize('source', [
+    BOTCUBE / 'examples/public/botcube.yaml',
+    BOTCUBE / 'examples/enterprise/botcube.yaml',
+], ids=['public', 'enterprise'])
+@pytest.mark.parametrize(('provider', 'enterprise_error'), [
+    ('anthropic', "the bot settings' model test-model is on provider anthropic, but "
+     "integrations.modelGateway.url ends in /v1, which Anthropic's API adds itself: "
+     "set integrations.modelGateway.providers.anthropic.url without /v1"),
+    ('openai', None),
+    ('deepseek', "the bot settings' model test-model is on provider deepseek, but "
+     'integrations.modelGateway reaches the providers anthropic and openai'),
+    ('echo', None),
+], ids=['anthropic', 'openai', 'deepseek', 'echo'])
+def test_startup_uses_the_resolver_reachability_message(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: Path, provider: str, enterprise_error: str | None,
+) -> None:
+    from botcube_harness_deepagents import bot_settings
+
+    path = resolve(source, tmp_path / 'resolved.json')
+    monkeypatch.setenv('BOTCUBE_CONFIG', str(path))
+    bot = _bot(tmp_path / 'bot', models=[{'key': 'test-model', 'label': 'Test', 'provider': provider, 'maxTokens': 1024}])
+    monkeypatch.setattr(bot_settings, 'load_bot_settings', lambda path: load_bot_settings(bot))
+    reason = json.loads(path.read_text())['modelGateway'][provider]['unreachableReason']
+
+    expected = enterprise_error if source.parent.name == 'enterprise' else None
+    if expected is None:
+        assert reason is None
+        assert bot_settings.bot_from_env()[1] == 'test-model'
+    else:
+        assert expected.endswith(f', but {reason}')
+        with pytest.raises(BotSettingsError) as error:
+            bot_settings.bot_from_env()
+        assert str(error.value) == f'BotCube Config {path}: {expected}'

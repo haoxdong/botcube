@@ -150,7 +150,7 @@ def test_shell_command_traces_reach_the_collector_through_the_trace_relay_with_t
         deploy_collector(monkeypatch, tmp_path, front.port, {'clientCertificate': certs.files('client_a'), 'serverIdentity': mtls_fake.SERVER_IDENTITY})
         request = urllib.request.Request(start_trace_relay(), data=b'command spans', method='POST', headers={'Content-Type': 'application/x-protobuf'})
 
-        with urllib.request.urlopen(request, timeout=5) as response:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=5) as response:
             assert response.status == 200
         assert collector.received.wait(5)
 

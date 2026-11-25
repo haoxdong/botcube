@@ -35,8 +35,8 @@ from opentelemetry import baggage, propagate
 from pydantic import Field
 
 from . import aws_clients, turn_timing
-from .botcube_config import botcube_config_from_env
 from .definition import ModelRelay
+from .deployment import deployed_config
 
 DEFAULT_MODEL = 'us.anthropic.claude-sonnet-4-6'
 AVAILABLE_MODELS: dict[str, str] = {
@@ -180,7 +180,7 @@ def has_model_profile(key: str, provider: str) -> bool:
 
 def models_on_endpoint() -> bool:
     """Whether the BotCube Config puts the agent's models on a model gateway, relayed by the Credential Service."""
-    return botcube_config_from_env()['integrations']['modelGateway']['kind'] == OPENAI_COMPATIBLE
+    return deployed_config()['config']['integrations']['modelGateway']['kind'] == OPENAI_COMPATIBLE
 
 
 class _Request(Protocol):
@@ -396,7 +396,8 @@ def _gateway_model(
             # Claude 4.7+ default display to "omitted": thinking streams empty.
             thinking={'type': 'adaptive', 'display': 'summarized'}, effort=resolve_effort(effort),
         )
-    responses = (botcube_config_from_env()['integrations']['modelGateway'].get('providers') or {}).get('openai', {}).get('useResponsesApi', False)
+    route = deployed_config()['modelGateway']['openai']['route']
+    responses = route is not None and route['useResponsesApi']
     reasoning = {} if effort is None else _openai_reasoning(resolve_effort(effort), responses)
     return _GatewayOpenAI(
         **common, http_async_client=openai.DefaultAsyncHttpxClient(event_hooks=hooks), stream_usage=True, use_responses_api=responses, **reasoning,

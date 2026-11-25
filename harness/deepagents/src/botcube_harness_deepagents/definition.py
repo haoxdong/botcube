@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
@@ -45,7 +45,7 @@ def openai_model_relay(
 class BotModel:
     """How a bot model is called: its provider, by LangChain's name, and its output ceiling."""
 
-    provider: str
+    provider: Literal['anthropic', 'deepseek', 'echo', 'openai']
     max_tokens: int | None
 
 

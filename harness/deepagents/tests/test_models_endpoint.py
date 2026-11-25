@@ -19,7 +19,6 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from botcube_harness_deepagents import llm, turn_timing
 from botcube_harness_deepagents.agent import build_agent
-from botcube_harness_deepagents.botcube_config import BotCubeConfigError
 from botcube_harness_deepagents.definition import ModelRelay, openai_model_relay
 from botcube_harness_deepagents.turn_memory import collecting_turn_feeds
 from deployment_fixture import ENDPOINT_MODELS, deploy
@@ -663,9 +662,3 @@ def test_a_turn_that_overflows_the_context_compacts_and_answers(tmp_path: Path, 
     event = asyncio.run(graph.aget_state(config)).values['_summarization_event']
     assert 'Earlier requests concerned copper.' in event['summary_message'].text
     assert (tmp_path / event['file_path'].lstrip('/')).is_file()
-
-
-def test_a_turn_fails_on_a_models_kind_the_botcube_config_wrote_wrong(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stand_in: StandIn) -> None:
-    path = deploy(monkeypatch, tmp_path, integrations={'modelGateway': {'kind': 'anthropic'}})
-    with pytest.raises(BotCubeConfigError, match=f'^BotCube Config {path}: integrations.modelGateway: '):
-        llm.build_model(model='gpt-5', provider='openai', relay=lambda: _turn(stand_in))

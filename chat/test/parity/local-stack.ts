@@ -121,12 +121,13 @@ export async function startLocalStack(options: {
     await rm(home, { recursive: true, force: true });
   };
   try {
-    // Every process reads the one BotCube Config, its External Services replaced by their offline stand-ins.
     // The models Endpoint's stand-in, its API key in a file as a secret injector mounts it, for the Credential Service.
     const modelsStandIn = await standInModels(models, openAICompatible, home, mtls);
     const botcubeConfig = await standInBotCubeConfig(deploymentPath, config, home, { ...egress?.offline, ...modelsStandIn });
+    const resolvedConfig = join(home, 'resolved.json');
+    await writeFile(resolvedConfig, resolvedJson(resolveConfig(loadConfig(botcubeConfig))));
     // The Harness serves the bot settings the BotCube Config's `bot` names, as the example bot's image does.
-    Object.assign(pythonEnv, egress?.telemetry?.harness, mtls?.pythonTrust, { BOTCUBE_CONFIG: botcubeConfig }, options.harnessEnv);
+    Object.assign(pythonEnv, egress?.telemetry?.harness, mtls?.pythonTrust, { BOTCUBE_CONFIG: resolvedConfig }, options.harnessEnv);
     const start = async (command: string, env: NodeJS.ProcessEnv, path: string, listeningPrefix: string) => {
       const running = await startOnFreePort((port) => ({
         command,
@@ -137,8 +138,6 @@ export async function startLocalStack(options: {
       processes.push(running);
       return new URL(running.url).origin;
     };
-    const resolvedConfig = join(home, 'resolved.json');
-    if (modelsStandIn) await writeFile(resolvedConfig, resolvedJson(resolveConfig(loadConfig(botcubeConfig))));
     const credentialService = modelsStandIn && {
       BOTCUBE_CREDENTIAL_SERVICE_URL: await start(
         `${CREDENTIAL_SERVICE_BIN}/python ${fileURLToPath(new URL('models-credential-service.py', import.meta.url))}`,

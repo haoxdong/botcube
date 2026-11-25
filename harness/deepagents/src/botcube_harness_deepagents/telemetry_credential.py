@@ -15,8 +15,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from requests.auth import AuthBase
 
-from .botcube_config import botcube_config_from_env
 from .credential_source import CredentialSource, credential_source
+from .deployment import deployed_config
 from .endpoint_tls import EndpointTls, EndpointTlsError, endpoint_tls
 from .proxy_relay import proxy_url_from_config
 
@@ -99,18 +99,18 @@ def telemetry_session() -> requests.Session:
 
 def telemetry_credential() -> CredentialSource | None:
     """The BotCube Config's `otlp` Endpoint credential, or None."""
-    telemetry = botcube_config_from_env()['integrations']['telemetry']
+    telemetry = deployed_config()['config']['integrations']['telemetry']
     return credential_source('telemetry.credential', telemetry['credential']) if 'credential' in telemetry else None
 
 
 def telemetry_proxy() -> str | None:
     """Where the BotCube Config's `otlp` Endpoint is reached through, when it names the proxy, or None."""
-    config = botcube_config_from_env()
+    config = deployed_config()['config']
     url = proxy_url_from_config(config) if 'proxy' in config['integrations']['telemetry'] else None
     return url() if url else None
 
 
 def telemetry_tls() -> EndpointTls | None:
     """The BotCube Config's `otlp` Endpoint TLS, or None."""
-    telemetry = botcube_config_from_env()['integrations']['telemetry']
+    telemetry = deployed_config()['config']['integrations']['telemetry']
     return endpoint_tls('telemetry', telemetry['tls']) if 'tls' in telemetry else None

@@ -3155,14 +3155,12 @@ def test_the_service_serves_on_every_interface_at_port_8080(start: Callable[[], 
 def test_the_service_fails_to_start_on_a_ca_bundle_it_cannot_load(
     start: Callable[[], list[tuple[Any, dict[str, Any]]]], monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bundle: str,
 ) -> None:
-    from botcube_harness_deepagents.botcube_config import BotCubeConfigError
-
     path = tmp_path / 'ca-bundle.pem'
     if bundle == 'not-pem':
         path.write_text('not a certificate\n')
     deploy(monkeypatch, tmp_path, caBundle=str(path))
 
-    with pytest.raises(BotCubeConfigError, match=f'^caBundle {path}: '):
+    with pytest.raises(RuntimeError, match=f'^caBundle {path}: '):
         start()
 
 

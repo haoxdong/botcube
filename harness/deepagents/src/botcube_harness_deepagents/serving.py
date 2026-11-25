@@ -66,9 +66,9 @@ from .agent_documents import (
 from .agent_prompts import agent_prompts
 from .artifact import SKILLS_SOURCE, artifact_tool
 from .bot_settings import bot_from_env
-from .botcube_config import botcube_config_from_env, load_ca_bundle
 from .definition import BotModel, HarnessDefinition, InvocationAuth, ModelRelay
 from .definition import InvocationContext as _RequestContext
+from .deployment import deployed_config, load_ca_bundle
 from .files import (
     FilesBindingError,
     absolute_attachment_paths,
@@ -206,7 +206,7 @@ def configure_harness_definition(definition: HarnessDefinition, default_model: s
     def build_backend(environment: dict[str, str]) -> WorkerShellBackend:
         root = _workspace()
         definition.prepare_root(root)
-        config = botcube_config_from_env()
+        config = deployed_config()['config']
         relay = ShellRelay(definition.shell_environment, config.get('caBundle')) if definition.shell_environment else None
         backend = WorkerShellBackend(
             root_dir=root,
@@ -956,7 +956,7 @@ def main() -> None:
 
     diagnostic_response.configured_gate()
 
-    load_ca_bundle(botcube_config_from_env())
+    load_ca_bundle(deployed_config()['config'])
     importlib.import_module('openai.resources.responses')
     if AGENTCORE_MEMORY_ID:
         agentcore_memory_backend.sts_client(AWS_REGION)

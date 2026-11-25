@@ -13,17 +13,12 @@ from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 from jsonschema import Draft202012Validator, ValidationError
+from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
-from .botcube_config import (
-    CONFIG_ENV,
-    botcube_config_from_env,
-    gateway_routes,
-    yaml_document,
-)
 from .definition import (
     BotModel,
     HarnessDefinition,
@@ -31,6 +26,7 @@ from .definition import (
     environment_cache_key,
     openai_model_relay,
 )
+from .deployment import CONFIG_ENV, deployed_config
 from .invocation import Invocation
 from .llm import ECHO_PROVIDER, has_model_profile
 from .memory.agentcore import turn_actor
@@ -67,7 +63,7 @@ def load_bot_settings(path: Path) -> BotSettings:
     if path.name == 'bot.json':
         raise BotSettingsError(f'{source}: bot.json: renamed to /bot/bot.yaml')
     try:
-        settings = yaml_document(path.read_text(encoding='utf8'))
+        settings = _yaml_document(path.read_text(encoding='utf8'))
     except (OSError, YAMLError, ValueError) as error:
         raise BotSettingsError(f'{source}: (root): {error}') from error
     for key, replacement in _SCHEMA['x-renamed-keys'].items():
@@ -112,27 +108,28 @@ def _instructions(path: Path, settings: Mapping[str, Any], source: str) -> str:
 
 def bot_from_env() -> tuple[HarnessDefinition, str]:
     """The Harness definition and default model from /bot/bot.yaml in the Bot Image, on a model gateway that reaches its providers."""
-    gateway = botcube_config_from_env()['integrations']['modelGateway']
+    resolved = deployed_config()
+    gateway = resolved['config']['integrations']['modelGateway']
     path = Path('/bot/bot.yaml')
     bot = load_bot_settings(path)
     for index, (key, model) in enumerate(bot.calls.items()):
-        if (unreached := unreached_provider(gateway, model.provider)) is not None:
+        if (unreached := resolved['modelGateway'][model.provider]['unreachableReason']) is not None:
             raise BotSettingsError(f"BotCube Config {os.environ[CONFIG_ENV]}: the bot settings' model {key} is on provider {model.provider}, but {unreached}")
         if gateway['kind'] != 'bedrock' and model.provider != ECHO_PROVIDER and model.max_tokens is None and not has_model_profile(key, model.provider):
             raise BotSettingsError(f'Bot settings {path}: models.{index}.maxTokens: LangChain has no model profile for {key} to take its output ceiling from: set maxTokens')
     return bot_definition(bot), bot.models[0]
 
 
-def unreached_provider(gateway: Mapping[str, Any], provider: str) -> str | None:
-    """Why the model gateway cannot call a model on `provider`, or None when it can, as botcube/config's `unreachedProvider`."""
-    if gateway['kind'] == 'bedrock' or provider == ECHO_PROVIDER:
-        return None
-    served = gateway_routes(gateway)
-    if provider not in served:
-        return f"integrations.modelGateway reaches the providers {' and '.join(sorted(served))}"
-    if provider == 'anthropic' and 'url' not in served['anthropic'] and urlsplit(gateway['url']).path.rstrip('/').endswith('/v1'):
-        return "integrations.modelGateway.url ends in /v1, which Anthropic's API adds itself: set integrations.modelGateway.providers.anthropic.url without /v1"
-    return None
+def _yaml_document(text: str) -> Any:
+    reader = YAML(typ='safe', pure=True)
+    reader.version = (1, 2)
+    resolvers = reader.resolver.versioned_resolver
+    for first, rules in resolvers.items():
+        resolvers[first] = [(tag, pattern) for tag, pattern in rules if tag not in ('tag:yaml.org,2002:timestamp', 'tag:yaml.org,2002:merge')]
+    value = reader.load(text)
+    if reader.version != (1, 2):
+        raise ValueError('expected YAML 1.2')
+    return value
 
 
 def bot_definition(bot: BotSettings) -> HarnessDefinition:

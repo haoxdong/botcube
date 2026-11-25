@@ -57,12 +57,3 @@ def test_the_harness_exports_to_the_otlp_endpoint_with_its_credential_as_the_bea
     assert len(received) == 1
     assert received[0]['authorization'] == 'Bearer collector-token'
     assert received[0]['x-tenant'] == 'botcube-example'
-
-
-def test_the_harness_refuses_a_malformed_telemetry_credential_naming_it(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from botcube_harness_deepagents.botcube_config import BotCubeConfigError
-    from botcube_harness_deepagents.telemetry_credential import telemetry_session
-
-    path = deploy(monkeypatch, tmp_path, integrations={'telemetry': {'kind': 'otlp', 'url': 'http://collector.example.com:4318/v1/traces', 'credential': {'kind': 'file'}}})
-    with pytest.raises(BotCubeConfigError, match=f'^BotCube Config {path}: integrations.telemetry.credential.path: '):
-        telemetry_session()
