@@ -11,14 +11,16 @@ from typing import NotRequired, TypedDict
 from urllib.error import HTTPError
 
 from botocore.exceptions import ClientError
-from deploy_guard import SETTLED, require_no_deploy
+from deploy_guard import require_no_deploy
 from deploy_identity import load_deployment, owned_egress
 from egress_probe import RunningProbe
-from parking_state import (
+from parking_state import production_state, wake_state
+from transition import (
+    SETTLED,
+    effective_modes,
     mode_parameter,
+    mode_stacks,
     preparation_requested,
-    production_state,
-    wake_state,
 )
 
 
@@ -48,14 +50,8 @@ RESOLVED = load_deployment()
 NAMES = RESOLVED['physicalNames']
 PARK_STATE = NAMES['parkStateParameterName']
 OWNED_EGRESS = owned_egress(RESOLVED)
-STACKS = {**({'egress': OWNED_EGRESS['stackName']} if OWNED_EGRESS else {}),
-          'origin': NAMES['previewOriginStackName'],
-          'health': NAMES['apiHealthStackName']}
-EFFECTIVE_MODES = {
-    STACKS['health']: {'parked': 'parked', 'egress': 'parked', 'credential': 'parked', 'live': 'live'},
-    **({STACKS['egress']: {'parked': 'parked', 'egress': 'egress', 'credential': 'egress', 'live': 'egress'}} if OWNED_EGRESS else {}),
-    STACKS['origin']: {'parked': 'parked', 'egress': 'parked', 'credential': 'credential', 'live': 'live'},
-}
+STACKS = mode_stacks(RESOLVED)
+EFFECTIVE_MODES = effective_modes(STACKS)
 STEPS = {mode: tuple(step for step in steps if OWNED_EGRESS or step not in ('egress', 'prepare', 'probe-drain')) for mode, steps in {
     'parked': ('health', 'origin', 'capacity', 'probe-drain', 'egress', 'verify', 'store'),
     'egress': ('health', 'egress', 'origin', 'capacity', 'verify', 'store'),
@@ -73,7 +69,7 @@ def handler(event, context, *, executions=None, ssm=None, **ports):
     try:
         if event.get('op') == 'wake-state':
             import boto3
-            return wake_state(executions or boto3.client('stepfunctions'), ssm or boto3.client('ssm'), PARK_STATE, STEPS)
+            return wake_state(executions or boto3.client('stepfunctions'), ssm or boto3.client('ssm'), PARK_STATE)
         return operate(event, context, executions=executions, ssm=ssm, **ports)
     except ClientError as error:
         code = error.response['Error']['Code']

@@ -7,11 +7,11 @@ from datetime import UTC, datetime
 
 from botocore.exceptions import ClientError
 from deploy_identity import load_deployment
+from transition import SETTLED
 
 RESOLVED = load_deployment()
 NAMES = RESOLVED['physicalNames']
 IDENTITY = RESOLVED['config']
-SETTLED = {'CREATE_COMPLETE', 'UPDATE_COMPLETE', 'UPDATE_ROLLBACK_COMPLETE', 'IMPORT_COMPLETE'}
 # What a production deploy changes: the harness, the origin and the web stacks.
 DEPLOYED_STACKS = (f"AgentCore-{IDENTITY['name']}-default",
                    NAMES['previewOriginStackName'], NAMES['webLatencyStackName'])

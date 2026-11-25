@@ -7,8 +7,10 @@ from datetime import UTC, datetime
 from email.message import Message
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import NotRequired, TypedDict
 
+import boto3
 import deploy_identity
 import pytest
 from botocore.exceptions import ClientError
@@ -202,6 +204,55 @@ class Production(CloudFormation):
             if state.get('done'):
                 return state
         raise AssertionError('transition never finished')
+
+
+@pytest.mark.parametrize(('scenario', 'expected'), [
+    ('equivalent', None),
+    ('legacy', None),
+    ('bootstrap', None),
+    ('prepared', 'prepareOrigin=true'),
+    ('unsettled', 'UPDATE_ROLLBACK_FAILED'),
+    ('drifted', 'differs from stored mode egress'),
+    ('running', 'Production transition running'),
+    ('stale', 'Park state changed'),
+])
+def test_deploy_checks_the_same_stack_modes_as_the_transition(monkeypatch, scenario, expected):
+    import transition
+
+    world = Production(True)
+    world.stored = 'live' if scenario == 'stale' else 'egress'
+    origin = world.stacks['bot-cube-preview-origin']
+    world.stacks['bot-cube-private-egress']['Parameters'][0]['ParameterValue'] = 'credential'
+    if scenario == 'legacy':
+        origin['Parameters'][0] = {'ParameterKey': 'parked', 'ParameterValue': 'true'}
+    elif scenario == 'prepared':
+        origin['Parameters'][1]['ParameterValue'] = 'true'
+    elif scenario == 'unsettled':
+        origin['StackStatus'] = 'UPDATE_ROLLBACK_FAILED'
+    elif scenario == 'drifted':
+        origin['Parameters'][0]['ParameterValue'] = 'credential'
+
+    class Executions:
+        def get_paginator(self, operation):
+            assert operation == 'list_state_machines'
+            machines = [] if scenario == 'bootstrap' else [
+                {'name': 'bot-cube-production-parking-transition', 'stateMachineArn': 'transition-machine'},
+            ]
+            return SimpleNamespace(paginate=lambda: iter([{'stateMachines': []}, {'stateMachines': machines}]))
+
+        def list_executions(self, *, stateMachineArn, statusFilter, maxResults):
+            assert scenario != 'bootstrap'
+            assert (stateMachineArn, statusFilter, maxResults) == ('transition-machine', 'RUNNING', 1)
+            return {'executions': [{'status': 'RUNNING'}] if scenario == 'running' else []}
+
+    monkeypatch.setattr(boto3, 'client', {'ssm': world, 'stepfunctions': Executions(), 'cloudformation': world}.__getitem__)
+    if expected:
+        with pytest.raises(SystemExit, match=expected):
+            transition.main(['check-deploy-mode', 'egress'])
+    else:
+        transition.main(['check-deploy-mode', 'egress'])
+        assert load().handler({'op': 'state'}, None, cloudformation=world, ssm=world) == {'state': 'egress'}
+    assert world.effects == []
 
 
 def lease(minutes_ago, now=10_000.0):

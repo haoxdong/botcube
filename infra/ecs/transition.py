@@ -6,12 +6,57 @@ from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any, TypedDict
 
-from deploy_identity import load_deployment, required
+from deploy_identity import load_deployment, owned_egress, required
 
-NAMES = load_deployment()['physicalNames']
+RESOLVED = load_deployment()
+NAMES = RESOLVED['physicalNames']
 PARAMETER = NAMES['parkStateParameterName']
+
+SETTLED = {'CREATE_COMPLETE', 'UPDATE_COMPLETE', 'UPDATE_ROLLBACK_COMPLETE', 'IMPORT_COMPLETE'}
 MODES = ('parked', 'egress', 'credential', 'live')
 
+
+def mode_stacks(resolved):
+    names = resolved['physicalNames']
+    egress = owned_egress(resolved)
+    return {**({'egress': egress['stackName']} if egress else {}),
+            'origin': names['previewOriginStackName'], 'health': names['apiHealthStackName']}
+
+
+def effective_modes(stacks):
+    return {stacks[role]: dict(zip(MODES, values, strict=True)) for role, values in {
+        'health': ('parked', 'parked', 'parked', 'live'),
+        'egress': ('parked', 'egress', 'egress', 'egress'),
+        'origin': ('parked', 'parked', 'credential', 'live'),
+    }.items() if role in stacks}
+
+
+def stack_mode_mismatch(cloudformation, stored, stack_modes):
+    if stored not in MODES:
+        raise ValueError(f'Invalid park state {stored}')
+    for name, modes in stack_modes.items():
+        stack = cloudformation.describe_stacks(StackName=name)['Stacks'][0]
+        if stack['StackStatus'] not in SETTLED:
+            return f"{name} is {stack['StackStatus']}"
+        if preparation_requested(stack):
+            return f'{name} has prepareOrigin=true'
+        _, value = mode_parameter(stack)
+        if modes[value] != modes[stored]:
+            return f'{name} has mode {value}, which differs from stored mode {stored}'
+    return None
+
+
+def preparation_requested(stack):
+    return any(item['ParameterKey'] == 'prepareOrigin' and item['ParameterValue'] == 'true' for item in stack['Parameters'])
+
+
+def mode_parameter(stack):
+    parameters = {item['ParameterKey']: item['ParameterValue'] for item in stack['Parameters']}
+    if 'productionMode' in parameters:
+        return 'productionMode', parameters['productionMode']
+    if parameters.get('parked') in ('true', 'false'):
+        return 'parked', 'parked' if parameters['parked'] == 'true' else 'live'
+    raise RuntimeError('Stack has neither productionMode nor a valid legacy parked parameter')
 
 def parse_state(value: str):
     if value not in MODES:
@@ -27,6 +72,23 @@ def stored_state():
     except ssm.exceptions.ParameterNotFound as error:
         raise SystemExit(f'Stored park state {PARAMETER} is missing; bootstrap-deploy-role.sh creates it') from error
     return parse_state(required(parameter.get('Value'), 'stored park state Value'))
+
+
+def check_deploy_mode(expected: str):
+    import boto3
+
+    stored = stored_state()
+    if stored != expected:
+        raise SystemExit(f'Park state changed during deployment preparation ({expected} to {stored}); retry')
+    executions = boto3.client('stepfunctions')
+    name = NAMES['parkingFunctionName'] + '-transition'
+    pages = executions.get_paginator('list_state_machines').paginate()
+    machine = next((item['stateMachineArn'] for page in pages for item in page['stateMachines'] if item['name'] == name), None)
+    if machine and executions.list_executions(stateMachineArn=machine, statusFilter='RUNNING', maxResults=1)['executions']:
+        raise SystemExit('Production transition running; retry after it finishes')
+    mismatch = stack_mode_mismatch(boto3.client('cloudformation'), stored, effective_modes(mode_stacks(RESOLVED)))
+    if mismatch:
+        raise SystemExit(f'Transition incomplete: {mismatch}; finish recovery before deploy')
 
 
 class SessionApiCapacity(TypedDict):
@@ -246,6 +308,8 @@ def transition(mode: str):
 def main(argv: list[str]):
     if argv == ['state']:
         print(stored_state())
+    elif len(argv) == 2 and argv[0] == 'check-deploy-mode':
+        check_deploy_mode(argv[1])
     elif argv in (['park'], ['unpark']):
         transition('parked' if argv[0] == 'park' else 'live')
     elif len(argv) == 2 and argv[0] == 'mode' and argv[1] in MODES:
