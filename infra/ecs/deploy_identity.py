@@ -53,7 +53,7 @@ def owned_egress(resolved: dict[str, Any]) -> dict[str, Any] | None:
     names = resolved['physicalNames']
     return {
         'stackName': names['privateEgressStackName'],
-        'routeTableId': config['existing']['vpc']['privateSubnets'][0]['routeTableId'],
+        'routeTableId': resolved['privateNatRouteTableId'],
         'publicIp': config['network'].get('publicIp'),
         'natGateway': {'name': names['natGatewayName']},
     }

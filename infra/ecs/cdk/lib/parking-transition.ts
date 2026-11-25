@@ -14,6 +14,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
+import { resolveBotCubeConfig, type SynthesizedConfig } from './deploy-root.js';
 import type { DeployIdentity } from './production-identity.js';
 
 /** The built-in boto3 dropped GetAgentRuntime's platformVersion. Install the locked SDK once per pin set. */
@@ -33,11 +34,6 @@ function lockedSdk(infraRoot: string) {
 
 const DEPLOY_LEASES = 'deploy-leases/';
 
-/** The BotCube Config synthesis read (`path`). */
-export interface SynthesizedConfig {
-  path: string;
-}
-
 /** The stacks a production deploy changes: harness, origin and web (DEPLOYED_STACKS in parking_transition.py). */
 export function deployedStacks(identity: DeployIdentity) {
   return [`AgentCore-${identity.aws.cloudFormation.stackFamily}-default`, identity.aws.ecs.previewOriginStackName, identity.aws.ecs.webLatency.stackName];
@@ -55,8 +51,7 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
       image: imageRegistry ? DockerImage.fromRegistry(`${imageRegistry}/sam/build-${lambda.Runtime.PYTHON_3_12.name}`) : lambda.Runtime.PYTHON_3_12.bundlingImage,
       local: { tryBundle(outputDir) {
         fs.cpSync(lockedSdk(infraRoot), outputDir, { recursive: true });
-        const cli = path.join(path.dirname(require.resolve('botcube-config/read')), 'cli.ts');
-        fs.writeFileSync(path.join(outputDir, 'botcube.resolved.json'), execFileSync(process.execPath, [cli, 'resolve', config.path]));
+        fs.writeFileSync(path.join(outputDir, 'botcube.resolved.json'), resolveBotCubeConfig(config.path));
         fs.writeFileSync(path.join(outputDir, 'agentcore-exports.json'), JSON.stringify({
           sessionApi: sessionApi.capacity, runtimeLogGroup: runtimeLogGroupName('{runtimeId}'),
         }));

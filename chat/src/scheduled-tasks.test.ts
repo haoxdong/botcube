@@ -1,3 +1,4 @@
+import { TaskSchedules } from '../test/task-schedules.js';
 import { randomUUID } from 'node:crypto';
 import { DeleteTableCommand, DynamoDBClient, GetItemCommand } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
@@ -5,7 +6,7 @@ import { CreateScheduleGroupCommand, DeleteScheduleCommand, ListSchedulesCommand
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
-import { SchedulerView, createScheduledRuns, type ScheduledRuns } from '../test/fakes/scheduler.js';
+import { createScheduledRuns, type ScheduledRuns } from '../test/fakes/scheduler.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
 import { ScheduledTasks } from './scheduled-tasks.js';
@@ -18,7 +19,7 @@ import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { eventually } from '../test/eventually.js';
 
 let stack: InProcessStack;
-let scheduler: SchedulerView;
+let scheduler: TaskSchedules;
 beforeAll(async () => {
   stack = await startInProcess({ scheduled: true });
   scheduler = defined(stack.scheduler, 'the stack schedules tasks');
@@ -395,7 +396,7 @@ describe('POST /scheduled-tasks', () => {
     expect(task).toEqual({ id: expect.stringMatching(/^[0-9a-f-]{36}$/), ...MORNING_BRIEF, paused: false, proposalId: 'call-1', nextRun: expect.any(String), ended: false, sideChat: null });
     expect(await listed(account)).toEqual([task]);
     expect(await scheduler.schedule(task.id)).toMatchObject({
-      Name: task.id,
+      Name: await scheduler.name(task.id),
       GroupName: scheduler.runs.group,
       ScheduleExpression: 'cron(0 8 ? * MON-FRI *)',
       ScheduleExpressionTimezone: 'America/New_York',
@@ -516,11 +517,17 @@ describe('POST /scheduled-tasks', () => {
     const account = owner();
     const proposalId = randomUUID();
     const { id } = await confirm(account, MORNING_BRIEF, proposalId);
+    const name = await scheduler.name(id);
     expect((await request(account, `/scheduled-tasks/${id}`, { method: 'DELETE' })).status).toBe(204);
 
     const again = await confirm(account, MORNING_BRIEF, proposalId);
 
     expect(again.id).not.toBe(id);
+    expect(await scheduler.name(again.id)).toBe(name);
+    expect(await scheduler.schedule(id)).toBeNull();
+    expect(await scheduler.schedule(again.id)).toMatchObject({
+      Target: { Input: JSON.stringify({ owner: account, taskId: again.id }) },
+    });
     expect(await listed(account)).toEqual([again]);
   });
 
@@ -674,7 +681,7 @@ describe('PATCH /scheduled-tasks/:id', () => {
     const task = await confirm(account, { ...MORNING_BRIEF, schedule: 'at(2026-10-02T13:30:00)' });
     const client = new SchedulerClient(motoAws());
     // ActionAfterCompletion: DELETE, once its run is delivered.
-    await client.send(new DeleteScheduleCommand({ Name: task.id, GroupName: scheduler.runs.group }));
+    await client.send(new DeleteScheduleCommand({ Name: await scheduler.name(task.id), GroupName: scheduler.runs.group }));
 
     const response = await request(account, `/scheduled-tasks/${task.id}`, { method: 'PATCH', body: { paused: true } });
 
@@ -700,7 +707,7 @@ describe('DELETE /scheduled-tasks/:id', () => {
     const proposalId = randomUUID();
     const task = await confirm(account, MORNING_BRIEF, proposalId);
     const client = new SchedulerClient(motoAws());
-    await client.send(new DeleteScheduleCommand({ Name: task.id, GroupName: scheduler.runs.group }));
+    await client.send(new DeleteScheduleCommand({ Name: await scheduler.name(task.id), GroupName: scheduler.runs.group }));
 
     const response = await request(account, `/scheduled-tasks/${task.id}`, { method: 'DELETE' });
 
@@ -774,7 +781,7 @@ describe('DELETE /scheduled-tasks/:id', () => {
     const account = owner();
     const task = await confirm(account);
     const client = new SchedulerClient(motoAws());
-    await client.send(new DeleteScheduleCommand({ Name: task.id, GroupName: scheduler.runs.group }));
+    await client.send(new DeleteScheduleCommand({ Name: await scheduler.name(task.id), GroupName: scheduler.runs.group }));
 
     await stack.history.delete(account);
     expect(await listed(account)).toEqual([]);
@@ -852,7 +859,7 @@ describe("an account's scheduled tasks", () => {
     const once = await confirm(source, { ...MORNING_BRIEF, schedule: 'at(2026-11-06T13:30:00)' });
     const client = new SchedulerClient(motoAws());
     // ActionAfterCompletion: DELETE, once its run is delivered.
-    await client.send(new DeleteScheduleCommand({ Name: once.id, GroupName: scheduler.runs.group }));
+    await client.send(new DeleteScheduleCommand({ Name: await scheduler.name(once.id), GroupName: scheduler.runs.group }));
 
     await stack.history.transfer(source, destination);
 
@@ -949,7 +956,40 @@ describe("an account's scheduled tasks", () => {
 
     expect(again.status).toBe(200);
     expect(await again.json()).toEqual(task);
-    expect((await confirm(source, MORNING_BRIEF, proposalId)).id).not.toBe(task.id);
+    const movedName = await scheduler.name(task.id);
+    const replacement = await confirm(source, MORNING_BRIEF, proposalId);
+    expect(replacement.id).not.toBe(task.id);
+    expect(await scheduler.name(replacement.id)).not.toBe(movedName);
+    const [moved, recreated] = await Promise.all([scheduler.schedule(task.id), scheduler.schedule(replacement.id)]);
+    expect(moved).toMatchObject({ Target: { Input: JSON.stringify({ owner: destination, taskId: task.id }) } });
+    expect(recreated).toMatchObject({ Target: { Input: JSON.stringify({ owner: source, taskId: replacement.id }) } });
+  });
+
+  it('keeps the moved schedule when Account Claim lands during source reconfirmation', async () => {
+    const [source, destination] = [owner(), owner()];
+    const proposalId = randomUUID();
+    const original = await confirm(source, MORNING_BRIEF, proposalId);
+    const name = await scheduler.name(original.id);
+    const documents = new DynamoDBClient(motoAws());
+    let claimed = false;
+    documents.middlewareStack.add((next, context) => async (args) => {
+      const result = await next(args);
+      if (!claimed && context.commandName === 'GetItemCommand' && (args.input as { Key?: { sk: string } }).Key?.sk === 'CLAIM') {
+        claimed = true;
+        await stack.history.transfer(source, destination);
+      }
+      return result;
+    }, { step: 'initialize' });
+
+    const tasks = new ScheduledTasks(stack.table.name, scheduler.runs, documents, new SchedulerClient(motoAws()));
+    const replacement = await tasks.create(source, proposalId, MORNING_BRIEF);
+
+    expect(claimed).toBe(true);
+    expect(replacement.created).toBe(true);
+    expect(replacement.task.id).not.toBe(original.id);
+    expect(await scheduler.schedule(name)).toMatchObject({
+      Target: { Input: JSON.stringify({ owner: destination, taskId: original.id }) },
+    });
   });
 
   it('are deleted, with their schedules, with the account', async () => {
@@ -1110,9 +1150,10 @@ describe('ScheduledTasks', () => {
     const { task: expired } = await normal.create(account, randomUUID(), { ...MORNING_BRIEF, endDate: '2000-01-01T00:00:00.000Z' });
     const prompt = `Healthy delivery ${randomUUID()}`;
     const { task: healthy } = await normal.create(account, randomUUID(), { ...MORNING_BRIEF, prompt });
+    const poisonName = await new TaskSchedules(motoEndpoint(), runs).name(poison.id);
     const documents = DynamoDBDocumentClient.from(dynamodb);
     if (failureKind === 'unknown schedule group') {
-      await realScheduler.send(new DeleteScheduleCommand({ Name: poison.id, GroupName: runs.group }));
+      await realScheduler.send(new DeleteScheduleCommand({ Name: poisonName, GroupName: runs.group }));
       await documents.send(new UpdateCommand({
         TableName: isolatedTable, Key: { pk: `SCHEDULED#${account}`, sk: `TASK#${poison.id}` },
         UpdateExpression: 'REMOVE schedule_group SET mutation = :mutation',
@@ -1122,7 +1163,7 @@ describe('ScheduledTasks', () => {
     const refusal = new SchedulerServiceException({ name: 'AccessDeniedException', message: 'Retirement denied', $fault: 'client', $metadata: { httpStatusCode: 403 } });
     const failingScheduler = {
       send: (command: unknown) => {
-        if (failureKind === 'Scheduler refusal' && command instanceof DeleteScheduleCommand && command.input.Name === poison.id) return Promise.reject(refusal);
+        if (failureKind === 'Scheduler refusal' && command instanceof DeleteScheduleCommand && command.input.Name === poisonName) return Promise.reject(refusal);
         return realScheduler.send(command as Parameters<SchedulerClient['send']>[0]);
       },
     } as unknown as SchedulerClient;
@@ -1183,10 +1224,11 @@ describe('ScheduledTasks', () => {
     const healthyPrompt = `Healthy after retirement ${randomUUID()}`;
     const { task: retiring } = await normal.create(account, randomUUID(), { ...MORNING_BRIEF, prompt: retiredPrompt });
     const { task: healthy } = await normal.create(account, randomUUID(), { ...MORNING_BRIEF, prompt: healthyPrompt });
+    const retiringName = await new TaskSchedules(motoEndpoint(), runs).name(retiring.id);
     const failure = new Error('Scheduler connection reset');
     const failingScheduler = {
       send: (command: unknown) => {
-        if (command instanceof DeleteScheduleCommand && command.input.Name === retiring.id) return Promise.reject(failure);
+        if (command instanceof DeleteScheduleCommand && command.input.Name === retiringName) return Promise.reject(failure);
         return realScheduler.send(command as Parameters<SchedulerClient['send']>[0]);
       },
     } as unknown as SchedulerClient;
@@ -1297,11 +1339,11 @@ describe('ScheduledTasks', () => {
       });
       expect(paused.status).toBe(200);
       expect(await tasks.get(account, task.id)).toMatchObject({ paused: true });
-      expect(await new SchedulerView(motoEndpoint(), runs).schedule(task.id)).toMatchObject({ State: 'DISABLED' });
+      expect(await new TaskSchedules(motoEndpoint(), runs).schedule(task.id)).toMatchObject({ State: 'DISABLED' });
       release();
       expect((await editing).status).toBe(200);
       const saved = await tasks.get(account, task.id);
-      const scheduled = await new SchedulerView(motoEndpoint(), runs).schedule(task.id);
+      const scheduled = await new TaskSchedules(motoEndpoint(), runs).schedule(task.id);
       expect({ paused: saved?.paused, state: scheduled?.State }).toEqual({ paused: true, state: 'DISABLED' });
       expect(saved?.[field]).toBe('Updated morning brief');
     } finally {
@@ -1357,9 +1399,9 @@ describe('ScheduledTasks', () => {
     });
     expect((await patch({ title: 'Paused title', paused: true })).status).toBe(200);
     expect(await original.get(account, task.id)).toMatchObject({ title: 'Paused title', prompt: 'Updated prompt', paused: true });
-    expect(await new SchedulerView(motoEndpoint(), runs).schedule(task.id)).toMatchObject({ State: 'DISABLED' });
+    expect(await new TaskSchedules(motoEndpoint(), runs).schedule(task.id)).toMatchObject({ State: 'DISABLED' });
     expect((await patch({ paused: false })).status).toBe(200);
-    expect(await new SchedulerView(motoEndpoint(), runs).schedule(task.id)).toMatchObject({ State: 'ENABLED' });
+    expect(await new TaskSchedules(motoEndpoint(), runs).schedule(task.id)).toMatchObject({ State: 'ENABLED' });
   });
 
   it('fails metadata persistence loudly without changing the paused schedule, and permits an explicit retry', async () => {
@@ -1384,7 +1426,7 @@ describe('ScheduledTasks', () => {
     try {
       expect((await patch()).status).toBe(500);
       expect(await original.get(account, task.id)).toMatchObject({ title: MORNING_BRIEF.title, paused: true });
-      expect(await new SchedulerView(motoEndpoint(), runs).schedule(task.id)).toMatchObject({ State: 'DISABLED' });
+      expect(await new TaskSchedules(motoEndpoint(), runs).schedule(task.id)).toMatchObject({ State: 'DISABLED' });
       expect((await patch()).status).toBe(200);
       expect(await original.get(account, task.id)).toMatchObject({ title: 'Updated title', paused: true });
     } finally { errors.mockRestore(); }
@@ -1452,7 +1494,7 @@ describe('ScheduledTasks', () => {
       resume();
       const response = await creating;
 
-      const view = new SchedulerView(motoEndpoint(), runs);
+      const view = new TaskSchedules(motoEndpoint(), runs);
       const id = defined(pending, 'the admitted task').id;
       if (metadataRemoved && !erasedBeforeCreate) {
         expect(response.status).toBe(500);
@@ -1545,7 +1587,7 @@ describe('ScheduledTasks', () => {
       const id = defined(pending, 'the admitted task').id;
       await history.delete(account);
       expect(await tasks.list(account)).toEqual([]);
-      expect(await new SchedulerView(motoEndpoint(), runs).schedule(id)).toBeNull();
+      expect(await new TaskSchedules(motoEndpoint(), runs).schedule(id)).toBeNull();
       expect(deletion).toMatchObject({ name: 'ResourceNotFoundException' });
     } finally {
       resume();
@@ -1573,7 +1615,7 @@ describe('ScheduledTasks', () => {
     await expect(updating.update(account, task.id, { paused: true })).rejects.toMatchObject({ status: 410 });
     await tasks.deleteAll(account);
     expect(await tasks.list(account)).toEqual([]);
-    expect(await new SchedulerView(motoEndpoint(), runs).schedule(task.id)).toBeNull();
+    expect(await new TaskSchedules(motoEndpoint(), runs).schedule(task.id)).toBeNull();
   });
 
   it.each(['account', 'task'] as const)('does not restore a task updated after %s deletion completes', async (deleted) => {
@@ -1605,7 +1647,7 @@ describe('ScheduledTasks', () => {
     expect(await response.json()).toEqual({
       detail: deleted === 'account' ? 'The account history was deleted' : 'Scheduled task not found',
     });
-    expect(await new SchedulerView(motoEndpoint(), runs).schedule(task.id)).toBeNull();
+    expect(await new TaskSchedules(motoEndpoint(), runs).schedule(task.id)).toBeNull();
   });
 
   it.each([['refusal', 400], ['outage', 500]] as const)('never confirms a pending proposal that Scheduler then rejects: %s', async (failure, status) => {
@@ -1649,11 +1691,47 @@ describe('ScheduledTasks', () => {
       expect(completedDuplicate.status).toBe(200);
       expect(await completedDuplicate.json()).toEqual(created);
       expect(await tasks.list(account)).toEqual([stored(created as Task)]);
-      expect(await new SchedulerView(motoEndpoint(), runs).schedule((created as Task).id)).toMatchObject({ State: 'ENABLED' });
+      expect(await new TaskSchedules(motoEndpoint(), runs).schedule((created as Task).id)).toMatchObject({ State: 'ENABLED' });
     } finally {
       resume();
       await first;
     }
+  });
+
+  it('reuses the schedule with a fresh task ID after losing the create response', async () => {
+    const account = owner();
+    const proposalId = randomUUID();
+    const scheduler = new SchedulerClient(motoAws());
+    let accepted: { name: string; taskId: string } | undefined;
+    scheduler.middlewareStack.add((next, context) => async (args) => {
+      const result = await next(args);
+      if (context.commandName === 'CreateScheduleCommand' && accepted === undefined) {
+        const { Name, Target } = args.input as { Name: string; Target: { Input: string } };
+        const { taskId } = JSON.parse(Target.Input) as { taskId: string };
+        accepted = { name: Name, taskId };
+        throw new Error('Scheduler response was lost after acceptance');
+      }
+      return result;
+    }, { step: 'initialize' });
+    const tasks = new ScheduledTasks(table, runs, dynamodb, scheduler);
+    const { app } = serviceForTasks(account, tasks);
+    const confirmProposal = () => app.request('/scheduled-tasks', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...MORNING_BRIEF, proposalId }),
+    });
+
+    expect((await confirmProposal()).status).toBe(500);
+    expect(await tasks.list(account)).toEqual([]);
+    const original = defined(accepted, 'the schedule Scheduler accepted');
+    const retry = await confirmProposal();
+    expect(retry.status).toBe(201);
+    const confirmed = await retry.json() as Task;
+    expect(confirmed.id).not.toBe(original.taskId);
+    expect(await tasks.list(account)).toEqual([stored(confirmed)]);
+    expect(await new TaskSchedules(motoEndpoint(), runs).schedule(confirmed.id)).toMatchObject({
+      Name: original.name,
+      Target: { Input: JSON.stringify({ owner: account, taskId: confirmed.id }) },
+    });
   });
 
   it('allows explicit confirmation retry after a definite refusal is rolled back', async () => {
@@ -1671,7 +1749,7 @@ describe('ScheduledTasks', () => {
     expect(retry.status).toBe(201);
     const created = await retry.json() as Task;
     expect(await tasks.list(account)).toEqual([stored(created)]);
-    expect(await new SchedulerView(motoEndpoint(), runs).schedule(created.id)).toMatchObject({ State: 'ENABLED' });
+    expect(await new TaskSchedules(motoEndpoint(), runs).schedule(created.id)).toMatchObject({ State: 'ENABLED' });
   });
 
   it('recovers a refused confirmation after its rollback storage outage settles', async () => {
@@ -1702,7 +1780,7 @@ describe('ScheduledTasks', () => {
     expect(retry.status).toBe(201);
     const created = await retry.json() as Task;
     expect(await tasks.list(account)).toEqual([stored(created)]);
-    expect(await new SchedulerView(motoEndpoint(), runs).schedule(created.id)).toMatchObject({ State: 'ENABLED' });
+    expect(await new TaskSchedules(motoEndpoint(), runs).schedule(created.id)).toMatchObject({ State: 'ENABLED' });
   });
 
   it.each(['complete recovery storage outage', 'ambiguous Scheduler failure'])('retains honest pending state after %s', async (stage) => {
@@ -1820,7 +1898,7 @@ describe('ScheduledTasks', () => {
     const schedulerClient = new SchedulerClient(motoAws());
     let failedProbe = false;
     schedulerClient.middlewareStack.add((next, context) => async (args) => {
-      if (stage === 'schedule probe' && !failedProbe && context.commandName === 'GetScheduleCommand') {
+      if (stage === 'schedule probe' && !failedProbe && context.commandName === 'UpdateScheduleCommand') {
         failedProbe = true;
         throw probeFailure;
       }
@@ -1837,7 +1915,7 @@ describe('ScheduledTasks', () => {
     expect(errors.mock.calls).toEqual([['POST /scheduled-tasks failed', failure]]);
     const [created] = await tasks.list(account);
     const id = defined(created, 'Scheduler accepted the task').id;
-    expect(await new SchedulerView(motoEndpoint(), runs).schedule(id)).toMatchObject({ State: 'ENABLED' });
+    expect(await new TaskSchedules(motoEndpoint(), runs).schedule(id)).toMatchObject({ State: 'ENABLED' });
     if (stage !== 'completion marker') {
       expect((await confirm()).status).toBe(500);
       expect(errors.mock.calls.at(-1)).toEqual(['POST /scheduled-tasks failed', stage === 'repair marker' ? failure : probeFailure]);
@@ -1892,7 +1970,7 @@ describe('ScheduledTasks', () => {
     const tasks = new ScheduledTasks(table, runs, recovering, realScheduler);
 
     await expect(tasks.deleteAll(account)).rejects.toBe(outage);
-    expect(await new SchedulerView(motoEndpoint(), runs).schedule(task.id)).toBeNull();
+    expect(await new TaskSchedules(motoEndpoint(), runs).schedule(task.id)).toBeNull();
     expect(await tasks.get(account, task.id)).toEqual(task);
 
     await tasks.deleteAll(account);
@@ -1915,7 +1993,7 @@ describe('ScheduledTasks', () => {
 
     await expect(tasks.deleteAll(account)).rejects.toBe(outage);
     expect(await tasks.get(account, task.id)).toEqual(task);
-    expect(await new SchedulerView(motoEndpoint(), runs).schedule(task.id)).not.toBeNull();
+    expect(await new TaskSchedules(motoEndpoint(), runs).schedule(task.id)).not.toBeNull();
 
     await tasks.deleteAll(account);
     expect(await tasks.list(account)).toEqual([]);
@@ -1924,7 +2002,7 @@ describe('ScheduledTasks', () => {
   it('propagates storage failure while cleaning up an absent schedule', async () => {
     const account = owner();
     const { task } = await new ScheduledTasks(table, runs, dynamodb, realScheduler).create(account, randomUUID(), MORNING_BRIEF);
-    await realScheduler.send(new DeleteScheduleCommand({ Name: task.id, GroupName: runs.group }));
+    await realScheduler.send(new DeleteScheduleCommand({ Name: await new TaskSchedules(motoEndpoint(), runs).name(task.id), GroupName: runs.group }));
     const outage = new Error('DynamoDB is down');
     const recovering = new DynamoDBClient(motoAws());
     let refused = false;
@@ -1957,7 +2035,7 @@ describe('ScheduledTasks', () => {
     const proposalId = randomUUID();
     const normal = new ScheduledTasks(table, runs, dynamodb, realScheduler);
     const { task } = await normal.create(account, proposalId, MORNING_BRIEF);
-    await realScheduler.send(new DeleteScheduleCommand({ Name: task.id, GroupName: runs.group }));
+    await realScheduler.send(new DeleteScheduleCommand({ Name: await new TaskSchedules(motoEndpoint(), runs).name(task.id), GroupName: runs.group }));
     const denied = new SchedulerClient(motoAws());
     denied.middlewareStack.add(
       (next, context) => async (args) => {
@@ -1988,14 +2066,14 @@ describe('ScheduledTasks', () => {
     }));
     const group = configured === 'unchanged' ? runs.group : `legacy-${randomUUID()}`;
     if (configured === 'existing') await realScheduler.send(new CreateScheduleGroupCommand({ Name: group }));
-    if (configured === 'unchanged') await realScheduler.send(new DeleteScheduleCommand({ Name: task.id, GroupName: group }));
+    if (configured === 'unchanged') await realScheduler.send(new DeleteScheduleCommand({ Name: await new TaskSchedules(motoEndpoint(), runs).name(task.id), GroupName: group }));
     const tasks = new ScheduledTasks(table, { ...runs, group }, dynamodb, realScheduler);
 
     await expect(tasks.deleteAll(account)).rejects.toMatchObject({ status: 503, detail: 'Scheduled task schedule group is unknown', cause: { name: 'ResourceNotFoundException' } });
     expect(await tasks.get(account, task.id)).toEqual(task);
     expect((await normal.create(account, proposalId, MORNING_BRIEF)).created).toBe(false);
-    expect(await new SchedulerView(motoEndpoint(), runs).schedule(task.id)).toEqual(
-      configured === 'unchanged' ? null : expect.objectContaining({ Name: task.id, State: 'ENABLED' }),
+    expect(await new TaskSchedules(motoEndpoint(), runs).schedule(task.id)).toEqual(
+      configured === 'unchanged' ? null : expect.objectContaining({ Name: await new TaskSchedules(motoEndpoint(), runs).name(task.id), State: 'ENABLED' }),
     );
     for (let n = 1; n < 10; n += 1) {
       // eslint-disable-next-line no-await-in-loop -- a legacy identity failure must not free task capacity
@@ -2015,7 +2093,7 @@ describe('ScheduledTasks', () => {
 
     expect(await tasks.delete(account, task.id)).toBe(true);
     expect(await tasks.list(account)).toEqual([]);
-    expect(await new SchedulerView(motoEndpoint(), runs).schedule(task.id)).toBeNull();
+    expect(await new TaskSchedules(motoEndpoint(), runs).schedule(task.id)).toBeNull();
     expect((await tasks.create(account, proposalId, MORNING_BRIEF)).created).toBe(true);
   });
 
@@ -2103,7 +2181,7 @@ describe('ScheduledTasks', () => {
     const held = await tasks.list(destination);
     expect(held.filter((task) => !task.paused)).toHaveLength(10);
     expect(held.find((task) => task.id === moved.id)).toEqual(asPaused(moved));
-    expect(await new SchedulerView(motoEndpoint(), runs).schedule(moved.id)).toMatchObject({
+    expect(await new TaskSchedules(motoEndpoint(), runs).schedule(moved.id)).toMatchObject({
       State: 'DISABLED',
       Target: { Input: JSON.stringify({ owner: destination, taskId: moved.id }) },
     });
@@ -2158,7 +2236,7 @@ describe('scheduled task delivery fence', () => {
     expect(await tasks.get('source', task.id, { deliveryFence: 'frozen-cutover' })).toMatchObject({ id: task.id });
     expect(await tasks.get('source', task.id)).not.toHaveProperty('deliveryFence');
     await tasks.update('source', task.id, { timezone: 'UTC' });
-    const view = new SchedulerView(endpoint, runs);
+    const view = new TaskSchedules(endpoint, runs);
     expect(JSON.parse(defined(await view.schedule(task.id), 'edited schedule').Target.Input)).toEqual({ owner: 'source', taskId: task.id, deliveryFence: 'frozen-cutover' });
     await tasks.transfer('source', 'destination');
     expect(await tasks.get('destination', task.id, {})).toBeNull();

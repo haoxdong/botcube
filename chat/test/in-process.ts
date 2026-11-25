@@ -14,7 +14,8 @@ import { ScheduledTasks } from '../src/scheduled-tasks.js';
 import { sqsRunQueue, type RunQueue } from '../src/scheduled-runs.js';
 import type { ParkHistory } from '../src/park-history.js';
 import type { ProductionActivity } from '../src/production-activity.js';
-import { SchedulerView, createScheduledRuns } from './fakes/scheduler.js';
+import { createScheduledRuns } from './fakes/scheduler.js';
+import { TaskSchedules } from './task-schedules.js';
 import { FakeAgentCore } from './fakes/fake-agentcore.js';
 import { FakeSessionApi } from './fakes/fake-backends.js';
 import { RUNTIME_ARN, createChatTable } from './fakes/stack.js';
@@ -63,7 +64,7 @@ export interface InProcessStack {
   /** The account-history hooks the Chat Service handed the Chat. */
   readonly history: AccountHistory;
   /** The stack's schedules and run queue, when it has scheduled tasks. */
-  readonly scheduler: SchedulerView | null;
+  readonly scheduler: TaskSchedules | null;
   /** Allocates a Session under a test-chosen ID through the path `POST /threads` takes, as the server issues every Session ID. */
   allocate(owner: string, sessionId: string): Promise<string>;
   stop(): Promise<void>;
@@ -136,7 +137,7 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
     sessionApi,
     sessionMetadata,
     table: { name: table, client },
-    scheduler: runs && new SchedulerView(endpoint, runs),
+    scheduler: runs && new TaskSchedules(endpoint, runs),
     async allocate(owner, sessionId) {
       await sessionMetadata.recordTurn(owner, sessionId, { filingUserId: chat.filingUserId(owner), title: '', warmup: true, allocation: true });
       return sessionId;

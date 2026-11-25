@@ -1261,7 +1261,7 @@
                     "description": "As CDK SubnetAttributes.ipv4CidrBlock, which CDK needs to synthesize without credentials."
                   },
                   "routeTableId": {
-                    "description": "As CDK SubnetAttributes.routeTableId: required with network.natGateways 1, which routes it to the NAT.",
+                    "description": "As CDK SubnetAttributes.routeTableId: with network.natGateways 1, all private subnets must name the same route table.",
                     "type": "string",
                     "pattern": "^rtb-[0-9a-z]+$"
                   }
@@ -1871,7 +1871,7 @@
         "when": "network.natGateways"
       },
       "aws.ecs.privateEgress.routeTableId": {
-        "path": "existing.vpc.privateSubnets.0.routeTableId",
+        "path": "existing.vpc.privateSubnets",
         "when": "network.natGateways"
       },
       "aws.ecs.privateEgress.natGateway.name": {

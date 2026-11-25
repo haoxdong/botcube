@@ -52,7 +52,7 @@ const vpc = z
     privateSubnets: z
       .array(subnetAttributes.extend({
         ipv4CidrBlock: z.string().min(1).describe('As CDK SubnetAttributes.ipv4CidrBlock, which CDK needs to synthesize without credentials.'),
-        routeTableId: z.string().regex(/^rtb-[0-9a-z]+$/).optional().describe('As CDK SubnetAttributes.routeTableId: required with network.natGateways 1, which routes it to the NAT.'),
+        routeTableId: z.string().regex(/^rtb-[0-9a-z]+$/).optional().describe('As CDK SubnetAttributes.routeTableId: with network.natGateways 1, all private subnets must name the same route table.'),
       }))
       .min(2)
       .describe("The services', browsers' and Lambdas' subnets."),

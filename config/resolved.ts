@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { modelProvider, type ModelProvider, type CredentialSource } from './blocks.js';
 import { deploymentNames, webOrigins } from './read.cjs';
-import { botcubeConfig, type sectionDefaults } from './schema.js';
+import { botcubeConfig, privateRouteTables, type sectionDefaults } from './schema.js';
 import { BotCubeConfigError, parsed } from './parse.js';
 
 export const FORMAT_VERSION = 1;
@@ -32,6 +32,7 @@ export function resolveConfig(config: Config) {
     formatVersion: FORMAT_VERSION,
     config,
     physicalNames,
+    privateNatRouteTableId: config.network.natGateways === 1 && config.existing ? (privateRouteTables(config.existing.vpc.privateSubnets).values().next().value ?? null) : null,
     webOrigins: webOrigins(config) ?? [],
     credentialServiceHttpPath: services?.credentialService?.http?.path ?? '',
     modelGateway,

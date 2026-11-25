@@ -1,3 +1,4 @@
+import { TaskSchedules } from '../task-schedules.js';
 import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -13,7 +14,7 @@ import { FakeForwardProxy, FakeOtlpCollector } from '../fakes/egress.js';
 import { FakeMtlsFront, FakeMtlsProxy, mtlsCertificates, SERVER_IDENTITY, type MtlsCertificates } from '../fakes/mtls.js';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../fakes/stack.js';
 import { startOnFreePort, startProcess, type RunningProcess } from '../fakes/process.js';
-import { createScheduledRuns, SchedulerView } from '../fakes/scheduler.js';
+import { createScheduledRuns } from '../fakes/scheduler.js';
 import { motoEndpoint } from '../fakes/moto.js';
 import { FakeJwtAuthorizer } from '../fakes/jwt-authorizer.js';
 import type { BotCubeConfig } from '../../../config/schema.js';
@@ -49,7 +50,7 @@ export interface LocalStack {
   /** The Bedrock Converse endpoint each finished Turn is summarized at. */
   /** The stand-in for a BotCube Config's OpenAI-compatible models endpoint, when it names one. */
   readonly openAICompatible?: FakeOpenAICompatible;
-  readonly scheduler?: SchedulerView;
+  readonly scheduler?: TaskSchedules;
   /** The Harness as the Chat Service reaches it: behind the Runtime's JWT authorizer when the Harness auth is a bearer. */
   readonly harnessUrl: string;
   /** The stand-ins for a BotCube Config's proxy and traces collector, when it names a proxy. */
@@ -208,7 +209,7 @@ export async function startLocalStack(options: {
       harnessProcess = await startProcess(required(harnessOptions, 'Harness start options'));
       processes.push(harnessProcess);
     };
-    return { url,  ...(openAICompatible ? { openAICompatible } : {}), harnessUrl, egress, ...(mtls ? { mtls } : {}), restartHarness, ...(scheduledRuns ? { scheduler: new SchedulerView(dynamodbEndpoint, scheduledRuns) } : {}), browser: () => new Browser(url), logs: () => chatService.output(), stop: stopAll };
+    return { url,  ...(openAICompatible ? { openAICompatible } : {}), harnessUrl, egress, ...(mtls ? { mtls } : {}), restartHarness, ...(scheduledRuns ? { scheduler: new TaskSchedules(dynamodbEndpoint, scheduledRuns) } : {}), browser: () => new Browser(url), logs: () => chatService.output(), stop: stopAll };
   } catch (error) {
     await stopAll();
     throw error;

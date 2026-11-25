@@ -1,19 +1,19 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { CronDate } from 'croner';
 import { ConditionalCheckFailedException, DynamoDBClient, type TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import {
   DynamoDBDocumentClient,
   GetCommand,
-  QueryCommand,
   ScanCommand,
   TransactWriteCommand,
   UpdateCommand,
   paginateQuery,
+  paginateScan,
 } from '@aws-sdk/lib-dynamodb';
 import {
+  ConflictException,
   CreateScheduleCommand,
   DeleteScheduleCommand,
-  GetScheduleCommand,
   GetScheduleGroupCommand,
   ResourceNotFoundException,
   SchedulerClient,
@@ -100,7 +100,7 @@ const proposalKey = (owner: string, proposalId: string) => ({ pk: ownerPk(owner)
 type Mutation = { token: string; kind: 'update'; changes: TaskChanges } | { token: string; kind: 'transfer'; destination: string; paused: boolean } | { token: string; kind: 'retire'; completedOneOff?: boolean };
 
 type TaskItem = Omit<ScheduledTask, 'proposalId' | 'lastRun' | 'nextRun' | 'nextRunUnknown' | 'ended' | 'sideChatId'> & {
-  side_chat_id?: string; deliveryFence?: string; revision?: number; mutation?: Mutation; pk: string; sk: string; created_at: string; proposal_id: string; pending_creation?: boolean; creation_refused?: boolean; schedule_group?: string; last_run?: ScheduledTaskRun;
+  side_chat_id?: string; deliveryFence?: string; revision?: number; mutation?: Mutation; pk: string; sk: string; created_at: string; proposal_id: string; pending_creation?: boolean; creation_refused?: boolean; schedule_group?: string; schedule_name?: string; last_run?: ScheduledTaskRun;
 };
 
 class RetirementSchedulerFailure extends Error {
@@ -176,7 +176,7 @@ const cancelledOn = (error: unknown, index: number) =>
 
 /**
  * Scheduled tasks, stored per account in the chat table beside a count that
- * holds the cap, each with an EventBridge Scheduler schedule of the same ID.
+ * holds the cap, each with an EventBridge Scheduler schedule.
  */
 export class ScheduledTasks {
   private readonly documents: DynamoDBDocumentClient;
@@ -196,19 +196,20 @@ export class ScheduledTasks {
   }
 
   async list(owner: string): Promise<ScheduledTask[]> {
+    return (await this.taskItems(owner)).map(task);
+  }
+
+  private async taskItems(owner: string): Promise<TaskItem[]> {
     const items: TaskItem[] = [];
-    const pages = paginateQuery(
-      { client: this.documents },
-      {
-        TableName: this.tableName,
-        KeyConditionExpression: 'pk = :pk AND begins_with(sk, :task)',
-        ExpressionAttributeValues: { ':pk': ownerPk(owner), ':task': 'TASK#' },
-        // Stryker disable next-line BooleanLiteral: moto reads are always consistent; DynamoDB's strong read lists a task just confirmed
-        ConsistentRead: true,
-      },
-    );
+    const pages = paginateQuery({ client: this.documents }, {
+      TableName: this.tableName,
+      KeyConditionExpression: 'pk = :pk AND begins_with(sk, :task)',
+      ExpressionAttributeValues: { ':pk': ownerPk(owner), ':task': 'TASK#' },
+      // Stryker disable next-line BooleanLiteral: moto reads are always consistent
+      ConsistentRead: true,
+    });
     for await (const page of pages) items.push(...(page.Items as TaskItem[]));
-    return items.sort((a, b) => a.created_at.localeCompare(b.created_at)).map(task);
+    return items.sort((a, b) => a.created_at.localeCompare(b.created_at));
   }
 
   async get(owner: string, id: string, delivery?: Pick<ScheduledRunMessage, 'deliveryFence'>): Promise<ScheduledTask | null> {
@@ -245,8 +246,10 @@ export class ScheduledTasks {
     proposalId: string,
     definition: ScheduledTaskDefinition,
   ): Promise<{ task: ScheduledTask; created: boolean }> {
-    const group = this.config.group;
     const id = randomUUID();
+    const Key = { pk: `SESSIONS#${owner}`, sk: 'CLAIM' };
+    const { Item: claim } = await this.documents.send(new GetCommand({ TableName: this.tableName, Key, ConsistentRead: true }));
+    // A Claim keeps the moved Schedule under its old name. Fence the read when reserving a name.
     const item: TaskItem = {
       ...taskKey(owner, id),
       id,
@@ -255,7 +258,8 @@ export class ScheduledTasks {
       created_at: new Date().toISOString(),
       proposal_id: proposalId,
       pending_creation: true,
-      schedule_group: group,
+      schedule_group: this.config.group,
+      schedule_name: createHash('sha256').update(JSON.stringify([owner, proposalId, claim?.destination])).digest('hex'),
     };
     assertBounds(definition);
     for (const field of ['startDate', 'endDate'] as const) if (item[field] !== undefined) item[field] = new Date(item[field]).toISOString();
@@ -288,10 +292,12 @@ export class ScheduledTasks {
                 ConditionExpression: 'attribute_not_exists(pk)',
               },
             },
+            ...(claim === undefined ? [{ ConditionCheck: { TableName: this.tableName, Key, ConditionExpression: 'attribute_not_exists(pk)' } }] : []),
           ],
         }),
       );
     } catch (error) {
+      if (cancelledOn(error, 4)) return this.create(owner, proposalId, definition);
       if (cancelledOn(error, 3)) throw new HttpError(410, 'The account history was deleted');
       if (cancelledOn(error, 1)) return this.confirmExistingProposal(owner, proposalId, definition);
       if (cancelledOn(error, 0)) {
@@ -300,13 +306,16 @@ export class ScheduledTasks {
       throw error;
     }
     try {
-      await this.scheduler.send(new CreateScheduleCommand(this.schedule(owner, item, group)));
+      const input = this.schedule(owner, item);
+      await this.scheduler.send(new CreateScheduleCommand(input)).catch((error: unknown) => {
+        if (!(error instanceof ConflictException)) throw error;
+        return this.scheduler.send(new UpdateScheduleCommand(input));
+      });
     } catch (error) {
       await this.rollbackCreation(owner, id, proposalId, error);
       throw schedulerRefusal(error);
     }
     await this.completeCreation(owner, item);
-    // Read only once Scheduler has taken the schedule, so reading it never strands a pending task.
     return { task: task(item), created: true };
   }
 
@@ -336,7 +345,7 @@ export class ScheduledTasks {
 
   /** Persist accepted creation and honor an account deletion that raced Scheduler. */
   private async completeCreation(owner: string, item: TaskItem): Promise<void> {
-    const { id, proposal_id: proposalId } = item;
+    const { id } = item;
     // Record completion before allowing missing-schedule cleanup to release the durable obligation.
     await this.documents.send(new UpdateCommand({
       TableName: this.tableName, Key: taskKey(owner, id),
@@ -352,7 +361,7 @@ export class ScheduledTasks {
     }));
     if (deleted !== undefined) {
       // Schedule first, as in account deletion. A failed cleanup leaves the task available for deletion retry.
-      await this.removeScheduledTask(owner, id, proposalId, item.schedule_group ?? this.config.group, true);
+      await this.removeScheduledTask(owner, item, true);
       throw new HttpError(410, 'The account history was deleted');
     }
   }
@@ -373,10 +382,9 @@ export class ScheduledTasks {
     }
     if (found.pending_creation === true) {
       try {
-        await this.scheduler.send(new GetScheduleCommand({ Name: found.id, GroupName: found.schedule_group ?? this.config.group }));
+        await this.scheduler.send(new UpdateScheduleCommand(this.schedule(owner, found, found.schedule_group)));
       } catch (error) {
         if (!(error instanceof ResourceNotFoundException)) throw error;
-        // A missing schedule is an honest pending-state probe, not a completed confirmation.
         const pending = new HttpError(409, 'Scheduled task confirmation is still pending; try again');
         pending.cause = error;
         throw pending;
@@ -565,7 +573,7 @@ export class ScheduledTasks {
     if (item.mutation?.kind !== 'retire') throw new Error('Task retirement has no durable intent');
     if (item.mutation.completedOneOff === true) return this.remove(owner, item.id, item.proposal_id);
     try {
-      return await this.removeScheduledTask(owner, item.id, item.proposal_id, item.schedule_group ?? this.config.group, item.pending_creation === false && item.schedule_group !== undefined, item.mutation.token);
+      return await this.removeScheduledTask(owner, item, item.pending_creation === false && item.schedule_group !== undefined, item.mutation.token);
     } catch (error) {
       if (!(error instanceof RetirementSchedulerFailure)) throw error;
       const failure = retirementFailure(item, error.error);
@@ -646,20 +654,15 @@ export class ScheduledTasks {
   /** The schedule each task holds in EventBridge Scheduler, for a deployment moving its schedules into its table. */
   async existingSchedules(): Promise<CreateScheduleCommandInput[]> {
     const items: TaskItem[] = [];
-    let start: Record<string, unknown> | undefined;
-    do {
-      // eslint-disable-next-line no-await-in-loop -- one scan page at a time
-      const page = await this.documents.send(new ScanCommand({
-        TableName: this.tableName, ExclusiveStartKey: start, ConsistentRead: true,
-        FilterExpression: 'begins_with(pk, :owner) AND begins_with(sk, :task)',
-        ExpressionAttributeValues: { ':owner': 'SCHEDULED#', ':task': 'TASK#' },
-      }));
-      items.push(...(page.Items ?? []) as TaskItem[]);
-      start = page.LastEvaluatedKey;
-    } while (start !== undefined);
+    const pages = paginateScan({ client: this.documents }, {
+      TableName: this.tableName, ConsistentRead: true,
+      FilterExpression: 'begins_with(pk, :owner) AND begins_with(sk, :task)',
+      ExpressionAttributeValues: { ':owner': 'SCHEDULED#', ':task': 'TASK#' },
+    });
+    for await (const page of pages) items.push(...(page.Items ?? []) as TaskItem[]);
     return items
       .filter((item) => item.pending_creation !== true && item.creation_refused !== true && item.mutation?.kind !== 'retire' && !fired(item))
-      .map((item) => this.schedule(item.pk.slice('SCHEDULED#'.length), item, item.schedule_group ?? this.config.group));
+      .map((item) => this.schedule(item.pk.slice('SCHEDULED#'.length), item, item.schedule_group));
   }
 
   /** Account deletion: every task goes, schedule first. */
@@ -689,17 +692,8 @@ export class ScheduledTasks {
    * each one past it arrives paused (ADR 0030: no task is silently dropped).
    */
   async transfer(source: string, destination: string): Promise<void> {
-    const { Items } = await this.documents.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        KeyConditionExpression: 'pk = :pk AND begins_with(sk, :task)',
-        ExpressionAttributeValues: { ':pk': ownerPk(source), ':task': 'TASK#' },
-        // Stryker disable next-line BooleanLiteral: moto reads are always consistent; DynamoDB's strong read moves a task just confirmed
-        ConsistentRead: true,
-      }),
-    );
+    const moving = await this.taskItems(source);
     let held = await this.count(destination);
-    const moving = (Items as TaskItem[]).sort((a, b) => a.created_at.localeCompare(b.created_at));
     for (const found of moving) {
       held += 1;
       const item = { ...found, paused: found.paused || held > SCHEDULED_TASK_CAP };
@@ -771,9 +765,10 @@ export class ScheduledTasks {
     }
   }
 
-  private async removeScheduledTask(owner: string, id: string, proposalId: string, group: string, creationComplete: boolean, clientToken?: string): Promise<boolean> {
+  private async removeScheduledTask(owner: string, item: TaskItem, creationComplete: boolean, clientToken?: string): Promise<boolean> {
+    const { id, proposal_id: proposalId, schedule_name: name, schedule_group: group = this.config.group } = item;
     try {
-      await this.scheduler.send(new DeleteScheduleCommand({ Name: id, GroupName: group, ClientToken: clientToken }));
+      await this.scheduler.send(new DeleteScheduleCommand({ Name: name ?? id, GroupName: group, ClientToken: clientToken }));
     } catch (error) {
       // An admitted create may still produce a schedule: only durable completion permits metadata repair.
       if (!(error instanceof ResourceNotFoundException) || !creationComplete) {
@@ -830,14 +825,13 @@ export class ScheduledTasks {
     }
   }
 
-  private schedule(owner: string, { id, schedule, timezone, startDate: starts, endDate, paused, created_at, deliveryFence }: TaskItem, group = this.config.group): CreateScheduleCommandInput {
+  private schedule(owner: string, { id, schedule_name, schedule, timezone, startDate: starts, endDate, paused, created_at, deliveryFence }: TaskItem, group = this.config.group): CreateScheduleCommandInput {
     const message: ScheduledRunMessage = { owner, taskId: id, ...(deliveryFence === undefined ? {} : { deliveryFence }) };
     const startDate = nextRateTick(schedule, created_at, Date.now(), starts) ?? (starts === undefined ? undefined : new Date(starts));
-    // Scheduler's API reference promises no past EndDate, so a schedule past its stop time goes without one, disabled:
-    // the task keeps its stop time, to move or clear.
+    // Disable stopped schedules and omit their past EndDate. The task keeps the date for edits.
     const stopped = endDate !== undefined && Date.parse(endDate) <= Date.now();
     return {
-      Name: id,
+      Name: schedule_name ?? id,
       GroupName: group,
       ScheduleExpression: schedule,
       ScheduleExpressionTimezone: timezone,
@@ -845,7 +839,7 @@ export class ScheduledTasks {
       ...(endDate === undefined || stopped ? {} : { EndDate: new Date(endDate) }),
       // A one-off schedule is gone once it has run; its run retires the task.
       ...(once(schedule) ? { ActionAfterCompletion: 'DELETE' as const } : {}),
-      State: paused || stopped ? ('DISABLED' as const) : ('ENABLED' as const),
+      State: paused || stopped ? 'DISABLED' : 'ENABLED',
       FlexibleTimeWindow: { Mode: 'OFF' as const },
       Target: { Arn: this.config.queueArn, RoleArn: this.config.roleArn, Input: JSON.stringify(message) },
     };

@@ -7,7 +7,8 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { DynamoEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as logs from 'aws-cdk-lib/aws-logs';
-import { parkingTransition, type SynthesizedConfig } from './parking-transition.js';
+import type { SynthesizedConfig } from './deploy-root.js';
+import { parkingTransition } from './parking-transition.js';
 import type { DeployIdentity } from './production-identity.js';
 import type { Construct } from 'constructs';
 

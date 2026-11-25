@@ -4,7 +4,7 @@ import { commandFields, credentialFields } from 'botcube-config/credential-field
 import { proxiedFields } from 'botcube-config/proxied-fields';
 import { absolutePath, credentialSource, endpointHeaders, endpointTls, forwardProxy, gatewayModels, modelProvider, proxyReference, relayProviders, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource } from 'botcube-config/blocks';
 import { existing } from 'botcube-config/existing';
-import { agentCore, alarms, cloudflare, deploymentKeys, natGateways, natRouteTables, openEgress, parking, publicIp, RETIRED_FILES, services } from 'botcube-config/deployment';
+import { agentCore, alarms, cloudflare, deploymentKeys, natGateways, openEgress, parking, publicIp, RETIRED_FILES, services } from 'botcube-config/deployment';
 import { imageRegistry } from 'botcube-config/images';
 import { userPool } from 'botcube-config/user-pool';
 import { renamedBotKeys, renamedKeys } from 'botcube-config/renamed-keys';
@@ -256,13 +256,16 @@ export const botcubeConfig = configSections.superRefine((config, context) => {
   for (const path of config.integrations.proxy.kind === 'none' ? proxiedFields(config) : []) {
     context.addIssue({ code: 'custom', path, message: 'names integrations.proxy, which is none' });
   }
-  for (const path of natRouteTables(config)) {
-    context.addIssue({ code: 'custom', path, message: 'With network.natGateways 1, BotCube routes each private subnet to the NAT: give its route table' });
+  const routeTables = privateRouteTables(config.existing.vpc.privateSubnets);
+  if (config.network.natGateways === 1 && (routeTables.size !== 1 || routeTables.has(undefined))) {
+    context.addIssue({ code: 'custom', path: ['existing', 'vpc', 'privateSubnets'], message: 'With network.natGateways 1, private subnets must share one route table' });
   }
 });
 
 /** Every section's default, for a process that runs without a BotCube Config: the keys a file must give are absent. */
 export const sectionDefaults = () => configSections.partial({ name: true, env: true, domains: true, existing: true }).parse({});
+
+export const privateRouteTables = (subnets: readonly { routeTableId?: string | undefined }[]) => new Set(subnets.map(({ routeTableId }) => routeTableId));
 
 export type BotSettings = z.output<typeof botSettings>;
 export type BotCubeConfig = z.output<typeof botcubeConfig>;

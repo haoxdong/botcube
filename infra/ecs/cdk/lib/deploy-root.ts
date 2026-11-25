@@ -1,6 +1,6 @@
+import { execFileSync } from 'node:child_process';
 import * as path from 'node:path';
 import { readDeployment, deploymentNames, fillName, type DeploymentConfig } from 'botcube-config/read';
-import type { SynthesizedConfig } from './parking-transition.js';
 import type { DeployIdentity } from './production-identity.js';
 
 /**
@@ -13,13 +13,21 @@ export function activeDeployRoot(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /** The BotCube Config beside the deploy root, which its identity is built from. */
-export function deployRootConfig(deployRoot: string): SynthesizedConfig {
+export function deployRootConfig(deployRoot: string) {
   return { path: path.join(deployRoot, '../botcube.yaml') };
+}
+
+export type SynthesizedConfig = ReturnType<typeof deployRootConfig>;
+
+export function resolveBotCubeConfig(configPath: string): string {
+  return execFileSync(process.execPath, [require.resolve('botcube-config/cli'), 'resolve', configPath], { encoding: 'utf8' });
 }
 
 export function deployIdentity(deployRoot: string): DeployIdentity {
   const config = readDeployment(deployRoot);
   const names = deploymentNames(config);
+  const routeTableId: string | null = config.network?.natGateways === 1
+    ? JSON.parse(resolveBotCubeConfig(deployRootConfig(deployRoot).path)).privateNatRouteTableId : null;
   const { services } = config;
   const link = config.existing.browsers?.link;
   const identity = {
@@ -79,9 +87,9 @@ export function deployIdentity(deployRoot: string): DeployIdentity {
         originPullClientSecretName: names.originPullClientSecretName,
         originTokenSecretName: names.originTokenSecretName,
         previewOriginStackName: names.previewOriginStackName,
-        privateEgress: config.network?.natGateways ? {
+        privateEgress: routeTableId ? {
           stackName: names.privateEgressStackName,
-          routeTableId: config.existing.vpc.privateSubnets[0]?.routeTableId,
+          routeTableId,
           natGateway: {
             name: names.natGatewayName,
             publicSubnetId: config.existing.vpc.publicSubnets[0]?.subnetId,

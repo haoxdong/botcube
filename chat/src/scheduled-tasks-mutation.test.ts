@@ -1,16 +1,17 @@
+import { TaskSchedules } from '../test/task-schedules.js';
 import { randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { SchedulerClient, type UpdateScheduleCommandInput } from '@aws-sdk/client-scheduler';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createChatTable } from '../test/fakes/stack.js';
-import { createScheduledRuns, SchedulerView } from '../test/fakes/scheduler.js';
+import { createScheduledRuns } from '../test/fakes/scheduler.js';
 import { ScheduledTasks } from './scheduled-tasks.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 
 const BRIEF = { title: 'Brief', prompt: 'Summarize overnight news', schedule: 'rate(1 day)', timezone: 'America/New_York' };
 let dynamodb: DynamoDBClient;
 let scheduler: SchedulerClient;
-let view: SchedulerView;
+let view: TaskSchedules;
 let tasks: ScheduledTasks;
 
 beforeEach(async () => {
@@ -21,7 +22,7 @@ beforeEach(async () => {
   const aws = motoAws();
   dynamodb = new DynamoDBClient(aws);
   scheduler = new SchedulerClient(aws);
-  view = new SchedulerView(endpoint, runs);
+  view = new TaskSchedules(endpoint, runs);
   tasks = new ScheduledTasks(table, runs, dynamodb, scheduler);
 });
 
@@ -32,11 +33,12 @@ describe('Account Claim at the scheduled-task cap', () => {
       await tasks.create('destination', randomUUID(), BRIEF);
     }
     const { task } = await tasks.create('source', randomUUID(), BRIEF);
+    const name = await view.name(task.id);
     const states: string[] = [];
     scheduler.middlewareStack.add(
       (next, context) => async (args) => {
         const response = await next(args);
-        if (context.commandName === 'UpdateScheduleCommand' && (args.input as UpdateScheduleCommandInput).Name === task.id) {
+        if (context.commandName === 'UpdateScheduleCommand' && (args.input as UpdateScheduleCommandInput).Name === name) {
           states.push((await view.schedule(task.id))?.State ?? 'missing');
         }
         return response;

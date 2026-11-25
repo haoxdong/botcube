@@ -290,7 +290,7 @@ describe('managing a scheduled task', () => {
     const { accountId } = await browser.openAccountSession();
     const task = await confirm(browser);
     expect((await patch(browser, task.id, { paused: true })).status).toBe(200);
-    const removed = await fetch(`${motoEndpoint()}/schedules/${task.id}?groupName=${scheduler.runs.group}`, {
+    const removed = await fetch(`${motoEndpoint()}/schedules/${await scheduler.name(task.id)}?groupName=${scheduler.runs.group}`, {
       method: 'DELETE',
       headers: { authorization: `AWS4-HMAC-SHA256 Credential=${AWS_ACCESS_KEY_ID}/20260101/us-east-1/scheduler/aws4_request, SignedHeaders=host, Signature=0` },
     });

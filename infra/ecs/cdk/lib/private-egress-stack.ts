@@ -10,12 +10,6 @@ export interface PrivateEgressStackProps extends StackProps {
   routeTableId: string;
 }
 
-/**
- * The private subnets' NAT egress (ADR 0065 decision 4). The Elastic IP is the
- * fixed credential egress IP: it is imported, never created, and always retained.
- * Parked production has no NAT Gateway or default route
- * (scripts/production/production-parking.md).
- */
 export class PrivateEgressStack extends Stack {
   constructor(scope: Construct, id: string, props: PrivateEgressStackProps) {
     super(scope, id, props);
@@ -43,20 +37,16 @@ export class PrivateEgressStack extends Stack {
   }
 }
 
-/** The deploy's NAT, which its identity names exactly when the BotCube Config's network.natGateways is 1. */
-const EGRESS_FIELDS = 'network.natGateways, aws.ecs.privateEgress';
-const EGRESS_BOTH = 'With network.natGateways 0, existing.vpc brings its own egress, so the deploy identity names no NAT for BotCube to create and park in it';
-const EGRESS_NEITHER = 'Unless existing.vpc brings its own egress, the deploy identity names the NAT BotCube creates for the private subnets';
-
 export function ownedEgress(app: App, identity: DeployIdentity, existingNetwork: boolean, boundary?: iam.IManagedPolicy): PrivateEgressStack | undefined {
   const egress = identity.aws.ecs.privateEgress;
   if (existingNetwork === Boolean(egress)) {
-    throw new Error(`${EGRESS_FIELDS}: ${egress ? EGRESS_BOTH : EGRESS_NEITHER}`);
+    const reason = egress ? 'existing.vpc already supplies egress' : 'Unless existing.vpc brings its own egress, a managed NAT is required';
+    throw new Error(`network.natGateways, aws.ecs.privateEgress: ${reason}`);
   }
   if (!egress) return undefined;
   const stack = new PrivateEgressStack(app, 'PrivateEgress', {
     env: { account: identity.aws.account, region: identity.aws.region },
-    stackName: egress.stackName, natGateway: egress.natGateway, routeTableId: egress.routeTableId,
+    ...egress,
   });
   if (boundary) iam.PermissionsBoundary.of(stack).apply(boundary);
   return stack;

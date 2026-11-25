@@ -68,21 +68,17 @@ def owned_egress_network(egress):
     # Parked production has no default route; the unpark deploy recreates it.
     if len(defaults) > 1 or (defaults and (defaults[0].get('State') != 'active' or not defaults[0].get('NatGatewayId'))):
         raise SystemExit('Preview private egress must be one active NAT Gateway route, or none while Parked')
-    nat_state = None
     if defaults:
         nat = aws('ec2', 'describe-nat-gateways', '--nat-gateway-ids', defaults[0]['NatGatewayId'])['NatGateways'][0]
         if nat['State'] != 'available' or nat['VpcId'] != identity['existing']['vpc']['vpcId']:
             raise SystemExit('Preview NAT Gateway is not available in the configured VPC')
-        nat_state = nat['State']
-    return {'routeTableId': egress['routeTableId'], 'subnetIds': sorted(associated - {None}),
-            'defaultRoute': defaults[0] if defaults else None, 'natGatewayState': nat_state}
 
 
 egress = owned_egress(RESOLVED)
-owned_network = owned_egress_network(egress) if egress else None
+if egress:
+    owned_egress_network(egress)
 Path(os.environ['PREVIEW_ORIGIN_INPUT']).write_text(json.dumps({
     'turnIdentityKeysVersion': next(version for version, stages in aws('secretsmanager', 'describe-secret', '--secret-id', NAMES['turnIdentityKeysSecretName'])['VersionIdsToStages'].items() if 'AWSCURRENT' in stages),
     'cloudflareCidrs': cidrs, 'clientVersion': client['VersionId'], 'runtimeArn': runtime_arn, 'filesWorkspace': workspace,
-    **({'network': owned_network} if owned_network else {}),
 }))
 print('Prepared current Cloudflare ranges and client certificate revision')

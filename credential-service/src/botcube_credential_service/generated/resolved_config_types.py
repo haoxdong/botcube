@@ -511,6 +511,7 @@ class ResolvedConfig(TypedDict):
     formatVersion: Literal[1]
     config: Config
     physicalNames: PhysicalNames
+    privateNatRouteTableId: None | str
     webOrigins: list[str]
     credentialServiceHttpPath: str
     modelGateway: dict[str, ModelGatewayValue]

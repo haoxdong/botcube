@@ -1,14 +1,17 @@
+import { TaskSchedules } from '../test/task-schedules.js';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { SchedulerClient } from '@aws-sdk/client-scheduler';
+import { CreateScheduleCommand, SchedulerClient } from '@aws-sdk/client-scheduler';
 import { CreateQueueCommand, DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { loadBotCube } from 'botcube-config/load';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createChatTable } from '../test/fakes/stack.js';
-import { createScheduledRuns, SchedulerView, type ScheduledRuns } from '../test/fakes/scheduler.js';
+import { createScheduledRuns, type ScheduledRuns } from '../test/fakes/scheduler.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { chatScheduling, type ChatScheduling } from './schedules.js';
+import { ScheduledTasks } from './scheduled-tasks.js';
+import { TableSchedules } from './table-schedules.js';
 
 const example = (name: string) => loadBotCube(fileURLToPath(new URL(`../../examples/${name}/botcube.yaml`, import.meta.url))).config;
 
@@ -75,6 +78,36 @@ describe('the enterprise example schedules from its table', () => {
     expect(await at('2026-11-18T14:30:00.000Z', restarted)).toEqual([cron, rate].sort());
   });
 
+  it('recovers a confirmation from a table schedule after losing the create response', async () => {
+    vi.setSystemTime(new Date('2026-11-16T09:00:00.000Z'));
+    const owner = randomUUID();
+    const proposal = randomUUID();
+    const definition = { title: 'Brief', prompt: 'Brief me', schedule: 'cron(30 9 * * ? *)', timezone: 'UTC' };
+    const scheduleRows = new TableSchedules(table, clients.dynamodb, sqs, queueUrl, async () => []);
+    let acceptedId: string | undefined;
+    const tasks = new ScheduledTasks(table, { group: 'table', queueUrl }, clients.dynamodb, {
+      async send(command) {
+        const result = await scheduleRows.send(command);
+        if (command instanceof CreateScheduleCommand && acceptedId === undefined) {
+          acceptedId = (JSON.parse(command.input.Target?.Input ?? '{}') as { taskId: string }).taskId;
+          throw new Error('Schedule response was lost');
+        }
+        return result;
+      },
+    });
+
+    await expect(tasks.create(owner, proposal, definition)).rejects.toThrow('Schedule response was lost');
+    expect(await tasks.list(owner)).toEqual([]);
+    expect(acceptedId).toBeDefined();
+    const retry = await tasks.create(owner, proposal, definition);
+    expect(retry.created).toBe(true);
+    expect(retry.task.id).not.toBe(acceptedId);
+    expect(await tasks.list(owner)).toMatchObject([{ id: retry.task.id }]);
+    vi.setSystemTime(new Date('2026-11-16T09:30:00.000Z'));
+    await scheduleRows.tick();
+    expect(await delivered()).toEqual([retry.task.id]);
+  });
+
   it('pauses and resumes a task through its schedule row', async () => {
     vi.setSystemTime(new Date('2026-11-16T12:00:00.000Z'));
     const scheduling = enterprise();
@@ -110,7 +143,7 @@ describe('a deployment on the default schedules adapter', () => {
     vi.setSystemTime(new Date('2026-11-16T12:00:01.000Z'));
     const { task: paused } = await existingBot.tasks.create(owner, randomUUID(), { title: 'Later', prompt: 'Later', schedule: 'rate(1 hour)', timezone: 'UTC' });
     await existingBot.tasks.update(owner, paused.id, { paused: true });
-    expect(await new SchedulerView(motoEndpoint(), runs).schedule(existing.id)).toMatchObject({ ScheduleExpression: 'cron(30 9 * * ? *)' });
+    expect(await new TaskSchedules(motoEndpoint(), runs).schedule(existing.id)).toMatchObject({ ScheduleExpression: 'cron(30 9 * * ? *)' });
 
     const moved = enterprise();
     if (moved === null) throw new Error('the enterprise example schedules nothing');

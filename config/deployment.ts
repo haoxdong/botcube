@@ -70,12 +70,6 @@ export const agentCore = z
   .optional()
   .describe('The AgentCore resources BotCube creates.');
 
-/** The private subnets natGateways 1 must route to the NAT but names no route table for. */
-export function natRouteTables({ network, existing }: { network: { natGateways?: 0 | 1 | undefined }; existing?: { vpc?: { privateSubnets: { routeTableId?: string | undefined }[] } | undefined } | undefined }): (string | number)[][] {
-  if (!network.natGateways) return [];
-  return (existing?.vpc?.privateSubnets ?? []).flatMap(({ routeTableId }, index) => (routeTableId ? [] : [['existing', 'vpc', 'privateSubnets', index, 'routeTableId']]));
-}
-
 export const natGateways = z
   .union([z.literal(0), z.literal(1)])
   .optional()
@@ -214,7 +208,7 @@ export const RETIRED_FILES: Readonly<Record<string, Readonly<Record<string, Sour
     'aws.ecs.previewOriginStackName': named('previewOriginStackName'),
     'aws.ecs.privateEgress.stackName': named('privateEgressStackName', NAT),
     'aws.ecs.privateEgress.publicIp': at('network.publicIp', { when: NAT }),
-    'aws.ecs.privateEgress.routeTableId': at('existing.vpc.privateSubnets.0.routeTableId', { when: NAT }),
+    'aws.ecs.privateEgress.routeTableId': at('existing.vpc.privateSubnets', { when: NAT }),
     'aws.ecs.privateEgress.natGateway.name': named('natGatewayName', NAT),
     'aws.ecs.privateEgress.natGateway.publicSubnetId': at('existing.vpc.publicSubnets.0.subnetId', { when: NAT }),
     'aws.ecs.apiHealth.stackName': named('apiHealthStackName'),

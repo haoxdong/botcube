@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { botDirectoryErrors, readDeployment, deploymentNames, readConfig, webOrigins } from './read.cjs';
 import { loadConfig } from './load.js';
+import { resolveConfig } from './resolved.js';
 
 function file(config: unknown): string {
   const path = join(mkdtempSync(join(tmpdir(), 'botcube-deployment-')), 'botcube.yaml');
@@ -106,7 +107,20 @@ describe("a deploy root's native BotCube Config", () => {
     const privateSubnets = VPC.privateSubnets.map(({ routeTableId: _, ...subnet }) => subnet);
     expect(loadConfig(file({ ...DEPLOYMENT, existing: { vpc: { ...VPC, privateSubnets } } })).existing.vpc.privateSubnets).toEqual(privateSubnets);
     expect(() => loadConfig(file({ ...DEPLOYMENT, network: { natGateways: 1 }, existing: { vpc: { ...VPC, privateSubnets } } })))
-      .toThrow('existing.vpc.privateSubnets.0.routeTableId: With network.natGateways 1, BotCube routes each private subnet to the NAT: give its route table');
+      .toThrow('existing.vpc.privateSubnets: With network.natGateways 1, private subnets must share one route table');
+  });
+
+  it('requires all private subnets to share a route table for a managed NAT', () => {
+    const privateSubnets = VPC.privateSubnets.map((subnet, index) => ({ ...subnet, routeTableId: `rtb-${index}` }));
+    const config = { ...DEPLOYMENT, existing: { vpc: { ...VPC, privateSubnets } } };
+    expect(loadConfig(file(config)).existing.vpc.privateSubnets).toEqual(privateSubnets);
+    expect(readDeployment(deployRoot(config)).existing.vpc.privateSubnets).toEqual(privateSubnets);
+    const managed = { ...config, network: { natGateways: 1 } };
+    const issue = 'existing.vpc.privateSubnets: With network.natGateways 1, private subnets must share one route table';
+    expect(() => loadConfig(file(managed))).toThrow(issue);
+    const shared = { ...managed, existing: { vpc: { ...VPC, privateSubnets: [...VPC.privateSubnets].reverse() } } };
+    expect(resolveConfig(loadConfig(file(shared))).privateNatRouteTableId).toBe('rtb-acme');
+    expect(resolveConfig(loadConfig(file(config))).privateNatRouteTableId).toBeNull();
   });
 
   it('reads the origin-pull CA as an S3 reference without a deploy-tree file', () => {

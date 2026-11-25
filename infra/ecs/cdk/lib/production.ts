@@ -9,7 +9,7 @@ import { CfnBrowserCustom } from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import type { ITable } from 'aws-cdk-lib/aws-dynamodb';
 import type { DeployIdentity } from './production-identity.js';
-import type { SynthesizedConfig } from './parking-transition.js';
+import type { SynthesizedConfig } from './deploy-root.js';
 import { existingFilesRoleNames } from './files-role-names.js';
 import { createProductionParking } from './production-parking-stack.js';
 import { ContainerImage, Secret } from 'aws-cdk-lib/aws-ecs';

@@ -1,10 +1,11 @@
+import { TaskSchedules } from '../test/task-schedules.js';
 import { randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { DeleteScheduleCommand, SchedulerClient } from '@aws-sdk/client-scheduler';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createChatTable } from '../test/fakes/stack.js';
-import { createScheduledRuns, SchedulerView, type ScheduledRuns } from '../test/fakes/scheduler.js';
+import { createScheduledRuns, type ScheduledRuns } from '../test/fakes/scheduler.js';
 import { ScheduledTasks } from './scheduled-tasks.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 
@@ -13,7 +14,7 @@ let table: string;
 let runs: ScheduledRuns;
 let dynamodb: DynamoDBClient;
 let scheduler: SchedulerClient;
-let view: SchedulerView;
+let view: TaskSchedules;
 
 beforeAll(async () => {
   const endpoint = motoEndpoint();
@@ -22,7 +23,7 @@ beforeAll(async () => {
   runs = await createScheduledRuns(endpoint);
   dynamodb = new DynamoDBClient(motoAws());
   scheduler = new SchedulerClient(motoAws());
-  view = new SchedulerView(endpoint, runs);
+  view = new TaskSchedules(endpoint, runs);
 });
 
 const normal = () => new ScheduledTasks(table, runs, dynamodb, scheduler);
@@ -143,7 +144,7 @@ describe('timestamp task lifecycle', () => {
   it('does not treat a new delete token as a replay of an earlier successful deletion', async () => {
     const owner = randomUUID();
     const { task } = await normal().create(owner, randomUUID(), definition);
-    const input = { Name: task.id, GroupName: runs.group, ClientToken: randomUUID() };
+    const input = { Name: await view.name(task.id), GroupName: runs.group, ClientToken: randomUUID() };
     await scheduler.send(new DeleteScheduleCommand(input));
     await scheduler.send(new DeleteScheduleCommand(input));
     await expect(scheduler.send(new DeleteScheduleCommand({ ...input, Name: randomUUID() }))).rejects.toMatchObject({ name: 'ConflictException' });
@@ -199,7 +200,7 @@ describe('timestamp task lifecycle', () => {
     const schedule = 'at(2090-01-01T12:00:00)';
     await expect(new ScheduledTasks(table, runs, delayed, scheduler).update(owner, task.id, { schedule })).rejects.toBe(failure);
     expect(await raw(owner, task.id)).toMatchObject({ mutation: { kind: 'update', changes: { schedule } } });
-    await scheduler.send(new DeleteScheduleCommand({ Name: task.id, GroupName: runs.group }));
+    await scheduler.send(new DeleteScheduleCommand({ Name: await view.name(task.id), GroupName: runs.group }));
     await expect(tasks.recoverMutation(owner, task.id)).rejects.toMatchObject({ status: 409, detail: 'The schedule is unavailable; the task update could not be confirmed' });
     expect(await raw(owner, task.id)).not.toHaveProperty('mutation');
     expect(await tasks.get(owner, task.id)).toMatchObject({ schedule: definition.schedule });
@@ -212,7 +213,7 @@ describe('timestamp task lifecycle', () => {
     const tasks = normal();
     const owner = randomUUID();
     const { task } = await tasks.create(owner, randomUUID(), definition);
-    await scheduler.send(new DeleteScheduleCommand({ Name: task.id, GroupName: runs.group }));
+    await scheduler.send(new DeleteScheduleCommand({ Name: await view.name(task.id), GroupName: runs.group }));
     await expect(tasks.update(owner, task.id, { schedule: 'at(2090-01-01T12:00:00)' })).rejects.toMatchObject({ status: 409 });
     expect(await raw(owner, task.id)).not.toHaveProperty('mutation');
     expect(await tasks.get(owner, task.id)).toMatchObject({ schedule: definition.schedule });
