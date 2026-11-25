@@ -8,7 +8,7 @@ import folder from './app-icons/file-folder-3d.png';
 import terminal from './app-icons/windows-terminal.svg';
 
 /** The computer's apps, each in its own window and on the taskbar. */
-export type DockApp = 'Chrome' | 'Terminal' | 'Files';
+export type DockApp = 'Chromium' | 'Terminal' | 'Files';
 
 export const TITLE_BAR = 40;
 // Fluent 2 motion: decelerate in, accelerate out (its curveDecelerateMax and curveAccelerateMax).
@@ -90,7 +90,7 @@ const useStyles = makeStyles({
 });
 
 /** Each app's own icon, pinned in `app-icons/` with its licence (botcube/NOTICE). */
-const APP_ICON: Record<DockApp, string | { src: string }> = { Files: folder, Chrome: chromium, Terminal: terminal };
+const APP_ICON: Record<DockApp, string | { src: string }> = { Files: folder, Chromium: chromium, Terminal: terminal };
 
 export function AppIcon({ app, size }: { app: DockApp; size: 16 | 24 }) {
   const styles = useStyles();

@@ -41,7 +41,7 @@ const renderComputer = (control: 'agent' | 'user' = 'agent', props: Partial<Para
     root.render(
       React.createElement(AgentComputer, {
         agentName: 'Pebble',
-        app: 'Chrome',
+        app: 'Chromium',
         files: React.createElement('div'),
         computer: { state: 'awake', browserSessionId: 'browser-1', control, screenshot: null },
         commands: [],
@@ -234,47 +234,47 @@ describe("the Agent Computer's app frame", () => {
   const app = (name: DockApp) => container.querySelector<HTMLButtonElement>(`.agent-computer-taskbar-app[aria-label="${name}"]`);
   const front = () => container.querySelector('.agent-computer-taskbar-app[aria-pressed="true"]')?.getAttribute('aria-label');
 
-  it('switches from Files and Terminal back to Chrome on the taskbar, keeping the same browser view', () => {
+  it('switches from Files and Terminal back to Chromium on the taskbar, keeping the same browser view', () => {
     const onOpenApp = (next: DockApp) => renderComputer('agent', { app: next, onOpenApp });
-    renderComputer('agent', { app: 'Chrome', onOpenApp });
+    renderComputer('agent', { app: 'Chromium', onOpenApp });
     act(() => button('View computer')?.click());
     act(() => liveFailures.get('browser-1')?.());
     const liveView = container.querySelector('[data-live-view="browser-1"]');
 
     act(() => app('Files')?.click());
     expect(front()).toBe('Files');
-    act(() => app('Chrome')?.click());
-    expect(front()).toBe('Chrome');
+    act(() => app('Chromium')?.click());
+    expect(front()).toBe('Chromium');
     expect(container.querySelector('[data-live-view="browser-1"]')).toBe(liveView);
 
     act(() => app('Terminal')?.click());
     expect(front()).toBe('Terminal');
     expect(container.querySelector('.agent-computer-terminal')?.textContent).toBe('No commands yet');
-    act(() => app('Chrome')?.click());
-    expect(front()).toBe('Chrome');
+    act(() => app('Chromium')?.click());
+    expect(front()).toBe('Chromium');
     expect(container.querySelector('[data-live-view="browser-1"]')).toBe(liveView);
     expect(container.querySelector('.agent-computer-screen-covered')).toBeNull();
   });
 
   it('minimises the front window from its taskbar button, bringing the next one forward, and restores it', () => {
     const onOpenApp = vi.fn((next: DockApp) => renderComputer('agent', { app: next, onOpenApp }));
-    renderComputer('agent', { app: 'Chrome', onOpenApp });
+    renderComputer('agent', { app: 'Chromium', onOpenApp });
     act(() => button('View computer')?.click());
 
-    act(() => app('Chrome')?.click());
-    expect(container.querySelector('[data-window="Chrome"]')?.getAttribute('data-state')).toBe('minimised');
+    act(() => app('Chromium')?.click());
+    expect(container.querySelector('[data-window="Chromium"]')?.getAttribute('data-state')).toBe('minimised');
     expect(onOpenApp).toHaveBeenLastCalledWith('Terminal');
     expect(front()).toBe('Terminal');
     expect(container.querySelector('[data-live-view="browser-1"]')).not.toBeNull();
 
-    act(() => app('Chrome')?.click());
-    expect(container.querySelector('[data-window="Chrome"]')?.getAttribute('data-state')).toBe('open');
-    expect(front()).toBe('Chrome');
+    act(() => app('Chromium')?.click());
+    expect(container.querySelector('[data-window="Chromium"]')?.getAttribute('data-state')).toBe('open');
+    expect(front()).toBe('Chromium');
   });
 
   it('closes a window from its title bar, leaving its app on the taskbar to open again', () => {
     const onOpenApp = (next: DockApp) => renderComputer('agent', { app: next, onOpenApp });
-    renderComputer('agent', { app: 'Chrome', onOpenApp });
+    renderComputer('agent', { app: 'Chromium', onOpenApp });
     act(() => button('View computer')?.click());
 
     act(() => button('Close Terminal')?.click());
@@ -290,10 +290,10 @@ describe("the Agent Computer's app frame", () => {
     expect(container.querySelector('[data-window="Terminal"]')?.getAttribute('data-state')).toBe('open');
     expect(front()).toBe('Terminal');
 
-    // Closed, Chrome's window keeps the live view connected for its return.
+    // Closed, Chromium's window keeps the live view connected for its return.
     const liveView = container.querySelector('[data-live-view="browser-1"]');
-    act(() => button('Close Chrome')?.click());
-    expect(container.querySelector('[data-window="Chrome"]')?.getAttribute('data-state')).toBe('closed');
+    act(() => button('Close Chromium')?.click());
+    expect(container.querySelector('[data-window="Chromium"]')?.getAttribute('data-state')).toBe('closed');
     expect(container.querySelector('[data-live-view="browser-1"]')).toBe(liveView);
   });
 });
@@ -543,7 +543,7 @@ describe("the Agent Computer cover's Starting…", () => {
     expect(label()).toBeNull();
   });
 
-  it('keeps waiting out one --motion-move while another window comes forward: Chrome stays covered under it', () => {
+  it('keeps waiting out one --motion-move while another window comes forward: Chromium stays covered under it', () => {
     renderComputer('agent', { computer: asleep, starting: true });
     wait(200);
     renderComputer('agent', { computer: asleep, starting: true, app: 'Terminal' });

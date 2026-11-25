@@ -68,8 +68,8 @@ it.each([{ empty: false, automated: false }, { empty: true, automated: true }])(
   await click('Files');
   await draw();
   expect(measures()).toHaveLength(1);
-  // Back to a Files window still open behind Chrome: its listing shows at once, a second opening.
-  await click('Chrome');
+  // Back to a Files window still open behind Chromium: its listing shows at once, a second opening.
+  await click('Chromium');
   await click('Files');
   expect(measures()).toHaveLength(2);
   // Closed and opened again, Files lists anew: a third.
@@ -90,10 +90,10 @@ it('does not report a failed Files opening after a later successful reload', asy
   expect(measures()).toHaveLength(0);
 });
 
-it.each(['Chrome', 'hidden', 'chat'])('does not report a Files opening abandoned for %s before the response', async (leave) => {
+it.each(['Chromium', 'hidden', 'chat'])('does not report a Files opening abandoned for %s before the response', async (leave) => {
   await draw();
   await click('Files');
-  if (leave === 'Chrome') await click('Chrome');
+  if (leave === 'Chromium') await click('Chromium');
   else await draw(leave !== 'hidden', leave === 'chat' ? 'another-chat' : 'chat-test');
   await answer();
   expect(measures()).toHaveLength(0);
@@ -101,10 +101,10 @@ it.each(['Chrome', 'hidden', 'chat'])('does not report a Files opening abandoned
   expect(measures()).toHaveLength(0);
 });
 
-it('times a listing from the press that brings Files back, when it was left behind Chrome before it listed', async () => {
+it('times a listing from the press that brings Files back, when it was left behind Chromium before it listed', async () => {
   await draw();
   await click('Files');
-  await click('Chrome');
+  await click('Chromium');
   const back = performance.now();
   await click('Files');
   await answer();

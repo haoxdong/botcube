@@ -54,7 +54,7 @@
 /* Windows inside draws with Fluent UI; nothing of the app's own design reaches in. */
 .agent-computer-windows { position: absolute; inset: 0; }
 
-/* The agent's screen, in the Chrome window: the browser's live view, covered by its last screen until it settles. */
+/* The agent's screen, in the Chromium window: the browser's live view, covered by its last screen until it settles. */
 .agent-computer-screen {
   position: relative;
   width: 100%;

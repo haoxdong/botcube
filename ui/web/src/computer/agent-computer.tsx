@@ -214,10 +214,10 @@ export function AgentComputer({
           windows={[
             { app: 'Files', title: 'Files', startsClosed: true, children: <section className="agent-computer-app" aria-label="Files">{files}</section> },
             {
-              app: 'Chrome',
-              title: 'Chrome',
+              app: 'Chromium',
+              title: 'Chromium',
               keepMounted: true,
-              // The live view stays connected under the other windows, so bringing Chrome forward shows the browser at
+              // The live view stays connected under the other windows, so bringing Chromium forward shows the browser at
               // once. Until it shows the browser, its last screen stands in, dimmed: never a black frame.
               children: (
                 <div className={covered ? 'agent-computer-screen agent-computer-screen-covered' : 'agent-computer-screen'}>
@@ -225,7 +225,7 @@ export function AgentComputer({
                     <div key={`${browserSessionId}:${generation}`} className="agent-computer-live"><BrowserFrame
                       sessionId={browserSessionId}
                       expanded={sheet}
-                      interactive={active && sheet && control === 'user' && !busy && app === 'Chrome'}
+                      interactive={active && sheet && control === 'user' && !busy && app === 'Chromium'}
                       lastScreen={computer.screenshot}
                       recoverOnStall
                       onConnectionChange={onBrowserConnectionChange}
@@ -279,7 +279,7 @@ export function AgentComputer({
             <Button size="sm" disabled={busy || !active} onClick={() => {
                 if (control === 'agent') {
                   zoom(true);
-                  onOpenApp('Chrome');
+                  onOpenApp('Chromium');
                   onTakeOver(browserSessionId);
                 } else handBack(browserSessionId);
               }}>

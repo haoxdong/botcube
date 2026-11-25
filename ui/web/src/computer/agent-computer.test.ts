@@ -86,7 +86,7 @@ const render = (props: Partial<Parameters<typeof AgentComputer>[0]>) =>
   renderToStaticMarkup(
     React.createElement(AgentComputer, {
       agentName: 'Template Bot',
-      app: 'Chrome',
+      app: 'Chromium',
       files: React.createElement('div', { 'data-files': '' }),
       computer: { state: 'awake', browserSessionId: 'browser-1', control: 'agent', screenshot: null },
       commands: [],
@@ -108,7 +108,7 @@ const buttons = (html: string) =>
 /** The way into the computer sheet: the whole preview. */
 const OPEN = 'View computer';
 /** The buttons Windows draws: the taskbar's, each window's caption buttons, and Terminal's tab strip. */
-const WINDOWS = /^(Start|Search|Files|Chrome|Terminal|New tab|Open a profile|(Close )?[\w-]+@computer: ~|(Minimise|Maximise|Restore|Close) \w+)$/;
+const WINDOWS = /^(Start|Search|Files|Chromium|Terminal|New tab|Open a profile|(Close )?[\w-]+@computer: ~|(Minimise|Maximise|Restore|Close) \w+)$/;
 /** The computer's own controls, outside Windows. */
 const controls = (html: string) => buttons(html).filter((name) => name === undefined || !WINDOWS.test(name));
 /** The taskbar's apps from the left, the front one pressed. */
@@ -148,15 +148,15 @@ describe('AgentComputer', () => {
     expect(html).not.toContain('agent-computer-touch');
   });
 
-  it('opens Chrome and Terminal each in a window, Files on the taskbar until it opens, the front one pressed', () => {
+  it('opens Chromium and Terminal each in a window, Files on the taskbar until it opens, the front one pressed', () => {
     const html = render({});
 
-    expect(taskbar(html)).toEqual(['Files', 'Chrome pressed', 'Terminal']);
-    expect([...html.matchAll(/data-window="(\w+)" data-state="open"/g)].map(([, app]) => app)).toEqual(['Chrome', 'Terminal']);
+    expect(taskbar(html)).toEqual(['Files', 'Chromium pressed', 'Terminal']);
+    expect([...html.matchAll(/data-window="(\w+)" data-state="open"/g)].map(([, app]) => app)).toEqual(['Chromium', 'Terminal']);
     // Files lists the account's files only once it opens.
     expect(html).not.toContain('data-files');
     expect(html).toContain('agent-computer-terminal');
-    expect([...render({ app: 'Files' }).matchAll(/data-window="(\w+)" data-state="open"/g)].map(([, app]) => app)).toEqual(['Files', 'Chrome', 'Terminal']);
+    expect([...render({ app: 'Files' }).matchAll(/data-window="(\w+)" data-state="open"/g)].map(([, app]) => app)).toEqual(['Files', 'Chromium', 'Terminal']);
   });
 
   it('keeps the preview out of reach: a press anywhere opens the sheet', () => {
@@ -169,11 +169,11 @@ describe('AgentComputer', () => {
 
       expect(html).toContain('<section class="agent-computer-app" aria-label="Files"><div data-files=""></div></section>');
       expect(controls(html)).toEqual(computer.state === 'awake' ? [OPEN, 'Take over'] : [OPEN]);
-      expect(taskbar(html)).toEqual(['Files pressed', 'Chrome', 'Terminal']);
+      expect(taskbar(html)).toEqual(['Files pressed', 'Chromium', 'Terminal']);
     }
   });
 
-  it("keeps the live view connected in Chrome's window under Terminal and Files, so Chrome shows it at once", () => {
+  it("keeps the live view connected in Chromium's window under Terminal and Files, so Chromium shows it at once", () => {
     for (const app of ['Terminal', 'Files'] as const) {
       expect(render({ app })).toMatch(/<div class="agent-computer-screen[^"]*"><div class="agent-computer-live"><div data-live-view="browser-1"><\/div><\/div>/);
     }

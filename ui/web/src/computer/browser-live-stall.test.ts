@@ -82,7 +82,7 @@ describe('the Computer live view at DCV data timeout', () => {
     roots.push(root);
     const ended = vi.fn();
     await act(async () => root.render(React.createElement(AgentComputer, {
-      agentName: 'Test Agent', app: 'Chrome', files: null,
+      agentName: 'Test Agent', app: 'Chromium', files: null,
       computer: { state: 'awake', browserSessionId: 'browser-1', control: 'agent', screenshot: 'data:image/png;base64,c2NyZWVu' },
       commands: [], control: 'agent', running: false, busy: false, error: null, notice: null,
       onTakeOver: vi.fn(), onHandBack: vi.fn(), starting: false, onStop: vi.fn(), onOpenApp: vi.fn(),

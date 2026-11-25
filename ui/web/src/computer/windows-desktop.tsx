@@ -17,10 +17,10 @@ const PHONE = '(max-width: 640px)';
 /** Where each window opens. The browser's content box is 16:9, as the live view's screen is. */
 const PLACES: Record<DockApp, Rect> = {
   Files: { x: 40, y: 24, width: 760, height: 470 },
-  Chrome: { x: 440, y: 44, width: 800, height: 450 + TITLE_BAR },
+  Chromium: { x: 440, y: 44, width: 800, height: 450 + TITLE_BAR },
   Terminal: { x: 200, y: 330, width: 700, height: 320 },
 };
-const TASKBAR_APPS: readonly DockApp[] = ['Files', 'Chrome', 'Terminal'];
+const TASKBAR_APPS: readonly DockApp[] = ['Files', 'Chromium', 'Terminal'];
 
 // Stock Fluent (ADR 0093): its parts keep their own look and theme; these rules only place them and draw the desktop's
 // own surfaces, from Fluent's tokens.
@@ -160,7 +160,7 @@ export function WindowsDesktop({ windows, front, interactive, onFront }: { windo
   const scale = Math.min(1, boxSize.width / SCREEN.width);
   const [life, setLife] = useState<Record<DockApp, Life>>(() => {
     const closed = (app: DockApp): Life => (app !== front && windows.some((win) => win.app === app && win.startsClosed === true) ? 'closed' : 'open');
-    return { Files: closed('Files'), Chrome: closed('Chrome'), Terminal: closed('Terminal') };
+    return { Files: closed('Files'), Chromium: closed('Chromium'), Terminal: closed('Terminal') };
   });
   // The windows already open when the desktop appears arrive with it: only a window opened later plays its open motion.
   const [arrived, setArrived] = useState<ReadonlySet<DockApp>>(() => new Set(TASKBAR_APPS.filter((app) => life[app] === 'open')));

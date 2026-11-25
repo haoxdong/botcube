@@ -27,7 +27,7 @@ function Controls() {
       <span data-control="Toolbar">
         <Toolbar aria-label="Sample taskbar" checkedValues={{ app: ['files'] }}>
           <ToolbarToggleButton name="app" value="files" appearance="subtle" aria-label="Files" icon={<Folder24Filled />} />
-          <ToolbarToggleButton name="app" value="chrome" appearance="subtle" aria-label="Chrome" icon={<Folder24Filled />} />
+          <ToolbarToggleButton name="app" value="chromium" appearance="subtle" aria-label="Chromium" icon={<Folder24Filled />} />
         </Toolbar>
       </span>
       <span data-control="Text">

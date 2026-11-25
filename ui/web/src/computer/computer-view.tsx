@@ -129,7 +129,7 @@ export function ComputerView({ agentName, conversation, shown, activity, onConne
     setOpenedAt(performance.now());
     retry();
   }
-  const [app, setApp] = useState<DockApp>('Chrome');
+  const [app, setApp] = useState<DockApp>('Chromium');
   const filesOpening = useRef<{ start: number; showing: string } | null>(null);
   const opening = filesOpening.current;
   const filesLoaded = (outcome: 'ready' | 'failed') => {
