@@ -846,10 +846,10 @@ it("keeps the profile's status where it lands as the agent's character line come
   expect(sheet).toMatch(/\n\.agent-profile-character \{[^}]*font-size: var\(--font-small\);/);
 });
 
-it("switches the Agent Computer's dock apps at once, so showing its panel again replays no fade", () => {
-  // A dock switch is instant, and a `hidden` panel shown again would replay a `@starting-style` fade.
+it("switches the Agent Computer's apps at once, so showing a window again replays no fade", () => {
+  // A taskbar switch is instant, and a window shown again would replay a `@starting-style` fade.
   expect(motion).not.toMatch(/agent-computer/);
-  expect(readFileSync(path.join(here, '../computer/agent-computer.tsx'), 'utf8')).toMatch(/onClick=\{\(\) => onOpenApp\(dockApp\)\}/);
+  expect(readFileSync(path.join(here, '../computer/windows-desktop.tsx'), 'utf8')).toMatch(/onClick=\{\(\) => pick\(app\)\}/);
 });
 
 it('bobs Marq while the agent works', () => {

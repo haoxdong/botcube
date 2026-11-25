@@ -1,4 +1,4 @@
-/* Agent Computer: a desktop with its dock under the app window, framing the live browser (ADR 0077) */
+/* Agent Computer: Windows 11 on a virtual 1280x720 screen, its windows framing the live browser (ADR 0077, ADR 0093) */
 .agent-computer {
   height: 100%;
   min-height: 420px;
@@ -12,7 +12,7 @@
   gap: var(--space-12);
   --agent-computer-chrome: 124px;
 }
-.agent-computer-sheet { position: fixed; inset: 0; z-index: var(--layer-screen); height: auto; justify-content: center; --agent-computer-chrome: 150px; }
+.agent-computer-sheet { position: fixed; inset: 0; z-index: var(--layer-screen); height: auto; justify-content: center; --agent-computer-chrome: 64px; }
 /* Who drives, centred under the desktop (dots Fig 4, Fig 6). */
 .agent-computer-bar {
   display: flex;
@@ -38,70 +38,32 @@
 
 
 /*
- * The desktop hugs the browser's 16:9 screen (1280x720): as wide as the pane allows, and short enough to leave the
- * pane's height room for the rest of the computer (--agent-computer-chrome).
+ * The desktop is Windows' 16:9 screen (1280x720), drawn at its own size and scaled down to fit: as wide as the pane
+ * allows, and short enough to leave the pane's height room for the rest of the computer (--agent-computer-chrome).
  */
-/* stylelint-disable scale-unlimited/declaration-strict-value -- the simulated desktop scales with its screen (DESIGN.md) */
 .agent-computer-desktop {
   position: relative;
   flex: none;
-  width: min(100%, calc((100cqh - var(--agent-computer-chrome)) * 16 / 9 + 48px));
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-  padding: var(--space-24) var(--space-24) var(--space-12);
+  width: min(100%, calc((100cqh - var(--agent-computer-chrome)) * 16 / 9), 1280px);
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
   border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, var(--agent-deepest), var(--agent-deep) 55%, var(--agent-outline));
   box-shadow: var(--shadow-rest);
 }
 
-.agent-computer-window {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  overflow: hidden;
-  border-radius: var(--radius-md);
-  background: var(--color-text);
-  box-shadow: var(--shadow-float);
-}
+/* Windows inside draws with Fluent UI; nothing of the app's own design reaches in. */
+.agent-computer-windows { position: absolute; inset: 0; }
 
-@media (min-width: 641px) {
-  .agent-computer-window {
-    container-type: size;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: visible;
-    border-radius: 0;
-    background: none;
-    box-shadow: none;
-  }
-
-  .agent-computer-window > .agent-computer-screen {
-    flex: none;
-    width: min(100cqw, 100cqh * 16 / 9);
-    height: auto;
-    aspect-ratio: 16 / 9;
-    overflow: hidden;
-    border-radius: var(--radius-md);
-    background: var(--color-text);
-    box-shadow: var(--shadow-float);
-  }
-}
-
-/* The agent's screen: the browser's live view, covered by its last screen until the live view settles, under the
-   Terminal or Files window while one is open. */
+/* The agent's screen, in the Chrome window: the browser's live view, covered by its last screen until it settles. */
 .agent-computer-screen {
   position: relative;
   width: 100%;
   height: 100%;
-  /* Terminal sizes itself by the screen's width, as the live view scales Chrome. */
-  container-type: inline-size;
+  background: var(--color-text);
 }
 
-/* Still covered, the screen shows the desktop through it rather than the live view's black. */
-.agent-computer-window:has(> .agent-computer-screen-covered),
-.agent-computer-window > .agent-computer-screen.agent-computer-screen-covered { background: none; }
+/* Still covered, the screen is the agent's ground rather than the live view's black. */
+.agent-computer-screen.agent-computer-screen-covered { background: var(--agent-deepest); }
 
 .agent-computer-cover {
   position: absolute;
@@ -152,99 +114,34 @@
   color: var(--color-text);
 }
 
-.agent-computer-dock {
-  flex: none;
-  align-self: center;
-  display: flex;
-  gap: 6px;
-  padding: 6px;
-  border-radius: var(--radius-lg);
-  background: var(--frost);
-  backdrop-filter: blur(8px);
-}
-
-/* Each app its own drawn icon, as in dots' dock; the open one has a dot beneath it. */
-.agent-computer-dock-app {
-  position: relative;
-  width: 34px;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: none;
-  background: none;
-  cursor: pointer;
-}
-
-.agent-computer-dock-icon { width: 30px; height: 30px; }
-
-.agent-computer-dock-app-active::after {
-  content: '';
-  position: absolute;
-  bottom: -4px;
-  left: 50%;
-  width: 4px;
-  height: 4px;
-  margin-left: -2px;
-  border-radius: var(--radius-pill);
-  background: var(--color-white);
-}
-
-/* An app fills the screen's one window frame, the box Chrome's live view fills. */
+/* An app fills its window under the title bar. */
 .agent-computer-app {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-float);
   background: var(--color-white);
   color: var(--color-text);
   font-size: var(--font-small);
 }
-.agent-computer-app > :not(.agent-computer-terminal-bar) { flex: 1; min-height: 0; }
+.agent-computer-app > * { flex: 1; min-height: 0; }
 .agent-computer-app .agent-computer-error { padding: var(--space-12); font-size: inherit; }
 
-/*
- * Terminal, drawn as the live view draws Chrome: every size a share of the screen's width, as on a 1280px screen, so its
- * bar and type scale with the screen exactly as Chrome's do. A white title bar over a dark log.
- */
-.agent-computer-terminal-bar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  /* stylelint-disable-next-line declaration-property-value-allowed-list -- the terminal is drawn at its screen's scale */
-  gap: 0.63cqw;
-  height: 2.97cqw;
-  /* stylelint-disable-next-line declaration-property-value-allowed-list -- the terminal is drawn at its screen's scale */
-  padding: 0 1.25cqw;
-  border-bottom: 0.5px solid var(--color-line);
-  background: var(--color-white);
-  color: var(--color-text-muted);
-  font-size: 1.02cqw;
-  font-weight: var(--weight-semibold);
-  white-space: nowrap;
-}
-.agent-computer-terminal-bar svg { flex: none; width: 1.25cqw; height: 1.25cqw; color: var(--color-blue); }
-.agent-computer-terminal-bar span { overflow: hidden; text-overflow: ellipsis; }
-
+/* Terminal: Windows draws it at Windows Terminal's own size (windows-desktop.tsx). */
 .agent-computer-terminal {
   background: var(--color-text);
   color: var(--color-line);
   color-scheme: dark;
   scrollbar-color: var(--color-text-muted) transparent;
   font-family: var(--font-code);
-  font-size: 1.41cqw;
+  font-size: var(--font-code-size);
   line-height: var(--leading-loose);
   white-space: pre-wrap;
   /* Lines wrap between words; only a word longer than the line breaks. */
   overflow-wrap: anywhere;
 }
-/* stylelint-disable-next-line declaration-property-value-allowed-list -- drawn at its screen's scale */
-.agent-computer-terminal-content { padding: 0.63cqw 1.09cqw; }
+.agent-computer-terminal-content { padding: var(--space-8) var(--space-12); }
 .agent-computer-terminal-empty { color: var(--color-text-muted); }
 
 /* Thunar: a Places sidebar down the window's left edge, beside the open place's toolbar, icon view and status bar. */
@@ -472,15 +369,10 @@
 @media (max-width: 640px) {
   .agent-profile-panel:has(.agent-computer-touch) { padding: 0; }
   .agent-computer { min-height: 0; gap: var(--space-8); }
-  .agent-computer-desktop { gap: var(--space-8); padding: var(--space-12) var(--space-12) var(--space-8); }
-  .agent-computer-sheet > .agent-computer-desktop,
-  .agent-computer:has(.agent-computer-touch) > .agent-computer-desktop { border-radius: 0; box-shadow: none; }
-  .agent-computer-window { border-radius: var(--radius-md); }
-  /*
-   * The desktop fills the profile's phone sheet down to who drives, or to the touch tools on Take-over, for a tall,
-   * immersive computer; the computer sheet keeps it a band on black.
-   */
-  .agent-computer:not(.agent-computer-sheet) > .agent-computer-desktop { flex: 1; justify-content: center; }
+  /* The sheet runs Windows' phone layout edge to edge, between its title and who drives. */
+  /* Room for the sheet's title: a finger's 44px row (below) and its padding. */
+  .agent-computer-sheet { --agent-computer-head: 44px; padding-top: calc(var(--agent-computer-head) + 2 * var(--space-12)); }
+  .agent-computer-sheet > .agent-computer-desktop { flex: 1; min-height: 0; width: 100%; aspect-ratio: auto; border-radius: 0; box-shadow: none; }
 
   /* Who drives centred under the desktop, as on desktops; the touch tools round icon buttons at the bottom right (dots Fig 8). */
   .agent-computer-touch {
@@ -513,17 +405,8 @@
 
   .agent-computer-sheet-title svg { width: 22px; height: 22px; }
 
-  .agent-computer-sheet .agent-computer-touch {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    padding-bottom: max(var(--space-12), var(--shell-bottom));
-  }
+  .agent-computer-sheet .agent-computer-touch { padding-bottom: max(var(--space-12), var(--shell-bottom)); }
 
-
-  /* A finger's 44px target at the least (Apple HIG; the regression): the dock apps keep their 30px icons. */
-  .agent-computer-dock-app { width: 44px; height: 44px; }
 
   .agent-computer:not(.agent-computer-sheet) { --agent-computer-chrome: 136px; }
 }
@@ -566,7 +449,6 @@
 .remote-viewport-content { position: absolute; top: 0; left: 0; }
 .remote-viewport-shield { position: absolute; inset: 0; }
 
-/* stylelint-enable scale-unlimited/declaration-strict-value */
 
 .agent-computer-live,
 .browser-view-content {
@@ -596,4 +478,12 @@
 .agent-computer-file-trigger > .agent-computer-file {
   width: 100%;
   height: 100%;
+}
+
+/* Neither side's CSS reaches the other (ADR 0093): Fluent's own rules style its parts, and the app's base layer
+   (Tailwind's preflight) stops at them, so they draw as in a page of their own. The computer's content stays the app's. */
+@layer base {
+  .agent-computer-fluent :is([class*='fui-']:not(.fui-FluentProvider), [class*='fui-']:not(.fui-FluentProvider) *) {
+    all: revert-layer;
+  }
 }

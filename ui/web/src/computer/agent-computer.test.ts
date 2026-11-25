@@ -106,14 +106,18 @@ const buttons = (html: string) =>
   [...html.matchAll(/<button([^>]*)>(.*?)<\/button>/g)].map(
     ([, attributes = '', content = '']) => content.replace(/<[^>]*>/g, '') || /aria-label="([^"]*)"/.exec(attributes)?.[1],
   );
-/** The way into the computer sheet, at the wallpaper's bottom right under the dock. */
+/** The way into the computer sheet: the whole preview. */
 const OPEN = 'View computer';
-const DOCK = ['Files', 'Chrome', 'Terminal'];
-/** The dock's apps: each one's name, whether it shows its drawn icon, and whether it is the open one. */
-const dock = (html: string) =>
-  [...html.matchAll(/class="agent-computer-dock-app[^"]*" aria-label="([^"]+)" title="\1"( aria-current="true")?>(<svg class="agent-computer-dock-icon")?/g)].map(
-    ([, name, open, icon]) => `${name}${icon ? ' (icon)' : ''}${open ? ' open' : ''}`,
-  );
+/** The buttons Windows draws: the taskbar's, each window's tab and caption buttons. */
+const WINDOWS = /^(Start|Search|Files|Chrome|Terminal|workspace — zsh|(Minimise|Maximise|Restore|Close) \w+)$/;
+/** The computer's own controls, outside Windows. */
+const controls = (html: string) => buttons(html).filter((name) => name === undefined || !WINDOWS.test(name));
+/** The taskbar's apps from the left, the front one pressed. */
+const taskbar = (html: string) =>
+  [...html.matchAll(/<button[^>]*class="[^"]*agent-computer-taskbar-app[^"]*"[^>]*>/g)].map(([tag]) => {
+    const name = /aria-label="([^"]+)"/.exec(tag)?.[1];
+    return tag.includes('aria-pressed="true"') ? `${name} pressed` : name;
+  });
 
 describe('AgentComputer', () => {
   it('shows the live browser directly on the desktop, with the agent in control', () => {
@@ -121,18 +125,14 @@ describe('AgentComputer', () => {
 
     expect(html).toContain('<div data-live-view="browser-1"></div>');
     expect(html).toContain('Template Bot has control');
-    expect(buttons(html)).toEqual([OPEN, ...DOCK, 'Take over']);
+    expect(controls(html)).toEqual([OPEN, 'Take over']);
     expect(html).not.toContain('agent-computer-touch');
   });
 
   it('offers Stop only while the agent runs a Turn, in the bar', () => {
-    expect(buttons(render({ running: true }))).toEqual([OPEN, ...DOCK, 'Take over', 'Stop']);
-    expect(buttons(render({ running: true, control: 'user' }))).toEqual(
-      [OPEN, ...DOCK, 'Return control', 'Stop'],
-    );
-    expect(buttons(render({ running: true, computer: { state: 'asleep', screenshot: null } }))).toEqual(
-      [OPEN, ...DOCK, 'Stop'],
-    );
+    expect(controls(render({ running: true }))).toEqual([OPEN, 'Take over', 'Stop']);
+    expect(controls(render({ running: true, control: 'user' }))).toEqual([OPEN, 'Return control', 'Stop']);
+    expect(controls(render({ running: true, computer: { state: 'asleep', screenshot: null } }))).toEqual([OPEN, 'Stop']);
   });
 
   it('attaches who has control under the desktop, as dots does', () => {
@@ -145,28 +145,23 @@ describe('AgentComputer', () => {
 
   it('keeps compact user control read-only until the screen opens', () => {
     const html = render({ control: 'user' });
-    expect(buttons(html)).toEqual([OPEN, ...DOCK, 'Return control']);
+    expect(controls(html)).toEqual([OPEN, 'Return control']);
     expect(html).not.toContain('agent-computer-touch');
   });
 
-  it('docks Files, Chrome and Terminal from the left, marking the open one', () => {
+  it('opens Chrome and Terminal each in a window, Files on the taskbar until it opens, the front one pressed', () => {
     const html = render({});
 
-    expect(dock(html)).toEqual(['Files (icon)', 'Chrome (icon) open', 'Terminal (icon)']);
+    expect(taskbar(html)).toEqual(['Files', 'Chrome pressed', 'Terminal']);
+    expect([...html.matchAll(/data-window="(\w+)" data-state="open"/g)].map(([, app]) => app)).toEqual(['Chrome', 'Terminal']);
+    // Files lists the account's files only once it opens.
     expect(html).not.toContain('data-files');
-    expect(html).not.toContain('agent-computer-terminal');
+    expect(html).toContain('agent-computer-terminal');
+    expect([...render({ app: 'Files' }).matchAll(/data-window="(\w+)" data-state="open"/g)].map(([, app]) => app)).toEqual(['Files', 'Chrome', 'Terminal']);
   });
 
-  it("draws Chrome's dock icon as the Chromium logo: three blue segments around a blue core in a white ring", () => {
-    const chrome = /aria-label="Chrome"[^>]*><svg[^>]*>(.*?)<\/svg>/.exec(render({}))?.[1] ?? '';
-
-    expect([...chrome.matchAll(/fill="(#[0-9a-f]+)"/g)].map(([, fill]) => fill)).toEqual(['#1a73e8', '#4285f4', '#8ab4f8', '#ffffff', '#4285f4']);
-  });
-
-  it('docks the apps under the screen without the old Open computer pill', () => {
-    const html = render({});
-    expect(html).toContain('agent-computer-dock');
-    expect(html).not.toContain('agent-computer-open');
+  it('keeps the preview out of reach: a press anywhere opens the sheet', () => {
+    expect(render({})).toMatch(/<div class="agent-computer-windows" data-layout="desktop" inert="">/);
   });
 
   it("shows the Terminal's commands and their output as a read-only log in place of the browser", () => {
@@ -178,20 +173,16 @@ describe('AgentComputer', () => {
       ],
     });
 
-    // Each command after zsh's prompt on the chat's host, its output plain, under a title bar of the folder and shell alone.
-    expect(html).toMatch(
-      /<section class="agent-computer-app" aria-label="Terminal"><div class="agent-computer-terminal-bar"><svg[^>]*>.*?<\/svg><span>workspace — zsh<\/span><\/div>/,
-    );
+    // Each command after zsh's prompt on the chat's host, its output plain, in a window titled by the folder and shell alone.
+    expect(html).toMatch(/>workspace — zsh<\/span>/);
+    expect(html).toMatch(/<section class="agent-computer-app" aria-label="Terminal"><div class="[^"]*agent-computer-terminal" role="log"/);
     // The log is the stock Conversation: its own scroll box, then the lines.
     expect(html).toMatch(/<div class="[^"]*agent-computer-terminal" role="log" aria-label="Terminal"><div style="[^"]*"><div class="[^"]*agent-computer-terminal-content[^"]*">/);
     expect(html).toContain(
       '<div class="agent-computer-terminal-line">agent@a1b2c3d4e5f6 workspace % ls</div><div class="agent-computer-terminal-output">a.txt</div>' +
         '<div class="agent-computer-terminal-line">agent@a1b2c3d4e5f6 workspace % cat a.txt</div><div class="agent-computer-terminal-output">hello</div></div></div></div></section>',
     );
-    // The dock switches apps: no window has a Close of its own.
-    expect(buttons(html)).toEqual([...DOCK, 'Take over']);
-    expect(html).not.toContain('data-files');
-    expect(dock(html)).toContain('Terminal (icon) open');
+    expect(taskbar(html)).toContain('Terminal pressed');
   });
 
   it('says so while the agent has run no commands', () => {
@@ -200,23 +191,19 @@ describe('AgentComputer', () => {
     expect(html).toContain('<div class="agent-computer-terminal-empty">No commands yet</div>');
   });
 
-  it('shows the Files window over the browser while Files is open, with no Close: the dock switches apps', () => {
+  it('brings the Files window in front of the browser while Files is open', () => {
     for (const computer of [{ state: 'awake', browserSessionId: 'browser-1', control: 'agent', screenshot: null }, { state: 'asleep', screenshot: 'data:,' }] as const) {
       const html = render({ app: 'Files', computer });
 
       expect(html).toContain('<section class="agent-computer-app" aria-label="Files"><div data-files=""></div></section>');
-      expect(buttons(html)).toEqual(computer.state === 'awake' ? [...DOCK, 'Take over'] : DOCK);
-      expect(html).not.toContain('<img');
-      expect(html).not.toContain('Starting…');
-      expect(dock(html)).toContain('Files (icon) open');
+      expect(controls(html)).toEqual(computer.state === 'awake' ? [OPEN, 'Take over'] : [OPEN]);
+      expect(taskbar(html)).toEqual(['Files pressed', 'Chrome', 'Terminal']);
     }
   });
 
-  it("keeps the live view connected on the agent's screen under Terminal and Files, so Chrome shows it at once", () => {
+  it("keeps the live view connected in Chrome's window under Terminal and Files, so Chrome shows it at once", () => {
     for (const app of ['Terminal', 'Files'] as const) {
-      expect(render({ app })).toMatch(
-        /<div class="agent-computer-window"><div class="agent-computer-screen"><div class="agent-computer-live"><div data-live-view="browser-1"><\/div><\/div><section class="agent-computer-app"/,
-      );
+      expect(render({ app })).toMatch(/<div class="agent-computer-screen[^"]*"><div class="agent-computer-live"><div data-live-view="browser-1"><\/div><\/div>/);
     }
   });
 
@@ -226,7 +213,7 @@ describe('AgentComputer', () => {
 
     expect(html).toContain('<img class="agent-computer-screenshot" src="data:image/jpeg;base64,c2hvdA==" alt="The last screen"/>');
     expect(html).not.toContain('data-live-view');
-    expect(buttons(html)).toEqual([OPEN, ...DOCK]);
+    expect(controls(html)).toEqual([OPEN]);
   });
 
   it('shows the desktop, not a black frame, before the computer ever slept', () => {
@@ -276,13 +263,8 @@ describe("the Agent Computer's sheet", () => {
     expect(css).toMatch(/\n\.agent-computer-app \{[^}]*position: absolute;[^}]*inset: 0;[^}]*font-size: var\(--font-small\);/);
   });
 
-  // Terminal's bar and type are Chrome's: shares of the screen's width, as a 1280px stream draws them.
-  it("sizes Terminal by the screen's width, as the live view scales Chrome", () => {
-    expect(css).toMatch(/\n\.agent-computer-screen \{[^}]*container-type: inline-size;/);
-    expect(css).toMatch(/\n\.agent-computer-terminal-bar \{[^}]*height: 2\.97cqw;[^}]*padding: 0 1\.25cqw;[^}]*font-size: 1\.02cqw;/);
-    expect(css).toMatch(/\n\.agent-computer-terminal-bar svg \{[^}]*width: 1\.25cqw;[^}]*height: 1\.25cqw;/);
-    expect(css).toMatch(/\n\.agent-computer-terminal-content \{ padding: 0\.63cqw 1\.09cqw; \}/);
-    expect(css).toMatch(/\n\.agent-computer-terminal \{[^}]*background: var\(--color-text\);[^}]*font-family: var\(--font-code\);[^}]*font-size: 1\.41cqw;[^}]*line-height: var\(--leading-loose\);/);
+  it('draws Terminal as a dark log in the code face', () => {
+    expect(css).toMatch(/\n\.agent-computer-terminal \{[^}]*background: var\(--color-text\);[^}]*font-family: var\(--font-code\);/);
   });
 
   it("wraps the Terminal's lines between words, breaking only a word longer than the line", () => {

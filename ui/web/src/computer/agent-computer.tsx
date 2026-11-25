@@ -1,15 +1,15 @@
 
 
-import { ClipboardPaste, Copy, Folder, Keyboard, Laptop, MousePointer2, X, type LucideIcon } from 'lucide-react';
+import { ClipboardPaste, Copy, Keyboard, Laptop, MousePointer2, X, type LucideIcon } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Button } from "@/components/ui/button";
 import { useCallback, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode, type ComponentType } from 'react';
 
 import { BrowserLiveFrame, type LiveViewConnection, type BrowserLiveFrameProps } from './browser-live-frame';
 import { failureDetail } from './failure-detail';
-import { FOLDER_ICON } from './files-app';
 import { Fades, Glides, useAfterMove } from '../app/motion';
 import { Terminal, type ShellCommand } from './terminal';
+import { WindowsDesktop, type DockApp } from './windows-desktop';
 
 
 /**
@@ -70,31 +70,11 @@ function watching(computer: AgentComputerState, notice: string | null) {
   return { off, browserSessionId: computer.state === 'awake' && !off ? computer.browserSessionId : null, coverNotice: notice ?? (off ? 'Live view is off in this deployment.' : null) };
 }
 
-export type DockApp = 'Chrome' | 'Terminal' | 'Files';
-const DOCK_APPS: readonly DockApp[] = ['Files', 'Chrome', 'Terminal'];
-const DOCK_ICONS: Record<DockApp, ReactNode> = {
-  // The Chromium logo: three blue segments around a blue core in a white ring. Its Google colours stay off the palette: a real product's logo.
-  Chrome: (
-    <>
-      <path d="M16 9.4H28.35A14 14 0 0 1 15.54 29.99L21.72 19.3Z" fill="#1a73e8" />
-      <path d="M21.72 19.3L15.54 29.99A14 14 0 0 1 4.11 8.61L10.28 19.3Z" fill="#4285f4" />
-      <path d="M10.28 19.3L4.11 8.61A14 14 0 0 1 28.35 9.4H16Z" fill="#8ab4f8" />
-      <circle cx="16" cy="16" r="6.6" fill="#ffffff" />
-      <circle cx="16" cy="16" r="5.2" fill="#4285f4" />
-    </>
-  ),
-  Terminal: (
-    <>
-      <rect x="2" y="3" width="28" height="26" rx="6" style={{ fill: 'var(--color-text)' }} />
-      <path d="M9 12l5 4-5 4M16.5 21h6.5" fill="none" style={{ stroke: 'var(--color-white)' }} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-    </>
-  ),
-  Files: FOLDER_ICON,
-};
+export type { DockApp } from './windows-desktop';
 
 /**
- * The Agent Computer: a desktop with a dock, framing the agent's live browser or, asleep, its last
- * screen, or its Terminal, or its Files.
+ * The Agent Computer: Windows 11, with the agent's live browser or, asleep, its last screen in one window, and its
+ * Terminal and Files in others. Beside the chat it is a preview that opens the sheet.
  */
 export function AgentComputer({
   agentName,
@@ -196,7 +176,7 @@ export function AgentComputer({
   }, [hasViewer, browserSessionId]);
   const settled = live !== null && live.sessionId === browserSessionId;
   const connection = settled ? live.connection : null;
-  const covered = app === 'Chrome' && !settled;
+  const covered = !settled;
   const waited = useAfterMove(covered);
   const title = `${agentName}'s computer`;
   const host = chatId.replaceAll('-', '').slice(0, 12);
@@ -229,76 +209,67 @@ export function AgentComputer({
       )}</Fades>
       {/* Only a zoom springs the desktop between its place and the full-screen sheet. */}
       <Glides on dependency={sheet} scales className="agent-computer-desktop">
-        <div className="agent-computer-window">
-          {/* Every app draws on the agent's 16:9 screen. The live view stays connected under Terminal and Files, so
-              going back to Chrome shows the browser at once. Until it shows the browser, its last screen stands in,
-              dimmed, over the desktop: never a black frame. */}
-          <div className={covered ? 'agent-computer-screen agent-computer-screen-covered' : 'agent-computer-screen'}>
-            <Fades>{hasViewer && (
-              <div key={`${browserSessionId}:${generation}`} className="agent-computer-live"><BrowserFrame
-                sessionId={browserSessionId}
-                expanded={sheet}
-                interactive={active && sheet && control === 'user' && !busy && app === 'Chrome'}
-                lastScreen={computer.screenshot}
-                recoverOnStall
-                onConnectionChange={onBrowserConnectionChange}
-                onReleased={() => settle(browserSessionId, null)}
-                onConnection={(connection, painted) => {
-                  if (currentBrowser.current !== browserSessionId) return;
-                  onLive?.(painted);
-                  settle(browserSessionId, connection);
-                }}
-                onError={() => settle(browserSessionId, null)}
-                onEnded={() => {
-                  if (currentBrowser.current !== browserSessionId) return;
-                  setWatchedBrowser(null);
-                  setEnded(computer);
-                  setGeneration((current) => current + 1);
-                  setLive(null);
-                  onLiveEnded?.();
-                }}
-              /></div>
-            )}</Fades>
-            {covered && (
-              <div className="agent-computer-cover">
-                <Fades>{computer.screenshot !== null && (
-                  <img className="agent-computer-screenshot" src={computer.screenshot} alt="The last screen" />
-                )}</Fades>
-                {waited && !liveViewExhausted && !off && (starting || browserSessionId !== null) && <p className="agent-computer-starting" role="status">{computer.state === 'awake' ? 'Connecting…' : 'Starting…'}</p>}
-                <Fades>{coverNotice && <p className="agent-computer-notice" role="status">{coverNotice}</p>}</Fades>
-              </div>
-            )}
-            {/* Terminal and Files fill Chrome's window; the dock switches apps. */}
-            {app === 'Terminal' && (
-              <section className="agent-computer-app" aria-label="Terminal">
-                <div className="agent-computer-terminal-bar">
-                  <Folder aria-hidden="true" />
-                  <span>workspace — zsh</span>
+        <WindowsDesktop
+          front={app}
+          interactive={active && sheet}
+          onFront={onOpenApp}
+          windows={[
+            { app: 'Files', title: 'Files', startsClosed: true, children: <section className="agent-computer-app" aria-label="Files">{files}</section> },
+            {
+              app: 'Chrome',
+              title: 'Chrome',
+              keepMounted: true,
+              // The live view stays connected under the other windows, so bringing Chrome forward shows the browser at
+              // once. Until it shows the browser, its last screen stands in, dimmed: never a black frame.
+              children: (
+                <div className={covered ? 'agent-computer-screen agent-computer-screen-covered' : 'agent-computer-screen'}>
+                  <Fades>{hasViewer && (
+                    <div key={`${browserSessionId}:${generation}`} className="agent-computer-live"><BrowserFrame
+                      sessionId={browserSessionId}
+                      expanded={sheet}
+                      interactive={active && sheet && control === 'user' && !busy && app === 'Chrome'}
+                      lastScreen={computer.screenshot}
+                      recoverOnStall
+                      onConnectionChange={onBrowserConnectionChange}
+                      onReleased={() => settle(browserSessionId, null)}
+                      onConnection={(connection, painted) => {
+                        if (currentBrowser.current !== browserSessionId) return;
+                        onLive?.(painted);
+                        settle(browserSessionId, connection);
+                      }}
+                      onError={() => settle(browserSessionId, null)}
+                      onEnded={() => {
+                        if (currentBrowser.current !== browserSessionId) return;
+                        setWatchedBrowser(null);
+                        setEnded(computer);
+                        setGeneration((current) => current + 1);
+                        setLive(null);
+                        onLiveEnded?.();
+                      }}
+                    /></div>
+                  )}</Fades>
+                  {covered && (
+                    <div className="agent-computer-cover">
+                      <Fades>{computer.screenshot !== null && (
+                        <img className="agent-computer-screenshot" src={computer.screenshot} alt="The last screen" />
+                      )}</Fades>
+                      {waited && !liveViewExhausted && !off && (starting || browserSessionId !== null) && <p className="agent-computer-starting" role="status">{computer.state === 'awake' ? 'Connecting…' : 'Starting…'}</p>}
+                      <Fades>{coverNotice && <p className="agent-computer-notice" role="status">{coverNotice}</p>}</Fades>
+                    </div>
+                  )}
                 </div>
-                <Terminal commands={commands} error={terminalError} prompt={`agent@${host} workspace %`} />
-              </section>
-            )}
-            {app === 'Files' && <section className="agent-computer-app" aria-label="Files">{files}</section>}
-            {!sheet && app === 'Chrome' && <Button variant="link" className="agent-computer-screen-open" aria-label="View computer" disabled={!active} onClick={() => zoom(true)} />}
-          </div>
-        </div>
-        <nav className="agent-computer-dock" aria-label="Dock">
-          {DOCK_APPS.map((dockApp) => (
-              <button
-                key={dockApp}
-                type="button"
-                className={`agent-computer-dock-app${dockApp === app ? ' agent-computer-dock-app-active' : ''}`}
-                aria-label={dockApp}
-                title={dockApp}
-                aria-current={dockApp === app ? 'true' : undefined}
-                onClick={() => onOpenApp(dockApp)}
-              >
-                <svg className="agent-computer-dock-icon" viewBox="0 0 32 32" aria-hidden="true">
-                  {DOCK_ICONS[dockApp]}
-                </svg>
-              </button>
-          ))}
-        </nav>
+              ),
+            },
+            {
+              app: 'Terminal',
+              title: 'workspace — zsh',
+              dark: true,
+              children: <section className="agent-computer-app" aria-label="Terminal"><Terminal commands={commands} error={terminalError} prompt={`agent@${host} workspace %`} /></section>,
+            },
+          ]}
+        />
+        {/* Beside the chat the desktop is a preview: a press anywhere on it opens the sheet. */}
+        {!sheet && <Button variant="link" className="agent-computer-screen-open" aria-label="View computer" disabled={!active} onClick={() => zoom(true)} />}
       </Glides>
       {/* Who drives, attached under the desktop as in dots. */}
       <div className="agent-computer-bar">
@@ -309,6 +280,7 @@ export function AgentComputer({
             <Button size="sm" disabled={busy || !active} onClick={() => {
                 if (control === 'agent') {
                   zoom(true);
+                  onOpenApp('Chrome');
                   onTakeOver(browserSessionId);
                 } else handBack(browserSessionId);
               }}>

@@ -507,7 +507,7 @@ describe('an inactive retained Agent Computer', () => {
       const finishOldRead = finishRead;
 
       await act(async () => root.render(React.createElement(AgentComputer, { ...computerProps, active: false })));
-      expect(host.querySelector('[role="toolbar"]')).toBeNull();
+      expect(host.querySelector('[role="toolbar"][aria-label="Take-over"]')).toBeNull();
       await act(async () => root.render(React.createElement(AgentComputer, { ...computerProps, active: true })));
       await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="View computer"]')?.click());
       expect(host.querySelector<HTMLButtonElement>('[aria-label="Paste"]')?.disabled).toBe(false);
@@ -547,7 +547,7 @@ describe('an inactive retained Agent Computer', () => {
 
     await act(async () => root.render(React.createElement(AgentComputer, { ...computerProps, active: false })));
     expect(delivered).toEqual(['touchstart', 'touchmove', 'touchend']);
-    expect(host.querySelector('[role="toolbar"]')).toBeNull();
+    expect(host.querySelector('[role="toolbar"][aria-label="Take-over"]')).toBeNull();
     await act(async () => root.render(React.createElement(AgentComputer, { ...computerProps, active: true })));
     expect(delivered).toEqual(['touchstart', 'touchmove', 'touchend']);
     expect(host.querySelector('canvas')).toBe(canvas);

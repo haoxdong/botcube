@@ -66,10 +66,15 @@ it.each([{ empty: false, automated: false }, { empty: true, automated: true }])(
   await click('Files');
   await draw();
   expect(measures()).toHaveLength(1);
+  // Back to a Files window still open behind Chrome: its listing shows at once, a second opening.
   await click('Chrome');
   await click('Files');
-  await answer();
   expect(measures()).toHaveLength(2);
+  // Closed and opened again, Files lists anew: a third.
+  await click('Close Files');
+  await click('Files');
+  await answer();
+  expect(measures()).toHaveLength(3);
 });
 
 it('does not report a failed Files opening after a later successful reload', async () => {
@@ -96,14 +101,13 @@ it.each(['Chrome', 'hidden', 'chat'])('does not report a Files opening abandoned
   expect(measures()).toHaveLength(0);
 });
 
-it('keeps a late response from an abandoned opening out of the next opening', async () => {
+it('times a listing from the press that brings Files back, when it was left behind Chrome before it listed', async () => {
   await draw();
   await click('Files');
-  const old = listings.splice(0);
   await click('Chrome');
+  const back = performance.now();
   await click('Files');
-  await act(async () => old.forEach((resolve) => resolve(Response.json({ files: [] }))));
-  expect(measures()).toHaveLength(0);
   await answer();
   expect(measures()).toHaveLength(1);
+  expect(measures()[0]?.startTime).toBeGreaterThanOrEqual(back);
 });

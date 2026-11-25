@@ -169,7 +169,7 @@ describe('full-view ownership', () => {
     renderComputer(control, { ...props, active: false });
 
     expect(container.querySelector('[role="dialog"]')).toBeNull();
-    expect(container.querySelector('[role="toolbar"]')).toBeNull();
+    expect(container.querySelector('[role="toolbar"][aria-label="Take-over"]')).toBeNull();
     expect(button('View computer')?.disabled).toBe(true);
     expect(whoDrives()?.disabled).toBe(true);
     act(() => {
@@ -232,27 +232,70 @@ describe('full-view ownership', () => {
 });
 
 describe("the Agent Computer's app frame", () => {
-  it('switches from Files and Terminal back to Chrome in the dock, keeping the same browser view', () => {
-    const onOpenApp = (app: DockApp) => renderComputer('agent', { app, onOpenApp });
+  const app = (name: DockApp) => container.querySelector<HTMLButtonElement>(`.agent-computer-taskbar-app[aria-label="${name}"]`);
+  const front = () => container.querySelector('.agent-computer-taskbar-app[aria-pressed="true"]')?.getAttribute('aria-label');
+
+  it('switches from Files and Terminal back to Chrome on the taskbar, keeping the same browser view', () => {
+    const onOpenApp = (next: DockApp) => renderComputer('agent', { app: next, onOpenApp });
     renderComputer('agent', { app: 'Chrome', onOpenApp });
+    act(() => button('View computer')?.click());
     act(() => liveFailures.get('browser-1')?.());
     const liveView = container.querySelector('[data-live-view="browser-1"]');
 
-    act(() => button('Files')?.click());
-    expect(container.querySelector('.agent-computer-app')?.getAttribute('aria-label')).toBe('Files');
-    expect(button('Close app')).toBeNull();
-    act(() => button('Chrome')?.click());
-    expect(container.querySelector('[aria-current="true"]')?.getAttribute('aria-label')).toBe('Chrome');
+    act(() => app('Files')?.click());
+    expect(front()).toBe('Files');
+    act(() => app('Chrome')?.click());
+    expect(front()).toBe('Chrome');
     expect(container.querySelector('[data-live-view="browser-1"]')).toBe(liveView);
 
-    act(() => button('Terminal')?.click());
+    act(() => app('Terminal')?.click());
+    expect(front()).toBe('Terminal');
     expect(container.querySelector('.agent-computer-terminal')?.textContent).toBe('No commands yet');
-    expect(button('Close app')).toBeNull();
-    act(() => button('Chrome')?.click());
-    expect(container.querySelector('[aria-current="true"]')?.getAttribute('aria-label')).toBe('Chrome');
-    expect(container.querySelector('.agent-computer-app')).toBeNull();
+    act(() => app('Chrome')?.click());
+    expect(front()).toBe('Chrome');
     expect(container.querySelector('[data-live-view="browser-1"]')).toBe(liveView);
     expect(container.querySelector('.agent-computer-screen-covered')).toBeNull();
+  });
+
+  it('minimises the front window from its taskbar button, bringing the next one forward, and restores it', () => {
+    const onOpenApp = vi.fn((next: DockApp) => renderComputer('agent', { app: next, onOpenApp }));
+    renderComputer('agent', { app: 'Chrome', onOpenApp });
+    act(() => button('View computer')?.click());
+
+    act(() => app('Chrome')?.click());
+    expect(container.querySelector('[data-window="Chrome"]')?.getAttribute('data-state')).toBe('minimised');
+    expect(onOpenApp).toHaveBeenLastCalledWith('Terminal');
+    expect(front()).toBe('Terminal');
+    expect(container.querySelector('[data-live-view="browser-1"]')).not.toBeNull();
+
+    act(() => app('Chrome')?.click());
+    expect(container.querySelector('[data-window="Chrome"]')?.getAttribute('data-state')).toBe('open');
+    expect(front()).toBe('Chrome');
+  });
+
+  it('closes a window from its title bar, leaving its app on the taskbar to open again', () => {
+    const onOpenApp = (next: DockApp) => renderComputer('agent', { app: next, onOpenApp });
+    renderComputer('agent', { app: 'Chrome', onOpenApp });
+    act(() => button('View computer')?.click());
+
+    act(() => button('Close Terminal')?.click());
+    // It plays its close motion, then unmounts; jsdom runs no transitions, so the motion's end is sent here.
+    const closing = container.querySelector('[data-window="Terminal"]');
+    expect(closing?.getAttribute('data-state')).toBe('closed');
+    act(() => {
+      closing?.firstElementChild?.dispatchEvent(Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'opacity' }));
+    });
+    expect(container.querySelector('[data-window="Terminal"]')).toBeNull();
+    expect(container.querySelector('.agent-computer-terminal')).toBeNull();
+    act(() => app('Terminal')?.click());
+    expect(container.querySelector('[data-window="Terminal"]')?.getAttribute('data-state')).toBe('open');
+    expect(front()).toBe('Terminal');
+
+    // Closed, Chrome's window keeps the live view connected for its return.
+    const liveView = container.querySelector('[data-live-view="browser-1"]');
+    act(() => button('Close Chrome')?.click());
+    expect(container.querySelector('[data-window="Chrome"]')?.getAttribute('data-state')).toBe('closed');
+    expect(container.querySelector('[data-live-view="browser-1"]')).toBe(liveView);
   });
 });
 
@@ -297,11 +340,12 @@ describe('the Agent Computer on a phone, while the user has control (dots Fig 8)
 describe("the Agent Computer's preview in the profile on a phone, while the agent drives (Muse Fig 14)", () => {
   inWindow({ width: 390, height: 844 });
 
-  it('sets the desktop under the tabs as a rounded card that fills the pane down to who drives', () => {
+  it("sets the desktop under the tabs as a rounded card: Windows' 16:9 screen in miniature", () => {
     renderComputer();
 
-    expect(styleOf('.agent-computer-desktop').flexGrow).toBe('1');
+    expect(styleOf('.agent-computer-desktop').aspectRatio).toBe('16 / 9');
     expect(styleOf('.agent-computer-desktop').borderRadius).not.toBe('0px');
+    expect(container.querySelector('.agent-computer-windows')?.getAttribute('data-layout')).toBe('desktop');
 
 
   });
@@ -439,12 +483,11 @@ describe("the Agent Computer cover's Starting…", () => {
     expect(label()).toBeNull();
   });
 
-  it('shows nothing for a short wait: a cover gone before a --motion-move waits it out again', () => {
+  it('keeps waiting out one --motion-move while another window comes forward: Chrome stays covered under it', () => {
     renderComputer('agent', { computer: asleep, starting: true });
     wait(200);
     renderComputer('agent', { computer: asleep, starting: true, app: 'Terminal' });
     renderComputer('agent', { computer: asleep, starting: true });
-    wait(200);
     expect(label()).toBeNull();
     wait(100);
     expect(label()).toBe('Starting…');

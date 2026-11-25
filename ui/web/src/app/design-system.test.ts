@@ -84,13 +84,14 @@ it("colours text from the tokens, or a code block's tokens with Shiki's colours"
 });
 
 it('keeps raw colours out of components', () => {
-  // Marq's hat, eyes, monocle and laptop are an illustration's greys (his own blues are the agent tokens); Chrome's
-  // dock icon is Google's own logo; a Sheet's standard colors are its cells' own, as the Sheet format names them, not
-  // the app's.
+  // Marq's hat, eyes, monocle and laptop are an illustration's greys (his own blues are the agent tokens); the Agent
+  // Computer is Windows 11, in Windows' own colours; a Sheet's standard colors are its cells' own, as the Sheet format
+  // names them, not the app's.
   const exempt = {
     'app/avatar.tsx': /#(18191b|6b6f77|202124|d4d6da|0d0f12|4a4d55|6b7480|c9d0d9|8e98a6|bfc7d1|d3d9e0)\b/i,
     'app/sheet-model.ts': /#[0-9a-f]{6}/i,
-    'computer/agent-computer.tsx': /#(1a73e8|4285f4|8ab4f8|ffffff)\b/i,
+    'computer/windows-desktop.tsx': /#[0-9a-f]{6}|rgba?\(/i,
+    'computer/windows-window.tsx': /#f8c246\b/i,
   };
   expect(rawColoursIn(path.join(cube, 'ui/web/src'), exempt)).toEqual([]);
 });

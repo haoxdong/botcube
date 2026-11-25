@@ -1,6 +1,6 @@
 import { Component, type ReactNode } from 'react';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import type { AuthProviderProps, AuthUiState } from '../plugin';
 import type { StoredMainChatCopy } from './main-chat-copy';
 
@@ -14,6 +14,10 @@ vi.mock('@bot-ui', () => ({ webUiPlugin: {
   AuthProvider: ({ children }: AuthProviderProps) => children(state.auth),
 } }));
 
+
+// The first import of ./page transforms its whole module graph, seconds on a loaded CI shard; each test
+// then imports it fresh, after resetModules, from the transform cache.
+beforeAll(async () => { await import('./page'); }, 30_000);
 
 beforeEach(() => {
   vi.resetModules();

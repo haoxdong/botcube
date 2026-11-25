@@ -36,9 +36,11 @@ export const Terminal: Story = {
   play: async ({ canvasElement }) => {
     const terminal = within(canvasElement).getByRole('log', { name: 'Terminal' });
     await expect(terminal).toHaveTextContent('Sample item: 42');
-    // The desktop fills the pane: a collapsed one leaves the terminal with no area.
+    // The desktop fills the pane's width at 16:9: a collapsed one leaves the terminal with no area.
+    const desktop = canvasElement.querySelector('.agent-computer-desktop')?.getBoundingClientRect();
+    await expect(Math.min(desktop?.width ?? 0, desktop?.height ?? 0)).toBeGreaterThan(100);
     const { width, height } = terminal.getBoundingClientRect();
-    await expect(Math.min(width, height)).toBeGreaterThan(100);
+    await expect(Math.min(width, height)).toBeGreaterThan(0);
   },
 };
 export const Files: Story = { args: { app: 'Files' } };

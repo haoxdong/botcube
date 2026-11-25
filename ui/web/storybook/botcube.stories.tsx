@@ -37,11 +37,11 @@ const near = async (actual: number, expected: number, tolerance = 1) => expect(M
 async function noPageScroll(root: HTMLElement) {
   await expect(root.ownerDocument.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 }
-/** The shared desktop keeps its browser at 16:9 and its dock below it. */
+/** The shared desktop is Windows' 16:9 screen, its taskbar along the bottom. */
 async function computerGeometry(panel: HTMLElement) {
-  const screen = box(panel, '.agent-computer-window');
+  const screen = box(panel, '.agent-computer-desktop');
   await near(screen.width / screen.height, 16 / 9, 0.01);
-  await expect(panel.querySelector('.agent-computer-dock')).toBeVisible();
+  await expect(panel.querySelector('[role="toolbar"][aria-label="Taskbar"]')).toBeVisible();
   return screen;
 }
 
@@ -98,10 +98,11 @@ export const ProfileComputerAwake: Story = {
   play: resting(async ({ canvasElement }) => {
     await profile(canvasElement, 'Computer');
     const panel = computerPanel(canvasElement);
-    const covered = box(panel, '.agent-computer-window');
+    const covered = box(panel, '.agent-computer-screen');
     await visible(panel, '.computer-screen-image');
     // The screen keeps its place and size from its cover to its first frame.
-    const live = await computerGeometry(panel);
+    await computerGeometry(panel);
+    const live = box(panel, '.agent-computer-screen');
     await expect([live.left, live.top, live.width, live.height]).toEqual([covered.left, covered.top, covered.width, covered.height]);
     await near(box(panel, '.computer-screen-image').width, box(panel, '.computer-screen-glass').width);
     await noPageScroll(canvasElement);
