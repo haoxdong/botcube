@@ -117,7 +117,7 @@ What the agent knows about a User across Sessions: Written Memory and Extracted 
 _Avoid_: long-term memory, LTM, store, memory records, AgentCore Memory, agent-owned memory
 
 **Written Memory**:
-The User's `AGENTS.md` in their Files, which the agent and the User both write and the agent reads verbatim when a Session starts. It is deep agents' memory.
+The User's `memories/AGENTS.md` in their Files, which the agent and the User both write and the agent reads verbatim when a Session starts. It is deep agents' memory. A Guest keeps none.
 _Avoid_: notes, agent notes
 
 **Extracted Memory**:

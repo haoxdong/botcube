@@ -129,8 +129,8 @@ Each part copies its reference, states only where it differs, and is one compone
 - **Artifacts:** a card in its Type's Radix step 3 with step 11 ink (Doc blue, Sheet green, Slides red, Email amber,
   Page violet), with the Type's icon and word, so a Sheet never reads as a white `.xlsx` File. In a reply: words,
   then Artifact cards at equal width, then Files.
-- **Agent files:** Soul and Memory cards in Marq's colours (Muse Fig 16), white type at 4.5:1; an opened file is an
-  iOS grouped list.
+- **Agent files:** Soul and Memory cards in Marq's colours (Muse Fig 16), white type at 4.5:1; an opened Soul or
+  Memory is its text in one white card, with Edit.
 - **Charts:** Plotly's `simple_white`, no gridlines; axes `line`, labels `text-muted` at 13px; series take Radix step 9
   in the order blue, orange, green, red, violet, teal, amber, pink. Long titles wrap; the source sits in the subtitle.
 
