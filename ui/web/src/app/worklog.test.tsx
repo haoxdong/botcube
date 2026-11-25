@@ -1462,7 +1462,7 @@ it('keeps a stopped answer clock when its public message id differs from its mod
   expect(stepRows().map(([, time]) => time)).toEqual(['1s', '8s']);
 });
 
-it('keeps the terminal quiet gap on the last completed Thought in fresh history', () => {
+it('keeps the terminal quiet gap on the last completed Thought in fresh transcript', () => {
   const question = { id: 'quiet-terminal-question', role: 'user', content: 'Compare exposures', metadata: {
     ...stamp(0, 0).metadata,
     worklog_clock: { version: 1, question_id: 'quiet-terminal-question', started_at: START, at: START + 9000, ended_at: START + 9000,

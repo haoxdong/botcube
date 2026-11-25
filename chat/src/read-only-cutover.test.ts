@@ -36,7 +36,7 @@ const invokedFor = (sessionId: string) => stack.agentcore.invocations()
   .filter((request) => (JSON.parse(request.body) as { threadId?: string }).threadId === sessionId || request.headers[SESSION_HEADER] === sessionId);
 
 describe('chats from before the one-ID cutover', () => {
-  it('replay their history but refuse a Turn and a warmup without starting a Sandbox', async () => {
+  it('replay their transcript but refuse a Turn and a warmup without starting a Sandbox', async () => {
     const sessionId = '3f1c2a4e-9b7d-4c1e-8a2f-5d6e7f8a9b0c';
     await preCutoverChat('reader', sessionId);
 

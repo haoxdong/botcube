@@ -71,7 +71,7 @@ describe('Turn credential prefix boundaries', () => {
     expect(guard.leaks('', [text('token')])).toBe(true);
   });
 
-  it('does not hold completed credential history as an incomplete prefix when the message resumes', () => {
+  it('does not hold completed credential transcript as an incomplete prefix when the message resumes', () => {
     const guard = turnCredentialGuard(['cdp.signed.token'], [{ id: 'answer', role: 'assistant', content: 'cdp.signed.token' }]);
     expect(guard.hasPendingPrefix()).toBe(false);
     expect(guard.leaks('', [start()])).toBe(false);

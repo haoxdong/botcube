@@ -40,7 +40,7 @@ import { fitBubbles } from "./bubble-width";
 import { PlotlyPrefetch } from "../components/plotly-bundle";
 import { shows, useSteering, type PendingMessage, type Withdrawal } from "./steering";
 import { WaitingMessages } from "./waiting-steering";
-import { MessageEntranceRow, MessageEntranceHistory, type MessageEntrances } from "./message-entrance";
+import { MessageEntranceRow, MessageEntranceContext, type MessageEntrances } from "./message-entrance";
 import { useTurn, type Turn } from "./turn";
 import { ThreadScrollView } from "./conversation-thread";
 import { AlertLine } from "./alert-line";
@@ -684,7 +684,7 @@ export default function ChatSurface({ children, chatId, stopRef, entrances, ...p
       <PlotlyPrefetch />
       <SteeringDrop.Provider value={steeringDrop}>
         <ComputerStop chatId={chatId} stopRef={stopRef} />
-        <MessageEntranceHistory.Provider value={entrances}>{children(ChatThread)}</MessageEntranceHistory.Provider>
+        <MessageEntranceContext.Provider value={entrances}>{children(ChatThread)}</MessageEntranceContext.Provider>
       </SteeringDrop.Provider>
     </CopilotKit>
   );

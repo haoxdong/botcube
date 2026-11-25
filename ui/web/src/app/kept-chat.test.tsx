@@ -77,17 +77,17 @@ it("shows the user's questions as they are and the replies formatted, and no too
   expect(list).not.toHaveTextContent('4.12}');
 });
 
-it('shows only recent history while the interactive chat loads', () => {
-  const history = turns(174);
+it('shows only recent transcript while the interactive chat loads', () => {
+  const transcript = turns(174);
 
-  render(<KeptChat messages={history} disclaimer="" />);
+  render(<KeptChat messages={transcript} disclaimer="" />);
 
   expect(screen.queryByText('Question 0')).not.toBeInTheDocument();
   expect(screen.queryByText('Answer 133')).not.toBeInTheDocument();
   expect(screen.getByText('Question 134')).toBeInTheDocument();
   expect(screen.getByText('Answer 173')).toBeInTheDocument();
-  expect(history).toHaveLength(174);
-  expect(history[0]?.content).toBe('Question 0');
+  expect(transcript).toHaveLength(174);
+  expect(transcript[0]?.content).toBe('Question 0');
 });
 
 const tenTurns = turns(20);
@@ -136,14 +136,14 @@ it('shows, from the commit that mounts it, the Turns the copy it replaces showed
 });
 
 it('keeps a recent answer and its Worklog when the render window starts inside its Turn', async () => {
-  const history: Message[] = [
+  const transcript: Message[] = [
     { id: 'question', role: 'user', content: 'Read the close.' },
     ...Array.from({ length: 45 }, (_, index): Message => ({ id: `thought-${index}`, role: 'reasoning', content: `Thought ${index}` })),
     { id: 'call', role: 'assistant', content: 'Reading the close.', toolCalls: [{ id: 'read', type: 'function', function: { name: 'read_file', arguments: '{}' } }] },
     { id: 'result', role: 'tool', toolCallId: 'read', content: '{"close":4.12}' },
     { id: 'answer', role: 'assistant', content: 'The 10y closed at **4.12%**.' },
   ];
-  const view = render(<KeptChat messages={history} disclaimer="" />);
+  const view = render(<KeptChat messages={transcript} disclaimer="" />);
 
   expect(screen.queryByText('Read the close.')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Worked' })).toHaveAttribute('aria-expanded', 'false');
@@ -400,10 +400,10 @@ it('preserves the Markdown repair of unfinished display math', () => {
   expect(view.container.querySelector('.chat-message.is-assistant')).toHaveTextContent('$$x$$');
 });
 
-it('shows saved running history with mixed card calls before CopilotKit mounts', () => {
+it('shows saved running transcript with mixed card calls before CopilotKit mounts', () => {
   const started = Date.now() - 4000;
   const stamped = (from: number, to: number) => ({ metadata: { started_at: started + from, ended_at: started + to } });
-  const history: Message[] = [
+  const transcript: Message[] = [
     { id: 'kept-mixed-u', role: 'user', content: 'Compare rates', ...stamped(0, 0) },
     { id: 'kept-mixed-a', role: 'assistant', content: 'Chart ready', toolCalls: [
       { id: 'kept-mixed-card', type: 'function', function: { name: 'Artifact', arguments: '{}' } },
@@ -412,13 +412,13 @@ it('shows saved running history with mixed card calls before CopilotKit mounts',
     { id: 'kept-mixed-card-result', role: 'tool', toolCallId: 'kept-mixed-card', content: 'Ready', ...stamped(0, 2000) },
     { id: 'kept-mixed-query-result', role: 'tool', toolCallId: 'kept-mixed-query', content: 'Compared', ...stamped(0, 4000) },
   ];
-  render(<KeptChat messages={history} running disclaimer="Loading controls" />);
+  render(<KeptChat messages={transcript} running disclaimer="Loading controls" />);
   expect(screen.getByText('Compare rates')).toBeVisible();
   expect(screen.getByText('Chart ready')).toBeVisible();
   expect(screen.getByText('Loading controls')).toBeVisible();
 });
 
-it('keeps the last observed clock while saved running history awaits replay', async () => {
+it('keeps the last observed clock while saved running transcript awaits replay', async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   onTestFinished(() => { vi.useRealTimers(); });
   const start = Date.parse('2026-11-16T02:00:00Z');
@@ -452,12 +452,12 @@ it('keeps the last observed clock while saved running history awaits replay', as
 it('keeps saved tool steps accountable to the loading Worklog header', () => {
   const start = Date.parse('2026-11-16T02:00:00Z');
   const stamp = (from: number, to: number) => ({ metadata: { started_at: start + from, ended_at: start + to } });
-  const history: Message[] = [
+  const transcript: Message[] = [
     { id: 'loading-steps-u', role: 'user', content: 'Compare rates', ...stamp(0, 0) },
     { id: 'loading-steps-a', role: 'assistant', content: 'Researching rates', toolCalls: [{ id: 'loading-steps-call', type: 'function', function: { name: 'execute', arguments: '{"command":"compare rates"}' } }], ...stamp(0, 0) },
     { id: 'loading-steps-result', role: 'tool', toolCallId: 'loading-steps-call', content: 'Compared', ...stamp(0, 2000) },
   ];
-  const { container } = render(<KeptChat messages={history} running disclaimer="Loading controls" />);
+  const { container } = render(<KeptChat messages={transcript} running disclaimer="Loading controls" />);
   expect(container.querySelector('.worklog-title')).toHaveTextContent('Working · 2s');
   expect([...container.querySelectorAll('.worklog-step-time')].map(row => row.textContent)).toEqual(['2s']);
   expect(container.querySelector('.worklog-step')).toHaveTextContent('compare rates');
@@ -466,7 +466,7 @@ it('keeps saved tool steps accountable to the loading Worklog header', () => {
 it('keeps saved thought and mixed card calls timed without the interactive provider', () => {
   const start = Date.parse('2026-11-16T02:00:00Z');
   const stamp = (from: number, to: number) => ({ metadata: { started_at: start + from * 1000, ended_at: start + to * 1000 } });
-  const history: Message[] = [
+  const transcript: Message[] = [
     { id: 'saved-mixed-u', role: 'user', content: 'Compare rates', ...stamp(0, 0) },
     { id: 'saved-mixed-thought', role: 'reasoning', content: 'Compare each market', ...stamp(0, 1) },
     { id: 'saved-mixed-a', role: 'assistant', content: 'Publishing the comparison', toolCalls: [
@@ -476,7 +476,7 @@ it('keeps saved thought and mixed card calls timed without the interactive provi
     { id: 'saved-mixed-card-result', role: 'tool', toolCallId: 'saved-mixed-card', content: 'Ready', ...stamp(1, 3) },
     { id: 'saved-mixed-query-result', role: 'tool', toolCallId: 'saved-mixed-query', content: 'Compared', ...stamp(3, 5) },
   ];
-  const { container } = render(<KeptChat messages={history} running disclaimer="Loading controls" />);
+  const { container } = render(<KeptChat messages={transcript} running disclaimer="Loading controls" />);
   expect(container.querySelector('.worklog-title')).toHaveTextContent('Working · 5s');
   const rows = [...container.querySelectorAll<HTMLElement>('.worklog-step')];
   expect(rows.map(row => row.dataset.stepId)).toEqual(['saved-mixed-thought', 'saved-mixed-card', 'saved-mixed-query']);

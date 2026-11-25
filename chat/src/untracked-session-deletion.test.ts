@@ -34,13 +34,13 @@ it.each(['thread', 'account'] as const)('finishes deleting an empty pre-cutover 
   }
 });
 
-const preCutoverHistories = [
+const preCutoverRecords = [
   { title: 'Historical Turn' },
   { latest_message_id: 'message' },
   { turn_running_since: '2026-01-01T00:00:00Z', turn_run_id: 'run' },
 ];
 
-it.each(preCutoverHistories)('finishes deleting a pre-cutover chat with history %j', async (extra) => {
+it.each(preCutoverRecords)('finishes deleting a pre-cutover chat with an existing record %j', async (extra) => {
   const stack = await startInProcess();
   const documents = DynamoDBDocumentClient.from(stack.table.client);
   try {

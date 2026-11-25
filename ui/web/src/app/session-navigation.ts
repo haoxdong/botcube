@@ -77,7 +77,7 @@ export function useSessionNavigation({
   const navigation = useRef(0);
   const navigationDestination = useRef<string | null>(null);
   const deletedChats = useRef(new Set<string>());
-  // A browser copy belongs to the account that mounted it, including while its history loads.
+  // The mounted account owns the browser copy throughout replay.
   const copiedAccount = useRef<string | undefined>(undefined);
   const [turnSubmitted, setTurnSubmitted] = useState(false);
   const [activeInitialMessages, setActiveInitialMessages] = useState<Message[]>([]);
@@ -146,10 +146,10 @@ export function useSessionNavigation({
     const first = messages[0];
     const overlap = first === undefined ? -1 : shown.messages.findIndex(({ id }) => id === first.id);
     const keepOlder = replay.current.extended && overlap >= 0;
-    const history = keepOlder ? [...shown.messages.slice(0, overlap), ...messages] : messages;
+    const transcript = keepOlder ? [...shown.messages.slice(0, overlap), ...messages] : messages;
     if (!keepOlder && (nextBefore !== replay.current.before || replay.current.extended)) resetReplay(nextBefore);
-    shownEntrances.history(messages);
-    if (JSON.stringify(history) !== JSON.stringify(shown.messages)) shown.setMessages(history);
+    shownEntrances.seedTranscript(messages);
+    if (JSON.stringify(transcript) !== JSON.stringify(shown.messages)) shown.setMessages(transcript);
   };
 
   const loadOlder = async () => {
@@ -160,7 +160,7 @@ export function useSessionNavigation({
     try {
       const older = await openConversation({ id: activeId, chatServiceUrl, before: page.before });
       if (page !== replay.current || shownRef.current.agent !== agent || changed()) return;
-      entrances.history(older.messages);
+      entrances.seedTranscript(older.messages);
       agent.setMessages(prependOlderMessages(agent.messages, older.messages));
       page.before = older.nextBefore;
       page.extended = true;
@@ -451,14 +451,13 @@ export function useSessionNavigation({
     return () => subscription.unsubscribe();
   }, [agent, accountId]);
 
-  // A scheduled run makes a Side Chat and posts to the Main Chat on the server: reload the Side Chats and the open
-  // Main Chat's history when the user or the connection comes back to the page, and every 30 s while it is visible,
-  // unless a Turn is streaming. The open agent takes the history, so the chat and its composer draft stay mounted.
+  // Scheduled runs can change Side Chats and the Main Chat. Refresh on return, reconnect,
+  // and every 30 s while visible unless a Turn is streaming. Keep the composer draft mounted.
   const [mainChatRefreshError, setMainChatRefreshError] = useState<string | null>(null);
   useEffect(() => {
     if (!ready) return undefined;
     let mounted = true;
-    // Focus and visibility can overlap; only the latest load may replace history or report a failure.
+    // Focus and visibility can overlap; only the latest load may replace the transcript or report a failure.
     let refreshSequence = 0;
     const refresh = () => {
       if (document.visibilityState !== "visible" || agent.isRunning) return;
@@ -470,7 +469,7 @@ export function useSessionNavigation({
       counted(refreshesOut, fetchMainChat({ chatServiceUrl })).then(
         (mainChat) => {
           if (!mounted || sequence !== refreshSequence || changed()) return;
-          // A history with nothing new leaves the chat as it is, so a periodic refresh does not re-render it.
+          // Unchanged replay must avoid a periodic render.
           showReplay(mainChat);
           if (accountId !== undefined) withStorage(() => keepMainChatCopy(accountId, mainChat));
           setMainChatRefreshError(null);

@@ -216,7 +216,7 @@ function ReadLine({ stick, opensAt, room, onLanded }: { stick: StickToBottomCont
       const read = rows.find(({ box }) => box.top >= view.top && box.top < view.bottom) ?? rows.find(({ box }) => box.bottom > view.top);
       line.current = read ? { row: read.row, top: read.box.top } : null;
     };
-    // Older history joins above the read line. WebKit has no scroll anchoring, and Chromium skips it at scrollTop 0.
+    // Older transcript joins above the read line. WebKit has no scroll anchoring, and Chromium skips it at scrollTop 0.
     const held = new ResizeObserver((entries) => {
       for (const entry of entries) if (entry.target === composer) composerHeight = entry.contentRect.height;
       land();

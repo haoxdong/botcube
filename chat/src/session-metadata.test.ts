@@ -1638,7 +1638,7 @@ describe('running identity retry', () => {
 });
 
 describe('Account Claim failure recovery', () => {
-  it('retries a partial transfer without refiling checkpoints or losing a bound provider', async () => {
+  it('retries a partial transfer without refiling Transcripts or losing a bound provider', async () => {
     await metadata.recordTurn('claim-source', 'a-bound', { allocation: true, filingUserId: 'original-filing', title: 'bound', provider: 'openai' });
     await metadata.recordTurn('claim-source', 'b-unbound', { allocation: true, filingUserId: 'original-filing', title: 'unbound' });
     const failure = new Error('second-write outage');

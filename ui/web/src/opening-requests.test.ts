@@ -42,7 +42,7 @@ it('does not replay Main for a Side Chat link or a browser-view window', () => {
   }
 });
 
-it('creates a first anonymous account before retrying its unauthorized opening history', async () => {
+it('creates a first anonymous account before retrying its unauthorized opening transcript', async () => {
   const boot = vi.fn((url: string) => Promise.resolve(url.includes('/main-chat') ? new Response(null, {status: 401}) : Response.json({accountId: 'anonymous'})));
   vi.stubGlobal('fetch', boot);
   startOpeningRequests('https://chat.test');
@@ -52,7 +52,7 @@ it('creates a first anonymous account before retrying its unauthorized opening h
   expect(fresh).toHaveBeenCalledOnce();
 });
 
-it('propagates opening history errors and discards history when account startup failed', async () => {
+it('propagates opening transcript errors and discards transcript when account startup failed', async () => {
   vi.stubGlobal('fetch', () => Promise.resolve(new Response(null, {status: 503})));
   startOpeningRequests('https://chat.test');
   const fresh = vi.fn();

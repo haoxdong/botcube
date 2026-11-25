@@ -56,7 +56,7 @@ it('records an image-only Turn that ends in a run error as failed in Activity', 
   } finally { await stack.stop(); }
 });
 
-it.each([false, true])('retains both Activity entries for a full-history image follow-up with text %s', async (withText) => {
+it.each([false, true])('retains both Activity entries for a full-transcript image follow-up with text %s', async (withText) => {
   const stack = await startInProcess();
   const firstMessage = { id: 'first-question', role: 'user', content: 'Analyze the first report' };
   const post = async (runId: string, messages: unknown[]) => {

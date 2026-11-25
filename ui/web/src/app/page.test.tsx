@@ -461,7 +461,7 @@ async function chatService(url: string, init?: RequestInit): Promise<Response> {
   return threadService(route, pathname, init) ?? answer(204);
 }
 
-/** A Side Chat's rename and a chat's history; undefined for any other route. */
+/** A Side Chat's rename and a chat's transcript; undefined for any other route. */
 function threadService(route: string, pathname: string, init?: RequestInit): Response | undefined {
   const thread = /^\/threads\/([^/]+)/.exec(pathname)?.[1];
   if (thread === undefined) return undefined;
@@ -1156,7 +1156,7 @@ describe('a failed Turn', () => {
     expect(copilot.runAgent).toHaveBeenCalledExactlyOnceWith({ agent: agent() });
   });
 
-  it('keeps a question whose Turn failed at the network after saved history replaces messages', async () => {
+  it('keeps a question whose Turn failed at the network after saved transcript replaces messages', async () => {
     await renderPage();
     const question = 'Without using any tools: reply with just the word DELTA.';
     await sendMessage(question);
@@ -1191,7 +1191,7 @@ describe('a failed Turn', () => {
     expect(copilot.runAgent).toHaveBeenCalledExactlyOnceWith({ agent: agent() });
   });
 
-  it('keeps recovery text after saved history replaces messages, then clears it on the next send', async () => {
+  it('keeps recovery text after saved transcript replaces messages, then clears it on the next send', async () => {
     await renderPage();
     await sendMessage('original question');
     const onError = present(copilot.chat?.onError, 'the chat onError') as (event: { error: Error; code: string }) => void;
@@ -1466,7 +1466,7 @@ describe('an assistant reply', () => {
     expect(lookup).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps an idle history image failure through a later Turn', async () => {
+  it('keeps an idle transcript image failure through a later Turn', async () => {
     copilot.reply = '![Chart](/chart.svg)';
     const view = await renderPage();
     const list = screen.getByTestId('copilot-message-list');
@@ -1500,7 +1500,7 @@ describe('Main Chat kept in this browser', () => {
   };
   const kept = () => JSON.parse(localStorage.getItem(KEY) ?? 'null') as unknown;
 
-  // The Main Chat waited on its load, about 2 s, before showing any of its history.
+  // The Main Chat waited on its load, about 2 s, before showing any of its transcript.
   it('shows the copy it kept of the Main Chat at once, then the loaded one, on the same agent', async () => {
     localStorage.setItem(KEY, JSON.stringify({ accountId: 'acct-first', id: 'main-1', provider: 'openai', messages: earlier }));
     const held = holdMainChat();
@@ -1538,7 +1538,7 @@ describe('Main Chat kept in this browser', () => {
     expect(row()?.getAnimations()).toEqual([]);
   });
 
-  // The copy reconciled history but discarded the server Turn and its failure.
+  // The copy reconciled transcript but discarded the server Turn and its failure.
   it.each([false, true])('keeps Stop available when the Main Chat loads an active server Turn (copy: %s)', async (copy) => {
     if (copy) localStorage.setItem(KEY, JSON.stringify({ accountId: 'acct-first', id: 'main-1', provider: 'openai', messages: earlier }));
     service.mainChat = { id: 'main-1', provider: 'openai', messages: earlier, running: true, runId: 'background-run' };
@@ -2197,8 +2197,8 @@ describe('the kept Main Chat over the chat as it opens', () => {
   });
 });
 
-// The history moments run from the page's opening to the Main Chat's history on screen, once per page load.
-describe('the history moments', () => {
+// The transcript moments run from the page's opening to the Main Chat's transcript on screen, once per page load.
+describe('the transcript moments', () => {
   const earlier: Message[] = [
     { id: 'm1', role: 'user', content: 'Earlier question' },
     { id: 'm2', role: 'assistant', content: 'Earlier answer' },
@@ -2210,7 +2210,7 @@ describe('the history moments', () => {
     frames = [];
     for (const frame of due) frame(performance.now());
   };
-  /** The history moments measured, once the next frame has run. */
+  /** The transcript moments measured, once the next frame has run. */
   const measured = () => {
     nextFrame();
     return {
@@ -2288,7 +2288,7 @@ describe('the history moments', () => {
     expect(measured()).toEqual({ returning: 0, firstVisit: 0 });
   });
 
-  it.each(['error', 'parked'] as const)('times neither when the account session is %s before any history shows, nor once it is ready', async (sessionStatus) => {
+  it.each(['error', 'parked'] as const)('times neither when the account session is %s before any transcript shows, nor once it is ready', async (sessionStatus) => {
     service.mainChat = { id: 'main-1', messages: earlier };
     const view = await renderPage(auth({ sessionStatus: 'loading' }));
 
@@ -2390,7 +2390,7 @@ describe('Main Chat', () => {
     expect(sidebar().getByRole('button', { name: 'Main Chat' })).toHaveClass('sidebar-nav-item', 'sidebar-nav-item-active');
   });
 
-  it('opens without virtualized history', async () => {
+  it('opens without virtualized transcript', async () => {
     service.mainChat = { id: 'main-1', messages: [{ id: 'm1', role: 'user', content: 'Earlier question' }] };
 
     await renderPage();
@@ -2449,7 +2449,7 @@ describe('Main Chat', () => {
       vi.unstubAllGlobals();
     });
 
-    it('fetches older replay from the server only when the reader reaches the loaded history boundary', async () => {
+    it('fetches older replay from the server only when the reader reaches the loaded transcript boundary', async () => {
       service.mainChat = { id: 'main-1', messages: service.mainChat.messages.slice(-4) };
       const olderUrl = 'http://chat.test/threads/main-1?before=m83';
       fetchMock.mockImplementation(async (url, init) => {
@@ -2492,7 +2492,7 @@ describe('Main Chat', () => {
     });
 
     // A loaded phone's browser reported the marker leaving the view as a page joined and coming back into it in one
-    // callback; acting on the first change left earlier history unloaded for good.
+    // callback; acting on the first change left earlier transcript unloaded for good.
     it('lays out earlier rows when one report carries the marker leaving the view and coming back', async () => {
       await renderPage();
       const layout = layOut();
@@ -2526,7 +2526,7 @@ describe('Main Chat', () => {
       expect(rows()).toEqual(['m79', 'm80', 'm81', 'm82', 'm83', 'm84', 'm85', 'm86']);
     });
 
-    it('shows initial and paged history at rest, while a fresh row starts its entrance', async () => {
+    it('shows initial and paged transcript at rest, while a fresh row starts its entrance', async () => {
       document.documentElement.style.setProperty('--motion-move', '1s');
       onTestFinished(() => { document.documentElement.style.removeProperty('--motion-move'); });
       const row = (id: string) => document.querySelector<HTMLElement>(`[data-message-row="${id}"] :is(.copilotKitMessage, .chat-message)`);
@@ -3017,7 +3017,7 @@ describe('a scheduled post to the open Main Chat', () => {
     expect(agent().messages).toEqual([]);
   });
 
-  it('drops a history that arrives once a Turn has started', async () => {
+  it('drops a transcript that arrives once a Turn has started', async () => {
     await renderPage();
     const held: ((response: Response) => void)[] = [];
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
@@ -3034,7 +3034,7 @@ describe('a scheduled post to the open Main Chat', () => {
     expect(agent().messages).toEqual([]);
   });
 
-  it('keeps a Turn that finishes before the held history arrives', async () => {
+  it('keeps a Turn that finishes before the held transcript arrives', async () => {
     await renderPage();
     const held: ((response: Response) => void)[] = [];
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
@@ -3149,7 +3149,7 @@ describe('a scheduled post to the open Main Chat', () => {
 // The maintainer's decision (2026-11-04): a chat's Sandbox warms on the first compose action in its composer
 // before each send, so the ~3 s machine start hides behind typing, and a user only browsing chats starts no Session.
 describe('warming a chat as the user composes', () => {
-  // With history, so no opening Turn reaches the Sandbox first; an empty Main Chat's opening Turn is its first request.
+  // With transcript, so no opening Turn reaches the Sandbox first; an empty Main Chat's opening Turn is its first request.
   beforeEach(() => {
     service.mainChat = { id: 'main-1', messages: [{ id: 'earlier', role: 'user', content: 'Earlier' }] };
   });
@@ -3859,8 +3859,8 @@ describe('a Turn that runs on the server after a reload', () => {
   });
 
   // A Turn can stream here while its agent reads as not running, as an opening Turn does: the reload that follows a
-  // Turn's start answered with the server's history, which held none of it yet, and the rows streamed vanished.
-  it("keeps what a Turn streams here when the server's history, behind it, comes back shorter", async () => {
+  // Turn's start answered with the server's transcript, which held none of it yet, and the rows streamed vanished.
+  it("keeps what a Turn streams here when the server's transcript, behind it, comes back shorter", async () => {
     vi.useFakeTimers();
     service.replies.set('streaming', []);
     window.history.replaceState(null, '', '/?chat=streaming');
@@ -4058,7 +4058,7 @@ describe('a Turn that runs on the server after a reload', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('The chat could not refresh');
   });
 
-  it('does not report a replay failure after the streamed reply supersedes its history', async () => {
+  it('does not report a replay failure after the streamed reply supersedes its transcript', async () => {
     vi.useFakeTimers();
     service.mainChat = { id: 'main-1', messages: [question], running: true };
     await renderPage();

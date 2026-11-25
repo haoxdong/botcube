@@ -27,7 +27,7 @@ afterAll(async () => {
   if (directory !== undefined) await rm(directory, { recursive: true, force: true });
 });
 
-it('reopens a chat larger than Lambda’s 6 MB response limit and reads older history', async () => {
+it('reopens a chat larger than Lambda’s 6 MB response limit and reads older transcript', async () => {
   if (lambda === undefined) throw new Error('The Session API fixture did not start');
   const stack = await startInProcess({
     config: { sessionApi: { functionArn: 'session-replay', region: 'us-east-1', endpoint: lambda.url } },

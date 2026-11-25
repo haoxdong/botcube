@@ -669,13 +669,13 @@ describe('a Turn against a local Harness', () => {
 
   it.each(['thread', 'account'])('waits for an active Turn final flush before %s deletion purges its record', async (scope) => {
     let finish: (() => void) | undefined;
-    let checkpoint = 'old checkpoint';
+    let transcript = 'old transcript';
     const agent = await localHarness((response) => {
       response.writeHead(200, { 'content-type': 'text/event-stream' });
       response.write('data: {"type":"RUN_STARTED"}\n\n');
       finish = () => {
         // The Harness flushes in its producer finally, before HTTP EOF.
-        checkpoint = 'final checkpoint';
+        transcript = 'final transcript';
         response.end('data: {"type":"RUN_FINISHED"}\n\n');
       };
     });
@@ -686,7 +686,7 @@ describe('a Turn against a local Harness', () => {
       metadata: { ...sessionMetadata, fence: async () => summary, fenceOwner: async () => [summary] },
       history: (value) => { history = value; },
       invoke: async () => {
-        purged.push(checkpoint); checkpoint = '';
+        purged.push(transcript); transcript = '';
         return {};
       },
     });
@@ -699,8 +699,8 @@ describe('a Turn against a local Harness', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(purged).toEqual([]);
     defined(finish, 'producer completion')();
-    await expect.poll(() => purged, { timeout: 1_000 }).toEqual(['final checkpoint']);
-    expect(checkpoint).toBe('');
+    await expect.poll(() => purged, { timeout: 1_000 }).toEqual(['final transcript']);
+    expect(transcript).toBe('');
     await historyDeletion;
     await reader.cancel();
   });

@@ -35,7 +35,7 @@ async function saveImage(url: string) {
  * from a fresh one; one that fails to show is named in its place.
  *
  * Its box is there from the reply's first frame, at the size the image last loaded at or 16:9 until it has,
- * and the picture fades into it. In a row that joined the history above the reader the box keeps that size, so
+ * and the picture fades into it. In a row that joined the transcript above the reader the box keeps that size, so
  * nothing above the row read moves; elsewhere it takes the image's own size as it loads.
  */
 export function ReplyImage({ src, alt, title }: ComponentProps<'img'>) {

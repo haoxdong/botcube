@@ -60,9 +60,9 @@ describe('stock Plan Usage', () => {
     try {
       await signedIn.accounts.signIn(owner);
       const threadId = await signedIn.allocate(owner, 'session-anthropic-to-plan');
-      const history: RunAgentInput['messages'] = [];
+      const transcript: RunAgentInput['messages'] = [];
       const run = async (leg: string, provider: string, expectedModel: string, model?: string) => {
-        history.push({ id: leg, role: 'user', content: `Look up ${leg}` });
+        transcript.push({ id: leg, role: 'user', content: `Look up ${leg}` });
         const callId = `tool-${leg}`;
         const frames = [{ type: 'RUN_STARTED' },
           { type: 'TOOL_CALL_START', toolCallId: callId, toolCallName: 'lookup' },
@@ -75,7 +75,7 @@ describe('stock Plan Usage', () => {
           { type: 'RUN_FINISHED' }];
         signedIn.agentcore.script(threadId, { kind: 'stream', frames: frames.map((frame) => `data: ${JSON.stringify(frame)}`) });
         const response = await signedIn.app.request('/', {
-          method: 'POST', headers, body: turn(threadId, model === undefined ? {} : { model }, leg, history),
+          method: 'POST', headers, body: turn(threadId, model === undefined ? {} : { model }, leg, transcript),
         });
         expect(response.status).toBe(200);
         expect(sseFrames(await response.text()).map(frameData)).toEqual(expect.arrayContaining([
@@ -84,20 +84,20 @@ describe('stock Plan Usage', () => {
         ]));
         const invocation = signedIn.agentcore.invocations().at(-1);
         const dispatched = JSON.parse(invocation?.body ?? '{}') as RunAgentInput;
-        expect(dispatched).toMatchObject({ threadId, forwardedProps: { model: expectedModel }, messages: history });
+        expect(dispatched).toMatchObject({ threadId, forwardedProps: { model: expectedModel }, messages: transcript });
         const token = String(invocation?.headers['x-botcube-credential-invocation']);
         expect(verifyCredentialServiceInvocation('test-secret', token)).toMatchObject({
           modelProvider: provider, modelId: expectedModel.replace(/^openai-plan:/, ''),
         });
         expect(await (await signedIn.app.request(`/threads/${threadId}`, { headers })).json()).toMatchObject({ provider });
-        history.push({ id: `call-${leg}`, role: 'assistant', toolCalls: [{ id: callId, type: 'function', function: { name: 'lookup', arguments: '{}' } }] },
+        transcript.push({ id: `call-${leg}`, role: 'assistant', toolCalls: [{ id: callId, type: 'function', function: { name: 'lookup', arguments: '{}' } }] },
           { id: `result-${leg}`, role: 'tool', toolCallId: callId, content: leg },
           { id: `reply-${leg}`, role: 'assistant', content: `Found ${leg}` });
       };
       const refuse = async (model: string) => {
         const count = signedIn.agentcore.invocations().length;
         const response = await signedIn.app.request('/', {
-          method: 'POST', headers, body: turn(threadId, { model }, 'unavailable', history),
+          method: 'POST', headers, body: turn(threadId, { model }, 'unavailable', transcript),
         });
         expect(response.status).toBe(422);
         expect(signedIn.agentcore.invocations()).toHaveLength(count);

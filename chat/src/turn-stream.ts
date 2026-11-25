@@ -327,7 +327,7 @@ function seedMessages(messages: unknown, state: PrefixState, credentials: readon
   return false;
 }
 
-/** Content that arrived whole (seeded history, a tool result) keeps its prefix as a candidate but holds the relay only while its id is open. */
+/** A complete replay or tool result can seed a prefix. Only an open ID holds the relay. */
 function holdOnlyOpen(id: string, state: PrefixState) {
   if (!state.open.has(id)) state.pending.delete(id);
 }
@@ -496,7 +496,7 @@ function chunkEvents() {
   };
 }
 
-/** Client-held history omitted from this Turn. */
+/** Client-held transcript omitted from this Turn. */
 export interface HeldIds {
   messageIds: readonly string[];
   toolCallIds: readonly string[];
@@ -507,7 +507,7 @@ export function turnCredentialGuard(credentials: readonly string[], initialMessa
   hasPendingPrefix: () => boolean;
   /** The kinds (message or tool) of the ids holding the relay, for logging; never their content. */
   pendingKinds: () => string[];
-  /** The stream wrote to history the guard never saw. */
+  /** The guard missed streamed messages. */
   wroteHeld: () => boolean;
 } {
   const prefixes: PrefixState = { candidates: new Map(), pending: new Set(), open: new Set(), roles: new Map(), activities: new Map(), tools: new Set(), order: [], toolJSON: new Map() };

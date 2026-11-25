@@ -58,7 +58,7 @@ export interface SessionSummary extends SessionIdentity {
   /** The run ID of the Session's latest Turn, kept once it ends, while a relayed Turn is the latest. */
   turn_latest_run_id?: string;
   /**
-   * The latest Turn's run ID or scheduled message ID. An idle history read names it so the session API
+   * The latest Turn's run ID or scheduled message ID. An idle transcript read names it so the session API
    * checks the snapshot's settled Turn marker or message membership.
    */
   latest_message_id?: string;

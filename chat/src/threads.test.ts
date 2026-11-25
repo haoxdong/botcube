@@ -439,7 +439,7 @@ describe('GET /main-chat', () => {
     expect(stack.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: id, userId: filed('main-replayer') });
   });
 
-  // A checkpoint posted without Session Metadata loads empty, so its opening is refused.
+  // A Transcript saved without Session Metadata loads empty, so its opening is refused.
   it('reloads a Main Chat whose opening the Harness refused as already started, without that refusal', async () => {
     const { id } = await mainChat('opening-refused');
     const refusal = { type: 'RUN_ERROR', message: 'This Session already has a Turn', code: 'SESSION_OPENING_ALREADY_STARTED' };
@@ -460,7 +460,7 @@ describe('GET /main-chat', () => {
     expect(reloaded).not.toHaveProperty('failure');
   });
 
-  it('keeps failed history reads classified without reporting a successful history timing', async () => {
+  it('keeps failed transcript reads classified without reporting a successful transcript timing', async () => {
     const { id } = await mainChat('main-timing-failure');
     await chat('main-timing-failure', id);
     stack.sessionApi.reply(id, 503, { error: 'history unavailable' });

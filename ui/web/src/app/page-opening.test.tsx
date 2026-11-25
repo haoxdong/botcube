@@ -33,7 +33,7 @@ beforeEach(() => {
 });
 afterEach(() => { state.release(); cleanup(); localStorage.clear(); vi.unstubAllGlobals(); vi.doUnmock('./chat-app'); vi.doUnmock('./kept-markdown'); });
 
-it('shows saved history while the live chat module is still loading', async () => {
+it('shows saved transcript while the live chat module is still loading', async () => {
   const { default: Page } = await import('./page');
   render(<Page />);
   expect(await screen.findByText('The saved answer.')).toBeVisible();
@@ -45,7 +45,7 @@ it('shows saved history while the live chat module is still loading', async () =
   expect(screen.getByRole('status', { name: 'Live chat' })).toHaveTextContent('saved-account');
 });
 
-it("removes another account's saved history before the live module finishes loading", async () => {
+it("removes another account's saved transcript before the live module finishes loading", async () => {
   const { default: Page } = await import('./page');
   const view = render(<Page />);
   expect(await screen.findByText('The saved answer.')).toBeVisible();
@@ -57,7 +57,7 @@ it("removes another account's saved history before the live module finishes load
   expect(screen.getByRole('status', { name: 'Live chat' })).toHaveTextContent('other-account');
 });
 
-it('keeps matching saved history through auth completion while the live module is pending', async () => {
+it('keeps matching saved transcript through auth completion while the live module is pending', async () => {
   const { default: Page } = await import('./page');
   const view = render(<Page />);
   expect(await screen.findByText('The saved answer.')).toBeVisible();
@@ -95,7 +95,7 @@ function holdMarkdown() {
   return () => { release(); return loaded; };
 }
 
-it('waits for formatted saved history before showing and timing it', async () => {
+it('waits for formatted saved transcript before showing and timing it', async () => {
   const release = holdMarkdown();
   formattedCopy();
   const { default: Page } = await import('./page');
@@ -108,7 +108,7 @@ it('waits for formatted saved history before showing and timing it', async () =>
   await waitFor(() => expect(performance.getEntriesByName('latency:history-returning', 'measure')).toHaveLength(1));
 });
 
-it('shows prepared history when auth completes for the same account first', async () => {
+it('shows prepared transcript when auth completes for the same account first', async () => {
   const release = holdMarkdown();
   formattedCopy();
   const { default: Page } = await import('./page');
@@ -168,7 +168,7 @@ it('ignores failed formatter preparation from a replaced account', async () => {
   } finally { prepare.mockRestore(); report.mockRestore(); }
 });
 
-it('reports a failed formatter without timing absent history', async () => {
+it('reports a failed formatter without timing absent transcript', async () => {
   formattedCopy();
   const kept = await import('./kept-chat');
   const prepare = vi.spyOn(kept, 'prepareKeptChat').mockImplementation(() => Promise.reject(new Error('Saved formatter unavailable')));
@@ -214,7 +214,7 @@ it('shows the first opening response before the live chat module and leaves it a
 });
 
 
-it('leaves unauthorized first-visit history to the live account recovery path', async () => {
+it('leaves unauthorized first-visit transcript to the live account recovery path', async () => {
   localStorage.clear();
   vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 401 })));
   const { startOpeningRequests, takeOpeningResponse } = await import('../opening-requests');

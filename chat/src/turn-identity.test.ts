@@ -168,7 +168,7 @@ describe('Turn identity forwarding', () => {
     expect(body).not.toContain(payload.forwardedProps.turnIdentity as string);
   });
 
-  it('hands a named warmup the identity its history read needs', async () => {
+  it('hands a named warmup the identity its transcript read needs', async () => {
     const owner = `acct_owner-${randomUUID()}`;
     const sessionId = randomUUID();
     await stack.sessionMetadata.recordTurn(owner, sessionId, { filingUserId: filed('original'), title: 'Warm', allocation: true });

@@ -138,7 +138,7 @@ describe('Copilot direct AG-UI configuration', () => {
     ]);
   });
 
-  it('preserves text between tool calls through AG-UI 1.0 streaming and saved history', async () => {
+  it('preserves text between tool calls through AG-UI 1.0 streaming and saved transcript', async () => {
     const events = [
       { type: 'RUN_STARTED', threadId: 'session-1', runId: 'run-1', protocolVersion: '1.0' },
       ...[

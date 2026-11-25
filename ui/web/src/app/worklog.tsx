@@ -298,7 +298,7 @@ function TimedToolStep({ id, name, params, status: reported, output: result }: T
   const time = useStepTime(id);
   const [open, setOpen] = useState(false);
   // A step's sheet mounts as it first opens, and stays to animate closed: a closed sheet for every step of a long
-  // history would each hold a drawer's observers.
+  // transcript would each hold a drawer's observers.
   const [opened, setOpened] = useState(false);
   const argument = argumentOf(name, params);
   useEffect(preloadStepSheet, []);

@@ -40,7 +40,7 @@ describe('Turn credential guard follows the client buffers', () => {
       { id: 'message', role: 'assistant', content: 'private-' },
       { id: 'new', role: 'assistant', content: 'private-' },
     ])])).toBe(false);
-    // Seeded history is complete: its prefix stays a candidate but holds nothing.
+    // Seeded transcript is complete: its prefix stays a candidate but holds nothing.
     expect(guard.hasPendingPrefix()).toBe(false);
     expect(guard.leaks('', [start(), text('token')])).toBe(false);
     expect(guard.leaks('', [text('token', 'new')])).toBe(true);

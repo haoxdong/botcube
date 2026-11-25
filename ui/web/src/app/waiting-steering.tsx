@@ -5,7 +5,7 @@ import { Pencil, X } from "lucide-react";
 import { USER_MESSAGE_CLASS } from "./bubble-width";
 import { Fold, foldAway, Shows } from "./motion";
 import { sentFilesOf } from "./composer-files";
-import { MessageEntranceHistory } from "./message-entrance";
+import { MessageEntranceContext } from "./message-entrance";
 import type { PendingMessage, Withdrawal } from "./steering";
 import { Button } from "@/components/ui/button";
 
@@ -101,7 +101,7 @@ export function WaitingMessages({ waiting, withdraw, sendNow, onEdit }: {
   sendNow: (id: string) => Promise<Withdrawal>;
   onEdit: (message: PendingMessage) => void;
 }) {
-  const entrances = useContext(MessageEntranceHistory);
+  const entrances = useContext(MessageEntranceContext);
   useLayoutEffect(() => {
     for (const { id } of waiting) entrances?.presentedMessage(id);
   }, [entrances, waiting]);

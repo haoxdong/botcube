@@ -1678,7 +1678,7 @@ it('keeps the opening chat\'s composer shown over its kept view, so the draft ca
   }
 });
 
-it('shows a history reply image without a fade', () => {
+it('shows a transcript reply image without a fade', () => {
   const { container, unmount } = render(
     <div>
       <div className="copilotKitMessage" data-opened=""><div className="reply-image"><img className="history-image" /></div></div>

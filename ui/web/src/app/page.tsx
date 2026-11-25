@@ -9,7 +9,7 @@ import { webUiPlugin } from "@bot-ui";
 import type { AuthUiState } from "../plugin/index.js";
 import { chatServiceUrl } from "../plugin/chat-service-url";
 import { openingMainChat, type MainChatCopy, type StoredMainChatCopy } from "./main-chat-copy";
-import { endOpeningMoment, type HistoryMoment } from "./latency";
+import { endOpeningMoment, type TranscriptMoment } from "./latency";
 import { discardOpeningResponse, peekOpeningResponse } from "../opening-requests";
 import { rumConfig, startRum } from "./rum";
 import { keepFileDropsInPage } from "./keep-file-drops";
@@ -33,7 +33,7 @@ if (typeof window !== "undefined") {
   if (copy !== null) preloadKeptChat(copy.copy.messages);
 }
 
-function OpeningChat({ opening, latestShown, moment }: { opening: StoredMainChatCopy | null; latestShown: RefObject<number>; moment: HistoryMoment | null }) {
+function OpeningChat({ opening, latestShown, moment }: { opening: StoredMainChatCopy | null; latestShown: RefObject<number>; moment: TranscriptMoment | null }) {
   useEffect(() => {
     if (opening === null || moment === null) return;
     const frame = requestAnimationFrame(() => endOpeningMoment(moment));
@@ -70,7 +70,7 @@ function Session({ auth }: { auth: AuthUiState }) {
   const loading = auth.sessionStatus === "loading";
   const [opening, setOpening] = useState<StoredMainChatCopy | null>(null);
   const [openingError, setOpeningError] = useState<Error | null>(null);
-  const pageOpeningMoment = useRef<HistoryMoment | null>(null);
+  const pageOpeningMoment = useRef<TranscriptMoment | null>(null);
   const latestShown = useRef(1);
   const firstVisitResponse = useRef<ReturnType<typeof peekOpeningResponse>>(null);
   const preparingOpening = useRef<{ accountId: string; active: boolean } | null>(null);
@@ -84,7 +84,7 @@ function Session({ auth }: { auth: AuthUiState }) {
     preparingOpening.current = null;
   }, [auth.sessionStatus, auth.accountId]);
   useLayoutEffect(() => {
-    const { copy, historyMoment: moment } = openingMainChat();
+    const { copy, transcriptMoment: moment } = openingMainChat();
     pageOpeningMoment.current = moment;
     if (moment === "history-first-visit") firstVisitResponse.current = peekOpeningResponse(`${CHAT_SERVICE_URL}/main-chat`);
     if (!loading) return;
@@ -132,6 +132,6 @@ function Session({ auth }: { auth: AuthUiState }) {
   if (openingError !== null) throw openingError;
   const matchingOpening = loading || (auth.sessionStatus === "ready" && auth.accountId === opening?.accountId && auth.isAccountCurrent?.(auth.accountId) !== false) ? opening : null;
   return auth.sessionStatus === "ready" || (loading && opening !== null)
-    ? <Suspense fallback={<OpeningChat key={matchingOpening?.accountId ?? "empty"} opening={matchingOpening} latestShown={latestShown} moment={pageOpeningMoment.current} />}><App auth={auth} opening={matchingOpening} historyMoment={pageOpeningMoment} keptChatLatestShown={latestShown} /></Suspense>
+    ? <Suspense fallback={<OpeningChat key={matchingOpening?.accountId ?? "empty"} opening={matchingOpening} latestShown={latestShown} moment={pageOpeningMoment.current} />}><App auth={auth} opening={matchingOpening} transcriptMoment={pageOpeningMoment} keptChatLatestShown={latestShown} /></Suspense>
     : <SessionGate title={UI_CONFIG.title} agentName={UI_CONFIG.agentName} status={auth.sessionStatus} loadFailure={auth.loadFailure} chatServiceUrl={CHAT_SERVICE_URL} />;
 }

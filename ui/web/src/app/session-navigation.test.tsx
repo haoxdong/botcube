@@ -19,9 +19,9 @@ it.each([false, true])('keeps the running reply through cached Main Chat hand-ov
   const cached: MainChatCopy = { id: 'main-layout', messages: recording.cached };
   keepMainChatCopy('acct-layout', cached);
   let ready = false;
-  let history: MainChatCopy = { id: cached.id, ...recording.running };
+  let transcript: MainChatCopy = { id: cached.id, ...recording.running };
   vi.stubGlobal('fetch', async (url: string) => {
-    const body = url.endsWith('/main-chat') ? history : { threads: [] };
+    const body = url.endsWith('/main-chat') ? transcript : { threads: [] };
     return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
   });
   startOpeningRequests('http://chat.test');
@@ -36,21 +36,21 @@ it.each([false, true])('keeps the running reply through cached Main Chat hand-ov
   ready = true;
   rerender();
   await act(async () => {});
-  history = { id: cached.id, ...recording.completed };
+  transcript = { id: cached.id, ...recording.completed };
   await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
 
   expect(result.current.current.agent.messages).toEqual(recording.completed.messages);
   expect(result.current.current.turnRunsOnServer).toBe(false);
 });
 
-it('retains loaded running history when the live chat suspends during reload', async () => {
+it('retains loaded running transcript when the live chat suspends during reload', async () => {
   vi.useFakeTimers();
   const cached: MainChatCopy = { id: 'main-layout', messages: recording.cached };
   const opening = { accountId: 'acct-layout', copy: cached };
   keepMainChatCopy(opening.accountId, cached);
-  let history: MainChatCopy = { id: cached.id, ...recording.running };
+  let transcript: MainChatCopy = { id: cached.id, ...recording.running };
   vi.stubGlobal('fetch', async (url: string) => new Response(JSON.stringify(
-    url.endsWith('/main-chat') ? history : { threads: [] },
+    url.endsWith('/main-chat') ? transcript : { threads: [] },
   )));
   let suspended: Promise<void> | null = null;
   const { result, rerender } = renderHook(() => {
@@ -73,7 +73,7 @@ it('retains loaded running history when the live chat suspends during reload', a
   expect(result.current.current.agent).toBe(shown);
   expect(result.current.current.agent.messages).toEqual(recording.running.messages);
   expect(result.current.current.turnRunsOnServer).toBe(true);
-  history = { id: cached.id, ...recording.completed };
+  transcript = { id: cached.id, ...recording.completed };
   await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
   expect(result.current.current.agent.messages).toEqual(recording.completed.messages);
   expect(result.current.current.turnRunsOnServer).toBe(false);

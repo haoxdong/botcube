@@ -119,7 +119,7 @@ const ignore = () => {};
 export function KeptChat({ messages, running = false, disclaimer, composerAccessory, latestShown, onOpenRun }: { messages: Message[]; running?: boolean; disclaimer: string; composerAccessory?: ReactNode; latestShown?: RefObject<number>; onOpenRun?: (run: ReachedScheduledRun) => void }) {
   const kept = messages.slice(-MAIN_CHAT_COPY_MESSAGE_LIMIT);
   if (needsMarkdown(kept)) readMarkdown();
-  // Only the latest Turns that overflow the screen are formatted before the history's first frame. The copy
+  // Only the latest Turns that overflow the screen are formatted before the transcript's first frame. The copy
   // that replaces the Suspense fallback's starts where that one grew to.
   const [formatted, setFormatted] = useState(() => latestShown?.current ?? 1);
   const from = questionAtOrBefore(kept, kept.length - formatted);

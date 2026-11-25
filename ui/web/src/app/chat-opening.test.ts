@@ -81,9 +81,9 @@ it('waits for a reply file link to resolve before opening', () => {
   expect(opened).toHaveBeenCalledOnce();
 });
 
-// A chat's history is no message arriving: what it held when it opened shows at once, and only what arrives later
+// A chat's transcript is no message arriving: what it held when it opened shows at once, and only what arrives later
 // fades in.
-it('marks the messages a chat holds as it opens, so its history shows without the entrance fade', () => {
+it('marks the messages a chat holds as it opens, so its transcript shows without the entrance fade', () => {
   const wrapper = chat('<div class="copilotKitMessage"></div><div class="chat-message is-user"></div><div class="chat-message is-assistant"></div>');
   const opened = vi.fn(() => expect(wrapper.querySelectorAll(':is(.copilotKitMessage, .chat-message):not([data-opened])')).toHaveLength(0));
   watchOpening(() => wrapper, opened);

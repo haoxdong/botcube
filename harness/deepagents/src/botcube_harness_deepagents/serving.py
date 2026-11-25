@@ -641,12 +641,12 @@ async def _invoke_agent(input_data: Invocation, context: _RequestContext, auth: 
                 if prompt_hash is not None and event.type == EventType.RUN_STARTED:
                     yield CustomEvent(name='AGENT_SYSTEM_PROMPT', value=prompt_hash)
         return
-    reads_history = options.preparation_scope != 'startup'
+    reads_transcript = options.preparation_scope != 'startup'
     async with _SESSION_TURNS.preparation(session) as allowed:
         if allowed:
             await _prepare_agent(
                 build, turn_identity, input_data.run_id, persistent_memory, session, actor_id,
-                files, reads_history, options.session_snapshot_epoch,
+                files, reads_transcript, options.session_snapshot_epoch,
             )
     yield _preparation_event(input_data, 'prepared' if allowed else 'skipped-busy')
 
@@ -654,23 +654,23 @@ async def _invoke_agent(input_data: Invocation, context: _RequestContext, auth: 
 async def _prepare_agent(
     build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]], turn_identity: TurnIdentity | None,
     run_id: str, persistent_memory: bool, session: tuple[str, str], actor_id: str,
-    files: FilesMount | None, reads_history: bool, epoch: SnapshotEpoch | None = None,
+    files: FilesMount | None, reads_transcript: bool, epoch: SnapshotEpoch | None = None,
 ) -> None:
     memory_warmup = (
         session_memory.begin_warmup(session, actor_id)
-        if reads_history and AGENTCORE_MEMORY_ID and persistent_memory else None
+        if reads_transcript and AGENTCORE_MEMORY_ID and persistent_memory else None
     )
     memory_read: session_memory.OpeningRead | None = None
     try:
         agent, backend = await _turn_agent(
-            build, turn_identity if reads_history else None, run_id, persistent_memory,
+            build, turn_identity if reads_transcript else None, run_id, persistent_memory,
         )
 
         saver = getattr(agent.graph, 'checkpointer', None)
         if isinstance(saver, WarmSessionSaver):
             saver.discard_preparation(session_config(session))
 
-        async def read_history() -> None:
+        async def read_transcript() -> None:
             nonlocal memory_read
             reads: list[Awaitable[Any]] = [latest_checkpoint(agent.graph, session_config(session))]
             if AGENTCORE_MEMORY_ID and persistent_memory:
@@ -683,9 +683,9 @@ async def _prepare_agent(
                     memory_read = results[1]
 
         TurnFiles(files, Path(backend.cwd), excluded_paths(_require_bot().skills)).prefetch()
-        if reads_history:
-            await read_history()
-        if reads_history and isinstance(saver, WarmSessionSaver):
+        if reads_transcript:
+            await read_transcript()
+        if reads_transcript and isinstance(saver, WarmSessionSaver):
             saver.finish_preparation(
                 session_config(session), actor_id,
                 agentcore_memory_backend.finished_snapshot_epoch(turn_identity, epoch),

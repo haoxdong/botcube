@@ -275,7 +275,7 @@ describe('Rises', () => {
     expect(only().options.duration).toBe(300);
   });
 
-  it('leaves a child from history at rest, and stops a rise its message replaced', () => {
+  it('leaves a child from transcript at rest, and stops a rise its message replaced', () => {
     const view = render(<Rises arrives={false} replaced={false}><div>Earlier</div></Rises>);
     expect(fades).toEqual([]);
     view.unmount();

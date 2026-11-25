@@ -54,7 +54,7 @@ class SessionAgent(LangGraphAgent):
 
     AG-UI streams fresh IDs until the final snapshot. Resent streams must not
     append duplicate replies or tool steps. Current web clients send only new
-    user messages; older clients can resend the streamed history.
+    user messages; older clients can resend the streamed transcript.
     """
 
     _graph_ended_at: float | None = None
@@ -63,7 +63,7 @@ class SessionAgent(LangGraphAgent):
     _asked: int | None = None
 
     def __init__(self, **kwargs: Any) -> None:
-        # The graph's raw events carry the Session's history, which no client reads; skip
+        # The graph's raw events carry the Session's transcript, which no client reads; skip
         # building and JSON-converting them for every streamed event.
         kwargs.setdefault('emit_raw_events', False)
         super().__init__(**kwargs)
@@ -278,7 +278,7 @@ class SessionAgent(LangGraphAgent):
                 if call.function.arguments:
                     json.loads(call.function.arguments)
         if (timing := turn_timing.current()) is not None:
-            timing.history_messages = len(agent_state.values.get('messages', []))
+            timing.transcript_messages = len(agent_state.values.get('messages', []))
         configurable = config.setdefault('configurable', {})
         options = _invocation_options(input)
         configurable['scheduled_task_model'] = options.model

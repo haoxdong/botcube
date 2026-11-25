@@ -25,7 +25,7 @@ import {
   loadAgentProfile,
   type AgentProfileData,
 } from "./agent-profile";
-import { endOpeningMoment, type HistoryMoment } from "./latency";
+import { endOpeningMoment, type TranscriptMoment } from "./latency";
 import { forgetMainChatCopy, type StoredMainChatCopy } from "./main-chat-copy";
 import { forgetSteering } from "./steering";
 import { useModelSelection } from "./model-selection";
@@ -63,12 +63,12 @@ const CHAT_SERVICE_URL = chatServiceUrl();
 export default function App({
   auth,
   opening,
-  historyMoment,
+  transcriptMoment,
   keptChatLatestShown,
 }: {
   auth: AuthUiState;
   opening: StoredMainChatCopy | null;
-  historyMoment: RefObject<HistoryMoment | null>;
+  transcriptMoment: RefObject<TranscriptMoment | null>;
   keptChatLatestShown: RefObject<number>;
 }) {
   const isPhone = useViewport() === "phone";
@@ -111,10 +111,10 @@ export default function App({
   });
   const { model: offeredModel, effort } = picker;
   useEffect(() => {
-    const moment = historyMoment.current;
+    const moment = transcriptMoment.current;
     if (moment === null || (activeId === null && mainChatError === null)) return;
     if (activeId !== null && activeId === mainChatId) requestAnimationFrame(() => endOpeningMoment(moment));
-    historyMoment.current = null;
+    transcriptMoment.current = null;
   }, [activeId, mainChatId, mainChatError]);
 
   const [loadedAgentProfile, setAgentProfile] = useState<{ accountId: typeof accountId; profile: AgentProfileData } | null>(null);

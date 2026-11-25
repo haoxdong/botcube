@@ -43,7 +43,7 @@ function hasRenderedReplies(wrapper: Element | null): boolean {
 /** The bottom of the latest message in `wrapper`, on screen. */
 const latestBottom = (wrapper: Element | null) => [...(wrapper?.querySelectorAll(".copilotKitMessage, .chat-message") ?? [])].at(-1)?.getBoundingClientRect().bottom;
 
-// use-stick-to-bottom exposes position, not whether app reply renderers and composer padding are ready to reveal history.
+// Scroll position alone cannot tell when replies and composer padding are ready.
 export function watchOpening(wrapper: () => Element | null, onOpened: () => void): () => void {
   const started = performance.now();
   let held: number | undefined;

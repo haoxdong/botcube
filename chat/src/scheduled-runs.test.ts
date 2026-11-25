@@ -119,7 +119,7 @@ describe('a scheduled run', () => {
     expect(signInChecks).toContainEqual({ owner: account, outputs: answered ? ['Current brief.'] : [] });
   });
 
-  it('ignores snapshot history that predates the current request', async () => {
+  it('ignores snapshot messages that predates the current request', async () => {
     const account = owner();
     const main = await mainChat(account);
     await run(account, stream({ type: 'MESSAGES_SNAPSHOT', messages: [
@@ -166,7 +166,7 @@ describe('a scheduled run', () => {
     }]);
   });
 
-  it('keeps snapshot history before the current answer', async () => {
+  it('keeps snapshot messages before the current answer', async () => {
     const account = owner();
     const main = await mainChat(account);
     await run(account, stream(...text('current', 'Current brief.'), snapshot(

@@ -440,7 +440,7 @@ it.each(['main', 'side'])('replays a recorded pre-dispatch opening failure in %s
   } finally { await target.stop(); }
 });
 
-it.each(['main', 'side'])('replays the successful opening in %s Chat and propagates checkpoint failures', async (kind) => {
+it.each(['main', 'side'])('replays the successful opening in %s Chat and propagates Transcript read failures', async (kind) => {
   const target = await startInProcess();
   try {
     const main = await (await target.app.request('/main-chat')).json() as { id: string };
@@ -522,7 +522,7 @@ it.each([{ kind: 'main', opening: true }, { kind: 'side', opening: true }, { kin
   } finally { await target.stop(); }
 });
 
-it('reports fresh unwritten admissions as running and keeps settled missing checkpoints loud', async () => {
+it('reports fresh unwritten admissions as running and reports a missing Transcript after a Turn settles', async () => {
   const target = await startInProcess();
   try {
     const id = await target.allocate('acct_account-1', 'fresh-unwritten');
@@ -558,7 +558,7 @@ it('refuses stale interrupted replay when a newer Turn wins settlement', async (
   } finally { await target.stop(); }
 });
 
-it.each(['main', 'side'])('reloads an admitted %s opening before its first delta as running without a checkpoint', async (kind) => {
+it.each(['main', 'side'])('reloads an admitted %s opening before its first delta as running without a Transcript', async (kind) => {
   const target = await startInProcess();
   try {
     const { id: main } = await (await target.app.request('/main-chat')).json() as { id: string };

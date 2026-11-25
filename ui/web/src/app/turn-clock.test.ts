@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 
 describe('a Turn clock', () => {
-  it('times a Turn loaded from history by its stamps, its steps summing to its total, and stands still', () => {
+  it('times a Turn loaded from transcript by its stamps, its steps summing to its total, and stands still', () => {
     const question = { id: 'history-u', role: 'user', content: 'Rates', ...stamp(0, 0) };
     const turn = [
       { id: 'history-a', role: 'assistant', content: '', toolCalls: [call('history-c')], ...stamp(0, 1.5) },

@@ -130,7 +130,7 @@
   opacity: 1;
 }
 
-/* A chat's history shows at once as it opens, and its kept view's as soon as the image paints. */
+/* A chat's transcript shows at once as it opens, and its kept view's as soon as the image paints. */
 [data-opened] .reply-image > img {
   transition: none;
 }

@@ -4,7 +4,7 @@ import { withStorage } from "./main-chat-copy";
 export type Size = { width: number; height: number };
 
 const KEY = "late-box-sizes";
-/** Enough for every image in a long history; the oldest kept goes first. */
+/** Enough for every image in a long transcript; the oldest kept goes first. */
 const LIMIT = 500;
 
 let sizes: Map<string, Size> | null = null;

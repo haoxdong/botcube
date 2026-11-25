@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class Prefetch:
-    """The Turn's Memory block, read while the Turn reads its history; `taken` once the Turn uses it."""
+    """Memory read alongside the Transcript. `taken` marks use by the Turn."""
 
     run_id: str
     read: asyncio.Task[str]
@@ -110,7 +110,7 @@ def render_memory(preferences: Sequence[MemoryIndexEntry], facts: Sequence[Memor
 
 
 def prefetch(load: Callable[[], str], run_id: str, warmed: str | None = None) -> Prefetch:
-    """Supply the Turn's Memory block from its completed warmup or a read alongside history."""
+    """Supply the Turn's Memory block from its completed warmup or a read alongside the transcript."""
     async def read() -> str:
         with turn_timing.phase('personal_memory'):
             return warmed if warmed is not None else await asyncio.to_thread(load)

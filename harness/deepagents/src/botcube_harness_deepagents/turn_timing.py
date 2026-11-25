@@ -147,7 +147,7 @@ class TurnTiming(BaseCallbackHandler):
         self.run_id, self.session_id, self.model, self.warmup, self.receipt = run_id, session_id, model, warmup, receipt
         # Each phase run as (name, start, end); checkpoint writes append from executor threads.
         self._phases: list[tuple[str, float, float]] = []
-        self.history_messages: int | None = None
+        self.transcript_messages: int | None = None
         self.prepared_at: float | None = None
         self.first_token: float | None = None
         self.last_token: float | None = None
@@ -289,7 +289,7 @@ class TurnTiming(BaseCallbackHandler):
             'status': status,
             'processTurn': self.process_turn,
             'processAgeMs': ms(self.receipt - (process_observation.serving_since() or self.receipt)),
-            'historyMessages': self.history_messages,
+            'historyMessages': self.transcript_messages,
             'modelCalls': sum(call.start < last for call in models),
             'toolCalls': sum(call.start < last for call in tools),
             'inferenceMs': ms(inference_s),

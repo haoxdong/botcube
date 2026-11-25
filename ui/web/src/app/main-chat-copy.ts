@@ -1,6 +1,6 @@
 "use client";
 
-import type { HistoryMoment } from "./latency";
+import type { TranscriptMoment } from "./latency";
 import type { ReplayedSession } from "./conversations";
 
 const KEY = "botcube.main-chat";
@@ -68,13 +68,13 @@ export function forgetMainChatCopy() {
 }
 
 /**
- * The copy the page opens with while the account session loads, and the moment its Main Chat's history ends: neither
+ * The copy the page opens with while the account session loads, and the moment its Main Chat transcript appears: neither
  * for a link to a Side Chat. A device that opened the page before is one that kept a Main Chat copy: every load of the
- * Main Chat keeps one, and it is what lets a returning opening show history without the network. A device whose copy
+ * Main Chat keeps one, and it is what lets a returning opening show transcript without the network. A device whose copy
  * a sign-out forgot, or whose storage is blocked, opens as on a first visit, as slow as one.
  */
-export function openingMainChat(): { copy: StoredMainChatCopy | null; historyMoment: HistoryMoment | null } {
-  if (new URLSearchParams(window.location.search).get("chat") !== null) return { copy: null, historyMoment: null };
+export function openingMainChat(): { copy: StoredMainChatCopy | null; transcriptMoment: TranscriptMoment | null } {
+  if (new URLSearchParams(window.location.search).get("chat") !== null) return { copy: null, transcriptMoment: null };
   const copy = storedMainChatCopy();
-  return { copy, historyMoment: copy === null ? "history-first-visit" : "history-returning" };
+  return { copy, transcriptMoment: copy === null ? "history-first-visit" : "history-returning" };
 }

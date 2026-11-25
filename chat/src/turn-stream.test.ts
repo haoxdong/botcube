@@ -703,7 +703,7 @@ describe('a relayed Turn', () => {
     ]);
   });
 
-  it.each([false, true])('delivers unrelated live-view output before EOF with inactive history (input echo: %s)', async (echo) => {
+  it.each([false, true])('delivers unrelated live-view output before EOF with inactive transcript (input echo: %s)', async (echo) => {
     let source: ReadableStreamDefaultController<Uint8Array> | undefined;
     const frame = 'data: {"type":"TOOL_CALL_RESULT","messageId":"new","toolCallId":"t","content":"Session: browser-1"}\n\n';
     const runStart = echo ? `data: ${JSON.stringify({ type: 'RUN_STARTED', threadId: 't', runId: 'r', input: { threadId: 't', runId: 'r', messages: [{ id: 'old', role: 'assistant', content: 'private-' }], tools: [], context: [], state: {}, forwardedProps: {} } })}\n\n` : '';

@@ -9,7 +9,7 @@ from ag_ui_langgraph.utils import langchain_messages_to_agui
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.messages.content import ReasoningContentBlock
 
-# The additional_kwargs key a scheduled run's post keeps its run card under; history replays it as `metadata.scheduledRun`.
+# Replay maps this additional_kwargs key to `metadata.scheduledRun`.
 SCHEDULED_RUN = 'scheduled_run'
 OPENING_INSTRUCTION = 'opening_instruction'
 # Where a recorded message keeps when it started and ended, in epoch ms, in its `response_metadata`; a replay

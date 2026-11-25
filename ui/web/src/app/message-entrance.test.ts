@@ -4,10 +4,10 @@ import { MessageEntrances } from "./message-entrance";
 describe("message origins", () => {
   it("keeps the entire initial snapshot and later reconciled snapshots out of arrival motion", () => {
     const entrances = new MessageEntrances([{ id: "paged-history" }, { id: "visible-history" }]);
-    expect(entrances.entrance("paged-history")).toBe("history");
-    expect(entrances.entrance("visible-history")).toBe("history");
-    entrances.history([{ id: "restored-after-mount" }]);
-    expect(entrances.entrance("restored-after-mount")).toBe("history");
+    expect(entrances.entrance("paged-history")).toBe("settled");
+    expect(entrances.entrance("visible-history")).toBe("settled");
+    entrances.seedTranscript([{ id: "restored-after-mount" }]);
+    expect(entrances.entrance("restored-after-mount")).toBe("settled");
     expect(entrances.entrance("live" )).toBe("arrival");
   });
 
@@ -15,10 +15,10 @@ describe("message origins", () => {
     const entrances = new MessageEntrances([]);
     expect(entrances.entrance("live")).toBe("arrival");
     entrances.presentedRow("live");
-    expect(entrances.entrance("live")).toBe("history");
-    expect(entrances.fromHistory("live")).toBe(false);
-    entrances.history([{ id: "live" }]);
-    expect(entrances.fromHistory("live")).toBe(true);
+    expect(entrances.entrance("live")).toBe("settled");
+    expect(entrances.fromTranscript("live")).toBe(false);
+    entrances.seedTranscript([{ id: "live" }]);
+    expect(entrances.fromTranscript("live")).toBe(true);
   });
 
   it("distinguishes an Artifact update in place from a replacement in another answer root", () => {
@@ -38,10 +38,10 @@ describe("message origins", () => {
   it("leaves the first content arrival available when only its containing row was presented", () => {
     const entrances = new MessageEntrances([]);
     entrances.presentedRow("message");
-    expect(entrances.entrance("message")).toBe("history");
+    expect(entrances.entrance("message")).toBe("settled");
     expect(entrances.messageEntrance("message")).toBe("arrival");
     entrances.presentedMessage("message");
-    expect(entrances.messageEntrance("message")).toBe("history");
+    expect(entrances.messageEntrance("message")).toBe("settled");
     expect(entrances.messageEntrance("another-message")).toBe("arrival");
   });
 });

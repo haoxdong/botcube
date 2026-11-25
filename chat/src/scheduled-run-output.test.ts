@@ -245,7 +245,7 @@ describe('a scheduled run', () => {
   });
 
   it.each([
-    ['same ID safe history', 'safe-', 'a1', ['safe-token']],
+    ['same ID safe transcript', 'safe-', 'a1', ['safe-token']],
     ['different ID credential prefix', 'scheduled-invocation-', 'a2', ['scheduled-invocation-', 'token']],
   ])('preserves scheduled aggregation for %s across a snapshot', async (_, prefix, secondId, outputs) => {
     const account = owner();

@@ -58,10 +58,10 @@ it.each(['RUN_STARTED', 'MESSAGES_SNAPSHOT'])('withholds encoded tool arguments 
   expect(body).toContain('TURN_CREDENTIALS_IN_STREAM');
 });
 
-it.each(['snapshot', 'history'])('retains incomplete JSON escape state from %s', async (source) => {
+it.each(['snapshot', 'transcript'])('retains incomplete JSON escape state from %s', async (source) => {
   const messages = [message('{"token":"\\u0')];
   const events = source === 'snapshot' ? [{ type: 'MESSAGES_SNAPSHOT', messages }] : [];
-  const { body } = await publicTurn([...events, toolStart, args('070rivate-token"}'), toolEnd], source === 'history' ? messages : []);
+  const { body } = await publicTurn([...events, toolStart, args('070rivate-token"}'), toolEnd], source === 'transcript' ? messages : []);
   expect(body).toContain('TURN_CREDENTIALS_IN_STREAM');
   expect(body).not.toContain('070rivate-token');
 });

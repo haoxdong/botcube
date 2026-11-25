@@ -63,7 +63,7 @@ _REFUSED_IDENTITY = frozenset({'InvalidIdentityToken', 'ExpiredTokenException', 
 _LOADER = botocore.loaders.create_loader()
 _MEMORY_OPERATIONS = frozenset(botocore.session.get_session().get_service_model('bedrock-agentcore').operation_names)
 _TAGS_CLAIM = 'https://aws.amazon.com/tags'
-# Live, a Turn's opening Memory read, history read and turn feed overlapped 12 calls.
+# Live, a Turn's opening Memory read, transcript read and turn feed overlapped 12 calls.
 _MEMORY_CONFIG = Config(retries={'mode': 'adaptive'}, max_pool_connections=16)
 # A Turn exchanges its JWT again when the credentials held for its tags expire within this.
 _REUSE_MARGIN = timedelta(minutes=5)

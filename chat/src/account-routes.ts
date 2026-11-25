@@ -157,9 +157,9 @@ export function accountRoutes(
     const started = performance.now();
     const { owner } = await bot.requester(c);
     const authenticated = performance.now();
-    const history = await sessions.mainChat(owner, c.req.query('before'));
+    const transcript = await sessions.mainChat(owner, c.req.query('before'));
     const replayed = performance.now();
-    const response = c.json(history);
+    const response = c.json(transcript);
     const encoded = performance.now();
     const durations = {
       auth: authenticated - started,

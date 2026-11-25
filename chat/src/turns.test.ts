@@ -50,7 +50,7 @@ describe('a Turn', () => {
     }
   });
 
-  it('streams a new answer while the Harness is still open after seeding history ending in e', async () => {
+  it('streams a new answer while the Harness is still open after seeding transcript ending in e', async () => {
     const target = await startInProcess({ overrides: {
       invocationPayload: async (input) => ({
         ...input, credentialServiceInvocationToken: 'example-private-token',
@@ -59,13 +59,13 @@ describe('a Turn', () => {
     } });
     let release!: () => void;
     const hold = new Promise<void>((resolve) => { release = resolve; });
-    const history = { id: 'old', role: 'assistant', content: 'Earlier response' };
+    const transcript = { id: 'old', role: 'assistant', content: 'Earlier response' };
     const frame = (event: object) => `data: ${JSON.stringify(event)}`;
     try {
       const id = await target.allocate('acct_account-1', 'history-prefix-turn');
       target.agentcore.script(id, { kind: 'stream', hold, frames: [
         [
-          frame({ type: 'RUN_STARTED', threadId: id, runId: 'run-1', input: { messages: [history] } }),
+          frame({ type: 'RUN_STARTED', threadId: id, runId: 'run-1', input: { messages: [transcript] } }),
           frame({ type: 'TEXT_MESSAGE_START', messageId: 'answer', role: 'assistant' }),
           frame({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: 'New answer.' }),
         ].join('\n\n'),
@@ -73,7 +73,7 @@ describe('a Turn', () => {
         frame({ type: 'RUN_FINISHED', threadId: id, runId: 'run-1' }),
       ] });
 
-      const response = await postTurn(target, turn(id, [history, { id: 'm1', role: 'user', content: 'hello' }]));
+      const response = await postTurn(target, turn(id, [transcript, { id: 'm1', role: 'user', content: 'hello' }]));
       const invocation = target.agentcore.invocationFor(id);
       expect(invocation.headers['x-botcube-credential-invocation']).toBe('example-private-token');
       expect(invocation.body.includes('example-private-token')).toBe(false);
