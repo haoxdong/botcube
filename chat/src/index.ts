@@ -5,7 +5,7 @@ export { HttpError } from './http-error.js';
 export type { Requester } from './requester.js';
 export { agentDocumentTemplates } from './agent-documents.js';
 export { awsFetch, signedAwsHeaders } from './aws.js';
-export { LOCAL_UI_ORIGINS } from './cors.js';
+export { LOCAL_UI_ORIGINS } from './config.js';
 export { picture, pictureFromItem, pictureItem, pictureUrl, type Picture } from './pictures.js';
 export { serveChatService } from './server.js';
 export { agentCoreEndpointFromEnv } from './upstream.js';

@@ -8,13 +8,13 @@ import { TurnIdentity, turnIdentityConfigFromEnv, turnIdentityRoutes, type TurnI
 import { serve, type ServerType, type WebSocketServerLike } from '@hono/node-server';
 import { WebSocketServer } from 'ws';
 import { Hono, type Context } from 'hono';
+import { cors } from 'hono/cors';
 import { DynamoDBAgentDocuments, type AgentDocuments } from './agent-documents.js';
 import { awsFetch, presignAwsUrl } from './aws.js';
 import { cspReportRoutes } from './csp-reports.js';
 import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
 import { sleepComputersAtTaskStop } from './task-stop.js';
-import { cors } from './cors.js';
 import { sessionAccessError, sessionOperations } from './sessions.js';
 import { purgeQueue } from './purges.js';
 import { sweepEvery } from './task-drain.js';
@@ -173,7 +173,12 @@ export function createChatService(
     });
   }
 
-  app.use(cors(config.corsOrigins));
+  app.use(cors({
+    origin: [...config.corsOrigins],
+    credentials: true,
+    allowMethods: ['DELETE', 'GET', 'PATCH', 'POST', 'PUT', 'OPTIONS'],
+    maxAge: 600,
+  }));
   // Cloudflare replaces an origin's 502 or 504 with its own page, which has no CORS headers, so the browser would
   // read only a network error; a 503 keeps the error's body and headers.
   app.use(async (c, next) => {

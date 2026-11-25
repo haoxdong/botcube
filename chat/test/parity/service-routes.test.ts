@@ -71,7 +71,7 @@ describe('CORS', () => {
       // eslint-disable-next-line no-await-in-loop -- test cases run one at a time
       const response = await preflight(stack, origin);
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(204);
       expect(response.headers.get('access-control-allow-origin')).toBe(origin);
       expect(response.headers.get('access-control-allow-credentials')).toBe('true');
       expect(response.headers.get('access-control-allow-methods')).toContain('POST');
@@ -82,7 +82,7 @@ describe('CORS', () => {
     const allowed = await preflight(configuredCors, 'https://preview.example.com');
     const devOrigin = await preflight(configuredCors, 'http://localhost:3001');
 
-    expect(allowed.status).toBe(200);
+    expect(allowed.status).toBe(204);
     expect(allowed.headers.get('access-control-allow-origin')).toBe(
       'https://preview.example.com'
     );

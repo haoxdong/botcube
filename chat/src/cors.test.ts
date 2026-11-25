@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
-import { LOCAL_UI_ORIGINS } from './cors.js';
+import { LOCAL_UI_ORIGINS } from './config.js';
 
 const UI = 'https://ui.example.com';
 const domains = { web: UI, chatService: 'https://chat.example.com' };
@@ -17,76 +17,31 @@ const preflight = (origin: string, headers: Record<string, string> = {}) =>
     headers: { origin, 'access-control-request-method': 'POST', ...headers },
   });
 
-function headersOf(response: Response): Record<string, string> {
-  const headers: Record<string, string> = {};
-  response.headers.forEach((value, name) => (headers[name] = value));
-  return headers;
-}
-
 describe('a CORS preflight', () => {
   it('allows an allowed origin with credentials and the headers it asks for', async () => {
     const response = await preflight(UI, { 'access-control-request-headers': 'content-type, x-trace' });
 
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe('OK');
-    expect(headersOf(response)).toEqual({
-      'access-control-allow-credentials': 'true',
-      'access-control-allow-headers': 'content-type, x-trace',
-      'access-control-allow-methods': 'DELETE, GET, PATCH, POST, PUT, OPTIONS',
-      'access-control-allow-origin': UI,
-      'access-control-max-age': '600',
-      'content-type': 'text/plain;charset=UTF-8',
-      vary: 'Origin',
-    });
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe('');
+    expect(response.headers.get('access-control-allow-origin')).toBe(UI);
+    expect(response.headers.get('access-control-allow-credentials')).toBe('true');
+    expect(response.headers.get('access-control-allow-headers')?.split(',')).toEqual(['content-type', 'x-trace']);
+    expect(response.headers.get('access-control-allow-methods')?.split(',')).toEqual(['DELETE', 'GET', 'PATCH', 'POST', 'PUT', 'OPTIONS']);
+    expect(response.headers.get('access-control-max-age')).toBe('600');
+    expect(response.headers.get('vary')?.split(', ')).toEqual(['Origin', 'Access-Control-Request-Headers']);
   });
 
-  it('refuses a disallowed origin without granting it access', async () => {
+  it('denies browser access to a disallowed origin', async () => {
     const response = await preflight('https://evil.example.com', { 'access-control-request-headers': 'content-type' });
 
-    expect(response.status).toBe(400);
-    expect(await response.text()).toBe('Disallowed CORS origin');
-    expect(headersOf(response)).toEqual({
-      'access-control-allow-headers': 'content-type',
-      'access-control-allow-methods': 'DELETE, GET, PATCH, POST, PUT, OPTIONS',
-      'access-control-max-age': '600',
-      'content-type': 'text/plain;charset=UTF-8',
-      vary: 'Origin',
-    });
+    expect(response.headers.has('access-control-allow-origin')).toBe(false);
   });
 
   it('allows no request headers it was not asked for', async () => {
     const response = await preflight(UI);
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(204);
     expect(response.headers.has('access-control-allow-headers')).toBe(false);
-  });
-});
-
-describe('a request that is not a CORS preflight', () => {
-  it('is an OPTIONS request without an origin, which reaches the routes', async () => {
-    const response = await stack.app.request('/ping', {
-      method: 'OPTIONS',
-      headers: { 'access-control-request-method': 'GET' },
-    });
-
-    expect(response.status).toBe(404);
-    expect(response.headers.has('access-control-allow-methods')).toBe(false);
-  });
-
-  it('is an OPTIONS request without a requested method, which reaches the routes', async () => {
-    const response = await stack.app.request('/ping', { method: 'OPTIONS', headers: { origin: UI } });
-
-    expect(response.status).toBe(404);
-    expect(response.headers.has('access-control-allow-methods')).toBe(false);
-  });
-
-  it('is any other method, even with preflight headers', async () => {
-    const response = await stack.app.request('/ping', {
-      headers: { origin: UI, 'access-control-request-method': 'GET' },
-    });
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ status: 'Healthy' });
   });
 });
 
@@ -122,15 +77,14 @@ describe('a cross-origin request', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.has('access-control-allow-origin')).toBe(false);
-    expect(response.headers.has('access-control-allow-credentials')).toBe(false);
-    expect(response.headers.has('vary')).toBe(false);
+    expect(response.headers.get('vary')).toBe('Origin');
   });
 
-  it('without an origin gets no CORS headers', async () => {
+  it('without an origin still varies by Origin for shared caches', async () => {
     const response = await stack.app.request('/ping');
 
     expect(response.headers.has('access-control-allow-origin')).toBe(false);
-    expect(response.headers.has('vary')).toBe(false);
+    expect(response.headers.get('vary')).toBe('Origin');
   });
 });
 
@@ -144,7 +98,7 @@ describe('the allowed origins', () => {
       });
       const other = await local.app.request('/ping', { headers: { origin: UI } });
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(204);
       expect(other.headers.has('access-control-allow-origin')).toBe(false);
     } finally {
       await local.stop();

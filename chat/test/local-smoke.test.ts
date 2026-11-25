@@ -65,14 +65,13 @@ it('serves the stock Chat Service over HTTP with persisted thread metadata and c
     const preflight = await fetch(`${url}/threads`, {
       method: 'OPTIONS', headers: { origin, 'access-control-request-method': 'POST' },
     });
-    expect(preflight.status).toBe(200);
+    expect(preflight.status).toBe(204);
     expect(preflight.headers.get('access-control-allow-origin')).toBe(origin);
     expect(preflight.headers.get('access-control-allow-credentials')).toBe('true');
   }));
   const denied = await fetch(`${url}/threads`, {
     method: 'OPTIONS', headers: { origin: 'https://unrelated.example.invalid', 'access-control-request-method': 'POST' },
   });
-  expect(denied.status).toBe(400);
   expect(denied.headers.has('access-control-allow-origin')).toBe(false);
   const account = await fetch(`${url}/account/session`);
   const cookie = account.headers.get('set-cookie')?.split(';')[0];

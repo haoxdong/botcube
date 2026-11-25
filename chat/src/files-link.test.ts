@@ -4,13 +4,13 @@ import { mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } fro
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryDocuments } from '../test/memory-documents.js';
 import { AccountResources } from './account-resources.js';
 import { AccountTree } from './account-tree.js';
 import { HttpError } from './http-error.js';
 import { computerFilesRoutes } from './computer-files-routes.js';
-import { cors } from './cors.js';
 import { accountFilesEfs } from './files-efs.js';
 import { UPLOAD_CHUNK_BYTES } from './files-link.js';
 
@@ -40,7 +40,7 @@ function chatService(workspace?: string) {
     records: () => records, linkKey: 'k'.repeat(64),
   });
   const app = new Hono();
-  app.use(cors([UI_ORIGIN]));
+  app.use(cors({ origin: [UI_ORIGIN], credentials: true }));
   app.onError((error, c) => (error instanceof HttpError ? c.json({ detail: error.detail }, error.status as 400) : c.text('Internal Server Error', 500)));
   app.route('/', computerFilesRoutes({
     requester: async (c) => ({ owner: c.req.header('x-user') ?? '' }),

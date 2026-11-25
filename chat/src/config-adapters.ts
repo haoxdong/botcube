@@ -2,7 +2,7 @@ import { X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { BotCubeConfig } from 'botcube-config';
 import type { ResolvedConfig } from 'botcube-config/resolved';
-import { allowedOrigins } from './cors.js';
+import { allowedOrigins } from './config.js';
 import type { ChatHarnessAuth } from './harness-auth.js';
 
 const USER_MEMORY_ROLE_ARN = 'BOTCUBE_USER_MEMORY_ROLE_ARN';
