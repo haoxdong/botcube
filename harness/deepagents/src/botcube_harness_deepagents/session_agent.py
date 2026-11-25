@@ -36,6 +36,7 @@ from pydantic import TypeAdapter
 from . import message_times, turn_timing
 from .conversation import OPENING_INSTRUCTION, conversation, reasoning_chunk
 from .graph_stream import answering_model_step, clock_events, drain_after_answer
+from .invocation import Invocation, InvocationOptions
 from .turn_lifecycle import error_code, observe_reply_model
 
 log = logging.getLogger(f'{__package__}.serving')
@@ -76,7 +77,7 @@ class SessionAgent(LangGraphAgent):
         self._used_tools = False
         try:
             source = super()._handle_stream_events(input)
-            timed = clock_events(source, lambda: self._model_lane, canonical=(input.forwarded_props or {}).get('worklog_clock') == 1)
+            timed = clock_events(source, lambda: self._model_lane, canonical=_invocation_options(input).worklog_clock == 1)
             async with aclosing(timed) as events:
                 async for event in events:
                     if event.type == EventType.RUN_STARTED and self._asked is not None:
@@ -279,9 +280,10 @@ class SessionAgent(LangGraphAgent):
         if (timing := turn_timing.current()) is not None:
             timing.history_messages = len(agent_state.values.get('messages', []))
         configurable = config.setdefault('configurable', {})
-        configurable['scheduled_task_model'] = (input.forwarded_props or {}).get('model')
-        configurable['timezone'] = (input.forwarded_props or {}).get('timezone')
-        self._asked = message_times.turn_start((input.forwarded_props or {}).get('turn_started_at'))
+        options = _invocation_options(input)
+        configurable['scheduled_task_model'] = options.model
+        configurable['timezone'] = options.timezone
+        self._asked = options.started_at
         with turn_timing.phase('state_preparation'):
             prepared = await super().prepare_stream(input, agent_state, config)
         if (source := prepared.get('stream')) is not None:
@@ -313,11 +315,15 @@ class SessionAgent(LangGraphAgent):
         return merged
 
 
+def _invocation_options(input: RunAgentInput) -> InvocationOptions:
+    return input.options if isinstance(input, Invocation) else InvocationOptions()
+
+
 def _opening_messages(input: RunAgentInput) -> list[HumanMessage]:
-    forwarded = input.forwarded_props or {}
-    if forwarded.get('opening') is not True:
+    options = _invocation_options(input)
+    if not options.opening:
         return []
-    first_name = forwarded.get('opening_first_name')
+    first_name = options.opening_first_name
     name = f"The user's first name is {json.dumps(first_name)}.\n" if first_name else ''
     return [HumanMessage(
         id=f'{input.run_id}-opening',

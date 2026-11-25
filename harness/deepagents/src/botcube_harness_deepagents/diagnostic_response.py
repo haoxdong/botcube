@@ -9,8 +9,9 @@ from dataclasses import dataclass
 from functools import lru_cache, partial
 from time import perf_counter, time, time_ns
 
-from ag_ui.core import RunAgentInput
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
+
+from .invocation import Invocation
 
 log = logging.getLogger(__name__)
 
@@ -67,11 +68,11 @@ def configured_gate() -> DiagnosticResponseGate | None:
     return _configured_gate(os.environ.get('BOTCUBE_DIAGNOSTIC_FIRST_RESPONSE_SCOPE', ''))
 
 
-def response_hold(run: RunAgentInput, receipt: float, identify: Callable[[], str | None]) -> Callable[[], Awaitable[None]] | None:
+def response_hold(run: Invocation, receipt: float, identify: Callable[[], str | None]) -> Callable[[], Awaitable[None]] | None:
     gate = configured_gate()
     if gate is None or run.run_id != gate.scope.run_id:
         return None
-    forwarded = run.forwarded_props or {}
-    if not isinstance(forwarded, dict) or any(forwarded.get(key) for key in ('warmup', 'stop', 'steering')) or 'withdrawSteering' in forwarded:
+    options = run.options
+    if options.warmup or options.stop or options.steering or options.withdraw_steering is not None:
         return None
     return partial(gate.hold, run_id=run.run_id, receipt=receipt, identify=identify)

@@ -11,6 +11,7 @@ from ag_ui.core import RunAgentInput
 from starlette.types import Message
 
 from botcube_harness_deepagents import diagnostic_response, serving
+from botcube_harness_deepagents.invocation import Invocation
 
 FRAMES = ': keepalive\n\ndata: {"type":"RUN_STARTED"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'
 WALL = datetime(2026, 11, 23, tzinfo=UTC).timestamp()
@@ -53,12 +54,12 @@ def scope(monkeypatch: pytest.MonkeyPatch, *, seconds: float = 120) -> None:
     }))
 
 
-def run(run_id: str = 'diagnostic-run', forwarded: dict[str, bool] | None = None) -> RunAgentInput:
-    return RunAgentInput(thread_id='owned-session', run_id=run_id, messages=[], tools=[],
-                         context=[], state={}, forwarded_props=forwarded or {})
+def run(run_id: str = 'diagnostic-run', forwarded: dict[str, object] | None = None) -> Invocation:
+    return Invocation.parse(RunAgentInput(thread_id='owned-session', run_id=run_id, messages=[], tools=[],
+                         context=[], state={}, forwarded_props=forwarded or {}))
 
 
-async def respond(request: RunAgentInput, sent: list[Message], produced: list[bool], *,
+async def respond(request: Invocation, sent: list[Message], produced: list[bool], *,
                   identity: str = 'owned-test-user', receipt: float = 100) -> None:
     async def body() -> AsyncIterator[str]:
         produced.append(True)
@@ -100,7 +101,7 @@ def test_holds_headers_comments_and_body_until_31_seconds_from_receipt(clock: Cl
 
 
 @pytest.mark.parametrize('case', ['default-off', 'off', 'wrong-run', 'wrong-identity', 'expired', 'too-late',
-                                 'warmup', 'stop', 'steering', 'withdrawSteering', 'opaque-forwarding', 'selected-opaque-forwarding'])
+                                 'warmup', 'stop', 'steering', 'withdrawSteering'])
 def test_other_requests_pass_without_a_delay(
     case: str, clock: Clock, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -113,9 +114,6 @@ def test_other_requests_pass_without_a_delay(
         monkeypatch.setenv('BOTCUBE_DIAGNOSTIC_FIRST_RESPONSE', '0')
     elif case == 'wrong-run':
         request = run('ordinary-run')
-    elif case in ('opaque-forwarding', 'selected-opaque-forwarding'):
-        request = run('ordinary-run' if case == 'opaque-forwarding' else 'diagnostic-run')
-        request.forwarded_props = 'opaque client value'
     elif case == 'wrong-identity':
         identity = 'real-person-account'
     elif case == 'expired':
@@ -123,7 +121,7 @@ def test_other_requests_pass_without_a_delay(
     elif case == 'too-late':
         scope(monkeypatch, seconds=30)
     else:
-        request = run(forwarded={case: True})
+        request = run(forwarded={case: 'message-id' if case == 'withdrawSteering' else True})
     sent: list[Message] = []
     asyncio.run(respond(request, sent, [], identity=identity))
     assert clock.waits == []

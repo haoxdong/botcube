@@ -22,7 +22,7 @@ from ..files_mount import FilesMount, FilesMountError
 from ..lazy_files import turn_files
 from ..llm import PlanUsageError
 from ..memory import agentcore as agentcore_memory_backend
-from ..memory.agentcore import TurnIdentity
+from ..memory.agentcore import SnapshotEpoch, TurnIdentity
 from ..memory.agentcore.warm_session import WarmSessionSaver
 from ..prompt_cache_observability import prompt_cache_turn
 from ..steering import active_steering
@@ -79,7 +79,7 @@ class SessionTurns:
 
     async def read_checkpoint(
         self, saver: Any, input_data: RunAgentInput, *, session: tuple[str, str], opening: bool,
-        actor_id: str, epoch: Any, turn_identity: TurnIdentity | None,
+        actor_id: str, epoch: SnapshotEpoch | None, turn_identity: TurnIdentity | None,
     ) -> CheckpointTuple | None:
         async with self._locks.setdefault(session, asyncio.Lock()):
             turn = self._turns.get(session)

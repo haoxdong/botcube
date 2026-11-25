@@ -127,7 +127,7 @@ def test_assumed_turn_credentials_sign_memory_calls_without_sts(microvm: FakeSts
 
     assert microvm.calls == []
     assert signed == ['ASIAUSER1']
-    assert agentcore.finished_snapshot_epoch(_assumed('user-1', 'ASIAUSER1'), {'epoch': 'e-1', 'turnId': 'turn-ASIAUSER1'}) == 'e-1'
+    assert agentcore.finished_snapshot_epoch(_assumed('user-1', 'ASIAUSER1'), agentcore.SnapshotEpoch(epoch='e-1', turn_id='turn-ASIAUSER1')) == 'e-1'
     with pytest.raises(agentcore.MemorySandboxError):
         agentcore.turn_memory(MEMORY_ID, _assumed('user-2', 'ASIAUSER2'), region_name='us-west-2', run_id='run-2', turn=agentcore.next_turn())
 

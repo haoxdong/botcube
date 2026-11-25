@@ -56,13 +56,13 @@ def test_large_tool_results_stay_readable_but_out_of_files(
 @pytest.fixture
 def configured_shell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> LocalShellBackend:
     from botcube_harness_deepagents import serving
-    from botcube_harness_deepagents.definition import HarnessDefinition
+    from botcube_harness_deepagents.definition import HarnessDefinition, InvocationAuth
 
     monkeypatch.delenv('PYTHONDONTWRITEBYTECODE', raising=False)
     monkeypatch.setattr(serving, '_bot', None)
     monkeypatch.setattr(serving, '_workspace', lambda: tmp_path)
     serving.configure_harness_definition(HarnessDefinition(
-        skills=(), agent_name='artifacts', prepare_invocation=lambda invocation, _token: invocation,
+        skills=(), agent_name='artifacts', prepare_invocation=lambda _invocation, _token: InvocationAuth('user', False, None),
         prepare_root=lambda root: None, session_id_env_var='TEST_SESSION_ID',
         environment_cache_key=lambda environment: (),
     ))

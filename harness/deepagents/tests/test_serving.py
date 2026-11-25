@@ -2112,6 +2112,15 @@ def test_an_invocation_with_malformed_files_is_rejected(
     assert service.recorder.builds == []
 
 
+def test_a_warmup_with_a_malformed_binding_reports_failed_preparation(service: _Service) -> None:
+    events = service.turn('', warmup=True, preparationScope='recorded', files=[])
+    assert events[0]['type'] == 'RUN_ERROR'
+    assert events[0]['code'] == 'INVALID_FILES'
+    assert events[1]['name'] == 'SESSION_PREPARATION'
+    assert events[1]['value']['outcome'] == 'failed'
+    assert events[1]['value']['error']['code'] == 'INVALID_FILES'
+
+
 def test_a_plain_answer_does_not_depend_on_an_unavailable_background_files_pull(
     service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

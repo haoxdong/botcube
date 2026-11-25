@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 
 from langchain_core.callbacks.manager import adispatch_custom_event
 from langchain_core.tools import BaseTool, tool
@@ -48,10 +47,7 @@ class AgentDocuments:
         return PROMPT.format(identity=identity, soul=self.soul)
 
 
-def pop_agent_documents(forwarded: dict[str, Any]) -> AgentDocuments | None:
-    """Take both documents out of the forwarded props; None when the Turn carries neither."""
-    identity = forwarded.pop('agentIdentity', None)
-    soul = forwarded.pop('soul', None)
+def parse_agent_documents(identity: object, soul: object) -> AgentDocuments | None:
     if identity is None and soul is None:
         return None
     if identity is None:

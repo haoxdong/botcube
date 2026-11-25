@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from pathlib import Path, PurePosixPath
-from typing import Any
 
 from ag_ui.core import Message
 
@@ -51,8 +50,7 @@ def absolute_attachment_paths(messages: Iterable[Message], workspace: Callable[[
             message.content = text + heading + '\n'.join(f'- {path}' for path in paths)
 
 
-def pop_files_mount(forwarded: dict[str, Any]) -> FilesMount | None:
-    files = forwarded.pop('files', None)
+def parse_files_mount(files: object) -> FilesMount | None:
     if files is None:
         return None
     if not isinstance(files, dict):

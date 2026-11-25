@@ -25,7 +25,6 @@ from functools import partial
 from pathlib import Path
 from time import perf_counter, time_ns
 from typing import Any, Literal, NamedTuple, TypeGuard, cast
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ag_ui.core import (
     CustomEvent,
@@ -63,7 +62,6 @@ from .agent_documents import (
     AgentDocuments,
     AgentDocumentsError,
     agent_document_tools,
-    pop_agent_documents,
 )
 from .agent_prompts import agent_prompts
 from .artifact import SKILLS_SOURCE, artifact_tool
@@ -75,9 +73,9 @@ from .files import (
     FilesBindingError,
     absolute_attachment_paths,
     excluded_paths,
-    pop_files_mount,
 )
 from .files_mount import FilesMount, FilesMountError
+from .invocation import InvalidBinding, InvalidInvocation, Invocation
 from .lazy_files import TurnFiles
 from .llm import (
     PLAN_MODEL_PREFIX,
@@ -90,7 +88,7 @@ from .llm import (
 from .memory import agentcore as agentcore_memory_backend
 from .memory import inmem as inmem_memory_backend
 from .memory import local as local_memory_backend
-from .memory.agentcore import TurnIdentity, TurnIdentityError
+from .memory.agentcore import SnapshotEpoch, TurnIdentity, TurnIdentityError
 from .memory.agentcore.warm_session import WarmSessionSaver
 from .memory_tools import AGENTCORE_MEMORY_ID, AWS_REGION
 from .prompt_cache_observability import (
@@ -185,7 +183,7 @@ class HarnessBot:
     skills: Sequence[str]
     agent_name: str
     system_prompt: str
-    prepare_invocation: Callable[[Any, str | None], InvocationAuth]
+    prepare_invocation: Callable[[Invocation, str | None], InvocationAuth]
     build_backend: Callable[[dict[str, str]], LocalShellBackend]
     apply_session_id: Callable[[LocalShellBackend, str | None], None]
     environment_cache_key: Callable[[Mapping[str, str] | None], tuple[tuple[str, str], ...]]
@@ -534,93 +532,82 @@ def _require_session_user_id(session_user_id: str | None) -> str:
     return session_user_id
 
 
-async def invoke(input_data: RunAgentInput, context: _RequestContext):
-    forwarded = input_data.forwarded_props
-    if not isinstance(forwarded, dict):
-        forwarded = {}
-        input_data.forwarded_props = forwarded
-    warmup = forwarded.get('warmup')
-    session_user_id = forwarded.get('sessionUserId')
-    if warmup and not session_user_id:
-        if 'preparationScope' in forwarded:
+async def invoke(input_data: Invocation, context: _RequestContext):
+    options = input_data.options
+    session_user_id = options.session_user_id
+    if options.warmup and not session_user_id:
+        if options.preparation_scope is not None:
             _require_session_user_id(session_user_id)
         return
     absolute_attachment_paths(input_data.messages, _workspace)
-    if forwarded.get('steering'):
+    if options.steering:
         session_user_id = _require_session_user_id(session_user_id)
         accepted = _SESSION_TURNS.steer((session_user_id, input_data.thread_id), input_data)
         yield CustomEvent(name='STEERING_ACCEPTED', value={'accepted': accepted})
         return
-    if 'withdrawSteering' in forwarded:
+    if options.withdraw_steering is not None:
         session_user_id = _require_session_user_id(session_user_id)
-        withdrawn = _SESSION_TURNS.withdraw((session_user_id, input_data.thread_id), forwarded['withdrawSteering'])
+        withdrawn = _SESSION_TURNS.withdraw((session_user_id, input_data.thread_id), options.withdraw_steering)
         yield CustomEvent(name='STEERING_WITHDRAWN', value={'withdrawn': withdrawn})
         return
-    if forwarded.get('stop'):
+    if options.stop:
         session_user_id = _require_session_user_id(session_user_id)
         # AgentCore keeps a Turn running after its caller goes away, so the Chat Service stops it by name.
         _SESSION_TURNS.stop((session_user_id, input_data.thread_id), input_data.run_id)
         return
-    documents = pop_agent_documents(forwarded)
-    if 'agentSystemPrompt' in forwarded:
-        documents = None
-    files = pop_files_mount(forwarded)
     with turn_timing.phase('invocation_auth'):
         auth = context.prepare(input_data, _require_bot().prepare_invocation)
-    forwarded.pop('sessionUserId', None)
-    # Only an opted-in bot's shell holds the user token, for its CLIs to call its own service as the User (ADR 0091):
-    # minted per Turn, user-token audience, redacted from tool output, never in the model's context.
-    forwarded.pop('userToken', None)
-    if not auth.actor_id:
+    actor_id = auth.actor_id
+    if not actor_id:
         raise MissingUserIdError(
             'Invocation carries no user ID; the Chat Service must forward the account ID'
         )
     session_user_id = _require_session_user_id(session_user_id)
-    auth = with_agent_computer(auth, forwarded, (session_user_id, input_data.thread_id))
-    turn_identity = forwarded.pop('turnIdentity', None)
-    if AGENTCORE_MEMORY_ID:
-        turn_identity = agentcore_memory_backend.require_turn_identity(turn_identity)
-    async for event in _invoke_agent(input_data, context, forwarded, auth, session_user_id,
-                                   documents, files, warmup, turn_identity):
+    auth = with_agent_computer(auth, input_data.agent_computer_cdp_url, (session_user_id, input_data.thread_id))
+    turn_identity = input_data.turn_identity
+    if AGENTCORE_MEMORY_ID and turn_identity is None:
+        raise TurnIdentityError('Invocation carries no Turn identity; the Chat Service must forward turnIdentity')
+    async for event in _invoke_agent(input_data, context, auth, actor_id, session_user_id, turn_identity):
         yield event
 
 
-def _opening_turn(input_data: RunAgentInput, forwarded: dict[str, Any]) -> bool:
-    opening = forwarded.get('opening') is True
+def _opening_turn(input_data: Invocation) -> bool:
+    opening = input_data.options.opening
     if opening and input_data.messages:
         raise SessionOpeningError('An opening Turn cannot contain messages')
     return opening
 
 
-async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, forwarded: dict[str, Any],
-                        auth: Any, session_user_id: str, documents: Any,
-                        files: FilesMount | None, warmup: Any, turn_identity: TurnIdentity | None):
+async def _invoke_agent(input_data: Invocation, context: _RequestContext, auth: InvocationAuth,
+                        actor_id: str, session_user_id: str, turn_identity: TurnIdentity | None):
     session = (session_user_id, input_data.thread_id)
-    persistent_memory = (auth.persistent_memory and auth.actor_id != ANONYMOUS_ACTOR_ID and 'agentSystemPrompt' not in forwarded
-                         and forwarded.get('botMemory') is not False)
-    opening = _opening_turn(input_data, forwarded)
+    options = input_data.options
+    candidate = options.agent_system_prompt
+    files = input_data.files
+    persistent_memory = auth.persistent_memory and actor_id != ANONYMOUS_ACTOR_ID and candidate is None and options.bot_memory
+    opening = _opening_turn(input_data)
     build = partial(
         _agent_and_backend,
-        actor_id=auth.actor_id,
+        actor_id=actor_id,
         session_user_id=session_user_id,
         persistent_memory=persistent_memory,
-        model=forwarded.get('model') or _require_bot().default_model,
-        effort=forwarded.get('effort'),
+        model=options.model or _require_bot().default_model,
+        effort=options.effort,
         thread_id=input_data.thread_id,
         invocation_prompt=auth.system_prompt,
-        agent_system_prompt=forwarded.get('agentSystemPrompt', AGENT_SYSTEM_PROMPT),
-        bot_system_prompt=forwarded.get('botSystemPrompt'),
+        agent_system_prompt=AGENT_SYSTEM_PROMPT if candidate is None else candidate,
+        bot_system_prompt=options.bot_system_prompt,
         environment=auth.environment,
         model_relay=auth.model_relay,
-        documents=documents,
+        documents=input_data.documents if candidate is None else None,
         syncs_files=files is not None,
-        scheduled_run=forwarded.get('scheduledRun') is True,
-        preparing=bool(warmup),
+        scheduled_run=options.scheduled_run,
+        preparing=options.warmup,
     )
-    if not warmup:
+    if not options.warmup:
         timing = turn_timing.current()
         warmed = session_memory.take_warmup(
-            session, auth.actor_id, timing.receipt if timing is not None else perf_counter(),
+            session, actor_id, timing.receipt if timing is not None else perf_counter(),
         )
 
         async def prepare() -> PreparedTurn:
@@ -629,14 +616,14 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
             async def read(saver: Any) -> CheckpointTuple | None:
                 nonlocal saved
                 saved = await _SESSION_TURNS.read_checkpoint(
-                    saver, input_data, session=session, opening=opening, actor_id=auth.actor_id,
-                    epoch=forwarded.get('sessionSnapshotEpoch'), turn_identity=turn_identity,
+                    saver, input_data, session=session, opening=opening, actor_id=actor_id,
+                    epoch=options.session_snapshot_epoch, turn_identity=turn_identity,
                 )
                 return saved
 
             def prefetch(store: Any) -> session_memory.Prefetch | None:
                 if persistent_memory:
-                    return session_memory.prefetch(lambda: agentcore_memory_backend.opening(store, auth.actor_id), input_data.run_id, warmed)
+                    return session_memory.prefetch(lambda: agentcore_memory_backend.opening(store, actor_id), input_data.run_id, warmed)
                 return None
 
             agent, backend = await _turn_agent(build, turn_identity, input_data.run_id, persistent_memory, read, prefetch)
@@ -644,7 +631,6 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
             _require_bot().apply_session_id(backend, input_data.thread_id)
             return agent, Path(backend.cwd), bind_turn(backend, auth.model_relay)
 
-        candidate = forwarded.get('agentSystemPrompt')
         prompt_hash = _served_prompt_hash(candidate)
         async with aclosing(_SESSION_TURNS.stream(
             session, prepare, input_data, files, context, deadline=invocation_deadline(auth.model_relay),
@@ -655,12 +641,12 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
                 if prompt_hash is not None and event.type == EventType.RUN_STARTED:
                     yield CustomEvent(name='AGENT_SYSTEM_PROMPT', value=prompt_hash)
         return
-    reads_history = forwarded.get('preparationScope', 'recorded') != 'startup'
+    reads_history = options.preparation_scope != 'startup'
     async with _SESSION_TURNS.preparation(session) as allowed:
         if allowed:
             await _prepare_agent(
-                build, turn_identity, input_data.run_id, persistent_memory, session, auth.actor_id,
-                files, reads_history, forwarded.get('sessionSnapshotEpoch'),
+                build, turn_identity, input_data.run_id, persistent_memory, session, actor_id,
+                files, reads_history, options.session_snapshot_epoch,
             )
     yield _preparation_event(input_data, 'prepared' if allowed else 'skipped-busy')
 
@@ -668,7 +654,7 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
 async def _prepare_agent(
     build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]], turn_identity: TurnIdentity | None,
     run_id: str, persistent_memory: bool, session: tuple[str, str], actor_id: str,
-    files: FilesMount | None, reads_history: bool, epoch: Any = None,
+    files: FilesMount | None, reads_history: bool, epoch: SnapshotEpoch | None = None,
 ) -> None:
     memory_warmup = (
         session_memory.begin_warmup(session, actor_id)
@@ -726,7 +712,7 @@ def _is_assistant_text(event: Any) -> TypeGuard[TextMessageContentEvent]:
     return event.type == EventType.TEXT_MESSAGE_CONTENT and bool(event.delta.strip())
 
 
-async def _events_with_response_check(run_input: RunAgentInput, context: _RequestContext):
+async def _events_with_response_check(run_input: Invocation, context: _RequestContext):
     saw_assistant_text = False
     async for event in invoke(run_input, context):
         saw_assistant_text |= _is_assistant_text(event)
@@ -782,33 +768,52 @@ async def invocations(request: Request) -> Any:
     except Exception as e:
         return JSONResponse({'error': 'Invalid RunAgentInput', 'details': str(e)}, status_code=400)
 
-    forwarded = run_input.forwarded_props or {}
-    context = _RequestContext.from_request(request.headers, forwarded)
     encoder = EventEncoder(accept=request.headers.get('accept', ''))
-    if 'timezone' in forwarded:
-        name = forwarded['timezone']
-        if not isinstance(name, str):
-            return JSONResponse({'error': 'forwardedProps.timezone must be an IANA timezone string'}, status_code=400)
-        try:
-            ZoneInfo(name)
-        except (ZoneInfoNotFoundError, ValueError) as exc:
-            return JSONResponse({'error': 'Invalid forwardedProps.timezone', 'details': str(exc)}, status_code=400)
-    warmup = bool(forwarded.get('warmup'))
+    try:
+        invocation = Invocation.parse(run_input)
+    except InvalidInvocation as error:
+        return JSONResponse({'error': str(error)}, status_code=400)
+    except InvalidBinding as error:
+        log.error('Rejected invocation: %s', error)
+        return _rejected_invocation(run_input, request, encoder, receipt, error)
+    options = invocation.options
+    context = _RequestContext.from_request(request.headers, options.legacy_credential_token)
     timing = turn_timing.TurnTiming(
-        run_input.run_id, run_input.thread_id, forwarded.get('model'), warmup=warmup, receipt=receipt,
+        invocation.run_id, invocation.thread_id, options.model, warmup=options.warmup, receipt=receipt,
     )
 
     return _InvocationResponse(
-        keep_alive(_invocation_frames(run_input, context, encoder, timing), _KEEPALIVE_SECONDS),
+        keep_alive(_invocation_frames(invocation, context, encoder, timing), _KEEPALIVE_SECONDS),
         run_id=run_input.run_id, runtime_session_id=context.session_id, media_type=encoder.get_content_type(),
         diagnostic_hold=diagnostic_response.response_hold(
-            run_input, receipt, lambda: context.prepare(run_input, _require_bot().prepare_invocation).actor_id,
+            invocation, receipt, lambda: context.prepare(invocation, _require_bot().prepare_invocation).actor_id,
         ),
     )
 
 
+def _rejected_invocation(
+    run: RunAgentInput, request: Request, encoder: EventEncoder, receipt: float, error: InvalidBinding,
+) -> _InvocationResponse:
+    options = error.options
+    context = _RequestContext.from_request(request.headers, options.legacy_credential_token)
+    timing = turn_timing.TurnTiming(run.run_id, run.thread_id, options.model, warmup=options.warmup, receipt=receipt)
+
+    async def frames() -> AsyncGenerator[str, None]:
+        try:
+            event = RunErrorEvent(message=str(error), code=error.code)
+            yield encoder.encode(event)
+            if options.warmup:
+                yield encoder.encode(_preparation_event(run, 'failed', event))
+        finally:
+            timing.finish('failed')
+
+    return _InvocationResponse(
+        frames(), run_id=run.run_id, runtime_session_id=context.session_id, media_type=encoder.get_content_type(),
+    )
+
+
 async def _invocation_frames(
-    run_input: RunAgentInput, context: _RequestContext, encoder: EventEncoder, timing: turn_timing.TurnTiming,
+    run_input: Invocation, context: _RequestContext, encoder: EventEncoder, timing: turn_timing.TurnTiming,
 ) -> AsyncGenerator[str, None]:
     error: RunErrorEvent | None = None
     stream_error: RunErrorEvent | None = None
@@ -816,11 +821,7 @@ async def _invocation_frames(
     terminal_sent = False
     calls = FailedCalls()
     reply = ''
-    forwarded = run_input.forwarded_props or {}
-    environment = {
-        **os.environ, **{key: value for key, value in forwarded.items() if isinstance(value, str)},
-        **(forwarded.get('env') or {}), 'session_id': context.session_id or '',
-    }
+    environment = {**os.environ, **run_input.redaction_environment, 'session_id': context.session_id or ''}
     try:
         with turn_timing.use(timing), counting_failed_calls(calls):
             try:

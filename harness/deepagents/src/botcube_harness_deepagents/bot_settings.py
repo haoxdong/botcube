@@ -30,6 +30,7 @@ from .definition import (
     environment_cache_key,
     openai_model_relay,
 )
+from .invocation import Invocation
 from .llm import ECHO_PROVIDER, has_model_profile
 from .memory.agentcore import turn_actor
 
@@ -149,20 +150,19 @@ def bot_definition(bot: BotSettings) -> HarnessDefinition:
     )
 
 
-def _prepare_invocation(input_data: Any, token: str | None) -> InvocationAuth:
+def _prepare_invocation(input_data: Invocation, token: str | None) -> InvocationAuth:
     """The Turn's User, with Memory, and the Credential Service's model relay when Chat bound one for the Session.
 
     The User is the Turn identity's actor; the Session's filing ID differs for a Session filed under an older ID.
     The shell names the User and Chat's traffic marker to the spans of any CLI the agent runs.
     """
-    props = input_data.get('forwardedProps', {}) if isinstance(input_data, dict) else input_data.forwarded_props or {}
-    session = input_data.get('threadId') if isinstance(input_data, dict) else input_data.thread_id
-    url = props.get('credentialServiceUrl')
+    options = input_data.options
+    url = options.credential_service_url
     if bool(url) != bool(token):
         raise ValueError('The Credential Service binding needs both its URL and its invocation token')
-    relay = openai_model_relay(url, token, session) if url and token and isinstance(session, str) else None
-    actor = turn_actor(props.get('turnIdentity')) or props.get('sessionUserId')
-    return InvocationAuth(actor_id=actor, persistent_memory=True, environment=_span_resource(actor, props.get('traffic')), model_relay=relay)
+    relay = openai_model_relay(url, token, input_data.thread_id) if url and token else None
+    actor = turn_actor(input_data.turn_identity) or options.session_user_id
+    return InvocationAuth(actor_id=actor, persistent_memory=True, environment=_span_resource(actor, options.traffic), model_relay=relay)
 
 
 def _span_resource(actor: Any, traffic: Any) -> dict[str, str] | None:

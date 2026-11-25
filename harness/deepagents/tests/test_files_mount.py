@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from botcube_harness_deepagents.files import FilesBindingError, pop_files_mount
+from botcube_harness_deepagents.files import FilesBindingError, parse_files_mount
 from botcube_harness_deepagents.files_mount import FilesMount
 
 
@@ -17,12 +17,10 @@ def binding() -> dict[str, str]:
 
 
 def test_efs_binding_is_consumed_without_requiring_an_s3_bucket() -> None:
-    props = {'files': binding()}
-    files = pop_files_mount(props)
+    files = parse_files_mount(binding())
     assert isinstance(files, FilesMount)
     assert files.file_system_id == 'fs-00000000000000001'
     assert files.mount_target_ip == '192.0.2.12'
-    assert props == {}
 
 
 @pytest.mark.parametrize('field,value', [('mountTargetIp', 'host.invalid'), ('accessPointId', '../other'), ('expiration', '2000-01-01T00:00:00Z')])
@@ -30,7 +28,7 @@ def test_invalid_mount_binding_is_rejected(field: str, value: str) -> None:
     files = binding()
     files[field] = value
     with pytest.raises(FilesBindingError):
-        pop_files_mount({'files': files})
+        parse_files_mount(files)
 
 
 def test_summary_archive_waits_for_files_mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -42,7 +40,7 @@ def test_summary_archive_waits_for_files_mount(tmp_path: Path, monkeypatch: pyte
 
     root = tmp_path / 'workspace'
     root.mkdir()
-    files = pop_files_mount({'files': binding()})
+    files = parse_files_mount(binding())
     assert isinstance(files, FilesMount)
 
     def mount(self: FilesMount, destination: Path, excluded: Iterable[str]) -> None:

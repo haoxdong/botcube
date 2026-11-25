@@ -17,6 +17,7 @@ from langchain_core.outputs import ChatGenerationChunk
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
+from botcube_harness_deepagents.invocation import Invocation
 from botcube_harness_deepagents.steering import (
     PendingSteering,
     SteeringMiddleware,
@@ -339,7 +340,7 @@ async def _steer(run_id: str) -> list[Any]:
         'thread_id': 'session-1', 'run_id': run_id, 'messages': [{'id': _STEER_ID, 'role': 'user', 'content': _STEERING_TEXT}],
         'tools': [], 'context': [], 'state': {}, 'forwarded_props': {'steering': True, 'sessionUserId': 'user-1'},
     })
-    return [event async for event in serving.invoke(control, serving._RequestContext('agentcore-session-1'))]
+    return [event async for event in serving.invoke(Invocation.parse(control), serving._RequestContext('agentcore-session-1'))]
 
 
 async def _steer_while_held(hold: tuple[asyncio.Event, asyncio.Event], run_id: str) -> None:

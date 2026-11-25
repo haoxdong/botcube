@@ -18,6 +18,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from botcube_harness_deepagents import serving, turn_lifecycle
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.definition import InvocationAuth, ModelRelay
+from botcube_harness_deepagents.invocation import Invocation
 from botcube_harness_deepagents.session_agent import SessionAgent
 from conftest import ToolBindableFakeMessagesModel
 
@@ -73,8 +74,8 @@ def _model(phase: str, pause: Callable[[], Awaitable[None]]) -> StreamingToolMod
 async def _collect(run: str, relay: ModelRelay, started: asyncio.Event | None) -> list[Any]:
     events = []
     async for event in serving._invoke_agent(
-        _input(run), serving._RequestContext(None), {},
-        InvocationAuth('owner', False, None, relay), 'owner', None, None, False, None,
+        Invocation.parse(_input(run)), serving._RequestContext(None),
+        InvocationAuth('owner', False, None, relay), 'owner', 'owner', None,
     ):
         events.append(event)
         if started is not None and event.type == EventType.TEXT_MESSAGE_CONTENT and event.delta == 'Working':
@@ -174,8 +175,8 @@ def test_an_expired_invocation_keeps_the_user_message_and_streams_a_complete_ans
 
     async def exercise() -> None:
         events = [event async for event in serving._invoke_agent(
-            _input('expired'), serving._RequestContext(None), {},
-            InvocationAuth('owner', False, None, _relay(EPOCH - 1)), 'owner', None, None, False, None,
+            Invocation.parse(_input('expired')), serving._RequestContext(None),
+            InvocationAuth('owner', False, None, _relay(EPOCH - 1)), 'owner', 'owner', None,
         )]
         assert events[0].type == EventType.RUN_STARTED
         assert events[-1].type == EventType.RUN_FINISHED

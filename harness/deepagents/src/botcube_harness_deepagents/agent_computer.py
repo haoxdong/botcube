@@ -3,17 +3,13 @@
 import hashlib
 import json
 from dataclasses import replace
-from typing import Any
 
 from .definition import InvocationAuth
 
 
-def with_agent_computer(auth: InvocationAuth, forwarded: dict[str, Any], session: tuple[str, str]) -> InvocationAuth:
-    cdp_url = forwarded.pop('agentComputerCdpUrl', None)
+def with_agent_computer(auth: InvocationAuth, cdp_url: str | None, session: tuple[str, str]) -> InvocationAuth:
     if cdp_url is None:
         return auth
-    if not isinstance(cdp_url, str) or not cdp_url:
-        raise RuntimeError('agentComputerCdpUrl must be a non-empty URL')
     return replace(auth, environment={
         **(auth.environment or {}),
         'AGENT_BROWSER_CDP': cdp_url,

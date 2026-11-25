@@ -24,6 +24,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from botcube_harness_deepagents import serving, turn_lifecycle
 from botcube_harness_deepagents.files_mount import FilesMount
+from botcube_harness_deepagents.invocation import Invocation
 from botcube_harness_deepagents.lazy_files import (
     LazyFilesMiddleware,
     current_turn_files,
@@ -63,7 +64,7 @@ def test_run_started_carries_the_accepted_turn_origin() -> None:
         request = _input()
         assert request.forwarded_props is not None
         request.forwarded_props['turn_started_at'] = '2026-11-16T12:00:00Z'
-        events = [event async for event in _agent().run(request)]
+        events = [event async for event in _agent().run(Invocation.parse(request))]
         [started] = [event for event in events if event.type == EventType.RUN_STARTED]
         assert started.timestamp == 1794830400000
 
@@ -97,7 +98,7 @@ def test_live_clock_freezes_at_the_same_end_as_the_saved_answer(monkeypatch: pyt
         assert request.forwarded_props is not None
         request.forwarded_props['worklog_clock'] = 1
         request.forwarded_props['turn_started_at'] = '2026-11-16T12:00:00Z'
-        events = [event async for event in agent.run(request)]
+        events = [event async for event in agent.run(Invocation.parse(request))]
         [started] = [event for event in events if event.type == EventType.RUN_STARTED]
         assert started.metadata and started.metadata['worklog_clock']['version'] == 1
         frames = [operation['value'] for event in events if event.type == EventType.STATE_DELTA

@@ -20,15 +20,17 @@ from langchain_core.outputs import ChatGenerationChunk, ChatResult
 
 from botcube_harness_deepagents import serving
 from botcube_harness_deepagents.definition import InvocationAuth
+from botcube_harness_deepagents.invocation import Invocation
 
 _environment: dict[str, str] = {}
 
 
-def prepare_invocation(input_data: Any, token: str | None) -> InvocationAuth:
+def prepare_invocation(input_data: Invocation, token: str | None) -> InvocationAuth:
     auth = FAKE_SITE_DEFINITION.prepare_invocation(input_data, token)
     _environment.clear()
     _environment.update(auth.environment or {})
-    _environment['AGENT_BROWSER_CDP'] = input_data.forwarded_props['agentComputerCdpUrl']
+    if (cdp := input_data.agent_computer_cdp_url) is not None:
+        _environment['AGENT_BROWSER_CDP'] = cdp
     return auth
 
 

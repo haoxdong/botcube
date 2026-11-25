@@ -19,6 +19,7 @@ import os
 import re
 import threading
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import cache
 from typing import Any
@@ -275,9 +276,10 @@ def turn_memory(
     return WarmSessionSaver(memory_id, store.client), store
 
 
-def require_turn_identity(turn_identity: Any) -> TurnIdentity:
+def require_turn_identity(turn_identity: object) -> TurnIdentity:
     """The forwarded Turn identity, either shape, or a refusal naming what is missing."""
     if isinstance(turn_identity, str) and turn_identity:
+        _validate_identity_token(turn_identity)
         return turn_identity
     if isinstance(turn_identity, dict):
         if missing := [field for field in _ASSUMED_FIELDS if not isinstance(turn_identity.get(field), str) or not turn_identity[field]]:
@@ -286,11 +288,24 @@ def require_turn_identity(turn_identity: Any) -> TurnIdentity:
     raise TurnIdentityError('Invocation carries no Turn identity; the Chat Service must forward turnIdentity')
 
 
-def turn_actor(turn_identity: Any) -> str | None:
+def _validate_identity_token(token: str) -> None:
+    parts = token.split('.')
+    if len(parts) != 3 or not all(parts):
+        raise TurnIdentityError('The Turn identity must be a JWT')
+    try:
+        tags = _tags(token)
+        scope = [tags[key][0] for key in _SCOPE]
+    except (ValueError, TypeError, KeyError, IndexError):
+        raise TurnIdentityError('The Turn identity lacks JWT session tags') from None
+    if not all(isinstance(tags[key], list) and isinstance(value, str) and value for key, value in zip(_SCOPE, scope, strict=True)):
+        raise TurnIdentityError('The Turn identity lacks JWT session tags')
+
+
+def turn_actor(turn_identity: TurnIdentity | None) -> str | None:
     """The acting User a forwarded Turn identity names, or None when the invocation carries none."""
     if turn_identity is None:
         return None
-    return _tags(require_turn_identity(turn_identity))['actorId'][0]
+    return _tags(turn_identity)['actorId'][0]
 
 
 def _tags(turn_identity: TurnIdentity) -> dict[str, list[str]]:
@@ -309,14 +324,17 @@ def _turn_id(turn_identity: TurnIdentity) -> Any:
     return turn_identity['turnId'] if isinstance(turn_identity, dict) else _claims(turn_identity).get('jti')
 
 
-def finished_snapshot_epoch(turn_identity: TurnIdentity | None, marker: Any) -> str | None:
+@dataclass(frozen=True)
+class SnapshotEpoch:
+    epoch: str
+    turn_id: str
+
+
+def finished_snapshot_epoch(turn_identity: TurnIdentity | None, marker: SnapshotEpoch | None) -> str | None:
     """Bind registered writer proof to the JWT Chat issued for this invocation."""
-    if not isinstance(marker, dict) or not turn_identity:
+    if marker is None or turn_identity is None:
         return None
-    epoch, turn_id = marker.get('epoch'), marker.get('turnId')
-    if not isinstance(epoch, str) or not epoch or not isinstance(turn_id, str) or not turn_id:
-        return None
-    return epoch if _turn_id(turn_identity) == turn_id else None
+    return marker.epoch if _turn_id(turn_identity) == marker.turn_id else None
 
 
 def _sandbox(tags: dict[str, list[str]]) -> tuple[str, str]:

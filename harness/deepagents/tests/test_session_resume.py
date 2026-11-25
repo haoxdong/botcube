@@ -48,6 +48,7 @@ from agentcore_fake import (
 from agentcore_fake import FakeAgentCoreMemory as _FakeAgentCoreMemory
 from botcube_harness_deepagents import turn_lifecycle
 from botcube_harness_deepagents.agent import build_agent
+from botcube_harness_deepagents.invocation import Invocation
 from botcube_harness_deepagents.memory import agentcore
 from botcube_harness_deepagents.session_agent import SessionAgent
 from conftest import ToolBindableFakeModel
@@ -372,7 +373,7 @@ def _serve_session(
             'forwarded_props': {'sessionUserId': 'user-1', 'turnIdentity': turn_identity('user-1', 'user-1', session_id), **({'worklog_clock': 1, 'turn_started_at': datetime.fromtimestamp(serving.message_times.now() / 1000, UTC).isoformat()} if canonical else {})},
         })
         received = []
-        async for event in serving.invoke(run, context):
+        async for event in serving.invoke(Invocation.parse(run), context):
             received.append(event)
             if observe is not None:
                 observe(event)
@@ -541,7 +542,7 @@ async def _stop(run_id: str) -> list[Any]:
         'thread_id': 'session-1', 'run_id': run_id, 'messages': [], 'tools': [], 'context': [], 'state': {},
         'forwarded_props': {'stop': True, 'sessionUserId': 'user-1'},
     })
-    return [event async for event in serving.invoke(run, serving._RequestContext('agentcore-session-1'))]
+    return [event async for event in serving.invoke(Invocation.parse(run), serving._RequestContext('agentcore-session-1'))]
 
 
 def test_a_stop_invocation_stops_the_running_turn_it_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1129,7 +1130,7 @@ def test_the_steps_of_a_stopped_turn_stay_under_it_once_the_next_turn_resends_th
         events: list[Any] = []
 
         async def stopped_turn() -> list[Any]:
-            async for event in serving.invoke(run, serving._RequestContext('agentcore-session-1')):
+            async for event in serving.invoke(Invocation.parse(run), serving._RequestContext('agentcore-session-1')):
                 events.append(event)
                 if event.type == 'TOOL_CALL_RESULT':
                     # The Turn's next model call is under way when the user stops it.

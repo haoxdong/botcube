@@ -18,6 +18,7 @@ from opentelemetry.instrumentation.langchain import LangchainInstrumentor
 from agentcore_fake import turn_identity
 from botcube_harness_deepagents import serving
 from botcube_harness_deepagents.agent import build_agent
+from botcube_harness_deepagents.invocation import Invocation
 from botcube_harness_deepagents.llm import ModelRelay, build_model
 from botcube_harness_deepagents.memory import agentcore
 from relay_fake import RECORDED_STREAM, serving_relay
@@ -218,7 +219,7 @@ def test_cancel_during_parallel_tools_rebuilds_sendable_persisted_history(
                     'tools': [], 'context': [], 'state': {},
                     'forwardedProps': {'stop': True, 'sessionUserId': 'user-1'},
                 })
-                assert [event async for event in serving.invoke(stop, serving._RequestContext('agentcore-session-1'))] == []
+                assert [event async for event in serving.invoke(Invocation.parse(stop), serving._RequestContext('agentcore-session-1'))] == []
                 stopped = await running
                 assert (stopped[-1].type, stopped[-1].code) == ('RUN_ERROR', 'TURN_STOPPED')
                 persisted = (await reader.aget_state(config)).values['messages']
@@ -230,7 +231,7 @@ def test_cancel_during_parallel_tools_rebuilds_sendable_persisted_history(
                 ]
                 for name, value in {'_AGENTS': {}, '_CHECKPOINTER': None, '_STORE': None}.items():
                     monkeypatch.setattr(serving, name, value)
-                events = [event async for event in serving.invoke(followup, serving._RequestContext('agentcore-session-1'))]
+                events = [event async for event in serving.invoke(Invocation.parse(followup), serving._RequestContext('agentcore-session-1'))]
                 assert [(event.type, getattr(event, 'message', None)) for event in events
                         if event.type in {'RUN_ERROR', 'RUN_FINISHED'}] == [('RUN_FINISHED', None)]
                 assert not responses.missing

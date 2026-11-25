@@ -5,8 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
+
+if TYPE_CHECKING:
+    from .invocation import Invocation
 
 
 @dataclass(frozen=True)
@@ -66,13 +69,10 @@ class InvocationContext:
     _auth: InvocationAuth | None = field(default=None, init=False, repr=False)
 
     @classmethod
-    def from_request(cls, headers: Mapping[str, str], forwarded: Any) -> InvocationContext:
-        # Origin deploys after the Harness. Strip the old Origin's token at ingress during that interval.
-        legacy = forwarded.pop('credentialServiceInvocationToken', None) if isinstance(forwarded, dict) else None
-        token = headers.get(CREDENTIAL_INVOCATION_HEADER)
-        return cls(headers.get(SESSION_ID_HEADER), token or (legacy if isinstance(legacy, str) else None))
+    def from_request(cls, headers: Mapping[str, str], legacy_token: str | None) -> InvocationContext:
+        return cls(headers.get(SESSION_ID_HEADER), headers.get(CREDENTIAL_INVOCATION_HEADER) or legacy_token)
 
-    def prepare(self, run: Any, prepare: Callable[[Any, str | None], InvocationAuth]) -> InvocationAuth:
+    def prepare(self, run: Invocation, prepare: Callable[[Invocation, str | None], InvocationAuth]) -> InvocationAuth:
         if self._auth is None:
             self._auth = prepare(run, self.credential_token)
         return self._auth
@@ -100,7 +100,7 @@ class HarnessDefinition:
 
     skills: Sequence[str]
     agent_name: str
-    prepare_invocation: Callable[[Any, str | None], InvocationAuth]
+    prepare_invocation: Callable[[Invocation, str | None], InvocationAuth]
     prepare_root: Callable[[Path], object]
     session_id_env_var: str
     environment_cache_key: EnvironmentCacheKey

@@ -11,6 +11,7 @@ from ag_ui.core import RunAgentInput
 
 from agentcore_fake import another_microvm
 from botcube_harness_deepagents import serving, session_memory
+from botcube_harness_deepagents.invocation import Invocation
 from botcube_harness_deepagents.memory import agentcore as memory_backend
 from test_serving import _Member, _memory_block, _memory_record, _ScopedMemory, _Service
 from test_serving import agentcore_memory as agentcore_memory
@@ -242,7 +243,7 @@ def test_cancelled_warmup_discards_completed_read_and_next_turn_loads_fresh(
                              'turnIdentity': turn_identity('actor-1', 'user-1', 'thread-1')},
         )
         with pytest.raises(asyncio.CancelledError):
-            async for _ in serving.invoke(run_input, serving._RequestContext(None)):
+            async for _ in serving.invoke(Invocation.parse(run_input), serving._RequestContext(None)):
                 pass
     assert service.client.portal is not None
     service.client.portal.call(run)
@@ -295,7 +296,7 @@ def test_cancelled_first_turn_consumes_handoff_and_next_turn_loads_fresh(
                              'turnIdentity': turn_identity('actor-1', 'user-1', 'thread-1')},
         )
         with pytest.raises(asyncio.CancelledError):
-            async for _ in serving.invoke(run_input, serving._RequestContext(None)):
+            async for _ in serving.invoke(Invocation.parse(run_input), serving._RequestContext(None)):
                 pass
     assert service.client.portal is not None
     service.client.portal.call(run)
