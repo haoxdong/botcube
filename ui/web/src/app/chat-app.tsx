@@ -16,6 +16,7 @@ import { usePhoneProfileFocus } from "./phone-profile-focus";
 import { useDrawerSwipe } from "./drawer-swipe";
 import { Sidebar, useSidebar } from "./sidebar";
 import { usePhoneViewport } from "./phone-viewport";
+import { idlePreload } from "./preload";
 import { useViewport } from "@/design-system/viewport";
 import { isUnread } from "./conversations";
 import {
@@ -133,6 +134,10 @@ export default function App({
   useEffect(() => {
     if (profileSwipe.visible) setProfileKept(true);
   }, [profileSwipe.visible]);
+  // Builds the hidden profile while idle, so its first open only slides it in, as a reopen does.
+  useEffect(() => {
+    if (ready) idlePreload(async () => setProfileKept(true))();
+  }, [ready]);
   const profileVisible = profileSwipe.visible || profileKept;
   const agentProfileOpenerRef = useRef<HTMLButtonElement>(null);
   const { closeRef: agentProfileCloseRef } = usePhoneProfileFocus({ open: profileSwipe.open, expanded: agentProfileOpen, profileRef: agentProfileRef, openerRef: agentProfileOpenerRef, close: profileSwipe.close });

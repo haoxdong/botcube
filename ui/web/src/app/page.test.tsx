@@ -5608,6 +5608,20 @@ describe('agent profile', () => {
   const profile = () => document.querySelector<HTMLElement>('.agent-profile:not([hidden])');
   const openProfile = () => present(profile(), 'the agent profile');
 
+  it('builds the closed profile while idle, fetching only its identity and keeping it out of reach', async () => {
+    await renderPage();
+    const calls = fetchMock.mock.calls.length;
+    const kept = await vi.waitFor(() => present(document.querySelector<HTMLElement>('.agent-profile[hidden]'), 'the kept profile'), { timeout: 3000 });
+    await settle();
+
+    expect(fetchMock.mock.calls.slice(calls).map(([url]) => url)).toEqual(['http://chat.test/agent/identity']);
+    expect(bot.computerMounts).toBe(0);
+    expect(screen.queryByRole('dialog', { name: 'Agent profile' })).toBeNull();
+    expect(kept.contains(document.activeElement)).toBe(false);
+    await userEvent.click(avatar());
+    expect(openProfile()).toBe(kept);
+  });
+
   // Main hid the chat under the open phone profile, out of focus and the accessibility tree. Slid in over it, the
   // profile leaves it on screen beneath, inert. Beside the desktop profile, the chat stays in use.
   it.each([
