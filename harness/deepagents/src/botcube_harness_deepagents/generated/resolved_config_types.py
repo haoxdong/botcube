@@ -502,16 +502,9 @@ class Route(TypedDict):
     useResponsesApi: bool
 
 
-class ModelGatewayAnthropic(TypedDict):
+class ModelGatewayValue(TypedDict):
     route: None | Route
     unreachableReason: None | str
-
-
-class ModelGateway(TypedDict):
-    anthropic: ModelGatewayAnthropic
-    openai: ModelGatewayAnthropic
-    deepseek: ModelGatewayAnthropic
-    echo: ModelGatewayAnthropic
 
 
 class ResolvedConfig(TypedDict):
@@ -520,4 +513,4 @@ class ResolvedConfig(TypedDict):
     physicalNames: PhysicalNames
     webOrigins: list[str]
     credentialServiceHttpPath: str
-    modelGateway: ModelGateway
+    modelGateway: dict[str, ModelGatewayValue]

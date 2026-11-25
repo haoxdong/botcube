@@ -14,12 +14,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from botcube_credential_service.audit import CredentialAuditRecorder
-from botcube_credential_service.botcube_config import botcube_config_from_env
 from botcube_credential_service.credential_source import CredentialSourceError
 from botcube_credential_service.invocation import sign_credential_service_invocation
 from botcube_credential_service.models import models_provider_from_config
+from botcube_credential_service.resolved_config import (
+    load_resolved_config,
+    resolved_config_from_env,
+)
 from botcube_credential_service.server import CredentialServiceSettings, create_app
-from required_keys import with_required
+from required_keys import resolve_sections, resolved_sections
+
+pytestmark = pytest.mark.integration
 
 SECRET = 'credential-service-secret'
 START = 1_790_965_829.0
@@ -79,15 +84,16 @@ def _endpoint(credential: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _client(
-    gateway: FakeGateway, config: Mapping[str, Any], env: Mapping[str, str] | None = None, *, clock: Clock | None = None, sink: ListSink | None = None,
+    gateway: FakeGateway, config: dict[str, Any] | None, env: Mapping[str, str] | None = None, *, clock: Clock | None = None, sink: ListSink | None = None,
 ) -> TestClient:
     clock = clock or Clock()
+    resolved = resolved_sections(config) if config is not None else resolved_config_from_env()
     provider = models_provider_from_config(
-        CredentialAuditRecorder(sink=sink, clock=clock), config, env or {}, transport=httpx.MockTransport(gateway.handle), now=clock,
+        CredentialAuditRecorder(sink=sink, clock=clock), resolved, env or {}, transport=httpx.MockTransport(gateway.handle), now=clock,
     )
     assert provider is not None
     settings = CredentialServiceSettings(name='test-credential-service', invocation_secret=lambda: SECRET)
-    return TestClient(create_app(settings, [provider]))
+    return TestClient(create_app(settings, [provider], config=resolved['config']))
 
 
 def _turn(session_id: str = 'thread-1') -> dict[str, str]:
@@ -308,7 +314,6 @@ def test_a_turn_fails_naming_the_models_seam_and_its_file_when_the_file_cannot_b
     assert gateway.requests == []
 
 
-@pytest.mark.integration
 def test_the_credential_command_runs_here_and_again_a_minute_before_its_token_expires(
     gateway: FakeGateway, tmp_path: Path,
 ) -> None:
@@ -324,7 +329,7 @@ def test_the_credential_command_runs_here_and_again_a_minute_before_its_token_ex
     )
     command = {'kind': 'command', 'command': [sys.executable, str(helper)], 'timeoutSeconds': 30}
     clock = Clock()
-    client = _client(gateway, _endpoint(command), {'BOTCUBE_ALLOW_COMMAND_CREDENTIALS': '1'}, clock=clock)
+    client = _client(gateway, {**_endpoint(command), 'allowCommandCredentials': True}, {'BOTCUBE_ALLOW_COMMAND_CREDENTIALS': '1'}, clock=clock)
 
     _completion(client)
     clock.now = START + 240
@@ -338,20 +343,37 @@ def test_the_credential_command_runs_here_and_again_a_minute_before_its_token_ex
 def test_startup_fails_naming_the_models_seam_and_its_file_when_the_credential_cannot_be_read(tmp_path: Path) -> None:
     absent = tmp_path / 'absent'
     with pytest.raises(CredentialSourceError, match=f'^models credential \\(file {absent}\\): '):
-        models_provider_from_config(CredentialAuditRecorder(), _endpoint({'kind': 'file', 'path': str(absent)}), {})
+        models_provider_from_config(CredentialAuditRecorder(), resolved_sections(_endpoint({'kind': 'file', 'path': str(absent)})), {})
 
 
-def test_startup_refuses_a_command_credential_the_deploy_did_not_opt_in_to() -> None:
+@pytest.mark.integration
+@pytest.mark.parametrize('provider', ['anthropic', 'openai'])
+def test_startup_names_the_provider_when_its_own_credential_cannot_be_read(
+    key: Path, tmp_path: Path, provider: str,
+) -> None:
+    absent = tmp_path / 'absent'
+    resolved = resolved_sections(_deployed({
+        'url': 'https://models.example.com/v1',
+        'credential': {'kind': 'file', 'path': str(key)},
+        'providers': {provider: {'credential': {'kind': 'file', 'path': str(absent)}}},
+    }))
+    with pytest.raises(CredentialSourceError, match=rf'^models {provider} credential \(file {absent}\): '):
+        models_provider_from_config(CredentialAuditRecorder(), resolved, {})
+
+
+def test_startup_refuses_a_command_credential_without_the_runtime_environment_opt_in() -> None:
     command = {'kind': 'command', 'command': ['gateway-token'], 'timeoutSeconds': 30}
     with pytest.raises(CredentialSourceError, match='^models credential \\(command gateway-token\\): a command credential runs only when'):
-        models_provider_from_config(CredentialAuditRecorder(), _endpoint(command), {})
+        models_provider_from_config(CredentialAuditRecorder(), resolved_sections({**_endpoint(command), 'allowCommandCredentials': True}), {})
 
 
-def test_the_relay_reaches_the_endpoint_the_botcube_config_file_names(gateway: FakeGateway, key: Path, tmp_path: Path) -> None:
-    path = tmp_path / 'botcube.yaml'
-    path.write_text(json.dumps(with_required(_endpoint({'kind': 'file', 'path': str(key)}))))
+def test_the_relay_reaches_the_endpoint_the_resolved_file_names(
+    gateway: FakeGateway, key: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = resolve_sections(_endpoint({'kind': 'file', 'path': str(key)}), tmp_path)
+    monkeypatch.setenv('BOTCUBE_CONFIG', str(path))
 
-    response = _completion(_client(gateway, botcube_config_from_env({'BOTCUBE_CONFIG': str(path)})))
+    response = _completion(_client(gateway, None))
 
     assert response.status_code == 200
     [call] = gateway.requests
@@ -359,4 +381,4 @@ def test_the_relay_reaches_the_endpoint_the_botcube_config_file_names(gateway: F
 
 
 def test_a_deployment_on_bedrock_has_no_models_relay() -> None:
-    assert models_provider_from_config(CredentialAuditRecorder(), botcube_config_from_env({}), {}) is None
+    assert models_provider_from_config(CredentialAuditRecorder(), load_resolved_config(), {}) is None

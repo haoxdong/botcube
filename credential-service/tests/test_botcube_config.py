@@ -1,4 +1,4 @@
-"""The Credential Service reads the one BotCube Config BOTCUBE_CONFIG names, checked against its JSON Schema (ADR 0091)."""
+"""The YAML reader used by the Python deployment tooling."""
 
 from __future__ import annotations
 
@@ -6,21 +6,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-import certifi
 import pytest
 
 from botcube_credential_service import botcube_config
 from botcube_credential_service.botcube_config import (
     BotCubeConfigError,
     botcube_config_from_env,
-    credential_service_http_path,
     load_botcube_config,
     read_deployment,
-)
-from botcube_credential_service.server import (
-    CredentialServiceSettings,
-    create_app,
-    plan_usage_owner,
 )
 from required_keys import REQUIRED, with_required
 
@@ -76,14 +69,6 @@ def test_a_valid_file_gives_its_sections_and_the_defaults_of_those_it_leaves_out
     assert config['integrations']['telemetry'] == {'kind': 'xray'}
 
 
-def test_the_plan_usage_owner_is_the_files_not_the_environments(tmp_path: Path) -> None:
-    owned = _file(tmp_path, {'planUsage': {'ownerAccountId': 'acct_owner_1'}})
-    legacy = {'BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID': 'acct_other'}
-
-    assert plan_usage_owner(load_botcube_config(owned)) == 'acct_owner_1'
-    assert plan_usage_owner(botcube_config_from_env(legacy)) == ''
-
-
 def test_the_enterprise_example_loads() -> None:
     assert load_botcube_config(ENTERPRISE)['integrations']['proxy']['url'] == 'http://proxy.example.com:3128'
 
@@ -119,43 +104,6 @@ def test_the_locator_names_the_file(tmp_path: Path) -> None:
     path = _file(tmp_path, {'integrations': {'proxy': {'kind': 'forward', 'url': 'http://proxy.example.com:3128'}}})
 
     assert botcube_config_from_env({'BOTCUBE_CONFIG': str(path)})['integrations']['proxy']['url'] == 'http://proxy.example.com:3128'
-
-
-def test_the_credential_service_stops_before_it_serves_when_its_locator_names_no_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    path = tmp_path / 'absent.json'
-    monkeypatch.setenv('BOTCUBE_CONFIG', str(path))
-
-    with pytest.raises(BotCubeConfigError, match=f'^BotCube Config {path}: no file'):
-        create_app(CredentialServiceSettings('test', lambda: 'secret'), [])
-
-
-def test_the_credential_service_stops_before_it_serves_on_a_file_the_schema_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    path = _file(tmp_path, {'integrations': {'proxy': {'kind': 'forward'}}})
-    monkeypatch.setenv('BOTCUBE_CONFIG', str(path))
-
-    with pytest.raises(BotCubeConfigError, match=f"^BotCube Config {path}: integrations.proxy.url: 'url' is a required property"):
-        create_app(CredentialServiceSettings('test', lambda: 'secret'), [])
-
-
-@pytest.mark.parametrize(('bundle', 'reason'), [
-    ('absent.pem', 'No such file or directory'),
-    ('not-a-certificate.pem', 'no certificate or crl found'),
-])
-def test_the_credential_service_stops_before_it_serves_on_a_ca_bundle_it_cannot_load(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bundle: str, reason: str,
-) -> None:
-    (tmp_path / 'not-a-certificate.pem').write_text('not a certificate')
-    path = tmp_path / bundle
-    monkeypatch.setenv('BOTCUBE_CONFIG', str(_file(tmp_path, {'caBundle': str(path)})))
-
-    with pytest.raises(BotCubeConfigError, match=f'^caBundle {path}: .*{reason}'):
-        create_app(CredentialServiceSettings('test', lambda: 'secret'), [])
-
-
-def test_the_credential_service_starts_on_a_ca_bundle_holding_a_certificate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('BOTCUBE_CONFIG', str(_file(tmp_path, {'caBundle': certifi.where()})))
-
-    create_app(CredentialServiceSettings('test', lambda: 'secret'), [])
 
 
 def test_the_vendored_schema_is_the_canonical_schema_byte_for_byte() -> None:
@@ -356,12 +304,6 @@ def test_a_bot_directory_holds_its_bot_settings_latency_budgets_build_manifests_
     ])
 
     assert botcube_config.bot_directory_errors(root) == []
-
-
-def test_the_credential_service_http_path_is_the_files_or_none() -> None:
-    assert credential_service_http_path({'services': {'credentialService': {'http': {'path': '/rpc'}}}}) == '/rpc'
-    assert credential_service_http_path({'services': {'credentialService': {}}}) == ''
-    assert credential_service_http_path({}) == ''
 
 
 @pytest.mark.integration

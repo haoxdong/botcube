@@ -8,6 +8,7 @@ import pytest
 from fake_site_provider import FakeSiteProvider
 from fastapi.testclient import TestClient
 
+from botcube_credential_service.resolved_config import load_resolved_config
 from botcube_credential_service.server import CredentialServiceSettings, create_app
 from botcube_credential_service.vault import DynamoDbCredentialVault
 from local_stand_in_support import (
@@ -33,6 +34,7 @@ def test_link_relay_and_unlink_keep_durable_credential_in_encrypted_vault(table:
         app = create_app(
             CredentialServiceSettings('local', lambda: 'local-secret'),
             [FakeSiteProvider(lambda: vault, url)],
+            config=load_resolved_config()['config'],
         )
         with TestClient(app) as client:
             assert client.get('/fake-site/data', headers=authorization()).json()['code'] == 'SIGN_IN_NEEDED'
@@ -58,7 +60,7 @@ def test_relay_reuses_the_sites_access_until_the_site_ends_it_then_re_mints_once
         vault = DynamoDbCredentialVault(table, LocalKeys())
 
         def app() -> Any:
-            return create_app(CredentialServiceSettings('local', lambda: 'local-secret'), [FakeSiteProvider(lambda: vault, url)])
+            return create_app(CredentialServiceSettings('local', lambda: 'local-secret'), [FakeSiteProvider(lambda: vault, url)], config=load_resolved_config()['config'])
 
         with TestClient(app()) as client:
             credential = httpx.post(f'{url}/login').json()['credential']
@@ -87,6 +89,7 @@ def test_status_does_not_hide_vault_failure() -> None:
     app = create_app(
         CredentialServiceSettings('local', lambda: 'local-secret'),
         [provider],
+        config=load_resolved_config()['config'],
     )
     with TestClient(app) as client, pytest.raises(RuntimeError, match='vault unavailable'):
         client.get('/fake-site/auth/status', headers=authorization())

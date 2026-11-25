@@ -10,19 +10,19 @@ from fastapi import FastAPI
 
 from .audit import CredentialAuditRecorder, StdoutCredentialAuditSink
 from .aws import env_vault
-from .botcube_config import botcube_config_from_env
 from .models import models_provider_from_config
 from .openai import OpenAIProvider
+from .resolved_config import resolved_config_from_env
 from .server import CredentialServiceSettings, create_app, plan_usage_owner
 from .vault import RotatingCredentialVault
 
 
 def stock_credential_service(openai_vault: Callable[[], RotatingCredentialVault], invocation_secret: Callable[[], str]) -> FastAPI:
     audit = CredentialAuditRecorder(sink=StdoutCredentialAuditSink())
-    config = botcube_config_from_env()
+    config = resolved_config_from_env()
     models = models_provider_from_config(audit, config)
-    settings = CredentialServiceSettings('stock', invocation_secret, plan_usage_owner_account_id=plan_usage_owner(config))
-    return create_app(settings, [OpenAIProvider(openai_vault, audit=audit), *([models] if models else [])])
+    settings = CredentialServiceSettings('stock', invocation_secret, plan_usage_owner_account_id=plan_usage_owner(config['config']))
+    return create_app(settings, [OpenAIProvider(openai_vault, audit=audit), *([models] if models else [])], config=config['config'])
 
 
 def main() -> None:

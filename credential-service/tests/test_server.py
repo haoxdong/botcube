@@ -14,6 +14,7 @@ from botcube_credential_service.invocation import (
     CredentialServiceInvocation,
     sign_credential_service_invocation,
 )
+from botcube_credential_service.resolved_config import load_resolved_config
 from botcube_credential_service.server import (
     CredentialServiceSettings,
     InvocationGuard,
@@ -88,7 +89,7 @@ def _client(*providers: FakeProvider, owner: str = '') -> TestClient:
         invocation_secret=lambda: SECRET,
         plan_usage_owner_account_id=owner,
     )
-    return TestClient(create_app(settings, providers))
+    return TestClient(create_app(settings, providers, config=load_resolved_config()['config']))
 
 
 def _bearer(account_id: str = 'acct-1', session_id: str = 'run-1', scope: str | None = None) -> dict[str, str]:
@@ -98,7 +99,7 @@ def _bearer(account_id: str = 'acct-1', session_id: str = 'run-1', scope: str | 
 def test_non_ascii_bearer_signature_is_unauthorized_without_calling_the_provider() -> None:
     provider = FakeProvider()
     settings = CredentialServiceSettings(name='test-credential-service', invocation_secret=lambda: SECRET)
-    client = TestClient(create_app(settings, [provider]), raise_server_exceptions=False)
+    client = TestClient(create_app(settings, [provider], config=load_resolved_config()['config']), raise_server_exceptions=False)
 
     response = client.get('/site/v1/items', headers=[(b'authorization', b'Bearer v1.e30.\xe9')])
 
@@ -237,7 +238,7 @@ def test_shutdown_closes_every_provider_even_after_failure() -> None:
             if self.name == 'broken':
                 raise RuntimeError('shutdown failed')
 
-    app = create_app(CredentialServiceSettings('test', lambda: SECRET), [ClosingProvider('first'), ClosingProvider('broken')])
+    app = create_app(CredentialServiceSettings('test', lambda: SECRET), [ClosingProvider('first'), ClosingProvider('broken')], config=load_resolved_config()['config'])
     with pytest.raises(RuntimeError, match='shutdown failed'), TestClient(app):
         pass
     assert closed == ['broken', 'first']

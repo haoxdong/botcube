@@ -8,6 +8,7 @@ from botcube_credential_service.invocation import (
     CredentialServiceInvocation,
     sign_credential_service_invocation,
 )
+from botcube_credential_service.resolved_config import load_resolved_config
 from botcube_credential_service.server import (
     CredentialServiceSettings,
     InvocationGuard,
@@ -67,7 +68,7 @@ def test_plan_usage_ingest_refuses_a_non_owner_before_the_provider_sees_the_cred
     settings = CredentialServiceSettings(
         name='test-credential-service', invocation_secret=lambda: SECRET, plan_usage_owner_account_id='owner',
     )
-    client = TestClient(create_app(settings, [provider]))
+    client = TestClient(create_app(settings, [provider], config=load_resolved_config()['config']))
     token = sign_credential_service_invocation(SECRET, 'other-account', 'run-1', scope='credential_capture')
 
     response = client.post('/openai/auth/link/ingest', json={'durable': 'refresh-token'}, headers={

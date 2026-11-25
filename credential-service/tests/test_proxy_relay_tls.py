@@ -12,12 +12,12 @@ import pytest
 from cryptography import x509
 
 from botcube_credential_service import endpoint_tls as tls_module
-from botcube_credential_service.botcube_config import load_botcube_config
 from botcube_credential_service.endpoint_tls import EndpointTlsError, endpoint_tls
 from botcube_credential_service.proxy_relay import (
     proxy_url_from_config,
     start_proxy_relay,
 )
+from botcube_credential_service.resolved_config import load_resolved_config
 from mtls_fake import (
     IMPOSTOR_IDENTITY,
     SERVER_IDENTITY,
@@ -26,7 +26,7 @@ from mtls_fake import (
     mtls_proxy,
     tunnel,
 )
-from required_keys import with_required
+from required_keys import resolve_sections
 
 pytestmark = pytest.mark.integration
 
@@ -126,9 +126,8 @@ def test_relay_still_verifies_the_chain_of_a_proxy_carrying_the_expected_identit
 def test_relay_reads_its_tls_from_the_botcube_config_file(certs: Certificates, tmp_path: Path) -> None:
     with mtls_proxy(certs) as proxy:
         tls = {'clientCertificate': certs.files('client_a'), 'serverIdentity': SERVER_IDENTITY}
-        path = tmp_path / 'botcube.yaml'
-        path.write_text(json.dumps(with_required({'integrations': {'proxy': {'kind': 'forward', 'url': proxy.url, 'tls': tls}}})))
-        relay = proxy_url_from_config(load_botcube_config(path), {})
+        path = resolve_sections({'integrations': {'proxy': {'kind': 'forward', 'url': proxy.url, 'tls': tls}}}, tmp_path)
+        relay = proxy_url_from_config(load_resolved_config(path)['config'], {})
 
         assert relay is not None
         tunnel(relay())

@@ -51,17 +51,6 @@ def load_ca_bundle(config: Mapping[str, Any]) -> None:
         raise BotCubeConfigError(f'caBundle {path}: {error}') from None
 
 
-def web_origins(config: Mapping[str, Any]) -> list[str]:
-    """The origins CORS allows: domains.web and its aliases; without domains, none."""
-    domains = config.get('domains')
-    return [domains['web'], *domains.get('webAliases', [])] if domains else []
-
-
-def credential_service_http_path(config: Mapping[str, Any]) -> str:
-    """services.credentialService.http.path, the path the Credential Service serves its RPC under; none without it."""
-    return _value_at(config, 'services.credentialService.http.path') or ''
-
-
 @cache
 def _loaded(path: str | None) -> dict[str, Any]:
     if path is None or path.startswith('s3://') or not path.endswith(('.yaml', '.yml')):
@@ -204,17 +193,6 @@ def yaml_document(text: str) -> Any:
     value = reader.load(text)
     if reader.version != (1, 2):
         raise ValueError('expected YAML 1.2')
-    return value
-
-
-def _value_at(value: Any, path: str) -> Any:
-    for key in path.split('.'):
-        if isinstance(value, list) and key.isdigit():
-            value = value[int(key)] if int(key) < len(value) else None
-        elif isinstance(value, dict):
-            value = value.get(key)
-        else:
-            return None
     return value
 
 

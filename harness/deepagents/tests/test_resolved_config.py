@@ -25,8 +25,6 @@ def test_reads_a_resolved_example(tmp_path: Path, example: str) -> None:
     config = load_resolved_config(resolved)
     assert botcube_config.botcube_config_from_env({'BOTCUBE_CONFIG': str(resolved)}) == config['config']
     assert config['physicalNames'] == botcube_config.deployment_names(current)
-    assert config['webOrigins'] == botcube_config.web_origins(current)
-    assert config['credentialServiceHttpPath'] == botcube_config.credential_service_http_path(current)
     routes = config['modelGateway']
     assert {provider for provider in ('anthropic', 'openai', 'deepseek', 'echo') if routes[provider]['route'] is not None} == (
         {'anthropic', 'openai'} if example == 'enterprise' else set()

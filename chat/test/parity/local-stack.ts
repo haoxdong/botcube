@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { required } from '../required.js';
 import { Browser } from './browser.js';
 import { loadConfig } from '../../../config/load.js';
+import { resolveConfig, resolvedJson } from '../../../config/resolved.js';
 import { readConfig } from '../../../config/read.cjs';
 import { telemetryEnvironment } from '../../../config/telemetry.js';
 import { FakeOpenAICompatible } from '../fakes/fake-backends.js';
@@ -136,6 +137,8 @@ export async function startLocalStack(options: {
       processes.push(running);
       return new URL(running.url).origin;
     };
+    const resolvedConfig = join(home, 'resolved.json');
+    if (modelsStandIn) await writeFile(resolvedConfig, resolvedJson(resolveConfig(loadConfig(botcubeConfig))));
     const credentialService = modelsStandIn && {
       BOTCUBE_CREDENTIAL_SERVICE_URL: await start(
         `${CREDENTIAL_SERVICE_BIN}/python ${fileURLToPath(new URL('models-credential-service.py', import.meta.url))}`,
@@ -143,7 +146,7 @@ export async function startLocalStack(options: {
           PATH: process.env.PATH,
           HOME: home,
           BOTCUBE_CREDENTIAL_INVOCATION_SECRET: MODELS_INVOCATION_SECRET,
-          BOTCUBE_CONFIG: botcubeConfig, BOTCUBE_TEST_IMAGE_SETTINGS: fileURLToPath(new URL('../../../examples/bot/bot.yaml', import.meta.url)),
+          BOTCUBE_CONFIG: resolvedConfig, BOTCUBE_TEST_IMAGE_SETTINGS: fileURLToPath(new URL('../../../examples/bot/bot.yaml', import.meta.url)),
           ...mtls?.pythonTrust,
         },
         '/health',

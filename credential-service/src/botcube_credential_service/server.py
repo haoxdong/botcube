@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import ssl
 import time
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -10,7 +11,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, Response
 
-from .botcube_config import botcube_config_from_env, load_ca_bundle
+from .generated.resolved_config_types import Config
 from .invocation import (
     CredentialServiceInvocation,
     verify_credential_service_invocation,
@@ -95,9 +96,18 @@ def request_context(invocation: CredentialServiceInvocation, method: str, path: 
     return context
 
 
-def create_app(settings: CredentialServiceSettings, providers: Sequence[CredentialProvider[Any]]) -> FastAPI:
-    botcube_config = botcube_config_from_env()
-    load_ca_bundle(botcube_config)
+def _check_ca_bundle(config: Config) -> None:
+    if (path := config.get('caBundle')) is not None:
+        try:
+            ssl.create_default_context(cafile=path)
+        except OSError as error:
+            raise RuntimeError(f'caBundle {path}: {error}') from None
+
+
+def create_app(
+    settings: CredentialServiceSettings, providers: Sequence[CredentialProvider[Any]], *, config: Config,
+) -> FastAPI:
+    _check_ca_bundle(config)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from .generated.resolved_config_types import FORMAT_VERSION, ResolvedConfig
+
+
+def resolved_config_from_env() -> ResolvedConfig:
+    return load_resolved_config(os.getenv('BOTCUBE_CONFIG') or None)
 
 
 def load_resolved_config(path: Path | str | None = None) -> ResolvedConfig:

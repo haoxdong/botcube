@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from botcube_credential_service.audit import CredentialAuditRecorder
 from botcube_credential_service.openai import OpenAIProvider
+from botcube_credential_service.resolved_config import load_resolved_config
 from botcube_credential_service.server import CredentialServiceSettings, create_app
 from botcube_credential_service.vault import DynamoDbCredentialVault
 from test_openai import SECRET, _stored, _turn
@@ -28,7 +29,7 @@ def test_openai_refresh_and_relay_reach_openai(vault: DynamoDbCredentialVault) -
         lambda: vault, audit=CredentialAuditRecorder(), transport=httpx.MockTransport(answer), clock=lambda: 0,
     )
     settings = CredentialServiceSettings('test', lambda: SECRET, plan_usage_owner_account_id='acct-1')
-    with TestClient(create_app(settings, [provider])) as client:
+    with TestClient(create_app(settings, [provider], config=load_resolved_config()['config'])) as client:
         response = client.get('/openai/v1/models', headers=_turn())
         assert response.status_code == 200
         assert response.json() == {'data': []}

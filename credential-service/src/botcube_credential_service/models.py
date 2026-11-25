@@ -15,7 +15,6 @@ import httpx
 from fastapi import APIRouter, HTTPException, WebSocket
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from .botcube_config import gateway_routes
 from .credential_source import (
     CredentialSource,
     CredentialSourceError,
@@ -28,6 +27,7 @@ if TYPE_CHECKING:
     from fastapi import Request
 
     from .audit import CredentialAuditRecorder
+    from .generated.resolved_config_types import ResolvedConfig
     from .invocation import CredentialServiceInvocation
     from .server import InvocationGuard
 
@@ -40,28 +40,33 @@ _HOP_BY_HOP = frozenset({'connection', 'keep-alive', 'proxy-authenticate', 'prox
 
 def models_provider_from_config(
     audit: CredentialAuditRecorder,
-    config: Mapping[str, Any],
+    resolved: ResolvedConfig,
     env: Mapping[str, str] = os.environ,
     *,
     transport: httpx.AsyncBaseTransport | None = None,
     now: Callable[[], float] = time.time,
 ) -> ModelsEndpointProvider | None:
     """The relay to the BotCube Config's model gateway, each provider at its own URL, or None on Bedrock."""
+    config = resolved['config']
     models = config['integrations']['modelGateway']
     if models['kind'] != 'openai-compatible':
         return None
     through = proxy_url_from_config(config, env) if models.get('proxy') else None
     proxy = through() if through else None
-    gateway = credential_source('models', models['credential'], env=env, now=now, proxy=proxy)
-    gateway.get()
+    providers = models.get('providers', {})
+    overrides = {'anthropic': providers.get('anthropic'), 'openai': providers.get('openai')}
+    credentials: dict[str, CredentialSource] = {}
     routes: dict[str, ProviderRoute] = {}
-    for provider, own in gateway_routes(models).items():
-        credential = gateway
-        if 'credential' in own:
-            credential = credential_source(f'models {provider}', own['credential'], env=env, now=now, proxy=proxy)
-            credential.get()
-        headers = own.get('headers', models.get('headers')) or {}
-        routes[provider] = ProviderRoute(own.get('url', models['url']).rstrip('/'), dict(headers), credential)
+    for provider, reach in resolved['modelGateway'].items():
+        route = reach['route']
+        if route is None:
+            continue
+        override = overrides.get(provider)
+        seam = f'models {provider}' if override and 'credential' in override else 'models'
+        if seam not in credentials:
+            credentials[seam] = credential_source(seam, route['credential'], env=env, now=now, proxy=proxy)
+            credentials[seam].get()
+        routes[provider] = ProviderRoute(route['url'], route['headers'], credentials[seam])
     tls = endpoint_tls('models', models['tls'], env=env) if 'tls' in models else None
     if tls is not None:
         tls.context()

@@ -11,6 +11,7 @@ from starlette.responses import Response, StreamingResponse
 
 from botcube_credential_service.audit import CredentialAuditRecorder
 from botcube_credential_service.openai import OpenAIProvider
+from botcube_credential_service.resolved_config import load_resolved_config
 from botcube_credential_service.server import CredentialServiceSettings, create_app
 
 
@@ -97,7 +98,7 @@ def test_application_shutdown_closes_provider_pool(used: bool) -> None:
     owner = OpenAIProvider(unused_vault, audit=CredentialAuditRecorder(), transport=transport)
     settings = CredentialServiceSettings(name='pool-test', invocation_secret=lambda: 'secret')
     shared = owner._relay_client() if used else None
-    with TestClient(create_app(settings, [owner])) as client:
+    with TestClient(create_app(settings, [owner], config=load_resolved_config()['config'])) as client:
         assert client.get('/missing').status_code == 404
         if shared is not None:
             assert not shared.is_closed
@@ -117,6 +118,6 @@ def test_unused_provider_does_not_load_tls_but_relay_requires_it(
         with pytest.raises(FileNotFoundError):
             await owner.relay(request(), 'v1/models', 'token', account_id='first', request_context={})
 
-    with TestClient(create_app(settings, [owner])) as client:
+    with TestClient(create_app(settings, [owner], config=load_resolved_config()['config'])) as client:
         assert client.get('/missing').status_code == 404
         asyncio.run(run())

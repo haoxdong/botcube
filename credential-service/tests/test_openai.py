@@ -28,6 +28,7 @@ from botcube_credential_service.data_keys import (
 )
 from botcube_credential_service.invocation import sign_credential_service_invocation
 from botcube_credential_service.openai import OpenAIProvider
+from botcube_credential_service.resolved_config import load_resolved_config
 from botcube_credential_service.rotating_access import (
     Grant,
     GrantedAccess,
@@ -185,7 +186,7 @@ def _app(
         transport=httpx.MockTransport((openai or FakeOpenAI()).handle),
         clock=clock, refresh_timings=refresh_timings, grant=grant,
     )
-    return create_app(settings, [provider])
+    return create_app(settings, [provider], config=load_resolved_config()['config'])
 
 
 def _turn(account_id: str = 'acct-1', session_id: str = 'thread-1') -> dict[str, str]:
@@ -374,7 +375,7 @@ def test_an_unconfigured_vault_reports_the_service_unhealthy() -> None:
         invocation_secret=lambda: SECRET,
     )
 
-    response = TestClient(create_app(settings, [OpenAIProvider(unconfigured, audit=CredentialAuditRecorder())])).get('/health')
+    response = TestClient(create_app(settings, [OpenAIProvider(unconfigured, audit=CredentialAuditRecorder())], config=load_resolved_config()['config'])).get('/health')
 
     assert response.status_code == 503
     assert response.json()['detail']['component'] == 'vault'
@@ -1082,7 +1083,7 @@ def test_an_unreachable_token_endpoint_is_the_unavailable_error(vault: DynamoDbC
         name='test-credential-service', invocation_secret=lambda: SECRET,
     )
 
-    response = TestClient(create_app(settings, [provider])).get('/openai/v1/models', headers=_turn())
+    response = TestClient(create_app(settings, [provider], config=load_resolved_config()['config'])).get('/openai/v1/models', headers=_turn())
 
     assert response.status_code == 503
     assert response.json() == _plan_usage_error(
@@ -1155,7 +1156,7 @@ def test_renewal_timeout_after_successful_rotation_is_a_classified_public_failur
     settings = CredentialServiceSettings(
         name='test-credential-service', invocation_secret=lambda: SECRET, plan_usage_owner_account_id='acct-1',
     )
-    with TestClient(create_app(settings, [provider]), raise_server_exceptions=False) as client, ThreadPoolExecutor(max_workers=1) as pool:
+    with TestClient(create_app(settings, [provider], config=load_resolved_config()['config']), raise_server_exceptions=False) as client, ThreadPoolExecutor(max_workers=1) as pool:
         pending = pool.submit(client.get, '/openai/v1/models', headers=_turn())
         try:
             assert write_started.wait(5)
@@ -1304,7 +1305,7 @@ def test_shared_pool_reuses_refresh_and_relay_without_account_cookies(vault: Dyn
         return response
 
     provider = OpenAIProvider(lambda: vault, audit=CredentialAuditRecorder(), transport=Transport(handle), clock=Clock())
-    app = create_app(CredentialServiceSettings('test', lambda: SECRET), [provider])
+    app = create_app(CredentialServiceSettings('test', lambda: SECRET), [provider], config=load_resolved_config()['config'])
     with TestClient(app) as client:
         assert client.get('/openai/v1/models', headers=_turn()).status_code == 200
         assert client.get('/openai/v1/models', headers=_turn('acct-2')).status_code == 200
@@ -1331,7 +1332,7 @@ def test_cancelled_stream_closes_response_without_closing_pool(vault: DynamoDbCr
 
     upstream.responses = lambda: httpx.Response(200, stream=Stream())
     provider = OpenAIProvider(lambda: vault, audit=CredentialAuditRecorder(), transport=httpx.MockTransport(upstream.handle), clock=Clock())
-    app = create_app(CredentialServiceSettings('test', lambda: SECRET), [provider])
+    app = create_app(CredentialServiceSettings('test', lambda: SECRET), [provider], config=load_resolved_config()['config'])
 
     async def run() -> None:
         async with app.router.lifespan_context(app):
@@ -1395,7 +1396,7 @@ def test_model_catalog_calls_reuse_a_real_tcp_connection(vault: DynamoDbCredenti
                 lambda: vault, audit=CredentialAuditRecorder(), clock=Clock(),
                 settings=replace(OpenAISettings(), issuer=origin, api_origin=origin),
             )
-            app = create_app(CredentialServiceSettings('test', lambda: SECRET), [provider])
+            app = create_app(CredentialServiceSettings('test', lambda: SECRET), [provider], config=load_resolved_config()['config'])
             async with app.router.lifespan_context(app):
                 async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://service') as client:
                     for _ in range(2):

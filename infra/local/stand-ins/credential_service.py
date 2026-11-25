@@ -1,4 +1,4 @@
-"""The local stack's Credential Service, run as a script beside fake_site_provider.py."""
+"""Local Credential Service run beside fake_site_provider.py."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from botcube_credential_service.audit import (
     StdoutCredentialAuditSink,
 )
 from botcube_credential_service.aws import env_vault
-from botcube_credential_service.botcube_config import botcube_config_from_env
 from botcube_credential_service.compose import credential_service_app
+from botcube_credential_service.resolved_config import resolved_config_from_env
 from botcube_credential_service.server import (
     CredentialServiceSettings,
     plan_usage_owner,
@@ -30,7 +30,7 @@ def local_credential_service(
     return credential_service_app(
         CredentialServiceSettings(
             'local', invocation_secret,
-            plan_usage_owner_account_id=plan_usage_owner(botcube_config_from_env()),
+            plan_usage_owner_account_id=plan_usage_owner(resolved_config_from_env()['config']),
         ),
         FakeSiteProvider(vault, site_url, audit),
         vault,

@@ -19,6 +19,7 @@ from botcube_credential_service.credential_source import (
     credential_source,
 )
 from botcube_credential_service.models import models_provider_from_config
+from required_keys import resolved_sections
 
 START = 1_795_000_000.0
 CLIENT_SECRET = 's3cret-client-value'
@@ -87,7 +88,7 @@ def test_models_endpoint_gets_its_token_through_its_named_proxy(endpoint: TokenE
                 'modelGateway': {'kind': 'openai-compatible', 'url': 'https://models.example/v1',
                                  'credential': oauth(endpoint.url, secret_file), 'proxy': 'integrations.proxy'},
             }}
-            provider = models_provider_from_config(CredentialAuditRecorder(), config, {})
+            provider = models_provider_from_config(CredentialAuditRecorder(), resolved_sections(config), {})
             assert provider is not None
             asyncio.run(provider.aclose())
             assert [request['path'] for request in endpoint.requests] == [endpoint.url]

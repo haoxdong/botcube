@@ -1,4 +1,4 @@
-import { gatewayServesProvider, unreachedProvider, type ModelProvider, type CredentialSource } from './blocks.js';
+import { gatewayServesProvider, modelProvider, unreachedProvider, type ModelProvider, type CredentialSource } from './blocks.js';
 import { deploymentNames, webOrigins } from './read.cjs';
 import type { sectionDefaults } from './schema.js';
 
@@ -27,12 +27,7 @@ export function resolveConfig(config: Config) {
     physicalNames,
     webOrigins: webOrigins(config) ?? [],
     credentialServiceHttpPath: services?.credentialService?.http?.path ?? '',
-    modelGateway: {
-      anthropic: reach('anthropic'),
-      openai: reach('openai'),
-      deepseek: reach('deepseek'),
-      echo: reach('echo'),
-    } satisfies Record<ModelProvider, ReturnType<typeof reach>>,
+    modelGateway: Object.fromEntries(modelProvider.options.map(provider => [provider, reach(provider)])),
   } as const;
 }
 

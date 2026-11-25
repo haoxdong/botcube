@@ -69,7 +69,7 @@ const CLIENTS: Readonly<Record<string, readonly { client: string; route: Route }
   }],
   [`${CREDENTIAL_SERVICE}/credential_source.py`]: [
     { client: 'a secret Credential Source: Secrets Manager', route: { direct: 'aws' } },
-    { client: 'an OAuth token grant for the model gateway', route: { reference: 'integrations.modelGateway.proxy', reads: [[`${CREDENTIAL_SERVICE}/models.py`, "models['credential'], env=env, now=now, proxy=proxy"]] } },
+    { client: 'an OAuth token grant for the model gateway', route: { reference: 'integrations.modelGateway.proxy', reads: [[`${CREDENTIAL_SERVICE}/models.py`, "route['credential'], env=env, now=now, proxy=proxy"]] } },
   ],
   [`${CREDENTIAL_SERVICE}/endpoint_tls.py`]: [{ client: 'the connection to the proxy', route: { direct: 'proxy' } }],
   [`${CREDENTIAL_SERVICE}/sign_in.py`]: [{ client: "KMS and AgentCore Browser's automation stream", route: { direct: 'aws' } }],

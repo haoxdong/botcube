@@ -49,8 +49,10 @@ describe('agent opening Turn', () => {
     stack.agentcore.script(id, { kind: 'error', status: 503, body: JSON.stringify({ message: 'Model unavailable' }) });
     stack.sessionApi.reply(id, 404, { error: `Session ${id} has no record`, code: 'SESSION_NOT_FOUND' });
     await (await browser.post('/', opening(id, 'failed-opening'))).text();
-    expect(await (await browser.get('/main-chat')).json()).toMatchObject({ id, messages: [], provider: 'echo', running: false,
+    const failed = await (await browser.get('/main-chat')).json();
+    expect(failed).toMatchObject({ id, messages: [], running: false,
       failure: { runId: 'failed-opening', message: expect.stringContaining('Model unavailable') } });
+    expect(failed).not.toHaveProperty('provider');
     expect((await browser.post('/', opening(id, 'duplicate-opening'))).status).toBe(409);
     stack.agentcore.script(id, { kind: 'stream', frames: ['data: {"type":"RUN_STARTED"}', 'data: {"type":"RUN_FINISHED"}'] });
     expect(await (await browser.sendTurn(id, { text: 'Hello again', forwardedProps: { model: 'echo' } })).text()).toContain('RUN_FINISHED');
