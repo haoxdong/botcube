@@ -23,10 +23,10 @@ export const CHAT_FILES_MOUNT = '/mnt/files-efs';
  * Files on EFS: mount targets in the browser subnets, the Chat Service's mount of every account's directory,
  * and the key it signs each upload or download link with, which it serves itself.
  */
-export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatService, storage: ChatStorageStack, browsers: { subnets: Array<{ id: string; availabilityZone: string }> }, cubeRoot: string, clients: ec2.ISecurityGroup[] = [],
+export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatService, storage: ChatStorageStack, cubeRoot: string, clients: ec2.ISecurityGroup[] = [],
   mountRoleName?: string) {
   const existing = storage.existingFiles;
-  const { mountTargetIp, targets, accounts } = existing ? existingFilesNetwork(origin, existing, browsers.subnets[0]?.availabilityZone) : createdFilesNetwork(origin, chat, storage, browsers, clients);
+  const { mountTargetIp, targets, accounts } = existing ? existingFilesNetwork(origin, existing, chat.privateSubnets[0]?.availabilityZone) : createdFilesNetwork(origin, chat, storage, clients);
   const grantMount = (grant: (statement: iam.PolicyStatement) => unknown, accessPointArn: string, operator: 'StringEquals' | 'ArnLike' = 'StringEquals') => {
     if (!existing) grant(new iam.PolicyStatement({
       actions: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'],
@@ -109,12 +109,13 @@ function addPoolAlarm(origin: PreviewOriginStack, chat: PreviewChatService, capa
 interface FilesNetwork { mountTargetIp: string; targets: efs.CfnMountTarget[]; accounts: { id: string; attrArn: string; created?: efs.CfnAccessPoint } }
 
 function createdFilesNetwork(origin: PreviewOriginStack, chat: PreviewChatService, storage: ChatStorageStack,
-  browsers: { subnets: Array<{ id: string }> }, clients: ec2.ISecurityGroup[]): FilesNetwork {
+  clients: ec2.ISecurityGroup[]): FilesNetwork {
   const mountTargets = new ec2.SecurityGroup(origin, 'FilesEfsMountTargets', { vpc: chat.cluster.vpc, allowAllOutbound: false });
   mountTargets.addIngressRule(chat.network, ec2.Port.tcp(2049), 'Chat Service mounts Files');
   clients.forEach(client => mountTargets.addIngressRule(client, ec2.Port.tcp(2049), 'Account sessions mount Files'));
-  const targets = browsers.subnets.map((subnet, index) => new efs.CfnMountTarget(origin, `FilesEfsMountTarget${index}`, {
-    fileSystemId: storage.filesEfs.ref, subnetId: subnet.id, securityGroups: [mountTargets.securityGroupId],
+  const subnets = ec2.SubnetFilter.onePerAz().selectSubnets(chat.privateSubnets);
+  const targets = subnets.map((subnet, index) => new efs.CfnMountTarget(origin, `FilesEfsMountTarget${index}`, {
+    fileSystemId: storage.filesEfs.ref, subnetId: subnet.subnetId, securityGroups: [mountTargets.securityGroupId],
   }));
   // Every account's directory, as the uid each account's own access point uses.
   const accounts = new efs.CfnAccessPoint(origin, 'FilesEfsAccounts', {

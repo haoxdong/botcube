@@ -120,7 +120,10 @@ export class PreviewChatService extends Construct {
   readonly container: ecs.ContainerDefinition;
   readonly service: ecs.FargateService;
   /** The private subnets the service runs in, where a product's own tasks run beside it. */
-  readonly privateSubnetIds: string[];
+  readonly privateSubnets: ec2.ISubnet[];
+  get privateSubnetIds(): string[] {
+    return this.privateSubnets.map(subnet => subnet.subnetId);
+  }
   constructor(scope: Construct, id: string, props: PreviewChatServiceProps) {
     super(scope, id);
     const origin = Stack.of(this);
@@ -133,11 +136,8 @@ export class PreviewChatService extends Construct {
       availabilityZones: props.privateSubnets.map(subnet => subnet.availabilityZone),
       privateSubnetIds: props.privateSubnets.map(subnet => subnet.id),
     });
-    const selectedSubnets = props.subnets || props.vpc
-      ? vpc.selectSubnets(props.subnets ?? { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }).subnetIds
-      : props.privateSubnets.map(subnet => subnet.id);
-    if (selectedSubnets.length === 0) throw new Error('Preview Chat Service requires a non-empty private subnet selection');
-    this.privateSubnetIds = selectedSubnets;
+    this.privateSubnets = vpc.selectSubnets(props.subnets ?? { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }).subnets;
+    if (this.privateSubnets.length === 0) throw new Error('Preview Chat Service requires a non-empty private subnet selection');
     const cluster = this.cluster = new ecs.Cluster(this, 'Cluster', { vpc, clusterName: props.clusterName, containerInsightsV2: ecs.ContainerInsights.DISABLED });
     const ingress = this.network = new ec2.SecurityGroup(this, 'Ingress', { vpc, ...optionalPhysicalName('securityGroupName', props.securityGroupName) });
     allowIngress(ingress, ingressResources.securityGroup, port, Boolean(props.ingress));
@@ -197,7 +197,7 @@ export class PreviewChatService extends Construct {
       // aws-cdk-lib's Cluster declares `T | undefined` getters where ICluster declares `prop?: T`,
       // which exactOptionalPropertyTypes rejects; the construct is its interface.
       cluster: cluster as ecs.ICluster, taskDefinition: task, serviceName: props.serviceName ?? 'chat-service-preview', desiredCount: parkState(this).number(1, 0),
-      ...(props.subnets ? { vpcSubnets: props.subnets } : {}),
+      vpcSubnets: { subnets: this.privateSubnets },
       assignPublicIp: false,
       securityGroups: [ingress, ...(props.securityGroups ?? [])], minHealthyPercent: props.minHealthyPercent ?? 100, maxHealthyPercent: props.maxHealthyPercent ?? 200,
       circuitBreaker: { rollback: true }, healthCheckGracePeriod: Duration.seconds(props.healthGraceSeconds ?? 60),

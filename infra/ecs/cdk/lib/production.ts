@@ -234,7 +234,7 @@ function defineStacks(app: App, options: ProductionOptions) {
   if (options.awsAccess === 'assume-role') assumeUserMemoryRole(origin, chat, identity.aws.iam);
   nameTaskRoles(chat.task, filesRoles?.chatServiceTaskRole, undefined, undefined);
   grantSecretReads(chat, chat.task, options.chatSecretIds ?? []);
-  const agentComputer = addAgentComputerBrowser(origin, chat, storage, browserConfiguration(options, chat.cluster.vpc), {
+  const agentComputer = addAgentComputerBrowser(origin, chat, storage, identity.aws.agentCore.agentComputerBrowser.name, {
     ...options.originConfig, ...optionalPhysicalName('agentComputerBrowserRoleName', filesRoles?.agentComputerBrowserRole),
   });
   const credentialConfig = identity.aws.ecs.credentialService;
@@ -242,7 +242,7 @@ function defineStacks(app: App, options: ProductionOptions) {
   const credentials = new PrivateCredentialService(origin, 'CredentialService', {
     ...(options.executionRole ? { executionRole: options.executionRole } : {}),
     ...(options.kmsKey ? { kmsKey: options.kmsKey } : {}),
-    ...(options.privateSubnets ? { subnets: options.privateSubnets } : {}),
+    subnets: { subnets: chat.privateSubnets },
     cluster: chat.cluster, chatNetwork: chat.network, agentNetwork,
     tableName: credentialConfig.tableName, rpcPath: credentialConfig.rpcPath, namespaceName: identity.aws.ecs.privateNamespace,
     alertsTopicName: identity.aws.ecs.alertsTopicName, port: identity.aws.credentialService.port,
@@ -269,7 +269,7 @@ function defineStacks(app: App, options: ProductionOptions) {
     Tags.of(task).add('commit', commit, { includeResourceTypes: ['AWS::ECS::TaskDefinition'] });
   }
   addFilesPolicy(origin, chat);
-  addFilesLinks(origin, chat, storage, agentComputer, cubeRoot, [agentNetwork, agentComputer.network], filesRoles?.filesMountRole);
+  addFilesLinks(origin, chat, storage, cubeRoot, [agentNetwork, agentComputer.network], filesRoles?.filesMountRole);
   // The agent reaches its Agent Computer only through the Chat Service's CDP filter (ADR 0075 decision 5).
   chat.network.connections.allowFrom(agentNetwork, ec2.Port.tcp(options.chat?.port ?? 8123), 'Harness Agent Computer CDP');
   chat.container.addEnvironment(CREDENTIAL_SERVICE_ENV.url, credentials.url);
@@ -349,16 +349,6 @@ function createServingOrigin(app: App, options: ProductionOptions, input: Origin
   return origin;
 }
 
-function browserConfiguration(options: ProductionOptions, vpc: ec2.IVpc): DeployIdentity['aws']['agentCore'] {
-  const agentCore = options.identity.aws.agentCore;
-  if (!options.vpc && !options.privateSubnets) return agentCore;
-  const subnets = vpc.selectSubnets(options.privateSubnets ?? { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }).subnets;
-  return {
-    ...agentCore,
-    privateNatBrowser: { ...agentCore.privateNatBrowser, subnets: subnets.map(subnet => ({ id: subnet.subnetId, availabilityZone: subnet.availabilityZone })) },
-  };
-}
-
 /**
  * The Agent Computer's own browser (ADR 0077): in the login browser's subnets, so it
  * egresses through the same fixed NAT address, with an execution role that may mount
@@ -370,7 +360,7 @@ function addAgentComputerBrowser(
   origin: PreviewOriginStack,
   chat: PreviewChatService,
   storage: ChatStorageStack,
-  agentCore: DeployIdentity['aws']['agentCore'],
+  browserName: string,
   names?: ProductionOptions['originConfig'],
 ) {
   const network = new ec2.SecurityGroup(origin, 'AgentComputerBrowsers', { vpc: chat.cluster.vpc, ...optionalPhysicalName('securityGroupName', names?.agentComputerSecurityGroupName) });
@@ -383,23 +373,22 @@ function addAgentComputerBrowser(
     resources: [storage.filesEfs.attrArn],
     conditions: { ArnLike: { 'elasticfilesystem:AccessPointArn': origin.formatArn({ service: 'elasticfilesystem', resource: 'access-point', resourceName: '*' }) } },
   }));
-  const { subnets } = agentCore.privateNatBrowser;
   const managedPolicy = new Asset(origin, 'AgentComputerChromeManagedPolicy', {
     path: path.join(cubeRoot, 'infra/agent-computer/chrome-managed-policy.json'),
   });
   const browser = new CfnBrowserCustom(origin, 'AgentComputerBrowser', {
-    name: agentCore.agentComputerBrowser.name,
+    name: browserName,
     executionRoleArn: role.roleArn,
     networkConfiguration: {
       networkMode: 'VPC',
-      vpcConfig: { subnets: subnets.map(subnet => subnet.id), securityGroups: [network.securityGroupId] },
+      vpcConfig: { subnets: chat.privateSubnetIds, securityGroups: [network.securityGroupId] },
     },
     enterprisePolicies: [{ type: 'MANAGED', location: { bucket: managedPolicy.s3BucketName, prefix: managedPolicy.s3ObjectKey } }],
   });
   // The browser assumes its role when a session starts; the role's policy must exist by then.
   browser.node.addDependency(role);
   chat.container.addEnvironment('AGENTCORE_AGENT_COMPUTER_BROWSER_ID', browser.attrBrowserId);
-  return { browser, network, subnets };
+  return { browser, network };
 }
 
 /**

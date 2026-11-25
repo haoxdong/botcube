@@ -11,10 +11,14 @@ import { PreviewChatService } from '../lib/preview-chat-service.js';
 import { PreviewOriginStack } from '../lib/preview-origin-stack.js';
 import { repositoryRoot, caCertificate } from './origin-fixture.js';
 
-function synth(parked: boolean, context: Record<string, unknown> = {}) {
+const privateSubnets = [
+  { id: 'subnet-fixture33333333', availabilityZone: 'us-east-1a' },
+  { id: 'subnet-fixture44444444', availabilityZone: 'us-east-1b' },
+];
+
+function synth(parked: boolean, context: Record<string, unknown> = {}, subnets = privateSubnets) {
   const app = new App({ context });
   const env = { account: '123456789012', region: 'us-east-1' };
-  const subnets = [{ id: 'subnet-fixture33333333', availabilityZone: 'us-east-1a' }, { id: 'subnet-fixture44444444', availabilityZone: 'us-east-1b' }];
   const storage = new ChatStorageStack(app, 'Storage', { env });
   const origin = new PreviewOriginStack(app, 'Origin', {
     env, hostname: 'preview.example.com', production: { hostname: 'api.example.com' }, repositoryRoot, originProviderPath: path.resolve(__dirname, '../../origin-provider'),
@@ -30,9 +34,22 @@ function synth(parked: boolean, context: Record<string, unknown> = {}) {
     chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'),
   });
   const runtime = new SecurityGroup(origin, 'RuntimeNetwork', { vpc: chat.cluster.vpc });
-  addFilesLinks(origin, chat, storage, { subnets }, path.resolve(__dirname, '../../../..'), [runtime]);
+  addFilesLinks(origin, chat, storage, path.resolve(__dirname, '../../../..'), [runtime]);
   return parkingTemplate(origin, parked);
 }
+
+test('Files places one mount target per workload Availability Zone', () => {
+  const template = synth(false, {}, [...privateSubnets, {
+    id: 'subnet-fixture55555555', availabilityZone: 'us-east-1a',
+  }]);
+  expect(Object.values(template.findResources('AWS::EFS::MountTarget')).map(target => target.Properties.SubnetId))
+    .toEqual(['subnet-fixture33333333', 'subnet-fixture44444444']);
+  template.hasResourceProperties('AWS::ECS::Service', {
+    NetworkConfiguration: { AwsvpcConfiguration: {
+      Subnets: ['subnet-fixture33333333', 'subnet-fixture44444444', 'subnet-fixture55555555'],
+    } },
+  });
+});
 
 test.each([false, true])('Chat mounts the accounts access point with IAM and TLS while EFS selection stays off, parked=%s', parked => {
   const template = synth(parked);
