@@ -1,3 +1,4 @@
+import { VAULT_TABLE_ACTIONS } from 'botcube-config/table-actions';
 import { parkState } from './park-state.js';
 import { optionalPhysicalName } from './physical-name.js';
 import { CfnOutput, CfnResource, Duration, Names, RemovalPolicy, Stack } from 'aws-cdk-lib';
@@ -157,7 +158,7 @@ export class PrivateCredentialService extends Construct {
     };
     const table = vault('ProviderVault', props.tableName, 'provider');
     // UpdateItem takes a rotating credential's refresh lease (ADR 0078 decision 4).
-    if (!props.existingVaultTableName) table.grant(task.taskRole, 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:ConditionCheckItem');
+    if (!props.existingVaultTableName) table.grant(task.taskRole, ...VAULT_TABLE_ACTIONS);
     // Sign-in Sheet entry and session seeding: find a browser Session's automation stream and drive it.
     task.addToTaskRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock-agentcore:GetBrowserSession', 'bedrock-agentcore:ConnectBrowserAutomationStream'],

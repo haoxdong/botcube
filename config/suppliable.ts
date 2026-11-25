@@ -1,3 +1,4 @@
+import { VAULT_TABLE_ACTIONS } from './table-actions.cjs';
 import type { BotCubeConfig } from './schema.js';
 import type { Principal } from './principals.js';
 
@@ -5,7 +6,6 @@ export const NETWORK_INTERFACES = ['CreateNetworkInterface', 'DeleteNetworkInter
   'AssignPrivateIpAddresses', 'UnassignPrivateIpAddresses'].map(action => `ec2:${action}`);
 const CHAT_TABLE_ACTIONS = ['BatchGetItem', 'BatchWriteItem', 'ConditionCheckItem', 'DeleteItem', 'DescribeTable', 'GetItem', 'GetRecords',
   'GetShardIterator', 'PutItem', 'Query', 'Scan', 'UpdateItem'].map(action => `dynamodb:${action}`);
-const VAULT_TABLE_ACTIONS = ['ConditionCheckItem', 'DeleteItem', 'GetItem', 'PutItem', 'Query', 'UpdateItem'].map(action => `dynamodb:${action}`);
 const KEY_USE = ['kms:Decrypt', 'kms:DescribeKey', 'kms:GenerateDataKey'];
 const PARKING = 'production parking functions';
 const ORIGIN_SMOKE = "the deploy role's origin smoke test";
