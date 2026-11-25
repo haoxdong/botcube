@@ -1,3 +1,5 @@
+import { FILE_ACCOUNT_LOCK } from './plugin/file-account.ts';
+
 type OpeningResponse = { response: Response } | { error: unknown };
 
 declare global {
@@ -8,11 +10,15 @@ declare global {
 
 /** Start cookie-authenticated reads before hydration; consumers take each response once. */
 export function startOpeningRequests(chatServiceUrl: string): void {
-  const urls = [`${chatServiceUrl}/account/session`, `${chatServiceUrl}/main-chat`]
+  const accountUrl = `${chatServiceUrl}/account/session`;
+  const urls = [accountUrl, `${chatServiceUrl}/main-chat`]
     .filter(() => window.location.pathname === '/')
-    .filter((url) => !url.endsWith('/main-chat') || !new URLSearchParams(window.location.search).has('chat'));
-  window.__botcubeOpeningRequests = Object.fromEntries(urls.map((url) => [url, fetch(url, { credentials: 'include', cache: 'no-store' })
-    .then((response) => ({ response }), (error: unknown) => ({ error }))]));
+    .filter((url) => url === accountUrl || !new URLSearchParams(window.location.search).has('chat'));
+  window.__botcubeOpeningRequests = Object.fromEntries(urls.map((url) => {
+    const send = () => fetch(url, { credentials: 'include', cache: 'no-store' });
+    const request = url === accountUrl ? navigator.locks.request(FILE_ACCOUNT_LOCK, send) : send();
+    return [url, request.then((response) => ({ response }), (error: unknown) => ({ error }))];
+  }));
 }
 
 export function peekOpeningResponse(url: string): Promise<OpeningResponse> | null {

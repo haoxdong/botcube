@@ -2,6 +2,7 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     "lib": ["ES2023", "DOM"],
     "allowJs": true,
