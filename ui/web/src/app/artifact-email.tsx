@@ -6,13 +6,14 @@ import { readDraft, type EmailDraft } from "botcube-artifact-check/email-schema"
 import type { Imported } from "botcube-artifact-check/record";
 import { Fades } from "./motion";
 import { MailIcon, PaperclipIcon } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { CouldntOpen, EditFailures, NewerVersion } from "./alert-line";
 import { artifactVersions } from "./artifact-versions";
 import { baseOf, filesPath } from "./files-path";
 import {
   pdfOf, saveFile, storedVersion, type ArtifactEdit, type ArtifactVersion, type Export, type ExportTarget, type ViewerProps,
 } from "./artifact-viewer";
+import { useLoad } from "./load-state";
 import { reason } from "./composer-files";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
@@ -90,21 +91,13 @@ export const EML: Export = {
   },
 };
 
-type Loaded = { version: ArtifactVersion } & ({ draft: EmailDraft } | { error: string });
-
-function useDraft(version: ArtifactVersion, read: ViewerProps["read"]): Loaded | null {
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
-  useEffect(() => {
-    let current = true;
-    read(version.path).then(
-      (text) => current && setLoaded({ version, draft: readDraft(text) }),
-      (error: unknown) => current && setLoaded({ version, error: reason(error) }),
-    ).catch((error: unknown) => current && setLoaded({ version, error: `it is not an email draft: ${reason(error)}` }));
-    return () => {
-      current = false;
-    };
-  }, [version, read]);
-  return loaded;
+async function loadDraft(version: ArtifactVersion, read: ViewerProps["read"]) {
+  const text = await read(version.path);
+  try {
+    return readDraft(text);
+  } catch (error) {
+    throw new Error(`it is not an email draft: ${reason(error)}`, { cause: error });
+  }
 }
 
 /**
@@ -115,8 +108,10 @@ export function EditableEmail({ artifact: newest, read, save, shows }: ViewerPro
   const [held, setHeld] = useState<ArtifactVersion | null>(null);
   const [edited, setEdited] = useState(false);
   const [opened, setOpened] = useState(0);
-  const loaded = useDraft(held ?? newest, read);
-  const shown = loaded?.version ?? newest;
+  const version = held ?? newest;
+  const key = useMemo(() => ({ version, read }), [version, read]);
+  const { state: loaded, resultKey } = useLoad(() => loadDraft(version, read), key);
+  const shown = resultKey?.version ?? newest;
   useEffect(() => {
     shows({ version: shown, unsaved: edited });
   }, [shows, shown, edited]);
@@ -127,12 +122,12 @@ export function EditableEmail({ artifact: newest, read, save, shows }: ViewerPro
   };
   return (
     <>
-      <Fades>{loaded !== null && "error" in loaded && (
+      <Fades>{loaded.status === "failed" && (
         <CouldntOpen title={shown.title} why={loaded.error} />
       )}</Fades>
-      <Fades>{loaded !== null && "draft" in loaded && (
+      <Fades>{loaded.status === "loaded" && (
         <div className="artifact-email">
-          <DraftForm key={`${shown.path}#${opened}`} version={shown} newest={newest} loaded={loaded.draft} close={close}
+          <DraftForm key={`${shown.path}#${opened}`} version={shown} newest={newest} loaded={loaded.value} close={close}
             edits={(now) => {
               setEdited(now);
               if (now) setHeld((current) => current ?? shown);

@@ -4,7 +4,7 @@ import { Fades } from "./motion";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import { AlertLine, CouldntOpen } from "./alert-line";
-import { reason } from "./composer-files";
+import { useLoad } from "./load-state";
 import { sanitizeSlide, type CleanSlide, type Embed } from "./slide-sanitize";
 import { filesPath, type FilesPath } from "./files-path";
 
@@ -119,18 +119,9 @@ export async function readDeck(path: FilesPath, read: (path: FilesPath) => Promi
 
 /** A published deck's Artifact Version from Files: its deck.json, then each slide it lists; empty while it loads. */
 export function useVersionFiles(path: FilesPath, read: (path: FilesPath) => Promise<string>): DeckFile[] | { error: string } {
-  const [files, setFiles] = useState<DeckFile[] | { error: string }>([]);
-  useEffect(() => {
-    let current = true;
-    readDeck(path, read).then(
-      (files) => current && setFiles(files),
-      (error: unknown) => current && setFiles({ error: reason(error) }),
-    );
-    return () => {
-      current = false;
-    };
-  }, [path, read]);
-  return files;
+  const key = useMemo(() => [path, read] as const, [path, read]);
+  const { state } = useLoad(() => readDeck(path, read), key);
+  return state.status === "loaded" ? state.value : state.status === "failed" ? { error: state.error } : [];
 }
 
 /** A published deck's version, as `useVersionFiles` loaded it (a Viewer may lay its drafts over the files): it runs. */

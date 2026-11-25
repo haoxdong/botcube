@@ -14,17 +14,22 @@ export type LoadState<T> = { status: "loading" } | { status: "loaded"; value: T 
  * Loads `load()` on mount and again whenever `key` changes, keeping what it showed until the new
  * answer arrives. `refresh` also keeps the last result visible, while `retry` starts from the loading state.
  */
-export function useLoad<T>(load: () => Promise<T>, key: unknown) {
-  const [result, setResult] = useState<{ state: LoadState<T>; key: unknown; attempt: number }>();
+export function useLoad<T, Key = unknown>(load: () => Promise<T>, key: Key) {
+  const [result, setResult] = useState<{ state: LoadState<T>; key: Key; attempt: number }>();
   const state: LoadState<T> = result?.state ?? { status: "loading" };
   const [attempt, setAttempt] = useState(0);
 
   useEffect(
     () => {
       let current = true;
-      load().then(
+      const request = async () => load();
+      void request().then(
         (value) => current && setResult({ state: { status: "loaded", value }, key, attempt }),
-        (failure: Error) => current && setResult({ state: { status: "failed", error: failure.message }, key, attempt }),
+        (failure: unknown) => current && setResult({
+          state: { status: "failed", error: failure instanceof Error ? failure.message : String(failure) },
+          key,
+          attempt,
+        }),
       );
       return () => {
         current = false;
@@ -45,7 +50,7 @@ export function useLoad<T>(load: () => Promise<T>, key: unknown) {
       : current);
   const refreshing = result?.state.status === "loaded" &&
     (!Object.is(result.key, key) || result.attempt !== attempt);
-  return { state, retry, refresh, refreshing, update };
+  return { state, resultKey: result?.key, retry, refresh, refreshing, update };
 }
 
 /** A placeholder in the shape of text, shown while `label` loads. */

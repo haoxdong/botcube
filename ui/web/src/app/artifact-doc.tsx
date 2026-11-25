@@ -9,14 +9,15 @@ import { createDocument, Editor, EditorContent, useEditor } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit";
 import { Fades } from "./motion";
 import { FileTextIcon } from "lucide-react";
-import { createContext, useContext, useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { createContext, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import {
   pdfOf, saveFile, storedVersion, type ArtifactVersion, type Export, type ExportTarget, type ViewerProps,
 } from "./artifact-viewer";
 import { CouldntOpen, EditFailures, NewerVersion } from "./alert-line";
 import { reason } from "./composer-files";
-import { baseOf, type FilesPath } from "./files-path";
+import { useLoad } from "./load-state";
+import { baseOf } from "./files-path";
 import { Button } from "@/components/ui/button";
 
 const EXTENSIONS = [
@@ -92,28 +93,15 @@ export function DocFrame({ title, markdown }: { title: string; markdown: string 
   return <div className="artifact-doc-page"><EditorContent editor={editor} /></div>;
 }
 
-function useMarkdown(version: ArtifactVersion, read: (path: FilesPath) => Promise<string>) {
-  const [loaded, setLoaded] = useState<{ version: ArtifactVersion } & ({ markdown: string } | { error: string }) | null>(null);
-  useEffect(() => {
-    let current = true;
-    read(version.path).then(
-      (markdown) => current && setLoaded({ version, markdown }),
-      (error: unknown) => current && setLoaded({ version, error: reason(error) }),
-    );
-    return () => {
-      current = false;
-    };
-  }, [version, read]);
-  return loaded;
-}
-
 export function EditableDoc({ artifact: newest, read, save, shows }: ViewerProps) {
   const [edit, setEdit] = useState<{ version: ArtifactVersion; markdown: string } | null>(null);
   const [opened, setOpened] = useState(0);
   const [saving, setSaving] = useState(false);
   const [failures, setFailures] = useState<string[]>([]);
-  const loaded = useMarkdown(edit?.version ?? newest, read);
-  const doc = loaded?.version ?? newest;
+  const version = edit?.version ?? newest;
+  const key = useMemo(() => ({ version, read }), [version, read]);
+  const { state: loaded, resultKey } = useLoad(() => read(version.path), key);
+  const doc = resultKey?.version ?? newest;
   const unsaved = edit !== null;
   useEffect(() => shows({ version: doc, unsaved }), [shows, doc, unsaved]);
   const stop = () => {
@@ -136,8 +124,8 @@ export function EditableDoc({ artifact: newest, read, save, shows }: ViewerProps
     }
   };
 
-  if (loaded === null) return <p className="artifact-status">Opening {doc.title}…</p>;
-  if ("error" in loaded) return <CouldntOpen title={doc.title} why={loaded.error} />;
+  if (loaded.status === "loading") return <p className="artifact-status">Opening {doc.title}…</p>;
+  if (loaded.status === "failed") return <CouldntOpen title={doc.title} why={loaded.error} />;
   return (
     <>
       <div className="artifact-edit-bar">
@@ -148,7 +136,7 @@ export function EditableDoc({ artifact: newest, read, save, shows }: ViewerProps
         <NewerVersion newest={newest.version} edited={edit.version.version} onDiscard={stop} />
       )}</Fades>
       <EditFailures failures={failures} />
-      <div className="artifact-doc-page"><DocEditor key={`${doc.path}:${opened}`} title={doc.title} markdown={loaded.markdown}
+      <div className="artifact-doc-page"><DocEditor key={`${doc.path}:${opened}`} title={doc.title} markdown={loaded.value}
         onEdit={(markdown) => setEdit({ version: doc, markdown })} /></div>
     </>
   );

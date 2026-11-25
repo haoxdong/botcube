@@ -9,6 +9,7 @@ import { CouldntOpen, EditFailures, NewerVersion } from "./alert-line";
 import { artifactVersions } from "./artifact-versions";
 import { baseOf } from "./files-path";
 import { saveFile, storedVersion, type ArtifactVersion, type Export, type ViewerProps } from "./artifact-viewer";
+import { useLoad } from "./load-state";
 import { reason } from "./composer-files";
 import type { Grid, GridPosition } from "./sheet-grid";
 import { readImports } from "./sheet-import";
@@ -16,7 +17,6 @@ import { editsOf, replay, univerDataOf, type ImportedSheets } from "./sheet-mode
 import { Button } from "@/components/ui/button";
 
 type Opened = { sheet: Sheet; imported: ImportedSheets };
-type Loaded = (Opened & { version: ArtifactVersion }) | { error: string } | null;
 
 function sheetOf(text: string): Sheet {
   const parsed: unknown = JSON.parse(text);
@@ -66,7 +66,9 @@ export const EXCEL: Export = {
 export function SheetVersion({ artifact: newest, read, readBytes, save, shows }: ViewerProps) {
   const [held, hold] = useState<ArtifactVersion | null>(null);
   const shownVersion = held ?? newest;
-  const [loaded, setLoaded] = useState<Loaded>(null);
+  const key = useMemo(() => ({ version: shownVersion, read, readBytes }), [shownVersion, read, readBytes]);
+  const { state: loaded, resultKey } = useLoad(() => openedAt(shownVersion, { read, readBytes }), key);
+  const loadedVersion = resultKey?.version ?? shownVersion;
   const host = useRef<HTMLDivElement>(null);
   const grid = useRef<Grid | null>(null);
   const position = useRef<GridPosition | null>(null);
@@ -75,20 +77,13 @@ export function SheetVersion({ artifact: newest, read, readBytes, save, shows }:
   const [changed, setChanged] = useState(false);
   const [failures, setFailures] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const opened = loaded !== null && "sheet" in loaded ? loaded : null;
-  const sheet = opened?.sheet ?? null;
-  const book = useMemo(() => opened && { workbook: replay(opened.sheet, opened.imported), version: opened.version }, [opened]);
+  const book = useMemo(() => loaded.status === "loaded" ? {
+    workbook: replay(loaded.value.sheet, loaded.value.imported),
+    version: loadedVersion,
+    sheet: loaded.value.sheet,
+  } : null, [loaded, loadedVersion]);
+  const [gridFailure, setGridFailure] = useState<{ book: NonNullable<typeof book>; error: string } | null>(null);
   const rendered = drawn !== null && drawn === book && book.version.path === shownVersion.path;
-
-  useEffect(() => {
-    let current = true;
-    openedAt(shownVersion, { read, readBytes }).then((found) => {
-      if (current) setLoaded({ ...found, version: shownVersion });
-    }).catch((error: unknown) => current && setLoaded({ error: reason(error) }));
-    return () => {
-      current = false;
-    };
-  }, [shownVersion, read, readBytes]);
 
   useEffect(() => {
     if (book === null || host.current === null) return;
@@ -105,7 +100,9 @@ export function SheetVersion({ artifact: newest, read, readBytes, save, shows }:
           if (edited) hold((current) => current ?? book.version);
         },
       });
-    }, (error: unknown) => setLoaded({ error: `the grid didn't load: ${reason(error)}` }));
+    }, (error: unknown) => {
+      if (!disposed) setGridFailure({ book, error: `the grid didn't load: ${reason(error)}` });
+    });
     return () => {
       disposed = true;
       if (grid.current !== null) {
@@ -121,8 +118,8 @@ export function SheetVersion({ artifact: newest, read, readBytes, save, shows }:
   useEffect(() => shows({ version: onScreen, unsaved: changed }), [shows, onScreen, changed]);
 
   const shown = (): Sheet | null => {
-    if (sheet === null || book === null || grid.current === null) return null;
-    return { edits: [...sheet.edits, ...editsOf(book.workbook, grid.current.cells())] };
+    if (book === null || grid.current === null) return null;
+    return { edits: [...book.sheet.edits, ...editsOf(book.workbook, grid.current.cells())] };
   };
 
   const drop = () => {
@@ -147,7 +144,7 @@ export function SheetVersion({ artifact: newest, read, readBytes, save, shows }:
     }
   };
 
-  const failure = loaded !== null && "error" in loaded ? loaded.error : null;
+  const failure = loaded.status === "failed" ? loaded.error : gridFailure?.book === book ? gridFailure.error : null;
   return (
     <>
       <Fades>{failure !== null && (
