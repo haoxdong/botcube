@@ -518,31 +518,32 @@ function ChatThread({
     onMessageSubmitted();
     listAgain.current = onMessageSubmitted;
   };
-  const submitTurn = (message: string, submit: Submit, retry: () => void = () => submitTurn(message, submit)) => {
-    const sent = runningRef.current ? steer(message) : startTurn(message, submit, retry);
-    if (sent && message.trim()) refreshSideChatsOnce();
-    return sent;
-  };
-  const startTurn = (message: string, submit: Submit, retry: () => void) => {
+  const turnRefusal = (message: string, retry: () => void) => {
     if (!modelsReady()) {
-      const { models: accountModels } = accountRef.current;
-      setRunError(
-        !accountModels.loaded && accountModels.error !== null
-          ? { message: `${accountModels.error}. Reload the page to send a message.`, question: message }
-          : { message: "Your models are still loading. Send it again once they have.", retry },
-      );
+      const { models } = accountRef.current;
+      return !models.loaded && models.error !== null
+        ? { message: `${models.error}. Reload the page to send a message.`, question: message }
+        : { message: "Your models are still loading. Send it again once they have.", retry };
+    }
+    return navigator.onLine ? undefined : { message: `Couldn't reach ${UI_CONFIG.title}. Check your connection.`, retry };
+  };
+  const submitTurn = (message: string, submit: Submit, retry: () => void = () => submitTurn(message, submit)) => {
+    const queue = runningRef.current;
+    const refusal = queue ? undefined : turnRefusal(message, retry);
+    if (refusal) {
+      setRunError(refusal);
       return false;
     }
-    if (!navigator.onLine) {
-      setRunError({ message: `Couldn't reach ${UI_CONFIG.title}. Check your connection.`, retry });
-      return false;
-    }
-    const { models: accountModels, selectedModel: currentModel } = accountRef.current;
-    onTurnStarting(accountModels.loaded ? accountModels.models.find(({ key }) => key === currentModel)?.provider : undefined);
+    if (queue && !steer(message)) return false;
     setRunError(null);
-    startMoment("send-acknowledged");
-    submittedQuestion.current = message;
-    void submit(message);
+    if (!queue) {
+      const { models, selectedModel } = accountRef.current;
+      onTurnStarting(models.loaded ? models.models.find(({ key }) => key === selectedModel)?.provider : undefined);
+      startMoment("send-acknowledged");
+      submittedQuestion.current = message;
+      void submit(message);
+    }
+    if (message.trim()) refreshSideChatsOnce();
     return true;
   };
   const showBusyRefusal = (error: Error) => {

@@ -9059,6 +9059,26 @@ describe('an offline first Turn refused before dispatch', () => {
     expect(await modelNames()).toEqual(['Deep', 'Astra']);
   });
 
+  it('queues an offline retry once when another Turn starts before reconnecting', async () => {
+    fetchMock.mockImplementation((url, init) => url.endsWith('/steer')
+      ? Promise.resolve(answer(200, { accepted: false }))
+      : chatService(url, init));
+    await renderPage(auth({ accountId: 'acct-first' }));
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    await sendMessage('Create one reminder');
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+
+    await act(async () => { copilot.running = true; });
+    online.mockReturnValue(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    const retry = screen.queryByRole('button', { name: 'Retry' });
+    if (retry) await userEvent.click(retry);
+
+    expect(requestsTo('/threads/main-1/steer')).toEqual(['POST']);
+    expect(screen.getByText('Waiting for the next Turn')).toBeVisible();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('keeps provider choices after the refused Turn succeeds on Retry', async () => {
     await renderPage();
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
