@@ -7,9 +7,7 @@ import type { Construct } from 'constructs';
 import type { RuntimeTelemetry } from '../../../../config/seams.js' with { 'resolution-mode': 'import' };
 
 /**
- * A runtime's telemetry: under `xray` it may send traces to X-Ray, under `otlp` read its Endpoint's credential secret,
- * and under `none` neither; the log group AgentCore (not CloudFormation) creates for it, named after its id, keeps
- * 30 days (ADR 0085 decision 2).
+ * Grant reads of telemetry credentials and retain the Runtime's logs for 30 days (ADR 0085 decision 2).
  */
 export function configureRuntimeTelemetry(
   scope: Construct,
@@ -18,10 +16,6 @@ export function configureRuntimeTelemetry(
   role: iam.IRole,
   telemetry: RuntimeTelemetry
 ): void {
-  if (telemetry.kind === 'xray')
-    role.addToPrincipalPolicy(
-      new iam.PolicyStatement({ actions: ['xray:PutTraceSegments', 'xray:PutTelemetryRecords'], resources: ['*'] })
-    );
   if (telemetry.secretIds.length)
     role.addToPrincipalPolicy(
       new iam.PolicyStatement({

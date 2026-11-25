@@ -237,8 +237,7 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in AdapterSections[S]['
       pulled: ['aws-observability/aws-otel-collector:v0.50.0'],
     },
     // Both services export straight to the Endpoint with the credential they read.
-    // AgentCore's Runtime construct grants the Harness X-Ray unless telemetry is none.
-    otlp: ({ url }) => ({ egressHosts: [new URL(url).host], iam: { harness: { actions: XRAY } } }),
+    otlp: ({ url }) => ({ egressHosts: [new URL(url).host] }),
     none: {},
   },
   proxy: {

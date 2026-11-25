@@ -377,8 +377,8 @@ test('grants the runtime role tracing and no browser access (ADR 0075 decision 5
   expect(JSON.stringify(template.findResources('AWS::IAM::Policy'))).not.toMatch(/Browser/);
 });
 
-test('grants the runtime role no X-Ray when telemetry is none, and keeps it otherwise', () => {
-  const runtimePolicies = (telemetry?: { kind: 'none' | 'xray'; secretIds: string[] }) =>
+test('grants X-Ray only for X-Ray telemetry', () => {
+  const runtimePolicies = (telemetry?: { kind: 'none' | 'xray' | 'otlp'; secretIds: string[] }) =>
     JSON.stringify(
       Template.fromStack(
         new AgentCoreStack(new cdk.App(), 'RuntimeTelemetryStack', {
@@ -391,6 +391,9 @@ test('grants the runtime role no X-Ray when telemetry is none, and keeps it othe
     );
 
   expect(runtimePolicies({ kind: 'none', secretIds: [] })).not.toContain('xray:');
+  const otlp = runtimePolicies({ kind: 'otlp', secretIds: ['telemetry/headers'] });
+  expect(otlp).toContain('secret:telemetry/headers-??????');
+  expect(otlp).not.toContain('xray:');
   expect(runtimePolicies({ kind: 'xray', secretIds: [] })).toContain('xray:PutTraceSegments');
 });
 

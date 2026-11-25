@@ -19,7 +19,7 @@ const XRAY_ACTION = /^xray:(PutTraceSegments|PutTelemetryRecords)$/i;
 /**
  * The Runtime role keeps no Memory access: a Turn reaches Memory only with its tagged credentials (ADR 0067 §8).
  * Nor does it keep Bedrock's models when the BotCube Config puts them elsewhere, or X-Ray, which `@aws/agentcore-cdk`
- * always grants, when its telemetry is `none`.
+ * always grants, unless the deployment selects X-Ray (the default).
  */
 function restrictRuntimePolicy(
   stack: Stack,
@@ -41,7 +41,7 @@ function restrictRuntimePolicy(
           action =>
             !RUNTIME_REMOVED_ACTION.test(action) &&
             !(models && BEDROCK_MODEL_ACTION.test(action)) &&
-            !(telemetry?.kind === 'none' && XRAY_ACTION.test(action))
+            !(telemetry && telemetry.kind !== 'xray' && XRAY_ACTION.test(action))
         );
       return actions.length ? [{ ...statement, Action: actions.length === 1 ? actions[0] : actions }] : [];
     }),

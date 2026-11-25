@@ -366,6 +366,7 @@ describe("the enterprise example's telemetry Endpoint", () => {
     expect(section(printed, 'Egress hosts')).toContain('  otel-collector.example.com:4318');
     expect(section(printed, 'Egress hosts')).not.toContain('  xray.<region>.amazonaws.com');
     expect(printed).not.toContain('otel-collector:v0.50.0');
+    expect(printed).not.toContain('xray:');
   });
 
   it('from a secret grants both services its value', () => {
