@@ -74,6 +74,7 @@ from agentcore_fake import (
 from botcube_harness_deepagents import (
     artifact,
     files,
+    lazy_files,
     llm,
     memory_tools,
     message_times,
@@ -2185,6 +2186,7 @@ def test_a_warmup_with_a_malformed_binding_reports_failed_preparation(service: _
 def test_a_plain_answer_does_not_depend_on_an_unavailable_background_files_pull(
     service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _bot_writes_memory(monkeypatch)
     def unavailable(*args: Any) -> None:
         raise FilesMountError('EFS unavailable')
     monkeypatch.setattr(FilesMount, 'pull', unavailable)
@@ -2192,12 +2194,15 @@ def test_a_plain_answer_does_not_depend_on_an_unavailable_background_files_pull(
 
     assert events[-1]['type'] == 'RUN_FINISHED'
     assert _said(events) == 'Echo: hello'
+    assert '<agent_memory>' not in service.recorder.prompts[-1]
 
 
 @pytest.mark.parametrize('startup', [False, True])
 def test_startup_and_first_chat_finish_while_files_mount_is_blocked(
     service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch, startup: bool,
 ) -> None:
+    _bot_writes_memory(monkeypatch)
+    monkeypatch.setattr(lazy_files, 'EFS_READY_TIMEOUT', 0.2)
     entered, release = threading.Event(), threading.Event()
     workers: list[threading.Thread] = []
 
@@ -2216,6 +2221,7 @@ def test_startup_and_first_chat_finish_while_files_mount_is_blocked(
         assert entered.wait(1)
         assert plain[-1]['type'] == 'RUN_FINISHED'
         assert _said(plain) == 'Echo: hello'
+        assert '<agent_memory>' not in service.recorder.prompts[-1]
         assert not release.is_set()
     finally:
         release.set()
@@ -2339,19 +2345,48 @@ def test_one_users_session_cannot_read_another_users_written_memory(
     service: _Service, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _bot_writes_memory(monkeypatch)
-    accounts = {user: MountedFiles(tmp_path / f'{user}-files') for user in ('user-1', 'user-2')}
+    access_points = {'user-1': 'fsap-00000000000000001', 'user-2': 'fsap-00000000000000002'}
+    accounts = {access_points[user]: MountedFiles(tmp_path / f'{user}-files') for user in access_points}
+    mounted: list[str] = []
+
+    def mount(self: FilesMount, root: Path, excluded: object = ()) -> None:
+        mounted.append(self.access_point_id)
+        accounts[self.access_point_id].mount(self, root, excluded)
+
+    monkeypatch.setattr(FilesMount, 'pull', mount)
 
     def chat_as(user: str, text: str) -> list[dict[str, Any]]:
-        files = accounts[user]
-        monkeypatch.setenv('BOTCUBE_WORKSPACE', str(files.root))
-        monkeypatch.setattr(FilesMount, 'pull', lambda mount, root, excluded=(): files.mount(mount, root, excluded))
-        return service.turn(text, thread=f'{user}-chat', actor=user, user=user, files=_files())
+        monkeypatch.setenv('BOTCUBE_WORKSPACE', str(accounts[access_points[user]].root))
+        mounted.clear()
+        events = service.turn(text, thread=f'{user}-chat', actor=user, user=user,
+                              files={**_files(), 'accessPointId': access_points[user]})
+        assert set(mounted) == {access_points[user]}
+        return events
 
     chat_as('user-1', 'write: /memories/AGENTS.md: - Prefers copper')
     chat_as('user-2', 'hello')
 
     assert _written_memory(service.recorder.prompts[-1]) == '(No memory loaded)'
-    assert accounts['user-1'].read('memories/AGENTS.md') == b'- Prefers copper'
+    assert accounts[access_points['user-1']].read('memories/AGENTS.md') == b'- Prefers copper'
+
+
+def test_a_turn_without_files_answers_and_the_sessions_next_turn_loads_written_memory(
+    service: _Service, files_bucket: MountedFiles, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bot_writes_memory(monkeypatch)
+    files_bucket.write('memories/AGENTS.md', b'- Prefers copper')
+    def unavailable(*args: Any) -> None:
+        raise FilesMountError('EFS unavailable')
+    monkeypatch.setattr(FilesMount, 'pull', unavailable)
+
+    outage = service.turn('hello', files=_files())
+    monkeypatch.setattr(FilesMount, 'pull', lambda mount, root, excluded=(): files_bucket.mount(mount, root, excluded))
+    recovered = service.turn('hello again', files=_files())
+
+    assert outage[-1]['type'] == 'RUN_FINISHED'
+    assert '<agent_memory>' not in service.recorder.prompts[0]
+    assert recovered[-1]['type'] == 'RUN_FINISHED'
+    assert _written_memory(service.recorder.prompts[-1]) == '/memories/AGENTS.md\n\n- Prefers copper'
 
 
 def test_written_memory_loads_when_the_files_mount_is_still_pending_as_the_turn_starts(
@@ -2363,7 +2398,7 @@ def test_written_memory_loads_when_the_files_mount_is_still_pending_as_the_turn_
     def mount(self: FilesMount, root: Path, excluded: object = ()) -> None:
         entered.set()
         assert release.wait(5)
-        (root / 'memories').mkdir()
+        (root / 'memories').mkdir(exist_ok=True)
         (root / 'memories' / 'AGENTS.md').write_text('- Prefers copper')
 
     def mount_later() -> None:

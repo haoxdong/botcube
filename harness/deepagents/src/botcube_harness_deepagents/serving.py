@@ -462,6 +462,15 @@ def _memory_tools(
     return inmem_memory_backend.build_memory_tools(store=cast(InMemoryStore, store), actor_id=actor_id, thread_id=conversation_id)
 
 
+def _files_ready(files: FilesMount | None, run_id: str) -> bool:
+    try:
+        TurnFiles(files, _workspace(), excluded_paths(_require_bot().skills)).ensure()
+    except FilesMountError as error:
+        log.warning('Harness Turn answers without Written Memory run_id=%s: %s', run_id, error)
+        return False
+    return True
+
+
 def _agent_and_backend(**kwargs: Any) -> tuple[LangGraphAgent, LocalShellBackend]:
     with _CACHE_LOCK:
         agent = _get_agent(**kwargs)
@@ -634,7 +643,10 @@ async def _invoke_agent(input_data: Invocation, context: _RequestContext, auth: 
                     return session_memory.prefetch(lambda: agentcore_memory_backend.opening(store, actor_id), input_data.run_id, warmed)
                 return None
 
-            agent, backend = await _turn_agent(build, turn_identity, input_data.run_id, persistent_memory, read, prefetch)
+            def build_turn() -> tuple[LangGraphAgent, LocalShellBackend]:
+                return build(written_memory=written_memory and _files_ready(files, input_data.run_id))
+
+            agent, backend = await _turn_agent(build_turn, turn_identity, input_data.run_id, persistent_memory, read, prefetch)
             validate_checkpoint(agent.graph, session_config(session), saved)
             _require_bot().apply_session_id(backend, input_data.thread_id)
             return agent, Path(backend.cwd), bind_turn(backend, auth.model_relay)
