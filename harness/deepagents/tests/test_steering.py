@@ -86,8 +86,14 @@ def test_mid_turn_attachment_is_readable_without_losing_workspace_edits(
 ) -> None:
 
     from botcube_harness_deepagents.files_mount import FilesMount
-    from botcube_harness_deepagents.lazy_files import current_turn_files, turn_files
+    from botcube_harness_deepagents.lazy_files import (
+        TurnFiles,
+        current_turn_files,
+        turn_files,
+    )
     from mounted_files import MountedFiles, binding
+
+    late_upload = tmp_path / 'uploaded-late.csv'
 
     async def run(mount: FilesMount, mounted: MountedFiles) -> None:
         entered, release = asyncio.Event(), asyncio.Event()
@@ -115,10 +121,21 @@ def test_mid_turn_attachment_is_readable_without_losing_workspace_edits(
         ])
         graph = create_agent(model, tools=[working_tool, read_attachment], middleware=[SteeringMiddleware()])
         pending = PendingSteering()
+        refresh = TurnFiles.arefresh
+
+        async def attach_during_refresh(files: TurnFiles) -> None:
+            await refresh(files)
+            if not late_upload.exists():
+                late_upload.write_bytes(b'late attachment')
+                pending.add('late', 'Also read this\n\nAttached files:\n- /late.csv')
+
+        monkeypatch.setattr(TurnFiles, 'arefresh', attach_during_refresh)
 
         def published(event: Any) -> None:
             assert (tmp_path / 'report.csv').read_text() == 'date,close\n2026-10-31,42'
             assert (tmp_path / 'notes.txt').read_text() == 'local work kept'
+            if event.message_id == 'late':
+                assert (tmp_path / 'late.csv').is_file(), 'Published the late attachment before its Files refresh'
 
         token = active_steering.set((pending, published))
         try:
@@ -135,7 +152,7 @@ def test_mid_turn_attachment_is_readable_without_losing_workspace_edits(
                 if refresh_fails:
                     with pytest.raises(RuntimeError, match='Files refresh failed'):
                         await asyncio.wait_for(work, 5)
-                    assert list(pending.messages) == ['attached']
+                    assert pending.waiting_ids() == ('attached',)
                     assert (tmp_path / 'notes.txt').read_text() == 'local work kept'
                     return
                 await asyncio.wait_for(work, 5)
@@ -143,11 +160,18 @@ def test_mid_turn_attachment_is_readable_without_losing_workspace_edits(
             active_steering.reset(token)
         assert model.inputs[1][-2].content == 'first tool result kept'
         assert model.inputs[1][-1].id == 'attached'
-        assert model.inputs[2][-1].content == 'date,close\n2026-10-31,42'
+        assert model.inputs[2][-2].content == 'date,close\n2026-10-31,42'
+        assert model.inputs[2][-1].id == 'late'
 
     mounted = MountedFiles(tmp_path)
     mounted.write('notes.txt', b'old notes')
-    monkeypatch.setattr(FilesMount, 'pull', lambda mount, root, excluded=(): mounted.mount(mount, root, excluded))
+
+    def pull(mount: FilesMount, root: Path, excluded: Any = ()) -> None:
+        mounted.mount(mount, root, excluded)
+        if late_upload.exists():
+            mounted.write('late.csv', late_upload.read_bytes())
+
+    monkeypatch.setattr(FilesMount, 'pull', pull)
     asyncio.run(run(FilesMount.from_binding(binding()), mounted))
 
 
@@ -236,7 +260,7 @@ def test_steering_taken_by_a_model_step_cannot_be_withdrawn() -> None:
     ]
     assert [event.type for event in events] == ['TEXT_MESSAGE_START', 'TEXT_MESSAGE_CONTENT', 'TEXT_MESSAGE_END']
     pending.add('steer-1', 'Use the other date')
-    assert pending.messages == {}
+    assert pending.waiting_ids() == ()
 
 
 def test_taking_steering_logs_how_long_each_message_waited(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -245,7 +269,7 @@ def test_taking_steering_logs_how_long_each_message_waited(caplog: pytest.LogCap
     pending = PendingSteering()
     pending.add('m1', 'Use the close')
     with caplog.at_level('INFO', logger='botcube_harness_deepagents.steering'):
-        pending.take(lambda _event: None)
+        pending.take(pending.waiting_ids(), lambda _event: None)
     records = [json.loads(record.message) for record in caplog.records]
     assert records == [{'event': 'harness_steering_wait', 'messageId': 'm1', 'waitMs': 2500}]
 
@@ -301,7 +325,7 @@ def test_steering_resent_after_stop_reaches_the_model_once() -> None:
 
     inputs, resent = asyncio.run(run())
 
-    assert resent.consumed == {'steer-x'}
+    assert resent.withdraw('steer-x') is False
 
     assert inputs[1][-1].id == 'steer-x'
     assert [message.id for message in inputs[-1] if isinstance(message, HumanMessage)] == ['start', 'steer-x', 'send-now']
