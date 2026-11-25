@@ -40,9 +40,9 @@ const STANDARD_PREFIXES = ['AWS_', 'OTEL_'];
 /** The operator's consent to command credentials, kept out of the editable BotCube Config on purpose. */
 const OPERATOR_CONSENT = ['BOTCUBE_ALLOW_COMMAND_CREDENTIALS'];
 
-export const ALLOWED: ReadonlySet<string> = new Set([...LOCATOR, ...SECRETS, ...CREATED_RESOURCES, ...STANDARD, ...OPERATOR_CONSENT]);
+const ALLOWED: ReadonlySet<string> = new Set([...LOCATOR, ...SECRETS, ...CREATED_RESOURCES, ...STANDARD, ...OPERATOR_CONSENT]);
 
-export const isAllowed = (name: string): boolean => ALLOWED.has(name) || STANDARD_PREFIXES.some(prefix => name.startsWith(prefix));
+const isAllowed = (name: string): boolean => ALLOWED.has(name) || STANDARD_PREFIXES.some(prefix => name.startsWith(prefix));
 
 /** The variable names one process is deployed with: an ECS container, a Lambda or a Harness Runtime. */
 export interface ProcessEnvironment { process: string; names: string[] }
