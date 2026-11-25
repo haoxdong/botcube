@@ -18,7 +18,6 @@ import json
 import os
 import re
 import threading
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import cache
@@ -28,8 +27,6 @@ import boto3
 import botocore.loaders
 import botocore.session
 from botocore import UNSIGNED
-from botocore.awsrequest import AWSResponse
-from botocore.compat import HTTPHeaders
 from botocore.config import Config
 from botocore.credentials import (
     CredentialProvider,
@@ -40,7 +37,7 @@ from botocore.credentials import (
 from botocore.exceptions import ClientError
 from langgraph_checkpoint_aws import AgentCoreMemorySaver, AgentCoreMemoryStore
 
-from ... import turn_timing
+from ... import aws_clients, turn_timing
 from ...memory_tools import memory_tool
 from ...session_memory import SessionMemoryMiddleware
 from ...turn_memory import TurnMemoryMiddleware
@@ -185,14 +182,6 @@ def _memory_client(credentials: _AwsAccess, like: Any) -> Any:
         'bedrock-agentcore', region_name=like.meta.region_name, config=config)
 
 
-class _AnsweredBody:
-    def __init__(self, body: bytes) -> None:
-        self._body = body
-
-    def stream(self, **_: Any) -> Iterator[bytes]:
-        yield self._body
-
-
 def prime_spare(memory_id: str, region_name: str) -> None:
     """Before the V2 snapshot: the Memory store and its signing client, unbound until the first Turn binds them."""
     global _SPARE
@@ -217,15 +206,16 @@ def prime_memory_client(region_name: str) -> None:
     client = _memory_client(signing, like)
     event = {'memoryId': 'snapshot', 'actorId': 'snapshot', 'sessionId': 'snapshot', 'eventId': 'snapshot',
              'eventTimestamp': 0, 'payload': []}
-    for operation, body in (('CreateEvent', {'event': event}), ('ListEvents', {'events': [event]}),
-                            ('ListMemoryRecords', {'memoryRecordSummaries': []})):
-        def answer(request: Any, *, answered: bytes = json.dumps(body).encode(), **_: Any) -> AWSResponse:
-            return AWSResponse(request.url, 200, HTTPHeaders(), _AnsweredBody(answered))
-        client.meta.events.register_first(f'before-send.bedrock-agentcore.{operation}', answer)
     names = {'memoryId': 'snapshot-memory', 'actorId': 'snapshot', 'sessionId': 'snapshot'}
-    client.create_event(**names, eventTimestamp=datetime.now(UTC), payload=[{'blob': '{}'}])
-    client.list_events(**names, includePayloads=True, maxResults=1)
-    list(client.get_paginator('list_memory_records').paginate(memoryId='snapshot-memory', namespace='/snapshot/'))
+    with aws_clients.snapshot_responses(
+        client,
+        CreateEvent=json.dumps({'event': event}).encode(),
+        ListEvents=json.dumps({'events': [event]}).encode(),
+        ListMemoryRecords=b'{"memoryRecordSummaries":[]}',
+    ):
+        client.create_event(**names, eventTimestamp=datetime.now(UTC), payload=[{'blob': '{}'}])
+        client.list_events(**names, includePayloads=True, maxResults=1)
+        list(client.get_paginator('list_memory_records').paginate(memoryId='snapshot-memory', namespace='/snapshot/'))
 
 
 _MEMORY_LOCK = threading.Lock()

@@ -13,14 +13,11 @@ import os
 import shutil
 import ssl
 import subprocess
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
 
 import boto3
 import certifi
-from botocore.awsrequest import AWSResponse
-from botocore.compat import HTTPHeaders
 
 from . import aws_clients
 from .memory import agentcore as agentcore_memory_backend
@@ -93,28 +90,9 @@ def runtime_credentials(region: str) -> None:
     aws_clients.bedrock(region)
 
 
-class _Body:
-    def __init__(self, body: bytes) -> None:
-        self._body = body
-
-    def stream(self, **_: Any) -> Iterator[bytes]:
-        yield self._body
-
-
-def _answering(client: Any, event: str, body: bytes) -> Callable[..., AWSResponse]:
-    def answer(request: Any, **_: Any) -> AWSResponse:
-        return AWSResponse(request.url, 200, HTTPHeaders(), _Body(body))
-    client.meta.events.register_first(event, answer)
-    return answer
-
-
 def answer_sdk_calls(region: str) -> None:
     """An STS exchange answered in process loads the request and XML response handling."""
     sts = agentcore_memory_backend.sts_client(region)
-    event = 'before-send.sts.AssumeRoleWithWebIdentity'
-    answer = _answering(sts, event, _STS_ANSWER)
-    try:
+    with aws_clients.snapshot_responses(sts, AssumeRoleWithWebIdentity=_STS_ANSWER):
         sts.assume_role_with_web_identity(
             RoleArn='arn:aws:iam::000000000000:role/snapshot', RoleSessionName='snapshot', WebIdentityToken='snapshot' * 3)
-    finally:
-        sts.meta.events.unregister(event, answer)

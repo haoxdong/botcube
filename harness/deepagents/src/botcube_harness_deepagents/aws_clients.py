@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import functools
 import json
+from collections.abc import Generator, Iterator
+from contextlib import ExitStack, contextmanager
 from typing import Any
 
 import boto3
 import botocore.loaders
 import botocore.session
-from botocore.awsrequest import AWSResponse
+from botocore.awsrequest import AWSPreparedRequest, AWSResponse
 from botocore.compat import HTTPHeaders
 
 from . import turn_timing
@@ -41,15 +43,31 @@ class _AnsweredBody:
     def __init__(self, body: bytes) -> None:
         self._body = body
 
-    def stream(self, **_: Any) -> Any:
+    def stream(self, **_: Any) -> Iterator[bytes]:
         yield self._body
+
+
+@contextmanager
+def snapshot_responses(client: Any, **responses: bytes) -> Generator[None]:
+    """Exercise Botocore's request and response path with in-process answers scoped to the snapshot."""
+    service = client.meta.service_model.service_id.hyphenize()
+    with ExitStack() as hooks:
+        for operation, body in responses.items():
+            event = f'before-send.{service}.{operation}'
+
+            def answer(request: AWSPreparedRequest, *, raw: bytes = body, **_: Any) -> AWSResponse:
+                return AWSResponse(request.url, 200, HTTPHeaders(), _AnsweredBody(raw))
+
+            client.meta.events.register_first(event, answer)
+            hooks.callback(client.meta.events.unregister, event, answer)
+        yield
 
 
 def prime(region_name: str) -> None:
     """Loads these clients' data files, and Converse's request and response handling, through `LOADER`, with no
     credentials fetched and no request leaving the process, so a V2 snapshot holds them."""
     fake = session()
-    runtime: Any = fake.client(
+    runtime = fake.client(
         'bedrock-runtime', region_name=region_name, aws_access_key_id='snapshot', aws_secret_access_key='snapshot')
     fake.client('bedrock', region_name=region_name, aws_access_key_id='snapshot', aws_secret_access_key='snapshot')
     answered = json.dumps({
@@ -57,8 +75,5 @@ def prime(region_name: str) -> None:
         'usage': {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2}, 'metrics': {'latencyMs': 1},
     }).encode()
 
-    def answer(request: Any, **_: Any) -> AWSResponse:
-        return AWSResponse(request.url, 200, HTTPHeaders(), _AnsweredBody(answered))
-
-    runtime.meta.events.register_first('before-send.bedrock-runtime.Converse', answer)
-    runtime.converse(modelId='snapshot', messages=[{'role': 'user', 'content': [{'text': 'snapshot'}]}])
+    with snapshot_responses(runtime, Converse=answered):
+        runtime.converse(modelId='snapshot', messages=[{'role': 'user', 'content': [{'text': 'snapshot'}]}])

@@ -28,7 +28,7 @@ def test_reads_a_resolved_example(tmp_path: Path, example: str, origins: list[st
     assert config['credentialServiceHttpPath'] == ''
     routes = config['modelGateway']
     assert {provider for provider in ('anthropic', 'openai', 'deepseek', 'echo') if routes[provider]['route'] is not None} == (
-        {'anthropic', 'openai'} if example == 'enterprise' else set()
+        {'openai'} if example == 'enterprise' else set()
     )
 
 

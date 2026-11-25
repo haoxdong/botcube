@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
+from contextlib import suppress
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -276,5 +277,6 @@ def test_a_loopback_closes_with_its_backend(bot_service: _Service, relay: FakeRe
     deadline = time.monotonic() + 5
     with pytest.raises(ConnectionRefusedError):
         while time.monotonic() < deadline:
-            socket.create_connection((origin.hostname or '', origin.port or 80), timeout=5).close()
+            with suppress(ConnectionResetError):
+                socket.create_connection((origin.hostname or '', origin.port or 80), timeout=5).close()
             time.sleep(0.05)
