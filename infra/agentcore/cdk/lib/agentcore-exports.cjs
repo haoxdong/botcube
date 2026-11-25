@@ -3,15 +3,6 @@ const { PolicyStatement } = require('aws-cdk-lib/aws-iam');
 const { sessionApiScaling } = require('botcube-config/session-api-capacity');
 
 const sessionApiAlias = 'live';
-const runtimeLogGroupPrefix = '/aws/bedrock-agentcore/runtimes/';
-
-function runtimeLogGroupName(runtimeId) {
-  return `${runtimeLogGroupPrefix}${runtimeId}-DEFAULT`;
-}
-
-function runtimeLogGroupPattern(runtimeName) {
-  return `${runtimeLogGroupPrefix}${runtimeName}-*`;
-}
 
 function sessionApiExports(stack, functionName) {
   const functionArn = stack.formatArn({
@@ -75,4 +66,4 @@ function sessionApiExports(stack, functionName) {
   };
 }
 
-module.exports = { sessionApiExports, runtimeLogGroupName, runtimeLogGroupPattern };
+module.exports = { sessionApiExports };

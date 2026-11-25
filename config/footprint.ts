@@ -1,6 +1,6 @@
 import { configStores } from './config-stores.js';
 import { credentialFields, outsideIssuer, tlsFields } from './credential-fields.js';
-import { physicalNames } from './deployment.js';
+import { physicalNames } from './names.cjs';
 import { footprintImages, sorted } from './footprint-images.js';
 import { modelLines, shellEnvironment } from './footprint-bot.js';
 import type { BotCubeConfig } from './schema.js';

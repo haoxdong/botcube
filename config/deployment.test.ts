@@ -80,6 +80,12 @@ describe("a deploy root's native BotCube Config", () => {
     });
   });
 
+  it.each(['*', 'acme-runtime', '1runtime', 'a'.repeat(49)])('reports the field path for invalid Runtime name %s', (runtimeAgentRuntimeName) => {
+    const config = { ...DEPLOYMENT, names: { runtimeAgentRuntimeName } };
+    expect(() => loadConfig(file(config))).toThrow('names.runtimeAgentRuntimeName:');
+    expect(() => readDeployment(deployRoot(config))).toThrow('names.runtimeAgentRuntimeName:');
+  });
+
   it.each(['acme-bot', 'example', 'a-b-c'])('derives fixed names identically in Node and Python for %s', (name) => {
     const config = { name, names: { clusterName: 'custom-cluster', chatServiceTaskRoleName: 'custom-role' } };
     const reader = fileURLToPath(new URL('../credential-service/src/botcube_credential_service/botcube_config.py', import.meta.url));

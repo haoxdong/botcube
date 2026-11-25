@@ -1,4 +1,5 @@
-import { runtimeLogGroupName, sessionApiExports } from 'botcube-infra-agentcore-cdk/exports';
+import { runtimeLogGroupName } from 'botcube-config/names';
+import { sessionApiExports } from 'botcube-infra-agentcore-cdk/exports';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';

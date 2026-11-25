@@ -9,6 +9,7 @@ from contextlib import AbstractContextManager, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from weakref import WeakValueDictionary
 
 from ag_ui.core import RunAgentInput
 from ag_ui_langgraph import LangGraphAgent
@@ -72,7 +73,7 @@ PreparedTurn = tuple[LangGraphAgent, Path, AbstractContextManager[None]]
 class SessionTurns:
     def __init__(self) -> None:
         self._turns: dict[_Session, _Turn] = {}
-        self._locks: dict[_Session, asyncio.Lock] = {}
+        self._locks: WeakValueDictionary[_Session, asyncio.Lock] = WeakValueDictionary()
         self._flush_failures: dict[_Session, Exception] = {}
         self._publications: dict[_Session, _Publication] = {}
         self._feeds: dict[_Session, asyncio.Task[None]] = {}
@@ -97,7 +98,6 @@ class SessionTurns:
                 return saved
 
     async def wait_for_checkpoint(self, session: tuple[str, str]) -> None:
-        """Wait for work that already holds this Session's checkpoint."""
         if (lock := self._locks.get(session)) is not None:
             async with lock:
                 pass
@@ -259,7 +259,7 @@ class SessionTurns:
             await session_memory.settle_prefetch(wait=not completed)
             otel_context.detach(trace_token)
             if self._turns.get(session) is turn:
-                del self._turns[session], self._locks[session]
+                del self._turns[session]
             put(_END)
 
     async def _execute(

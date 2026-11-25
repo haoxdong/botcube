@@ -1,4 +1,4 @@
-import { runtimeLogGroupName } from 'botcube-infra-agentcore-cdk/exports';
+import { runtimeLogGroupName } from 'botcube-config/names';
 import { CfnOutput, CfnResource, Fn, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as actions from 'aws-cdk-lib/aws-cloudwatch-actions';

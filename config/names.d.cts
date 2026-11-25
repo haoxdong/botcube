@@ -40,7 +40,12 @@ export const DERIVED_NAMES: {
 };
 type Name = keyof typeof DERIVED_NAMES;
 type OptionalName = { [Key in Name]: (typeof DERIVED_NAMES)[Key] extends null ? Key : never }[Name];
+export function physicalNames(name: string, names?: Partial<Record<string, string>>): Partial<Record<Name, string>>;
 type FixedName = 'parkStateParameterName' | 'originPullClientSecretName' | 'originTokenSecretName'
   | 'turnIdentityKeysSecretName' | 'rollbackTaskFamilyPrefix' | 'rollbackPolicyName';
 export function deploymentNames(config: { name: string; names?: Record<string, string | undefined> | undefined }):
   Record<Exclude<Name, OptionalName> | FixedName, string> & Partial<Record<OptionalName, string>>;
+export const defaultRuntimeLogGroupSuffix: '-DEFAULT';
+export function runtimeLogGroupName(runtimeId: string): string;
+export function runtimeLogGroupPrefix(runtimeName: string): string;
+export function runtimeLogGroupPattern(runtimeName: string): string;

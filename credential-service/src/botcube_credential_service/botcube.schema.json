@@ -27,7 +27,7 @@
         "runtimeAgentRuntimeName": {
           "description": "Absent: {snake}_runtime, from name.",
           "type": "string",
-          "minLength": 1
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,47}$"
         },
         "memoryName": {
           "description": "Absent: {snake}_memory, from name.",

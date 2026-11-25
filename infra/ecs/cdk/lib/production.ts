@@ -1,6 +1,6 @@
 import { ok as assert } from 'node:assert';
 import { publishConfig } from 'botcube-infra-agentcore-cdk/config-publisher';
-import { runtimeLogGroupPattern } from 'botcube-infra-agentcore-cdk/exports';
+import { runtimeLogGroupPattern } from 'botcube-config/names';
 import { optionalPhysicalName } from './physical-name.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';

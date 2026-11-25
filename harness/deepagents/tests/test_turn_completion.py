@@ -300,3 +300,38 @@ def test_an_errored_stream_drains_background_files_before_eof(
         await stream.aclose()
 
     asyncio.run(exercise())
+
+
+def test_turn_cleanup_preserves_the_lock_held_by_preparation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        settling = asyncio.Event()
+        settled = asyncio.Event()
+
+        async def settle_prefetch(*, wait: bool) -> None:
+            settling.set()
+            await settled.wait()
+
+        monkeypatch.setattr(turn_lifecycle.session_memory, 'settle_prefetch', settle_prefetch)
+        turns = turn_lifecycle.SessionTurns()
+        session = ('owner', 'session')
+        stream = turns.stream(session, prepared(_agent(), tmp_path), _input(), None, serving._RequestContext(None))
+
+        async def drain() -> list[EventType]:
+            return [event.type async for event in stream]
+
+        run = asyncio.create_task(drain())
+        await settling.wait()
+        async with turns.preparation(session) as admitted:
+            assert admitted
+            settled.set()
+            assert (await run)[-1] == EventType.RUN_FINISHED
+
+            async with turns.preparation(session) as overlapping:
+                assert not overlapping
+
+        async with turns.preparation(session) as admitted:
+            assert admitted
+
+    asyncio.run(exercise())

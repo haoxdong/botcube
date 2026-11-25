@@ -23,5 +23,5 @@ def test_bootstrap_authorizes_smoke_admission_and_session_binding():
                       'ForAllValues:StringLike', {}).get('dynamodb:LeadingKeys', []))]
         assert grants, f'{action} is missing for {key}'
     assert any('bedrock-agentcore:StopRuntimeSession' in statement['Action']
-               and statement['Resource'] == 'arn:aws:bedrock-agentcore:$AWS_REGION:$AWS_ACCOUNT_ID:runtime/${STACK_FAMILY}_runtime-*'
+               and statement['Resource'] == 'arn:aws:bedrock-agentcore:$AWS_REGION:$AWS_ACCOUNT_ID:runtime/$RUNTIME_NAME-*'
                for statement in policy['Statement'])

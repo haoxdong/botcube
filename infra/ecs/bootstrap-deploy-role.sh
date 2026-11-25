@@ -16,9 +16,12 @@ if [[ "$#" -ne 0 ]]; then
   exit 2
 fi
 
-read -r AWS_ACCOUNT_ID AWS_REGION STACK_FAMILY CLUSTER ROLE_NAME ORIGIN_PULL_SECRET ORIGIN_TOKEN_SECRET ALERTS_TOPIC MEMORY_NAME PARK_STATE POLICY_NAME PARKING_FUNCTION SESSION_API RUNTIME_ROLE EGRESS_STACK ORIGIN_STACK HEALTH_STACK TURN_IDENTITY_SECRET < <(node -e '
-  const config = require(require("node:path").resolve(process.argv[1])).readDeployment(process.argv[2]);
-  const names = require(require("node:path").resolve(process.argv[1])).deploymentNames(config);
+read -r AWS_ACCOUNT_ID AWS_REGION STACK_FAMILY CLUSTER ROLE_NAME ORIGIN_PULL_SECRET ORIGIN_TOKEN_SECRET ALERTS_TOPIC MEMORY_NAME PARK_STATE POLICY_NAME PARKING_FUNCTION SESSION_API RUNTIME_ROLE EGRESS_STACK ORIGIN_STACK HEALTH_STACK TURN_IDENTITY_SECRET RUNTIME_NAME RUNTIME_LOGS < <(node -e '
+  const { resolve } = require("node:path");
+  const { readDeployment } = require(resolve(process.argv[1], "read.cjs"));
+  const { deploymentNames, runtimeLogGroupPattern } = require(resolve(process.argv[1], "names.cjs"));
+  const config = readDeployment(process.argv[2]);
+  const names = deploymentNames(config);
   process.stdout.write([
     config.env.account,
     config.env.region,
@@ -38,8 +41,10 @@ read -r AWS_ACCOUNT_ID AWS_REGION STACK_FAMILY CLUSTER ROLE_NAME ORIGIN_PULL_SEC
     names.previewOriginStackName,
     names.apiHealthStackName,
     names.turnIdentityKeysSecretName,
+    names.runtimeAgentRuntimeName,
+    runtimeLogGroupPattern(names.runtimeAgentRuntimeName),
   ].join(" ") + "\n");
-' "$(dirname "${BASH_SOURCE[0]}")/../../config/read.cjs" "$DEPLOY_ROOT")
+' "$SCRIPT_DIR/../../config" "$DEPLOY_ROOT")
 
 TRUST_POLICY="$(mktemp)"
 ROLE_POLICY="$(mktemp)"
@@ -68,11 +73,7 @@ cat > "$TRUST_POLICY" <<EOF
 }
 EOF
 
-# Like the Credential Service role, effective deploy privilege comes from the CDK
-# bootstrap roles: they publish image assets (the asset repository has immutable
-# tags) and CloudFormation applies changes as cfn-exec-role. The direct grants
-# cover the guarded change-set flow, rollout checks and the Cloudflare upload of
-# the origin pull client certificate. ECS migration tickets widen this as needed.
+# CDK bootstrap roles publish assets and apply CloudFormation changes.
 cat > "$ROLE_POLICY" <<EOF
 {
   "Version": "2012-10-17",
@@ -180,7 +181,7 @@ cat > "$ROLE_POLICY" <<EOF
     {
       "Effect": "Allow",
       "Action": ["bedrock-agentcore:GetAgentRuntimeEndpoint", "bedrock-agentcore:UpdateAgentRuntime", "bedrock-agentcore:StopRuntimeSession"],
-      "Resource": "arn:aws:bedrock-agentcore:$AWS_REGION:$AWS_ACCOUNT_ID:runtime/${STACK_FAMILY}_runtime-*"
+      "Resource": "arn:aws:bedrock-agentcore:$AWS_REGION:$AWS_ACCOUNT_ID:runtime/$RUNTIME_NAME-*"
     },
     {
       "Effect": "Allow",
@@ -337,7 +338,7 @@ cat > "$ROLE_POLICY" <<EOF
     {
       "Effect": "Allow",
       "Action": "logs:FilterLogEvents",
-      "Resource": "arn:aws:logs:$AWS_REGION:$AWS_ACCOUNT_ID:log-group:/aws/bedrock-agentcore/runtimes/${STACK_FAMILY}_runtime-*"
+      "Resource": "arn:aws:logs:$AWS_REGION:$AWS_ACCOUNT_ID:log-group:$RUNTIME_LOGS"
     },
     {
       "Effect": "Allow",

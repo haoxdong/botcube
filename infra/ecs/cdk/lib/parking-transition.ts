@@ -1,4 +1,5 @@
-import { runtimeLogGroupName, runtimeLogGroupPattern, sessionApiExports } from 'botcube-infra-agentcore-cdk/exports';
+import { runtimeLogGroupName, runtimeLogGroupPattern } from 'botcube-config/names';
+import { sessionApiExports } from 'botcube-infra-agentcore-cdk/exports';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
@@ -15,8 +16,7 @@ import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import type { DeployIdentity } from './production-identity.js';
 
-/** The SDK in botcube/infra/transition-requirements.txt, installed once per pin set: the runtime's built-in boto3 is
- * older than the locked one the tests run against, and dropped GetAgentRuntime's platformVersion. */
+/** The built-in boto3 dropped GetAgentRuntime's platformVersion. Install the locked SDK once per pin set. */
 function lockedSdk(infraRoot: string) {
   const requirements = path.join(infraRoot, 'transition-requirements.txt');
   const installed = path.join(os.tmpdir(), `transition-sdk-${createHash('sha256').update(fs.readFileSync(requirements)).digest('hex').slice(0, 16)}`);

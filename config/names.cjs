@@ -52,13 +52,34 @@ const FIXED_NAMES = {
   rollbackPolicyName: '{name}-preview-rollback',
 };
 
-function deploymentNames(config) {
-  const names = Object.fromEntries(Object.entries(DERIVED_NAMES).flatMap(([key, template]) => {
-    const value = config.names?.[key] ?? (template === null ? undefined : fillName(template, config.name));
+function physicalNames(name, names) {
+  return Object.fromEntries(Object.entries(DERIVED_NAMES).flatMap(([key, template]) => {
+    const value = names?.[key] ?? (template === null ? undefined : fillName(template, name));
     return value === undefined ? [] : [[key, value]];
   }));
-  const fixed = Object.fromEntries(Object.entries(FIXED_NAMES).map(([key, template]) => [key, fillName(template, config.name)]));
-  return { ...names, ...fixed };
 }
 
-module.exports = { fillName, DERIVED_NAMES, deploymentNames };
+function deploymentNames({ name, names }) {
+  const fixed = Object.fromEntries(Object.entries(FIXED_NAMES).map(([key, template]) => [key, fillName(template, name)]));
+  return { ...physicalNames(name, names), ...fixed };
+}
+
+const agentCoreLogGroups = '/aws/bedrock-agentcore/runtimes/';
+const defaultRuntimeLogGroupSuffix = '-DEFAULT';
+
+function runtimeLogGroupName(runtimeId) {
+  return `${agentCoreLogGroups}${runtimeId}${defaultRuntimeLogGroupSuffix}`;
+}
+
+function runtimeLogGroupPrefix(runtimeName) {
+  return `${agentCoreLogGroups}${runtimeName}-`;
+}
+
+function runtimeLogGroupPattern(runtimeName) {
+  return `${runtimeLogGroupPrefix(runtimeName)}*`;
+}
+
+module.exports = {
+  fillName, DERIVED_NAMES, deploymentNames, physicalNames,
+  defaultRuntimeLogGroupSuffix, runtimeLogGroupName, runtimeLogGroupPrefix, runtimeLogGroupPattern,
+};

@@ -1,13 +1,8 @@
 import { z } from 'zod';
 import { proxyReference } from 'botcube-config/blocks';
 import { containerUri, serviceImages } from 'botcube-config/images';
-import { fillName, DERIVED_NAMES } from './names.cjs';
+import { DERIVED_NAMES } from './names.cjs';
 
-/**
- * Each physical name `names` may override, as `<role><CloudFormation name property>`, and what it is absent: derived
- * from `name`, where `{name}` is it, `{snake}` it with `_` for `-`, and `{compact}` it without `-`; or, for `null`,
- * none, so CloudFormation generates it.
- */
 export { DERIVED_NAMES } from './names.cjs';
 
 const origin = z
@@ -28,7 +23,8 @@ export const deploymentKeys = {
     .describe('Tags, as CDK Tags, on every stack of both CDK apps; the AgentCore project also carries agentcore:project-name.'),
   names: z
     .strictObject(Object.fromEntries(Object.entries(DERIVED_NAMES).map(([key, template]) => [
-      key, z.string().min(1).optional().describe(template === null ? 'Absent: CloudFormation generates it.' : `Absent: ${template}, from name.`),
+      key, (key === 'runtimeAgentRuntimeName' ? z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,47}$/) : z.string().min(1))
+        .optional().describe(template === null ? 'Absent: CloudFormation generates it.' : `Absent: ${template}, from name.`),
     ])))
     .optional()
     .describe('Physical names that differ from the derived ones, each by its role and CloudFormation name property.'),
@@ -147,14 +143,6 @@ export const parking = z
   })
   .optional()
   .describe('Parking, which stops an idle deployment and wakes it on a request.');
-
-/** Each physical name a deployment called `name` gives its resources: `names`' override, or the one derived from `name`. */
-export function physicalNames(name: string, names: Partial<Record<string, string>> = {}): Partial<Record<keyof typeof DERIVED_NAMES, string>> {
-  return Object.fromEntries(Object.entries(DERIVED_NAMES).flatMap(([key, template]): [string, string][] => {
-    const given = names[key] ?? (template === null ? undefined : fillName(template, name));
-    return given === undefined ? [] : [[key, given]];
-  }));
-}
 
 /** A Source of a retired deploy-root file's field: where in the BotCube Config it comes from. */
 export type Source =

@@ -28,6 +28,7 @@
     "./config-bucket": "./config-bucket.cjs",
     "./existing": "./existing.ts",
     "./images": "./images.ts",
+    "./names": {"types": "./names.d.cts", "default": "./names.cjs"},
     "./user-pool": "./user-pool.ts",
     "./renamed-keys": "./renamed-keys.ts",
     "./ecr": {
