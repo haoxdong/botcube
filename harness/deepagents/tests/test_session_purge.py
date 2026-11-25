@@ -12,6 +12,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import empty_checkpoint
 from langgraph_checkpoint_aws.checkpoint.agentcore.snapshot import (
     _writes_session_prefix,
+    writes_session_id,
 )
 
 from agentcore_fake import MEMORY_ID, FakeAgentCoreMemory
@@ -87,6 +88,19 @@ def test_a_purge_of_an_emptied_session_reads_one_page(memory: FakeAgentCoreMemor
     purge_module.purge_session(saver, 'user-1', SESSION)
 
     assert memory.listed == {SESSION: 2}
+
+
+def test_a_purge_leaves_writes_of_an_expired_checkpoint_to_agentcore_retention(
+    memory: FakeAgentCoreMemory,
+) -> None:
+    saver = agentcore.build_checkpointer(MEMORY_ID, region_name='us-east-1')
+    _write(saver, SESSION, 1)
+    orphan = writes_session_id(SESSION, 'expired-checkpoint')
+    memory.seed('user-1', orphan)
+
+    purge_module.purge_session(saver, 'user-1', SESSION)
+
+    assert _left(memory, SESSION) == {orphan: 1}
 
 
 def test_a_purge_retried_after_failing_part_way_empties_everything(
@@ -196,6 +210,11 @@ def test_a_session_whose_snapshot_no_longer_decodes_still_purges_every_writes_se
     else:
         fragment['payload'][0]['blob'] = 'Y29ycnVwdA=='
     assert len(_left(memory, SESSION)) == 2
+    for index in range(100):
+        memory.seed('user-1', f'neighbor-{index}')
+    orphan = writes_session_id(SESSION, 'expired-checkpoint')
+    memory.seed('user-1', orphan)
+    memory.seed('user-2', orphan)
     monkeypatch.undo()
     monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
     monkeypatch.setattr(purge_module, 'sleep', lambda seconds: None)
@@ -205,6 +224,8 @@ def test_a_session_whose_snapshot_no_longer_decodes_still_purges_every_writes_se
 
     assert _left(memory, SESSION) == {}
     assert len(_left(memory, OTHER)) == 2
+    assert memory.events[('user-1', 'neighbor-0')]
+    assert memory.events[('user-2', orphan)]
     assert [record.getMessage() for record in caplog.records] == [
         f'Session snapshot does not decode; listing its writes sessions by prefix. session_id={SESSION}',
     ]
