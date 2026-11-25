@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { gatewayServesProvider, modelProvider, unreachedProvider, type ModelProvider, type CredentialSource } from './blocks.js';
+import { modelProvider, type ModelProvider, type CredentialSource } from './blocks.js';
 import { deploymentNames, webOrigins } from './read.cjs';
 import { botcubeConfig, type sectionDefaults } from './schema.js';
 import { BotCubeConfigError, parsed } from './parse.js';
@@ -16,14 +16,16 @@ type Route = {
 
 export type ResolvedConfig = ReturnType<typeof resolveConfig>;
 
+const gatewayProviders = ['anthropic', 'openai'] as const satisfies readonly ModelProvider[];
+
 export function resolveConfig(config: Config) {
   const { integrations: { modelGateway: gateway }, name, names, services } = config;
   const physicalNames: Partial<ReturnType<typeof deploymentNames>> = name === undefined ? {} : deploymentNames({ name, names });
-  const reach = (provider: ModelProvider) => ({
-    route: modelRoute(gateway, provider),
-    unreachableReason: unreachedProvider(gateway, provider) ?? null,
-  });
-  const modelGateway: Partial<Record<ModelProvider, ReturnType<typeof reach>>> = Object.fromEntries(
+  const served = gateway.kind === 'bedrock' ? [] : gatewayProviders.filter(
+    provider => gateway.providers === undefined || gateway.providers[provider] !== undefined,
+  );
+  const reach = (provider: ModelProvider) => resolveProvider(gateway, provider, served);
+  const modelGateway: Partial<Record<string, ReturnType<typeof reach>>> = Object.fromEntries(
     modelProvider.options.map(provider => [provider, reach(provider)]),
   );
   return {
@@ -36,17 +38,30 @@ export function resolveConfig(config: Config) {
   } as const;
 }
 
-function modelRoute(
+function resolveProvider(
   gateway: Config['integrations']['modelGateway'],
   provider: ModelProvider,
-): Route | null {
-  if (gateway.kind === 'bedrock' || !gatewayServesProvider(gateway, provider)) return null;
-  const override = gateway.providers?.[provider];
+  served: readonly (typeof gatewayProviders)[number][],
+): { route: Route | null; unreachableReason: string | null } {
+  if (gateway.kind === 'bedrock' || provider === 'echo') return { route: null, unreachableReason: null };
+  const name = served.find(candidate => candidate === provider);
+  if (!name) return { route: null, unreachableReason: `integrations.modelGateway reaches the providers ${served.join(' and ')}` };
+
+  const override = gateway.providers?.[name];
+  const url = override?.url ?? gateway.url;
+  if (name === 'anthropic' && /\/v1\/*$/.test(new URL(url).pathname)) {
+    const field = override?.url ? 'integrations.modelGateway.providers.anthropic.url' : 'integrations.modelGateway.url';
+    const next = override?.url ? 'remove /v1 from that URL' : 'set integrations.modelGateway.providers.anthropic.url without /v1';
+    return { route: null, unreachableReason: `${field} ends in /v1, which Anthropic's API adds itself: ${next}` };
+  }
   return {
-    url: (override?.url ?? gateway.url).replace(/\/+$/, ''),
-    credential: override?.credential ?? gateway.credential,
-    headers: override?.headers ?? gateway.headers ?? {},
-    useResponsesApi: provider === 'openai' && (gateway.providers?.openai?.useResponsesApi ?? false),
+    route: {
+      url: url.replace(/\/+$/, ''),
+      credential: override?.credential ?? gateway.credential,
+      headers: override?.headers ?? gateway.headers ?? {},
+      useResponsesApi: name === 'openai' && (gateway.providers?.openai?.useResponsesApi ?? false),
+    },
+    unreachableReason: null,
   };
 }
 

@@ -66,12 +66,12 @@ it('resolves the public example with deployment names and section defaults', () 
   });
 });
 
-it('resolves the enterprise gateway routes and the loader’s reach independently', () => {
+it('omits the enterprise Anthropic route when its inherited URL is unusable', () => {
   const { status, stdout } = botcube('resolve', enterpriseExample);
   expect(status).toBe(0);
   expect(JSON.parse(stdout).modelGateway).toMatchObject({
     anthropic: {
-      route: { url: 'https://models.example.com/v1' },
+      route: null,
       unreachableReason: expect.stringContaining('Anthropic'),
     },
     openai: {
@@ -136,5 +136,18 @@ it('resolves provider overrides and the Credential Service HTTP path', () => {
         unreachableReason: null,
       },
     },
+  });
+});
+
+it('rejects an explicit Anthropic URL that would duplicate the API version in the relay path', () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'botcube-')), 'botcube.yaml');
+  const config = JSON.parse(readFileSync(enterpriseExample, 'utf8'));
+  config.integrations.modelGateway.providers = { anthropic: { url: 'https://models.example.com/anthropic/v1//' } };
+  writeFileSync(path, JSON.stringify(config));
+  const { status, stdout } = botcube('resolve', path);
+  expect(status).toBe(0);
+  expect(JSON.parse(stdout).modelGateway.anthropic).toEqual({
+    route: null,
+    unreachableReason: "integrations.modelGateway.providers.anthropic.url ends in /v1, which Anthropic's API adds itself: remove /v1 from that URL",
   });
 });

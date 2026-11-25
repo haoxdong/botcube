@@ -264,11 +264,12 @@ def test_cache_markers_reach_the_gateway_as_the_harness_wrote_them(gateway: Fake
     marked = json.dumps({'model': 'claude-sonnet-5-5', 'stream': True, 'system': [{'type': 'text', 'text': 'You are BotCube.', 'cache_control': {'type': 'ephemeral'}}], 'messages': [
         {'role': 'user', 'content': [{'type': 'text', 'text': 'Hello', 'cache_control': {'type': 'ephemeral'}}]},
     ]}).encode()
-    client = _client(gateway, _endpoint({'kind': 'file', 'path': str(key)}))
+    client = _client(gateway, _deployed({'url': 'https://models.example.com', 'credential': {'kind': 'file', 'path': str(key)}}))
 
     client.post('/models/anthropic/v1/messages', content=marked, headers=_turn())
 
     [call] = gateway.requests
+    assert str(call.url) == 'https://models.example.com/v1/messages'
     assert call.content == marked
 
 
@@ -353,7 +354,7 @@ def test_startup_names_the_provider_when_its_own_credential_cannot_be_read(
 ) -> None:
     absent = tmp_path / 'absent'
     resolved = resolved_sections(_deployed({
-        'url': 'https://models.example.com/v1',
+        'url': 'https://models.example.com',
         'credential': {'kind': 'file', 'path': str(key)},
         'providers': {provider: {'credential': {'kind': 'file', 'path': str(absent)}}},
     }))

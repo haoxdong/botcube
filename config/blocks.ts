@@ -133,9 +133,6 @@ export const forwardProxy = z.discriminatedUnion('kind', [
 export const modelProvider = z.enum(['anthropic', 'openai', 'deepseek', 'echo']);
 export type ModelProvider = z.output<typeof modelProvider>;
 
-/** The providers whose own API a model gateway serves. */
-export const GATEWAY_PROVIDERS = ['anthropic', 'openai'] as const satisfies readonly ModelProvider[];
-
 const gatewayUrl = z.url().refine(httpsOrLoopback, 'A models endpoint is an https URL; only a stand-in on this machine may use http');
 const providerRoute = z.strictObject({
   url: gatewayUrl.optional().describe("The base URL of the provider's own API on the gateway, as LiteLLM's api_base, such as https://models.example.com/anthropic; absent, the gateway's."),
@@ -155,26 +152,6 @@ export const gatewayModels = endpoint.extend({
   }).optional()
     .describe("Every provider the gateway serves, by LangChain's provider name, and where; absent, it serves each at its URL."),
 }).describe("Every model on a gateway, by its key in the bot settings, called on its provider's own API; Plan Usage models still run through the Credential Service.");
-export type GatewayModels = z.output<typeof gatewayModels>;
-
-export function gatewayServesProvider(gateway: GatewayModels, provider: ModelProvider): provider is (typeof GATEWAY_PROVIDERS)[number] {
-  return GATEWAY_PROVIDERS.some((name) => name === provider && (gateway.providers === undefined || gateway.providers[name] !== undefined));
-}
-
-/** Why `gateway` cannot call a model on `provider`, or undefined when it can; Bedrock runs every model it serves, and `echo` is never called. */
-export function unreachedProvider(gateway: GatewayModels | { kind: 'bedrock' }, provider: ModelProvider): string | undefined {
-  if (gateway.kind === 'bedrock') return undefined;
-  if (provider === 'echo') return undefined;
-  if (!gatewayServesProvider(gateway, provider)) {
-    const served = GATEWAY_PROVIDERS.filter((name) => gatewayServesProvider(gateway, name));
-    return `integrations.modelGateway reaches the providers ${served.join(' and ')}`;
-  }
-  if (provider === 'anthropic' && !gateway.providers?.anthropic?.url && /\/v1\/*$/.test(new URL(gateway.url).pathname)) {
-    return "integrations.modelGateway.url ends in /v1, which Anthropic's API adds itself: set integrations.modelGateway.providers.anthropic.url without /v1";
-  }
-  return undefined;
-}
-
 /** A model named `provider:model`, its provider read as a bot model's is; undefined unless it names both. */
 export const oidcIssuer = z.url().refine(httpsOrLoopback, 'An OIDC issuer is an https URL; only a stand-in on this machine may use http');
 
