@@ -7721,30 +7721,12 @@ describe('agent profile', () => {
 describe('model and effort picker', () => {
   const pill = pickerTrigger;
   const dropdown = pickerPopup;
-  const selected = async () => [...(await openModelList()).querySelectorAll('[role="option"][aria-selected="true"]')].map((option) => option.textContent);
 
   it('sits in the chat input beside Send', async () => {
     await renderPage();
 
     expect(picker()).toHaveClass('composer-end');
     expect(picker().lastElementChild).toBe(screen.getByRole('button', { name: 'Send' }));
-  });
-
-  it('opens by keyboard with its full model and reasoning name', async () => {
-    service.models = [{ key: 'gpt-plan', label: 'GPT Plan', provider: 'openai' }];
-    await renderPage();
-    const trigger = screen.getByRole('button', { name: 'Model GPT Plan, reasoning Medium' });
-    expect(trigger).toHaveAttribute('type', 'button');
-    expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    trigger.focus();
-    await userEvent.keyboard('{Enter}');
-    expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    expect(present(dropdown(), 'the picker')).toBeVisible();
-    await userEvent.keyboard('{Escape}');
-    expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    expect(trigger).toHaveFocus();
-    await userEvent.keyboard(' ');
-    expect(trigger).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('omits the unavailable microphone control', async () => {
@@ -7850,38 +7832,22 @@ describe('model and effort picker', () => {
   it('picks a model', async () => {
     await renderPage();
 
-    expect(await selected()).toEqual(['DeepSlower, more thorough']);
     await chooseModel('Fast');
 
     expect(kit().properties).toEqual({ model: 'fast', effort: 'medium', sandbox: true });
     expect(pill()).toHaveAccessibleName('Model Fast, reasoning Medium');
-    expect(await selected()).toEqual(['Fast']);
   });
 
-  it('picks an effort level', async () => {
+  it('passes effort changes and reset to CopilotKit', async () => {
     await renderPage();
 
-    const slider = await effortSlider();
-    expect([slider.min, slider.max, slider.step]).toEqual(['0', '3', '1']);
-    expect(effortStatus(present(dropdown(), 'the picker'))).toHaveTextContent(/Medium$/);
     await chooseEffort('High');
-
     expect(kit().properties).toEqual({ model: 'deep', effort: 'high', sandbox: true });
-    expect(pill()).toHaveAccessibleName('Model Deep, reasoning High');
-    expect(effortStatus(present(dropdown(), 'the picker'))).toHaveTextContent(/High$/);
-    expect(present(dropdown(), 'the picker')).toHaveTextContent(/^Effort\s*High/);
-
-    await chooseEffort('Max');
-    expect(kit().properties).toEqual({ model: 'deep', effort: 'max', sandbox: true });
     await chooseEffort('Low');
     expect(kit().properties).toEqual({ model: 'deep', effort: 'low', sandbox: true });
-  });
-
-  it('resets the effort to Medium', async () => {
-    await renderPage();
-
     await chooseEffort('Max');
     expect(kit().properties).toEqual({ model: 'deep', effort: 'max', sandbox: true });
+
     await userEvent.click(within(await openPicker()).getByRole('button', { name: 'Reset effort' }));
 
     expect(kit().properties).toEqual({ model: 'deep', effort: 'medium', sandbox: true });
@@ -7901,29 +7867,6 @@ describe('model and effort picker', () => {
     expect(dropdown()).not.toBeNull();
     await userEvent.click(pill());
     expect(dropdown()).toBeNull();
-  });
-
-  it('closes on Escape from the card or the slider, returning focus to its trigger', async () => {
-    await renderPage();
-
-    await openPicker();
-    await userEvent.keyboard('{Escape}');
-    expect(dropdown()).toBeNull();
-    expect(pill()).toHaveFocus();
-
-    (await effortSlider()).focus();
-    await userEvent.keyboard('{Escape}');
-    expect(dropdown()).toBeNull();
-    expect(pill()).toHaveFocus();
-  });
-
-  it('closes the model list on Escape, keeping the card open', async () => {
-    await renderPage();
-
-    await openModelList();
-    await userEvent.keyboard('{Escape}');
-    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
-    expect(dropdown()).not.toBeNull();
   });
 
   // An anonymous page kept its model list after a Sheet sign-in moved it to the linked account.

@@ -23,15 +23,18 @@ const dialog = () => screen.getByRole('dialog', { name: 'Model and effort' });
 const effortSlider = () => {
   const slider = dialog().querySelector<HTMLInputElement>('input[type="range"]');
   if (!slider) throw new Error('Effort slider is missing');
+  expect([slider.min, slider.max, slider.step]).toEqual(['0', '3', '1']);
   expect(document.getElementById(slider.getAttribute('aria-labelledby') ?? '')).toHaveTextContent('Effort');
   return slider;
 };
 
-it('opens from the trigger and restores focus when Escape closes it', async () => {
+it('opens from the trigger and restores focus on Escape from the slider', async () => {
   const { trigger } = picker();
+  expect(trigger).toHaveAttribute('type', 'button');
   await userEvent.click(trigger);
   expect(dialog()).toBeVisible();
   await waitFor(() => expect(dialog()).toContainElement(document.activeElement as HTMLElement));
+  effortSlider().focus();
   await userEvent.keyboard('{Escape}');
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Model and effort' })).toBeNull());
   expect(trigger).toHaveFocus();
