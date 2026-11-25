@@ -158,6 +158,11 @@ export interface SessionMetadata {
   pendingPurges(): Promise<SessionPurge[]>;
   /** Acknowledge only after Runtime stop and durable event purge succeed. */
   completePurge(session: SessionPurge): Promise<void>;
+  /**
+   * Every purge job, pending or completed, of a Session the account or a retired ID it claimed owned when fenced;
+   * a legacy job without an owner when it is filed under one of those IDs or its `userId`.
+   */
+  ownerPurges(owner: string, userId: (account: string) => string): Promise<SessionPurge[]>;
   retainUnprovedPurge(session: SessionPurge): Promise<void>;
   /** Raise unless the table is active and readable. */
   checkHealth(): Promise<void>;
@@ -387,6 +392,27 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       ConditionExpression: 'session_id = :id AND filing_user_id = :filing',
       ExpressionAttributeValues: { ':now': metadataTimestamp(), ':id': session.session_id, ':filing': session.filing_user_id },
     } });
+  }
+
+  async ownerPurges(owner: string, userId: (account: string) => string): Promise<SessionPurge[]> {
+    const owners = await this.answeringIds(owner);
+    const ownerValues = Object.fromEntries(owners.map((id, index) => [`:owner${index}`, id]));
+    const filingIds = [...new Set([...owners, ...owners.map(userId)])];
+    const filingValues = Object.fromEntries(filingIds.map((id, index) => [`:filing${index}`, id]));
+    const purges: SessionPurge[] = [];
+    for await (const page of paginateQuery({ client: this.documents }, {
+      TableName: this.tableName,
+      KeyConditionExpression: 'pk = :pk',
+      FilterExpression: `#owner IN (${Object.keys(ownerValues).join(', ')}) OR (attribute_not_exists(#owner) AND filing_user_id IN (${Object.keys(filingValues).join(', ')}))`,
+      ExpressionAttributeNames: { '#owner': 'owner' },
+      ExpressionAttributeValues: { ':pk': PURGES, ...ownerValues, ...filingValues },
+      ConsistentRead: true,
+    })) {
+      for (const { session_id, filing_user_id, owner: fencedBy } of (page.Items ?? []) as SessionPurge[]) {
+        purges.push({ session_id, filing_user_id, ...(fencedBy === undefined ? {} : { owner: fencedBy }) });
+      }
+    }
+    return purges;
   }
 
   private async registerLegacyPurge(item: SessionItem): Promise<void> {

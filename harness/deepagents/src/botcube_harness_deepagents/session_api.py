@@ -28,6 +28,7 @@ from .conversation import SCHEDULED_RUN, conversation
 from .llm import EchoChatModel
 from .memory import agentcore as agentcore_memory_backend
 from .memory import local as local_memory_backend
+from .memory.agentcore.forget import forget_extracted_memory
 from .memory.agentcore.purge import purge_session
 from .memory_document import (
     MemoryLineNotFoundError,
@@ -245,6 +246,13 @@ def _change_memory(change: Any, args: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _forget(args: dict[str, Any]) -> dict[str, Any]:
+    if AGENTCORE_MEMORY_ID:
+        client, identity = _memory_client(args['userId'])
+        forget_extracted_memory(client, **identity)
+    return {}
+
+
 async def _replay(args: dict[str, Any], phases: dict[str, float]) -> dict[str, Any]:
     return await _read_replay(args['userId'], args['sessionId'], args.get('before'), phases)
 
@@ -276,6 +284,7 @@ HANDLERS = {
     'memory-add': _memory_handler(_add_memory),
     'memory-edit': _memory_handler(partial(_change_memory, edit_memory_line)),
     'memory-delete': _memory_handler(partial(_change_memory, delete_memory_line)),
+    'forget': _memory_handler(_forget),
 }
 
 

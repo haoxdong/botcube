@@ -175,6 +175,12 @@ test("the session API may only list, get, create and delete events, list session
       Resource: { 'Fn::GetAtt': [memoryId(synthesized), 'MemoryArn'] },
     },
     {
+      Action: 'bedrock-agentcore:ListMemoryRecords',
+      Condition: { StringLike: { 'bedrock-agentcore:namespacePath': '/actors/*/' } },
+      Effect: 'Allow',
+      Resource: { 'Fn::GetAtt': [memoryId(synthesized), 'MemoryArn'] },
+    },
+    {
       Action: ['bedrock-agentcore:BatchUpdateMemoryRecords', 'bedrock-agentcore:DeleteMemoryRecord'],
       Effect: 'Allow',
       Resource: { 'Fn::GetAtt': [memoryId(synthesized), 'MemoryArn'] },

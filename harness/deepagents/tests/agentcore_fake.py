@@ -62,6 +62,8 @@ class FakeAgentCoreMemory:
         self.records: list[dict[str, Any]] = []
         # What ListMemoryRecords serves while it lags writes, as AgentCore's does for about a minute.
         self.listing: list[dict[str, Any]] | None = None
+        # DeleteMemoryRecord calls that succeed before AgentCore throttles the rest, or None for no throttling.
+        self.deletes_before_throttling: int | None = None
         self.list_events_calls = 0
         # ListEvents calls by Session ID.
         self.listed: Counter[str] = Counter()
@@ -90,6 +92,10 @@ class FakeAgentCoreMemory:
     def lag_listing(self) -> None:
         """ListMemoryRecords keeps listing the records as they are now, until it catches up."""
         self.listing = copy.deepcopy(self.records)
+
+    def catch_up_listing(self) -> None:
+        """ListMemoryRecords lists the records as they are again."""
+        self.listing = None
 
     def seed(self, actor_id: str, session_id: str) -> None:
         events = self.events[(actor_id, session_id)]
@@ -193,6 +199,11 @@ class FakeAgentCoreMemory:
 
     def delete_memory_record(self, **params: Any) -> dict[str, Any]:
         params = validated('DeleteMemoryRecord', params)
+        if self.deletes_before_throttling == 0:
+            raise EXCEPTIONS.ThrottlingException(
+                {'Error': {'Code': 'ThrottlingException', 'Message': 'Rate exceeded'}}, 'DeleteMemoryRecord')
+        if self.deletes_before_throttling is not None:
+            self.deletes_before_throttling -= 1
         self.records.remove(self._record(params['memoryRecordId'], 'DeleteMemoryRecord', params.get('namespace')))
         return {'memoryRecordId': params['memoryRecordId']}
 
@@ -201,7 +212,11 @@ class FakeAgentCoreMemory:
 
         def paginate(*, PaginationConfig: dict[str, int], **params: Any) -> list[dict[str, Any]]:
             validated('ListMemoryRecords', {**params, 'maxResults': PaginationConfig['PageSize']})
-            return [{'memoryRecordSummaries': self._under(params)}]
+            listed = self._under(params)
+            size = PaginationConfig['PageSize']
+            return [{'memoryRecordSummaries': listed[start:start + size]} for start in range(0, len(listed), size)] or [
+                {'memoryRecordSummaries': []}
+            ]
 
         return SimpleNamespace(paginate=paginate)
 

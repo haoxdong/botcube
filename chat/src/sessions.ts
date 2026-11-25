@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { SessionConcurrencyError, SessionBusyError, SessionClaimError, SessionDeletedError, SessionUnissuedError } from './session-metadata.js';
-import { assertContinuable, oneIdSession, SessionReadOnlyError } from './session-identity.js';
+import { assertContinuable, oneIdSession, SessionReadOnlyError, sessionUserIds } from './session-identity.js';
 import type { AgentDocuments } from './agent-documents.js';
 import { HttpError } from './http-error.js';
 import type { ScheduledTasks } from './scheduled-tasks.js';
@@ -37,6 +37,13 @@ export function sessionOperations(
   purge: (sessions: SessionPurge[], wait?: boolean) => Promise<void> | void,
   filingUserId: (owner: string) => string = (owner) => owner,
 ) {
+  const forgetExtractedMemory = async (owner: string): Promise<void> => {
+    const purges = await sessionMetadata.ownerPurges(owner, filingUserId);
+    for (const userId of new Set([filingUserId(owner), ...purges.flatMap((session) => sessionUserIds(session, filingUserId))])) {
+      // eslint-disable-next-line no-await-in-loop -- stops at the first failure, leaving the deletion pending
+      await invokeSessionApi('forget', { userId });
+    }
+  };
   const refuseMainChat = async (owner: string, sessionId: string, action: 'renamed' | 'deleted') => {
     if (sessionId === (await sessionMetadata.mainChat(owner, filingUserId(owner)))) {
       throw new HttpError(409, `The Main Chat cannot be ${action}`);
@@ -126,7 +133,7 @@ export function sessionOperations(
       const metadata = await sessionMetadata.fence(owner, sessionId);
       if (metadata !== null) await purge([metadata]);
     },
-    /** Account History deletion includes its documents and tasks, after fencing and enqueueing Sessions. */
+    /** Account History deletion includes its Extracted Memory, documents and tasks, after fencing and purging Sessions. */
     async removeOwner(accountId: string): Promise<void> {
       const sessions = await sessionMetadata.fenceOwner(accountId);
       try {
@@ -137,6 +144,7 @@ export function sessionOperations(
         pending.cause = error;
         throw pending;
       }
+      await forgetExtractedMemory(accountId);
       await agentDocuments.delete(accountId);
       await scheduledTasks?.deleteAll(accountId);
     },

@@ -30,6 +30,7 @@ const RUNTIME_IDLE_TIMEOUT_CAP_SECONDS = 900;
 const RUNTIME_SESSION_STORAGE = '/mnt/workspace';
 /** Every actor's long-term records: the trailing slashes refuse `/actors/` and an actor ID without its slash (ADR 0033). */
 const MEMORY_ACTOR_NAMESPACES = { StringLike: { 'bedrock-agentcore:namespace': '/actors/*/' } };
+const MEMORY_ACTOR_NAMESPACE_PATHS = { StringLike: { 'bedrock-agentcore:namespacePath': '/actors/*/' } };
 
 /** The `@aws/agentcore-cdk` L3 also names each Memory as `MEMORY_<NAME>_ID`; the Harness reads only AGENTCORE_MEMORY_ID. */
 function removeMemoryAlias(runtime: bedrockagentcore.CfnRuntime, generatedAlias: string): void {
@@ -330,6 +331,13 @@ export class AgentCoreStack extends Stack {
         actions: ['bedrock-agentcore:ListMemoryRecords'],
         resources: [memory.memoryArn],
         conditions: MEMORY_ACTOR_NAMESPACES,
+      })
+    );
+    role.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock-agentcore:ListMemoryRecords'],
+        resources: [memory.memoryArn],
+        conditions: MEMORY_ACTOR_NAMESPACE_PATHS,
       })
     );
     role.addToPrincipalPolicy(

@@ -3,6 +3,7 @@ import { stillServing } from './task-drain.js';
 import type { SessionApiFor } from './session-api.js';
 import { RuntimeAdmissionUnprovedError } from './session-lifecycle.js';
 import { SessionDispatchPendingError, type SessionPurge } from './session-metadata.js';
+import { sessionUserIds } from './session-identity.js';
 
 // A purge that fails (session API cold start, throttling, a network blip) is
 // retried after each of these waits before the failure is logged.
@@ -80,8 +81,7 @@ export function purgeQueue(
 
   async function erase(session: SessionPurge): Promise<void> {
     if (await stop(session) === 'absent') console.info(`Session Sandbox is absent; purging remaining Session events. session_id=${session.session_id}`);
-    const actorIds = new Set([session.filing_user_id, ...(session.owner === undefined ? [] : [ownerActorId(session.owner)])]);
-    for (const userId of actorIds) {
+    for (const userId of new Set(sessionUserIds(session, ownerActorId))) {
       // eslint-disable-next-line no-await-in-loop -- one actor's purge at a time keeps within AgentCore's delete rate
       await invoke('purge', { sessionId: session.session_id, userId });
     }

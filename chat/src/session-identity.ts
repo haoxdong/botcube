@@ -14,6 +14,11 @@ export type SessionPurge = SessionIdentity & {
   owner?: string;
 };
 
+/** The User IDs a Session's events are filed under: its own, and its owner's when the Session was fenced. */
+export function sessionUserIds(session: SessionPurge, userId: (owner: string) => string): string[] {
+  return [session.filing_user_id, ...(session.owner === undefined ? [] : [userId(session.owner)])];
+}
+
 export class SessionReadOnlyError extends Error {}
 
 type StoredSession = Partial<Record<'session_id' | 'read_only', unknown>>;

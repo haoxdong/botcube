@@ -95,6 +95,14 @@
         "SESSION_READ_TIMEOUT"
       ],
       "deadline": "request"
+    },
+    "forget": {
+      "required": { "userId": "" },
+      "optional": {},
+      "result": {},
+      "optionalResult": {},
+      "errors": [],
+      "deadline": "invocation"
     }
   }
 }

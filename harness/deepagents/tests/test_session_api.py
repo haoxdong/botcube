@@ -919,3 +919,57 @@ def test_concurrent_session_purges_both_succeed(
 
     assert [reply.status_code for reply in replies] == [200, 200]
     assert not memory.events[('user-1', 'session-1')]
+
+
+# -- Forget ----------------------------------------------------------------------
+
+# Every kind of record AgentCore extracts under an actor, the Session-scoped ones nested a level deeper.
+EXTRACTED_KINDS = ('preferences', 'facts', 'summaries/session-1', 'episodes/session-2', 'episodes')
+
+
+def _extracted(actor: str, count: int) -> list[dict[str, Any]]:
+    return [
+        _record(f'mem-{actor}-{index:035d}', f'Extracted {index}', actor, EXTRACTED_KINDS[index % len(EXTRACTED_KINDS)])
+        for index in range(count)
+    ]
+
+
+def _actor_records(memory: FakeAgentCoreMemory, actor: str) -> list[str]:
+    return [record['memoryRecordId'] for record in memory.records if record['namespaces'][0].startswith(f'/actors/{actor}/')]
+
+
+def test_forget_deletes_every_extracted_record_of_the_user_and_no_one_elses(
+    client: TestClient, memory: FakeAgentCoreMemory
+) -> None:
+    # More than two pages of records under the User's actor namespaces.
+    memory.records += _extracted('user-1', 250)
+    others = _actor_records(memory, OTHER_USER)
+
+    assert _memory(client, 'forget') == (200, {})
+    assert _actor_records(memory, 'user-1') == []
+    assert _actor_records(memory, OTHER_USER) == others
+
+
+def test_a_forget_that_fails_part_way_finishes_when_retried(client: TestClient, memory: FakeAgentCoreMemory) -> None:
+    memory.records += _extracted('user-1', 120)
+    others = _actor_records(memory, OTHER_USER)
+    memory.lag_listing()
+    memory.deletes_before_throttling = 50
+
+    with pytest.raises(ClientError, match='Rate exceeded'):
+        _memory(client, 'forget')
+    assert len(_actor_records(memory, 'user-1')) == 71
+
+    memory.deletes_before_throttling = None
+    # While the listing lags, it still lists the records the first try deleted.
+    with pytest.raises(ClientError, match='Memory record not found'):
+        _memory(client, 'forget')
+    memory.catch_up_listing()
+
+    assert _memory(client, 'forget') == (200, {})
+    assert _actor_records(memory, 'user-1') == []
+    assert _actor_records(memory, OTHER_USER) == others
+
+
+def test_forget_without_agentcore_memory_has_no_extracted_memory_to_delete(client: TestClient) -> None:
+    assert _memory(client, 'forget') == (200, {})

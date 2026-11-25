@@ -50,6 +50,7 @@ const sessionMetadata: SessionMetadata = {
   rename: unused,
   fence: unused,
   fenceOwner: unused,
+  ownerPurges: unused,
   transferOwner: unused,
   saveTurnSummary: unused,
   turnSummaries: unused,

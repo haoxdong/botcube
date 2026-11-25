@@ -2070,3 +2070,42 @@ it.each(['source', 'destination'])('reports deletion when the %s account fence a
 
   await expect(racing.beginDispatch('source', 'session', undefined, proof)).rejects.toBeInstanceOf(SessionDeletedError);
 });
+
+describe('ownerPurges', () => {
+  const userId = (account: string) => `filed-${account}`;
+
+  it("reads every page of purge jobs, past jobs that fill a page and are not the account's", async () => {
+    const documents = DynamoDBDocumentClient.from(client());
+    // Three jobs of about 380 KB each fill DynamoDB's 1 MB Query page, and sort before the account's.
+    await Promise.all([1, 2, 3].map((index) => documents.send(new PutCommand({ TableName: table, Item: {
+      pk: 'PURGES', sk: JSON.stringify([`aaa-other-${index}`, `session-${index}`]),
+      session_id: `session-${index}`, filing_user_id: `aaa-other-${index}`, owner: 'account-other', padding: 'x'.repeat(380_000),
+    } }))));
+    await turn('account-1', 'session-own', T1);
+    await fence('account-1', 'session-own', T2);
+    let pages = 0;
+    const counted = metadataWith(async (command, input) => {
+      if (command === 'QueryCommand' && (input as { ExpressionAttributeValues?: Record<string, unknown> }).ExpressionAttributeValues?.[':pk'] === 'PURGES') pages += 1;
+      return undefined;
+    });
+
+    expect(await counted.ownerPurges('account-1', userId)).toEqual([{ session_id: 'session-own', filing_user_id: 'filed-account-1', owner: 'account-1' }]);
+    expect(pages).toBeGreaterThan(1);
+  });
+
+  it("matches a legacy purge job with no owner filed under the account's ID, a retired ID, or either's User ID", async () => {
+    await turn('account-1', 'session-claimed', T1);
+    await metadata.transferOwner('account-1', 'account-2');
+    const documents = DynamoDBDocumentClient.from(client());
+    const legacy = [['account-2', 'legacy-unprefixed'], ['filed-account-2', 'legacy-own'], ['filed-account-1', 'legacy-retired'], ['filed-account-3', 'legacy-other']];
+    await Promise.all(legacy.map(([filing, session]) => documents.send(new PutCommand({ TableName: table, Item: {
+      pk: 'PURGES', sk: JSON.stringify([filing, session]), session_id: session, filing_user_id: filing,
+    } }))));
+
+    expect(await metadata.ownerPurges('account-2', userId)).toEqual([
+      { session_id: 'legacy-unprefixed', filing_user_id: 'account-2' },
+      { session_id: 'legacy-retired', filing_user_id: 'filed-account-1' },
+      { session_id: 'legacy-own', filing_user_id: 'filed-account-2' },
+    ]);
+  });
+});

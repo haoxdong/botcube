@@ -537,8 +537,10 @@ describe("the stock Chat Service's account deletion", () => {
     vault.delete(invocation.accountId);
     sendJson(response, 200, { status: 'revoked' });
   });
-  beforeAll(async () => { await credentialService.listen(); });
-  afterAll(async () => { await credentialService.close(); });
+  // The Session API an account deletion asks to delete the account's Extracted Memory.
+  const sessionApi = new FakeSessionApi();
+  beforeAll(async () => { await Promise.all([credentialService.listen(), sessionApi.listen()]); });
+  afterAll(async () => { await Promise.all([credentialService.close(), sessionApi.close()]); });
 
   it("revokes a Test User's credentials at the Credential Service before erasing it, and keeps it when the revoke fails", async () => {
     const endpoint = motoEndpoint();
@@ -549,7 +551,7 @@ describe("the stock Chat Service's account deletion", () => {
       PORT: '0', AWS_REGION: 'us-east-1', AWS_ENDPOINT_URL_DYNAMODB: endpoint, AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
       BOTCUBE_CHAT_TABLE: table, BOTCUBE_CONFIG: PUBLIC_EXAMPLE,
       BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET,
-      ...efsFiles(),
+      BOTCUBE_LOCAL_SESSION_API_URL: sessionApi.url, ...efsFiles(),
     };
     const filesRoot = mkdtempSync(join(tmpdir(), 'stock-files-'));
     const documents = DynamoDBDocumentClient.from(new DynamoDBClient(motoAws()));
@@ -599,6 +601,7 @@ describe("the stock Chat Service's account deletion", () => {
     const env = {
       PORT: '0', AWS_REGION: 'us-east-1', AGENTCORE_RUNTIME_ARN: RUNTIME_ARN, BOTCUBE_CHAT_TABLE: table,
       BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET, BOTCUBE_CONFIG: publicExample({ planUsage: { ownerAccountId: 'acct_owner' } }),
+      BOTCUBE_LOCAL_SESSION_API_URL: sessionApi.url,
     };
     const documents = DynamoDBDocumentClient.from(new DynamoDBClient(motoAws()));
     const accountId = 'acct_stock_connector';
@@ -656,6 +659,7 @@ describe("the stock Chat Service's account deletion", () => {
       PORT: '0', AWS_REGION: 'us-east-1', AWS_ENDPOINT_URL_DYNAMODB: endpoint, AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
       BOTCUBE_CHAT_TABLE: table, BOTCUBE_CONFIG: PUBLIC_EXAMPLE,
       BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET,
+      BOTCUBE_LOCAL_SESSION_API_URL: sessionApi.url,
     };
     const server = serveChatService(env);
     await once(server, 'listening');
@@ -793,12 +797,20 @@ describe('a signed-in User deleting their own account', () => {
     writeFileSync(config, JSON.stringify(withRequired({ integrations: { signIn: { ...enterprise.integrations.signIn, issuer: issuer.url, clients } } })));
   });
   afterAll(async () => { await issuer.close(); });
+  // The Session API, holding each User's Extracted Memory records as Memory lines.
+  const sessionApi = new FakeSessionApi();
+  // The AgentCore Runtime, where every Session a deletion stops is already gone.
+  const runtime = new HttpFake((_, response) => sendJson(response, 404, { message: 'Session not found' }));
+  beforeAll(async () => { await Promise.all([sessionApi.listen(), runtime.listen()]); });
+  afterAll(async () => { await Promise.all([sessionApi.close(), runtime.close()]); });
 
   async function oidcService(table: string, endpoint: string) {
     const env = {
       PORT: '0', AWS_REGION: 'us-east-1', AWS_ENDPOINT_URL_DYNAMODB: endpoint, AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
+      AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: runtime.url,
       BOTCUBE_CHAT_TABLE: table, BOTCUBE_CONFIG: config,
       BOTCUBE_CREDENTIAL_INVOCATION_SECRET: INTROSPECTION_SECRET,
+      BOTCUBE_LOCAL_SESSION_API_URL: sessionApi.url,
     };
     const server = serveChatService(env);
     await once(server, 'listening');
@@ -808,7 +820,7 @@ describe('a signed-in User deleting their own account', () => {
   type OidcService = Awaited<ReturnType<typeof oidcService>>;
 
   /** Run `test` against a stock Chat Service on its own table; `restart` starts another on the same table. */
-  async function withService(test: (service: OidcService, restart: () => Promise<OidcService>) => Promise<void>) {
+  async function withService(test: (service: OidcService, restart: () => Promise<OidcService>, table: string) => Promise<void>) {
     const endpoint = motoEndpoint();
     const table = `stock-self-delete-${Math.random().toString(36).slice(2)}`;
     await createChatTable(endpoint, table);
@@ -820,7 +832,7 @@ describe('a signed-in User deleting their own account', () => {
       return service;
     };
     try {
-      await test(await start(), start);
+      await test(await start(), start, table);
     } finally {
       await Promise.all(running.map((service) => service.close()));
       vi.unstubAllEnvs();
@@ -922,6 +934,128 @@ describe('a signed-in User deleting their own account', () => {
       // The sweep completes the intent after the erase, so wait on that last write.
       await vi.waitFor(async () => expect(await swept.store.pendingAccountDeletions()).toEqual([]));
       expect(await swept.store.loadAccount(accountId)).toBeNull();
+    });
+  });
+
+  it("deletes the User's Extracted Memory with the account, retrying a sweep that fails part way, and no one else's", async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await withService(async (service, restart) => {
+        const browser = service.browser();
+        const { accountId } = await signIn(browser, 'ada');
+        expect((await browser.post('/agent/memory', { text: 'Prefers tea' })).status).toBe(201);
+        sessionApi.memories.set('someone-else', [{ id: 'memory-kept', text: 'Prefers coffee' }]);
+        await throughProvider(browser, await startDeletion(browser), 'ada');
+        sessionApi.failForget = 1;
+
+        const failed = await restart();
+        await vi.waitFor(() => expect(logged).toHaveBeenCalledWith('Account deletion failed; it remains pending', accountId, expect.anything()));
+        expect(await failed.store.pendingAccountDeletions()).toEqual([expect.objectContaining({ accountId })]);
+        await failed.close();
+
+        const swept = await restart();
+        await vi.waitFor(async () => expect(await swept.store.pendingAccountDeletions()).toEqual([]));
+        expect(await swept.store.loadAccount(accountId)).toBeNull();
+        expect([...sessionApi.memories.values()].flat()).toEqual([{ id: 'memory-kept', text: 'Prefers coffee' }]);
+      });
+    } finally {
+      logged.mockRestore();
+      sessionApi.memories.clear();
+    }
+  });
+
+  /** Delete the signed-in User's account, then sweep it on a restarted Chat Service until it is erased. */
+  async function deleteAndSweep(browser: Browser, restart: () => Promise<OidcService>, accountId: string) {
+    await throughProvider(browser, await startDeletion(browser), 'ada');
+    const swept = await restart();
+    await vi.waitFor(async () => expect(await swept.store.pendingAccountDeletions()).toEqual([]));
+    expect(await swept.store.loadAccount(accountId)).toBeNull();
+  }
+
+  const OTHER_USERS_MEMORY = { id: 'memory-kept', text: 'Prefers coffee' };
+
+  describe("deletes the Extracted Memory of every User ID the account's Sessions were filed under", () => {
+    afterEach(() => {
+      sessionApi.memories.clear();
+      sessionApi.refuseForget.clear();
+    });
+
+    it('including a Session filed under an older User ID', async () => {
+      await withService(async (service, restart, table) => {
+        const browser = service.browser();
+        const { accountId } = await signIn(browser, 'ada');
+        expect((await browser.post('/agent/memory', { text: 'Prefers tea' })).status).toBe(201);
+        await new DynamoDBSessionMetadata(table).recordTurn(accountId, 'older-session', { filingUserId: 'older-user-id', title: 'Earlier', allocation: true });
+        sessionApi.memories.set('older-user-id', [{ id: 'memory-older', text: 'Lives in Leeds' }]);
+        sessionApi.memories.set('someone-else', [OTHER_USERS_MEMORY]);
+
+        await deleteAndSweep(browser, restart, accountId);
+
+        expect([...sessionApi.memories.values()].flat()).toEqual([OTHER_USERS_MEMORY]);
+      });
+    });
+
+    it('when a retry follows a run that purged every Session and then failed to forget the older User ID', async () => {
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        await withService(async (service, restart, table) => {
+          const browser = service.browser();
+          const { accountId } = await signIn(browser, 'ada');
+          await new DynamoDBSessionMetadata(table).recordTurn(accountId, 'older-session', { filingUserId: 'older-user-id', title: 'Earlier', allocation: true });
+          sessionApi.memories.set('older-user-id', [{ id: 'memory-older', text: 'Lives in Leeds' }]);
+          sessionApi.refuseForget.add('older-user-id');
+          await throughProvider(browser, await startDeletion(browser), 'ada');
+
+          const failed = await restart();
+          await vi.waitFor(() => expect(logged).toHaveBeenCalledWith('Account deletion failed; it remains pending', accountId, expect.anything()));
+          expect(await new DynamoDBSessionMetadata(table).pendingPurges()).toEqual([]);
+          await failed.close();
+          sessionApi.refuseForget.clear();
+
+          const swept = await restart();
+          await vi.waitFor(async () => expect(await swept.store.pendingAccountDeletions()).toEqual([]));
+          expect(sessionApi.memories.get('older-user-id')).toBeUndefined();
+        });
+      } finally {
+        logged.mockRestore();
+      }
+    });
+
+    it('including a Session the User deleted before deleting the account', async () => {
+      await withService(async (service, restart, table) => {
+        const browser = service.browser();
+        const { accountId } = await signIn(browser, 'ada');
+        const metadata = new DynamoDBSessionMetadata(table);
+        await metadata.recordTurn(accountId, 'older-session', { filingUserId: 'older-user-id', title: 'Earlier', allocation: true });
+        sessionApi.memories.set('older-user-id', [{ id: 'memory-older', text: 'Lives in Leeds' }]);
+        expect((await browser.delete('/threads/older-session')).status).toBe(204);
+        await vi.waitFor(async () => expect(await metadata.pendingPurges()).toEqual([]));
+
+        await deleteAndSweep(browser, restart, accountId);
+
+        expect(sessionApi.memories.get('older-user-id')).toBeUndefined();
+      });
+    });
+
+    it('including a Session a claimed account deleted before the Claim', async () => {
+      await withService(async (service, restart, table) => {
+        const guest = service.browser();
+        const { accountId: guestId } = await guest.openAccountSession();
+        const metadata = new DynamoDBSessionMetadata(table);
+        await metadata.recordTurn(guestId, 'guest-session', { filingUserId: 'older-user-id', title: 'Earlier', allocation: true });
+        sessionApi.memories.set('older-user-id', [{ id: 'memory-older', text: 'Lives in Leeds' }]);
+        sessionApi.memories.set(filingUserId('template', guestId), [{ id: 'memory-guest', text: 'Lives in York' }]);
+        expect((await guest.delete('/threads/guest-session')).status).toBe(204);
+        await vi.waitFor(async () => expect(await metadata.pendingPurges()).toEqual([]));
+        const browser = service.browser();
+        const { accountId } = await signIn(browser, 'ada');
+        await metadata.transferOwner(guestId, accountId);
+        sessionApi.memories.set('someone-else', [OTHER_USERS_MEMORY]);
+
+        await deleteAndSweep(browser, restart, accountId);
+
+        expect([...sessionApi.memories.values()].flat()).toEqual([OTHER_USERS_MEMORY]);
+      });
     });
   });
 

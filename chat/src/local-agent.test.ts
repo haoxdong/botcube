@@ -106,6 +106,7 @@ const sessionMetadata: SessionMetadata = {
   rename: async () => null,
   fence: async () => null,
   fenceOwner: async () => [],
+  ownerPurges: async () => [],
   transferOwner: async () => undefined,
   saveTurnSummary: async () => undefined,
   turnSummaries: async () => [],
@@ -148,8 +149,9 @@ async function chatService(localHarnessUrl: string, options: {
     for await (const chunk of request) body += String(chunk);
     const { operation, ...args } = JSON.parse(body);
     try {
-      if (operation !== 'purge') throw new Error('expected a purge');
-      response.end(JSON.stringify(await purge('purge', args)));
+      if (operation === 'forget') response.end(JSON.stringify({}));
+      else if (operation !== 'purge') throw new Error('expected a purge or forget');
+      else response.end(JSON.stringify(await purge('purge', args)));
     } catch (error) {
       response.writeHead(500).end(JSON.stringify({ error: String(error) }));
     }

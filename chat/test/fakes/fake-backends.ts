@@ -1,3 +1,4 @@
+import type { ServerResponse } from 'node:http';
 import type { ScheduledRunCard } from '../../src/session-api.js';
 import { HttpFake, sendJson } from './http-fake.js';
 
@@ -20,7 +21,8 @@ export type SessionApiEvent =
   | { operation: 'memory'; userId: string }
   | { operation: 'memory-add'; userId: string; text: string }
   | { operation: 'memory-edit'; userId: string; recordId: string; text: string }
-  | { operation: 'memory-delete'; userId: string; recordId: string };
+  | { operation: 'memory-delete'; userId: string; recordId: string }
+  | { operation: 'forget'; userId: string };
 
 /** One line of a user's Memory document: a memory record and its text. */
 export interface MemoryLine {
@@ -46,6 +48,10 @@ export class FakeSessionApi extends HttpFake {
   beforePurgeReply: (() => Promise<void>) | undefined;
   /** Each user's Memory, by user ID. */
   readonly memories = new Map<string, MemoryLine[]>();
+  /** How many `forget` calls to come fail, as an AgentCore error part way through the deletion fails one. */
+  failForget = 0;
+  /** The User IDs whose `forget` fails, as AgentCore throttling one actor's deletes does, until removed. */
+  readonly refuseForget = new Set<string>();
   /**
    * Session operations at once beyond this are throttled, as the deployed function's account
    * concurrency throttles them: HTTP 429. While it is set, each Session reply takes SESSION_REPLY_MS.
@@ -57,41 +63,57 @@ export class FakeSessionApi extends HttpFake {
     super(async (request, response) => {
       const event = JSON.parse(request.body) as SessionApiEvent;
       if (event.operation === 'purge') await this.beforePurgeReply?.();
-      if ('sessionId' in event) {
-        if (this.concurrencyLimit !== undefined) {
-          if (this.inFlight >= this.concurrencyLimit) {
-            sendJson(response, 429, { Reason: 'ConcurrentInvocationLimitExceeded', Type: 'User', message: 'Rate Exceeded.' });
-            return;
-          }
-          this.inFlight += 1;
-          await new Promise((resolve) => setTimeout(resolve, SESSION_REPLY_MS));
-          this.inFlight -= 1;
-        }
-        const reply = this.sessionReply(event.operation, event.sessionId);
-        sendJson(response, reply.status, reply.body);
-        return;
-      }
-      const lines = this.memories.get(event.userId) ?? [];
-      if (event.operation === 'memory') {
-        sendJson(response, 200, { lines });
-        return;
-      }
-      if (event.operation === 'memory-add') {
-        const line = { id: `pending:pending-memory-20261024:event-${lines.length}`, text: event.text };
-        lines.unshift(line);
-        this.memories.set(event.userId, lines);
-        sendJson(response, 200, { line });
-        return;
-      }
-      const line = lines.find(({ id }) => id === event.recordId);
-      if (line === undefined) {
-        sendJson(response, 404, { error: `Memory has no line ${event.recordId}`, code: 'MEMORY_LINE_NOT_FOUND' });
-        return;
-      }
-      if (event.operation === 'memory-edit') line.text = event.text;
-      else lines.splice(lines.indexOf(line), 1);
-      sendJson(response, 200, {});
+      if ('sessionId' in event) await this.answerSession(event, response);
+      else if (event.operation === 'forget') this.answerForget(event, response);
+      else this.answerMemory(event, response);
     });
+  }
+
+  private async answerSession(event: Extract<SessionApiEvent, { sessionId: string }>, response: ServerResponse): Promise<void> {
+    if (this.concurrencyLimit !== undefined) {
+      if (this.inFlight >= this.concurrencyLimit) {
+        sendJson(response, 429, { Reason: 'ConcurrentInvocationLimitExceeded', Type: 'User', message: 'Rate Exceeded.' });
+        return;
+      }
+      this.inFlight += 1;
+      await new Promise((resolve) => setTimeout(resolve, SESSION_REPLY_MS));
+      this.inFlight -= 1;
+    }
+    const reply = this.sessionReply(event.operation, event.sessionId);
+    sendJson(response, reply.status, reply.body);
+  }
+
+  private answerForget(event: Extract<SessionApiEvent, { operation: 'forget' }>, response: ServerResponse): void {
+    if (this.failForget > 0 || this.refuseForget.has(event.userId)) {
+      if (this.failForget > 0) this.failForget -= 1;
+      sendJson(response, 500, { errorMessage: 'Rate exceeded', errorType: 'ThrottlingException' });
+      return;
+    }
+    this.memories.delete(event.userId);
+    sendJson(response, 200, {});
+  }
+
+  private answerMemory(event: Extract<SessionApiEvent, { operation: `memory${string}` }>, response: ServerResponse): void {
+    const lines = this.memories.get(event.userId) ?? [];
+    if (event.operation === 'memory') {
+      sendJson(response, 200, { lines });
+      return;
+    }
+    if (event.operation === 'memory-add') {
+      const line = { id: `pending:pending-memory-20261024:event-${lines.length}`, text: event.text };
+      lines.unshift(line);
+      this.memories.set(event.userId, lines);
+      sendJson(response, 200, { line });
+      return;
+    }
+    const line = lines.find(({ id }) => id === event.recordId);
+    if (line === undefined) {
+      sendJson(response, 404, { error: `Memory has no line ${event.recordId}`, code: 'MEMORY_LINE_NOT_FOUND' });
+      return;
+    }
+    if (event.operation === 'memory-edit') line.text = event.text;
+    else lines.splice(lines.indexOf(line), 1);
+    sendJson(response, 200, {});
   }
 
   private sessionReply(operation: SessionOperation, sessionId: string): { status: number; body: unknown } {
