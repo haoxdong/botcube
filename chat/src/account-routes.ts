@@ -1,11 +1,10 @@
 import type { Hono } from 'hono';
-import { agentIdentity, soul, type AgentDocuments } from './agent-documents.js';
+import { agentIdentity, soul, type AgentDocuments, type AgentDocumentSet } from './agent-documents.js';
 import type { RequesterSource } from './requester.js';
-import type { TurnSource } from './turn-preparation.js';
 import { HttpError } from './http-error.js';
 import { isRecord } from './payload.js';
 import { picture, pictureUrl } from './pictures.js';
-import { accountModelList, namedModel } from './models.js';
+import { accountModelList, namedModel, type ModelSource } from './models.js';
 import { isScheduledInstant } from './schedule-time.js';
 import type { ScheduledTasks, ScheduledTask, ScheduledTaskDefinition, TaskChanges } from './scheduled-tasks.js';
 import type { SessionMetadata } from './session-metadata.js';
@@ -44,7 +43,7 @@ function taskInstant(value: unknown, field: 'startDate' | 'endDate', required: b
 
 export function accountRoutes(
   app: Hono,
-  bot: Omit<TurnSource, 'invocationPayload' | 'credentialProps' | 'turnStarting'> & RequesterSource,
+  bot: RequesterSource & ModelSource & { readonly agentDocuments: AgentDocumentSet },
   sessionMetadata: SessionMetadata,
   agentDocuments: AgentDocuments,
   sessions: ReturnType<typeof sessionOperations>,

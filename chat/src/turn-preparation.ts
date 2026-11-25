@@ -13,7 +13,7 @@ export interface TurnSource<R extends Requester = Requester> extends ModelSource
   readonly agentDocuments: AgentDocumentSet;
   /**
    * The bot settings' Extracted Memory gate (`extractedMemory.enabled`): false keeps no Extracted Memory for anyone.
-   * Its routes refuse, and each Turn tells the Harness (`forwardedProps.botMemory`), which then gives no `memory` tool. On unless false.
+   * Each Turn tells the Harness (`forwardedProps.botMemory`), which then gives no `memory` tool. On unless false.
    */
   readonly extractedMemory?: boolean;
   readonly writtenMemory?: boolean;

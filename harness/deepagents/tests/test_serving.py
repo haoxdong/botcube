@@ -76,7 +76,6 @@ from botcube_harness_deepagents import (
     files,
     lazy_files,
     llm,
-    memory_tools,
     message_times,
     serving,
     session_api,
@@ -2517,7 +2516,6 @@ def agentcore_memory(service: _Service, monkeypatch: pytest.MonkeyPatch) -> _Sco
     memory.sts = install_tagged_memory(monkeypatch, memory)
     monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     monkeypatch.setattr(serving, 'AWS_REGION', 'eu-west-1')
-    monkeypatch.setattr(memory_tools, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     return memory
 
 

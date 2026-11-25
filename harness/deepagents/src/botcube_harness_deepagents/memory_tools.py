@@ -167,19 +167,6 @@ def list_memory_record_summaries(
     return summaries
 
 
-def record_namespace(client: Any, *, memory_id: str, actor_id: str, record_id: str) -> str | None:
-    """The namespace of one of the actor's records, or None when the actor has no such record.
-
-    A get or delete by ID names it: the `assume-role` session policy scopes both by the request's namespace.
-    """
-    for summary in list_memory_record_summaries(
-        client, memory_id=memory_id, namespace=actor_namespace(actor_id), selector='namespacePath',
-    ):
-        if summary['memoryRecordId'] == record_id:
-            return summary['namespaces'][0]
-    return None
-
-
 def memory_tool(actor_id: str) -> BaseTool:
     """The actor's `memory` tool: Strands' AgentCoreMemoryToolProvider tool under ADR 0031's name."""
 

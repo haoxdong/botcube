@@ -16,8 +16,4 @@ def memory_reference(record_id: str) -> str:
 def memory_index_line(entry: MemoryIndexEntry) -> str:
     reference = f'{memory_reference(entry.record_id)} ' if entry.record_id else ''
     line = f'- {reference}{" ".join(entry.text.split())}'
-    return memory_preview(line)
-
-
-def memory_preview(text: str) -> str:
-    return text if len(text) <= 100 else text[:99] + '…'
+    return line if len(line) <= 100 else line[:99] + '…'
