@@ -3,13 +3,14 @@ import {
   Menu, MenuDivider, MenuItem, MenuItemCheckbox, MenuItemRadio, MenuList, MenuPopover, MenuTrigger, type MenuCheckedValueChangeData,
 } from '@fluentui/react-components';
 import {
-  ArrowClockwise20Regular, ArrowDownload20Regular, ArrowSort20Regular, ArrowUpload20Regular, ClipboardPaste20Regular, Copy20Regular, Cut20Regular,
-  Delete20Regular, Grid20Regular, GroupList20Regular, Info20Regular, Open20Regular, Rename20Regular,
+  Add20Regular, ArrowClockwise20Regular, ArrowDownload20Regular, ArrowSort20Regular, ArrowUpload20Regular, ClipboardPaste20Regular, Copy20Regular, Cut20Regular,
+  Delete20Regular, Folder20Filled, Grid20Regular, GroupList20Regular, Info20Regular, Link20Regular, Open20Regular, Rename20Regular,
 } from '@fluentui/react-icons';
 import type { ReactElement, ReactNode } from 'react';
 import { KeyedMenuItem, LETTERS } from './files-explorer-keytips';
 import type { ListActions } from './files-explorer-actions';
 import { GROUP_BYS, SORT_COLUMNS, VIEWS, type FilesItem, type GroupBy, type Sort, type View } from './files-items';
+import { FOLDER } from './windows-window';
 
 /** Explorer's panes beside the list, of which one shows at a time. */
 export type Pane = 'details' | 'preview';
@@ -36,6 +37,18 @@ export function Submenu({ label, icon, letter, className, children }: { label: s
       </MenuTrigger>
       <MenuPopover>{children}</MenuPopover>
     </Menu>
+  );
+}
+
+/** New's items: Folder, as Windows has it first, then Upload. */
+export type NewCommands = { canNewFolder: boolean; onNewFolder: () => void; onUpload: () => void };
+
+export function NewItems({ canNewFolder, onNewFolder, onUpload }: NewCommands) {
+  return (
+    <>
+      <MenuItem icon={<Folder20Filled color={FOLDER} />} disabled={!canNewFolder} onClick={onNewFolder}>Folder</MenuItem>
+      <MenuItem icon={<ArrowUpload20Regular />} onClick={onUpload}>Upload</MenuItem>
+    </>
   );
 }
 
@@ -108,8 +121,8 @@ export function SortMenuList({ arrangement, children }: { arrangement: Arrangeme
 }
 
 /**
- * An item's menu: Open, then for a file Cut, Download, Rename and Delete, and for either Copy path and Properties. On
- * an item of a selection of several, it acts on them all, and Rename is off. It opens on a right-click, or `open` from
+ * An item's menu: Open, then for a file Cut, Copy, Download, Rename and Delete, for a folder Rename, and for either Copy
+ * path and Properties. On an item of a selection of several, it acts on them all, and Rename is off. It opens on a right-click, or `open` from
  * Shift+F10 or the menu key; each item has its keytip.
  */
 export function RowMenu({ item, open, actions, children }: { item: FilesItem; open: boolean; actions: ListActions; children: ReactElement }) {
@@ -118,8 +131,11 @@ export function RowMenu({ item, open, actions, children }: { item: FilesItem; op
   type Entry = { label: keyof typeof letters; icon: ReactElement; act: (item: FilesItem) => void; off: boolean };
   const entries: Entry[] = [
     { label: 'Open', icon: <Open20Regular />, act: actions.onOpen, off: false },
-    ...(item.folder ? [] : [
+    ...(item.folder ? [
+      { label: 'Rename', icon: <Rename20Regular />, act: actions.onStartRename, off: many },
+    ] satisfies Entry[] : [
       { label: 'Cut', icon: <Cut20Regular />, act: actions.onCut, off: false },
+      { label: 'Copy', icon: <Copy20Regular />, act: actions.onCopy, off: false },
       { label: 'Download', icon: <ArrowDownload20Regular />, act: actions.onDownload, off: false },
       { label: 'Rename', icon: <Rename20Regular />, act: actions.onStartRename, off: many },
       { label: 'Delete', icon: <Delete20Regular />, act: actions.onDelete, off: false },
@@ -135,7 +151,7 @@ export function RowMenu({ item, open, actions, children }: { item: FilesItem; op
         <MenuList>
           {entries.map(entry)}
           <MenuDivider />
-          {entry({ label: 'Copy path', icon: <Copy20Regular />, act: actions.onCopyPath, off: false })}
+          {entry({ label: 'Copy path', icon: <Link20Regular />, act: actions.onCopyPath, off: false })}
           {entry({ label: 'Properties', icon: <Info20Regular />, act: actions.onProperties, off: false })}
         </MenuList>
       </MenuPopover>
@@ -145,17 +161,17 @@ export function RowMenu({ item, open, actions, children }: { item: FilesItem; op
 
 /**
  * The open folder's menu, on a right-click of the list's empty space, or `open` from Shift+F10 or the menu key with
- * nothing selected: View, Sort by and Group by, Refresh, Paste, Upload, and the folder's Properties, each with its
+ * nothing selected: View, Sort by and Group by, Refresh, Paste, New (Folder and Upload), and the folder's Properties, each with its
  * keytip. A right-click on an item opens the item's menu instead.
  */
-export function FolderMenu({ arrangement, open, onOpenChange, canPaste, onRefresh, onPaste, onUpload, onProperties, children }: {
+export function FolderMenu({ arrangement, open, onOpenChange, canPaste, news, onRefresh, onPaste, onProperties, children }: {
   arrangement: Arrangement;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   canPaste: boolean;
+  news: NewCommands;
   onRefresh: () => void;
   onPaste: () => void;
-  onUpload: () => void;
   onProperties: () => void;
   children: ReactElement;
 }) {
@@ -172,7 +188,7 @@ export function FolderMenu({ arrangement, open, onOpenChange, canPaste, onRefres
           <KeyedMenuItem letter={letters.Refresh} icon={<ArrowClockwise20Regular />} onClick={onRefresh}>Refresh</KeyedMenuItem>
           <MenuDivider />
           <KeyedMenuItem letter={letters.Paste} icon={<ClipboardPaste20Regular />} disabled={!canPaste} onClick={onPaste}>Paste</KeyedMenuItem>
-          <KeyedMenuItem letter={letters.Upload} icon={<ArrowUpload20Regular />} onClick={onUpload}>Upload</KeyedMenuItem>
+          <Submenu label="New" letter={letters.New} icon={<Add20Regular />}><MenuList><NewItems {...news} /></MenuList></Submenu>
           <MenuDivider />
           <KeyedMenuItem letter={letters.Properties} icon={<Info20Regular />} onClick={onProperties}>Properties</KeyedMenuItem>
         </MenuList>

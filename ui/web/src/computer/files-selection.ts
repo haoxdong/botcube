@@ -30,3 +30,6 @@ export const inverted = (selection: Selection, order: readonly string[]): Select
 
 /** A right-click: on a selected item it keeps the selection, which its menu acts on; on another it selects that alone. */
 export const pointedAt = (selection: Selection, path: string): Selection => (selection.paths.includes(path) ? selection : { paths: [path], anchor: path });
+
+/** What a paste selects, as Windows does: the files it put, else what was selected. */
+export const afterPaste = (selection: Selection, pasted: readonly string[]): Selection => (pasted[0] === undefined ? selection : { paths: pasted, anchor: pasted[0] });

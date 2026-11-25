@@ -7,7 +7,7 @@ import { FilesApp } from './files-app';
 import { FilesWindow } from './files-explorer';
 import { WindowsDesktop } from './windows-desktop';
 import { groupsOf, itemsIn } from './files-items';
-import { deleteFile, fileDownloadUrl, listFiles, moveIntoFolder, renameFile, uploadFile, uploadInto, withUploadsSettled, type UploadOptions } from './files-service';
+import { deleteFile, fileDownloadUrl, listFiles, moveIntoFolder, pastedCopyName, renameFile, uploadFile, uploadInto, withUploadsSettled, type UploadOptions } from './files-service';
 
 const entry = (name: string, size = 1, lastModified = '2026-10-01T09:00:00.000Z') => ({ name, size, lastModified });
 
@@ -165,6 +165,15 @@ describe('uploading a file the user attached in the chat', () => {
       : new Response('ok'))));
 
     expect(await uploadFile(file, { onProgress: vi.fn(), signal: new AbortController().signal }, { ...CHAT, fetchImpl: links })).toBe('/plan (2).txt');
+  });
+
+  it.each([
+    ['plan.txt', 1, 'plan - Copy.txt'],
+    ['plan.txt', 2, 'plan - Copy (2).txt'],
+    ['Makefile', 1, 'Makefile - Copy'],
+    ['a.' + 'b'.repeat(253), 1, 'a - Copy.' + 'b'.repeat(246)],
+  ])('names copy %s, number %i, pasted beside it %s as Windows does', (name, copy, named) => {
+    expect(pastedCopyName(name, copy)).toBe(named);
   });
 
   it.each([
@@ -403,11 +412,41 @@ describe('an upload into a folder, and a move into one', () => {
 /** The Chat Service as the app sees it: the account's Files, and the requests it got. */
 const calls: string[] = [];
 let stored: { name: string; size: number; lastModified: string }[] = [];
+/** Folders made with no file in them yet. */
+let folders: { name: string; lastModified: string }[] = [];
 let failing: number | null = null;
 const assign = vi.fn();
+type Moving = { from: string; to: string; name: string };
+const taken = (to: string) => stored.some(({ name }) => name === to || name.startsWith(`${to}/`)) || folders.some(({ name }) => name === to);
+const moved = (name: string, from: string, to: string) => (name === from ? to : name.startsWith(`${from}/`) ? `${to}${name.slice(from.length)}` : name);
+/** The fake Files' writes, by path. */
+const ROUTES: Record<string, (body: Moving) => Response> = {
+  '/files/rename': ({ from, to }) => {
+    if (taken(to)) return Response.json({ detail: `A file named ${to} is already in Files` }, { status: 409 });
+    calls.push(`renamed ${from} to ${to}`);
+    stored = stored.map((file) => ({ ...file, name: moved(file.name, from, to) }));
+    folders = folders.map((folder) => ({ ...folder, name: moved(folder.name, from, to) }));
+    return Response.json({ name: to });
+  },
+  '/files/folder': ({ name }) => {
+    if (taken(name)) return Response.json({ detail: `A folder named ${name} is already in Files` }, { status: 409 });
+    calls.push(`made ${name}`);
+    folders.push({ name, lastModified: '2026-10-02T09:00:00.000Z' });
+    return Response.json({ name }, { status: 201 });
+  },
+  '/files/copy': ({ from, to }) => {
+    if (taken(to)) return Response.json({ detail: `A file named ${to} is already in Files` }, { status: 409 });
+    const source = stored.find(({ name }) => name === from);
+    if (source === undefined) return Response.json({ detail: `No file ${from} in Files` }, { status: 404 });
+    calls.push(`copied ${from} to ${to}`);
+    stored = [...stored, { ...source, name: to }];
+    return Response.json({ name: to });
+  },
+};
 beforeEach(() => {
   calls.length = 0;
   stored = [];
+  folders = [];
   failing = null;
   assign.mockClear();
   vi.stubGlobal('location', { assign });
@@ -419,14 +458,9 @@ beforeEach(() => {
       stored = stored.filter(({ name }) => name !== url.searchParams.get('name'));
       return new Response(null, { status: 204 });
     }
-    if (url.pathname === '/files/rename') {
-      const { from, to } = JSON.parse(init?.body as string) as { from: string; to: string };
-      if (stored.some(({ name }) => name === to)) return Response.json({ detail: `A file named ${to} is already in Files` }, { status: 409 });
-      calls.push(`renamed ${from} to ${to}`);
-      stored = stored.map((file) => (file.name === from ? { ...file, name: to } : file));
-      return Response.json({ name: to });
-    }
-    if (url.pathname === '/files') return Response.json({ files: stored });
+    const route = ROUTES[url.pathname];
+    if (route !== undefined && init?.method === 'POST') return route(JSON.parse(init.body as string) as Moving);
+    if (url.pathname === '/files') return Response.json({ files: stored, folders });
     if (url.pathname === '/files/download-url') return Response.json({ url: `https://links.test/${url.searchParams.get('name')}` });
     throw new Error(`Unexpected request: ${input}`);
   });
@@ -457,6 +491,7 @@ async function windowWith(given: Partial<WindowProps>) {
   roots.push(root);
   const props: WindowProps = {
     files: [], error: null, onDownload: vi.fn(), onDelete: vi.fn(), onRename: vi.fn(() => null), onMove: vi.fn(), onReload: vi.fn(),
+    onCopy: vi.fn(), onNewFolder: vi.fn((folder: string) => `${folder}New folder/`),
     onUpload: vi.fn(() => Promise.reject(new Error('The test has no uploads'))), thumbnailUrl: vi.fn(async () => 'https://links.test/chart'),
     ...given,
   };
@@ -962,15 +997,15 @@ describe('FilesApp', () => {
   });
 
   describe('the command bar', () => {
-    it("acts on the selected file, and is off for nothing selected or a folder", async () => {
+    it("acts on the selected file, and is off for nothing selected; a folder has Rename alone", async () => {
       const { host, props } = await windowWith({ files: [entry('report.csv'), entry('reports/q3.pdf')] });
-      const off = () => ['Cut', 'Download', 'Rename', 'Delete'].map((label) => command(label).disabled);
-      expect(off()).toEqual([true, true, true, true]);
+      const off = () => ['Cut', 'Copy', 'Download', 'Rename', 'Delete'].map((label) => command(label).disabled);
+      expect(off()).toEqual([true, true, true, true, true]);
       await press(host, 'reports');
-      expect(off()).toEqual([true, true, true, true]);
+      expect(off()).toEqual([true, true, true, false, true]);
 
       await press(host, 'report.csv');
-      expect(off()).toEqual([false, false, false, false]);
+      expect(off()).toEqual([false, false, false, false, false]);
       await clickOn(command('Download'));
       expect(props.onDownload).toHaveBeenCalledExactlyOnceWith('report.csv');
       await clickOn(command('Rename'));
@@ -980,8 +1015,8 @@ describe('FilesApp', () => {
       await windowWith({ files: [entry('report.csv')] });
       const bar = document.querySelector('[role="toolbar"][aria-label="Commands"]');
       expect(command('New').textContent).toBe('New');
-      expect(['Cut', 'Paste', 'Download', 'Rename', 'Delete'].map((label) => [command(label).getAttribute('aria-label'), command(label).textContent])).toEqual(
-        ['Cut', 'Paste', 'Download', 'Rename', 'Delete'].map((label) => [label, '']),
+      expect(['Cut', 'Copy', 'Paste', 'Download', 'Rename', 'Delete'].map((label) => [command(label).getAttribute('aria-label'), command(label).textContent])).toEqual(
+        ['Cut', 'Copy', 'Paste', 'Download', 'Rename', 'Delete'].map((label) => [label, '']),
       );
       expect(['View', 'Sort'].map((label) => command(label).textContent)).toEqual(['View', 'Sort']);
       // See more always shows, for its own commands; a page with no layout has nothing overflowing into it.
@@ -998,19 +1033,19 @@ describe('FilesApp', () => {
   });
 
   describe("a row's menu", () => {
-    it('opens on a right-click with Open, Cut, Download, Rename, Delete, Copy path and Properties, selecting the row; a folder has Open, Copy path and Properties', async () => {
+    it('opens on a right-click with Open, Cut, Copy, Download, Rename, Delete, Copy path and Properties, selecting the row; a folder has Open, Rename, Copy path and Properties', async () => {
       stored.push(entry('report.csv'), entry('reports/q3.pdf'));
       const host = await app();
 
       expect((await contextMenu(host, 'report.csv')).defaultPrevented).toBe(true);
-      expect(menuItems()).toEqual(['Open', 'Cut', 'Download', 'Rename', 'Delete', 'Copy path', 'Properties']);
+      expect(menuItems()).toEqual(['Open', 'Cut', 'Copy', 'Download', 'Rename', 'Delete', 'Copy path', 'Properties']);
       expect(selected(host)).toEqual(['report.csv']);
       expect(assign).not.toHaveBeenCalled();
       await act(async () => userEvent.keyboard('{Escape}'));
       expect(menu()).toBeNull();
 
       await contextMenu(host, 'reports');
-      expect(menuItems()).toEqual(['Open', 'Copy path', 'Properties']);
+      expect(menuItems()).toEqual(['Open', 'Rename', 'Copy path', 'Properties']);
       await menuItem('Open');
       expect(names(host)).toEqual(['q3.pdf']);
     });
@@ -1345,6 +1380,116 @@ describe('FilesApp', () => {
     });
   });
 
+  describe('making a folder', () => {
+    /** Ends the open rename with `name`, Enter's commit, or Escape for null. */
+    const renameTo = async (host: HTMLElement, name: string | null) => act(async () => {
+      const input = host.querySelector<HTMLInputElement>('input[aria-label^="Rename "]');
+      if (input === null) throw new Error('no name field');
+      if (name !== null) input.value = name;
+      input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: name === null ? 'Escape' : 'Enter' }));
+    });
+
+    it('makes New folder in the open folder from New, at once, its name ready to type over', async () => {
+      stored.push(entry('reports/q3.pdf'));
+      const host = await app();
+      await tree.open(host, 'reports');
+      await clickOn(command('New'));
+      expect(menuItems()).toEqual(['Folder', 'Upload']);
+
+      await menuItem('Folder');
+
+      // Its row shows at once, as its name field.
+      expect(names(host)).toEqual(['', 'q3.pdf']);
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Rename New folder');
+      expect((document.activeElement as HTMLInputElement).value).toBe('New folder');
+      // Its name stays open to type while it is made and Files lists again.
+      await settled();
+      expect(calls).toContain('made reports/New folder');
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Rename New folder');
+      await renameTo(host, null);
+      await settled();
+      expect(calls).toContain('made reports/New folder');
+      expect(names(host)).toEqual(['New folder', 'q3.pdf']);
+    });
+
+    it('names a second one New folder (2), on Ctrl+Shift+N', async () => {
+      stored.push(entry('top.txt'));
+      folders.push({ name: 'New folder', lastModified: '2026-10-01T09:00:00.000Z' });
+      const host = await app();
+
+      await key(rowOf(host, 'top.txt'), '{Control>}{Shift>}N{/Shift}{/Control}');
+      await renameTo(host, null);
+      await settled();
+
+      expect(calls).toContain('made New folder (2)');
+      expect(names(host)).toEqual(['New folder', 'New folder (2)', 'top.txt']);
+    });
+
+    it('renames the new folder to the name typed, after it is made', async () => {
+      const host = await app();
+      await clickOn(command('New'));
+      await menuItem('Folder');
+
+      await renameTo(host, 'drafts');
+
+      expect(names(host)).toEqual(['drafts']);
+      await settled();
+      expect(calls.filter((call) => /^(made|renamed) /.test(call))).toEqual(['made New folder', 'renamed New folder to drafts']);
+      expect(names(host)).toEqual(['drafts']);
+    });
+
+    it('is off in Home', async () => {
+      const host = await app();
+      await tree.open(host, 'Home');
+      await clickOn(command('New'));
+      expect([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent === 'Folder')?.getAttribute('aria-disabled')).toBe('true');
+    });
+  });
+
+  describe('copying and pasting a file', () => {
+    beforeEach(() => {
+      stored.push(entry('notes/a.md'), entry('reports/b.pdf'), entry('top.txt'));
+    });
+
+    it('copies a file into the folder it is pasted in, keeping the original and the copy to paste again', async () => {
+      const host = await app();
+      await tree.open(host, 'notes');
+      await contextMenu(host, 'a.md');
+      await menuItem('Copy');
+
+      await tree.open(host, 'reports');
+      await clickOn(command('Paste'));
+      await settled();
+
+      expect(calls).toContain('copied notes/a.md to reports/a.md');
+      expect(names(host)).toEqual(['a.md', 'b.pdf']);
+      expect(selected(host)).toEqual(['a.md']);
+      expect(command('Paste').disabled).toBe(false);
+      await clickOn(command('Paste'));
+      await settled();
+      expect(calls).toContain('copied notes/a.md to reports/a (2).md');
+      expect(selected(host)).toEqual(['a (2).md']);
+    });
+
+    it('copies on Ctrl+C and pastes on Ctrl+V, a copy beside its file named as Windows names it, then selected', async () => {
+      const host = await app();
+      await press(host, 'top.txt');
+      expect(command('Copy').disabled).toBe(false);
+      await key(rowOf(host, 'top.txt'), '{Control>}c{/Control}');
+      await key(rowOf(host, 'top.txt'), '{Control>}v{/Control}');
+      await settled();
+
+      expect(calls).toContain('copied top.txt to top - Copy.txt');
+      expect(names(host)).toEqual(['notes', 'reports', 'top - Copy.txt', 'top.txt']);
+      expect(selected(host)).toEqual(['top - Copy.txt']);
+
+      await key(rowOf(host, 'top - Copy.txt'), '{Control>}v{/Control}');
+      await settled();
+      expect(calls).toContain('copied top.txt to top - Copy (2).txt');
+      expect(selected(host)).toEqual(['top - Copy (2).txt']);
+    });
+  });
+
   describe('uploading files', () => {
     const file = new File(['buy low'], 'plan.txt', { type: 'text/plain' });
     /** An upload the test settles, and the options it was given. */
@@ -1529,7 +1674,7 @@ describe('File Explorer’s views, selection, panes, tabs and keys', () => {
       await press(host, 'notes.txt', 2);
       expect(assign).toHaveBeenCalledWith('https://links.test/notes.txt');
       await contextMenu(host, 'notes.txt');
-      expect(menuItems()).toEqual(['Open', 'Cut', 'Download', 'Rename', 'Delete', 'Copy path', 'Properties']);
+      expect(menuItems()).toEqual(['Open', 'Cut', 'Copy', 'Download', 'Rename', 'Delete', 'Copy path', 'Properties']);
       await menuItem('Rename');
       expect(document.activeElement?.getAttribute('aria-label')).toBe('Rename notes.txt');
       await key(document.activeElement, '{Escape}');
@@ -1836,7 +1981,7 @@ describe('File Explorer’s views, selection, panes, tabs and keys', () => {
       const space = host.querySelector('.agent-computer-files-list');
       if (space === null) throw new Error('no list area');
       await act(async () => space.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 400 })));
-      expect(menuItems()).toEqual(['View', 'Sort by', 'Group by', 'Refresh', 'Paste', 'Upload', 'Properties']);
+      expect(menuItems()).toEqual(['View', 'Sort by', 'Group by', 'Refresh', 'Paste', 'New', 'Properties']);
       await menuItem('Refresh');
       expect(calls).toEqual(['GET https://chat.test/files', 'GET https://chat.test/files']);
 
@@ -1971,16 +2116,16 @@ describe('File Explorer’s views, selection, panes, tabs and keys', () => {
       const host = await app();
       await press(host, 'plan.md');
       await key(rowOf(host, 'plan.md'), '{Shift>}{F10}{/Shift}');
-      expect(menuItems()).toEqual(['Open', 'Cut', 'Download', 'Rename', 'Delete', 'Copy path', 'Properties']);
+      expect(menuItems()).toEqual(['Open', 'Cut', 'Copy', 'Download', 'Rename', 'Delete', 'Copy path', 'Properties']);
       await act(async () => userEvent.keyboard('{Escape}'));
       expect(menu()).toBeNull();
       await key(rowOf(host, 'plan.md'), '{ContextMenu}');
-      expect(menuItems()).toEqual(['Open', 'Cut', 'Download', 'Rename', 'Delete', 'Copy path', 'Properties']);
+      expect(menuItems()).toEqual(['Open', 'Cut', 'Copy', 'Download', 'Rename', 'Delete', 'Copy path', 'Properties']);
       await act(async () => userEvent.keyboard('{Escape}'));
 
       const fresh = await app();
       await key(rowOf(fresh, 'plan.md'), '{ContextMenu}');
-      expect(menuItems()).toEqual(['View', 'Sort by', 'Group by', 'Refresh', 'Paste', 'Upload', 'Properties']);
+      expect(menuItems()).toEqual(['View', 'Sort by', 'Group by', 'Refresh', 'Paste', 'New', 'Properties']);
     });
 
     it('shows each command’s letter on Alt, and runs the command on its letter', async () => {
@@ -1990,7 +2135,7 @@ describe('File Explorer’s views, selection, panes, tabs and keys', () => {
       await key(rowOf(host, 'notes.txt'), '{Alt}');
       const letters = () => [...document.querySelectorAll('[role="tooltip"]')].map((tip) => tip.textContent).filter(Boolean);
       // Paste has nothing to paste yet, so its letter waits.
-      expect(letters().sort()).toEqual(['D', 'E', 'I', 'M', 'N', 'O', 'S', 'X']);
+      expect(letters().sort()).toEqual(['C', 'D', 'E', 'I', 'M', 'N', 'O', 'S', 'X']);
       await act(async () => userEvent.keyboard('x'));
       expect(letters()).toEqual([]);
       expect(command('Paste').disabled).toBe(false);
@@ -2000,7 +2145,7 @@ describe('File Explorer’s views, selection, panes, tabs and keys', () => {
 
       await contextMenu(host, 'plan.md');
       await act(async () => userEvent.keyboard('{Alt}'));
-      expect(letters()).toEqual(['O', 'T', 'W', 'M', 'D', 'A', 'R']);
+      expect(letters()).toEqual(['O', 'T', 'C', 'W', 'M', 'D', 'A', 'R']);
       await act(async () => userEvent.keyboard('r'));
       expect(shownDialog()?.textContent).toContain('plan.md Properties');
     });

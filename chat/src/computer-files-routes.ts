@@ -19,7 +19,7 @@ export function computerFilesRoutes({ requester, history, computers, files, work
   workspace?: string | undefined;
   /** The bot settings' Written Memory gate (`writtenMemory.enabled`): false leaves the Memory panel no route. */
   writtenMemory: boolean;
-  files(c: Context): Pick<AccountFiles, 'list' | 'downloadUrl' | 'link' | 'remove' | 'rename' | 'uploadUrl' | 'saveArtifact' | 'restoreArtifact' | 'writtenMemory' | 'saveWrittenMemory'>;
+  files(c: Context): Pick<AccountFiles, 'list' | 'downloadUrl' | 'link' | 'remove' | 'rename' | 'makeFolder' | 'copy' | 'uploadUrl' | 'saveArtifact' | 'restoreArtifact' | 'writtenMemory' | 'saveWrittenMemory'>;
 }): Hono {
   const routes = new Hono();
   const threadIdOf = (c: Context) => { const value = c.req.query('thread_id')?.trim(); if (!value) throw new HttpError(422, 'thread_id must not be blank'); return value; };
@@ -37,7 +37,7 @@ export function computerFilesRoutes({ requester, history, computers, files, work
     if (typeof name !== 'string') throw new HttpError(422, 'name is required');
     return name;
   };
-  routes.get('/files', async (c) => c.json({ files: await files(c).list((await requester(c)).owner) }));
+  routes.get('/files', async (c) => c.json(await files(c).list((await requester(c)).owner)));
   const linkUrl = (c: Context, link: string) => new URL(link, browserOrigin(c)).toString();
   const workspacePrefix = workspace && `${posix.resolve(workspace).slice(1)}/`;
   routes.get('/files/download-url', async (c) => {
@@ -55,6 +55,19 @@ export function computerFilesRoutes({ requester, history, computers, files, work
     const { from, to } = (await jsonPayload(c)) ?? {};
     if (typeof from !== 'string' || typeof to !== 'string') throw new HttpError(422, 'from and to are required');
     await files(c).rename(owner, from, to);
+    return c.json({ name: to });
+  });
+  routes.post('/files/folder', async (c) => {
+    const { owner } = await requester(c);
+    const name = fileName((await jsonPayload(c))?.name);
+    await files(c).makeFolder(owner, name);
+    return c.json({ name }, 201);
+  });
+  routes.post('/files/copy', async (c) => {
+    const { owner } = await requester(c);
+    const { from, to } = (await jsonPayload(c)) ?? {};
+    if (typeof from !== 'string' || typeof to !== 'string') throw new HttpError(422, 'from and to are required');
+    await files(c).copy(owner, from, to);
     return c.json({ name: to });
   });
   routes.post('/files/upload-url', async (c) => {

@@ -1,6 +1,6 @@
 import { localCleanupWorker, type CleanupWorker } from './files-cleanup-worker.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { readdir, rmdir, stat } from 'node:fs/promises';
+import { rmdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
@@ -9,12 +9,13 @@ import {
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
 import { AccountTree, errorCode } from './account-tree.js';
 import { restoreArtifact, saveArtifact } from './artifact-save.js';
+import { walk } from './files-walk.js';
 import { HttpError } from './http-error.js';
 import { answerFilesLink, signFilesLink } from './files-link.js';
 import {
-  FILES_MOUNT_PATH, HIDDEN, POSIX_ID, RETIREMENT_GRACE_MS, MOUNT_SECONDS, URL_SECONDS, WRITTEN_MEMORY,
+  FILES_MOUNT_PATH, POSIX_ID, RETIREMENT_GRACE_MS, MOUNT_SECONDS, URL_SECONDS, WRITTEN_MEMORY,
   directoryOf, fileDestination, filePath, freeName,
-  type AccountFiles, type FileEntry, type FilesMount, type FilesMountBinding, type FilesRecords,
+  type AccountFiles, type FilesMount, type FilesMountBinding, type FilesRecords,
 } from './files-shared.js';
 
 export type { FilesMountBinding } from './files-shared.js';
@@ -127,31 +128,6 @@ export function accountFilesEfs({
   };
   const fileOf = async (userId: string, name: string) => path.join(await directory(userId), filePath(name));
 
-  /** Every visible file under a directory, by its name relative to it. */
-  async function walk(base: string, prefix = ''): Promise<Array<FileEntry & { file: string }>> {
-    let entries;
-    try {
-      entries = await readdir(path.join(base, prefix), { withFileTypes: true });
-    } catch (error) {
-      if (errorCode(error) === 'ENOENT') return [];
-      throw error;
-    }
-    const found: Array<FileEntry & { file: string }> = [];
-    for (const entry of entries) {
-      const name = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        // Hidden folders (the Harness's own, an upload's parts) are not the user's Files.
-        // eslint-disable-next-line no-await-in-loop -- one folder at a time keeps NFS round trips bounded
-        if (!HIDDEN.test(`${name}/`)) found.push(...await walk(base, name));
-      } else if (entry.isFile()) {
-        const file = path.join(base, name);
-        // eslint-disable-next-line no-await-in-loop -- one stat at a time, as the walk reads
-        const { size, mtime } = await stat(file);
-        found.push({ name, size, lastModified: mtime.toISOString(), file });
-      }
-    }
-    return found;
-  }
 
   async function exists(file: string): Promise<boolean> {
     try {
@@ -218,14 +194,14 @@ export function accountFilesEfs({
   async function transferFiles(sourceUserId: string, destinationUserId: string): Promise<void> {
     await retirementOperation(destinationUserId, async () => {
       await requireActive(destinationUserId);
-      const taken = new Set((await walk(await directory(destinationUserId))).map(({ name }) => name));
+      const taken = new Set((await walk(await directory(destinationUserId))).files.map(({ name }) => name));
       const destination = await AccountTree.account(await directory(destinationUserId), true);
       if (destination === null) throw new HttpError(503, 'The claiming account has no Files folder');
       const source = await AccountTree.account(await directory(sourceUserId));
       // The source walk never descends a link (a Dirent is not a directory); each move then goes through
       // folders opened in both trees, so a link either agent swaps in after the walk is refused.
       if (source !== null) {
-        for (const { name } of await walk(await directory(sourceUserId))) {
+        for (const { name } of (await walk(await directory(sourceUserId))).files) {
           let moved = freeName(name, taken);
           // A file written into the destination since it was listed takes the name first; try the next.
           // eslint-disable-next-line no-await-in-loop -- one file at a time: a retried claim moves what is left
@@ -314,7 +290,24 @@ export function accountFilesEfs({
       });
     },
     async list(userId) {
-      return (await walk(await directory(userId))).map(({ name, size, lastModified }) => ({ name, size, lastModified }));
+      const { files, folders } = await walk(await directory(userId));
+      return { files: files.map(({ name, size, lastModified }) => ({ name, size, lastModified })), folders };
+    },
+    async makeFolder(userId, name) {
+      // Checked as a folder: a name starting with a dot would hide it from the listing.
+      const folder = filePath(fileDestination(`${name}/`).slice(0, -1));
+      await requireActive(userId);
+      const tree = await AccountTree.account(await directory(userId), true);
+      if (tree === null) throw new HttpError(503, 'This account has no Files folder');
+      if (!await tree.makeFolder(folder)) throw new HttpError(409, `A folder named ${name} is already in Files`);
+    },
+    async copy(userId, from, to) {
+      const [source, destination] = [filePath(from), filePath(fileDestination(to))];
+      await requireActive(userId);
+      await inFiles(userId, from, (tree) => tree.copy(source, destination, false)).catch((error: unknown) => {
+        if (errorCode(error) === 'EEXIST') throw new HttpError(409, `A file named ${to} is already in Files`);
+        throw error;
+      });
     },
     async uploadUrl(userId, name) {
       await requireActive(userId);
@@ -340,7 +333,13 @@ export function accountFilesEfs({
     async rename(userId, from, to) {
       // Names are checked before the account folder: a bad name is 400 even for an account with no Files.
       const [source, destination] = [filePath(from), filePath(fileDestination(to))];
-      const moved = await inFiles(userId, from, (tree) => tree.moveNoClobber(source, destination));
+      const moved = await inFiles(userId, from, async (tree) => {
+        if (!await tree.isFolder(source)) return tree.moveNoClobber(source, destination);
+        // A folder is checked as one, so it never hides behind a dot, and it can't go inside itself.
+        fileDestination(`${destination}/`);
+        if (destination.startsWith(`${source}/`)) throw new HttpError(400, `${from} can't move into itself`);
+        return tree.moveFolderNoClobber(source, destination);
+      });
       if (!moved) throw new HttpError(409, `A file named ${to} is already in Files`);
     },
     async saveArtifact(userId, save) {

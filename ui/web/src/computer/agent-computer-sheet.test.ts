@@ -362,7 +362,7 @@ describe("the Agent Computer's Files on a phone", () => {
       app: 'Files',
       files: React.createElement(FilesWindow, {
         files, error: null, onDownload: () => {}, onDelete: () => {}, onRename: () => null, onMove: () => {}, onReload: () => {},
-        onUpload: () => Promise.reject(new Error('The test has no uploads')), thumbnailUrl: async () => 'https://s3.test/chart.json',
+        onCopy: () => {}, onNewFolder: (folder: string) => `${folder}New folder/`, onUpload: () => Promise.reject(new Error('The test has no uploads')), thumbnailUrl: async () => 'https://s3.test/chart.json',
       }),
     });
 

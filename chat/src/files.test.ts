@@ -22,7 +22,7 @@ it('serves persisted EFS files without a store selector or S3 configuration', as
     };
     expect(filesConfigured(env)).toBe(true);
     const files = accountFilesFromEnv(env, () => new AccountResources('chat', memoryDocuments()), undefined, root)();
-    expect(await files.list(account)).toEqual([{ name: 'reopened.txt', size: 9, lastModified: expect.any(String) }]);
+    expect((await files.list(account)).files).toEqual([{ name: 'reopened.txt', size: 9, lastModified: expect.any(String) }]);
     expect(await files.downloadUrl(account, 'reopened.txt')).toMatch(/^\/files\/link\?t=/);
     await expect(files.downloadUrl('acct_other', 'reopened.txt')).rejects.toMatchObject({ status: 404 });
   } finally {

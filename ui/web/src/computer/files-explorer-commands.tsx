@@ -4,13 +4,13 @@ import {
   Toolbar, ToolbarButton, ToolbarDivider, Tooltip, useIsOverflowItemVisible, useMergedRefs, useOverflowMenu, useRestoreFocusTarget,
 } from '@fluentui/react-components';
 import {
-  Add20Regular, ArrowDownload20Regular, ArrowSort20Regular, ArrowSwap20Regular, ArrowUpload20Regular, ClipboardPaste20Regular, Cut20Regular,
+  Add20Regular, ArrowDownload20Regular, Copy20Regular, ArrowSort20Regular, ArrowSwap20Regular, ClipboardPaste20Regular, Cut20Regular,
   Delete20Regular, Grid20Regular, GroupList20Regular, Info20Regular, MoreHorizontal20Regular, Rename20Regular, SelectAllOff20Regular,
   SelectAllOn20Regular, type FluentIcon,
 } from '@fluentui/react-icons';
 import type { ReactElement } from 'react';
 import { LETTERS, useKeytip } from './files-explorer-keytips';
-import { GroupMenuList, SortMenuList, Submenu, ViewMenuList, type Arrangement } from './files-explorer-menus';
+import { GroupMenuList, NewItems, SortMenuList, Submenu, ViewMenuList, type Arrangement, type NewCommands } from './files-explorer-menus';
 import { useExplorerStyles } from './files-explorer-nav';
 
 const useStyles = makeStyles({
@@ -74,9 +74,9 @@ function SortAndGroup({ arrangement }: { arrangement: Arrangement }) {
 
 /**
  * See more, at the end of the bar: Select all, Select none, Invert selection and Properties, after the commands whose
- * buttons don't fit and Upload for New.
+ * buttons don't fit and New's items.
  */
-function SeeMore({ commands, arrangement, selection, keytips, onUpload }: { commands: readonly Command[]; arrangement: Arrangement; selection: SelectionCommands; keytips: boolean; onUpload: () => void }) {
+function SeeMore({ commands, arrangement, selection, keytips, news }: { commands: readonly Command[]; arrangement: Arrangement; selection: SelectionCommands; keytips: boolean; news: NewCommands }) {
   const explorer = useExplorerStyles();
   const newVisible = useIsOverflowItemVisible('new');
   // Always shown, for its own items; the bar leaves room for it as it overflows.
@@ -91,7 +91,7 @@ function SeeMore({ commands, arrangement, selection, keytips, onUpload }: { comm
       </MenuTrigger>
       <MenuPopover>
         <MenuList>
-          <MenuItem icon={<ArrowUpload20Regular />} onClick={onUpload} className={mergeClasses(newVisible && explorer.hidden)}>Upload</MenuItem>
+          <Submenu label="New" icon={<Add20Regular />} className={mergeClasses(newVisible && explorer.hidden)}><MenuList><NewItems {...news} /></MenuList></Submenu>
           {commands.map((command) => <OverflowCommand key={command.id} {...command} />)}
           <OverflowMenu id="view" label="View" Icon={Grid20Regular}><ViewMenuList arrangement={arrangement} /></OverflowMenu>
           <OverflowMenu id="sort" label="Sort" Icon={ArrowSort20Regular}><SortAndGroup arrangement={arrangement} /></OverflowMenu>
@@ -110,18 +110,22 @@ function SeeMore({ commands, arrangement, selection, keytips, onUpload }: { comm
  * New, then each command as an icon button with its name as a tooltip, acting on every selected file, then View and
  * Sort, and See more. Whatever doesn't fit the window's width goes, from the end, into See more.
  */
-export function CommandBar({ hasFiles, canRename, canPaste, arrangement, selection, keytips, onUpload, onCut, onPaste, onDownload, onRename, onDelete }: {
-  /** Whether a file is selected, for Cut, Download and Delete to act on. */
+export function CommandBar({ hasFiles, canRename, canPaste, canNewFolder, arrangement, selection, keytips, onNewFolder, onUpload, onCut, onCopy, onPaste, onDownload, onRename, onDelete }: {
+  /** Whether a file is selected, for Cut, Copy, Download and Delete to act on. */
   hasFiles: boolean;
-  /** Whether one file alone is selected, for Rename. */
+  /** Whether one item alone is selected, for Rename. */
   canRename: boolean;
   canPaste: boolean;
+  /** Whether a folder is open to make one in: not Home. */
+  canNewFolder: boolean;
   arrangement: Arrangement;
   selection: SelectionCommands;
   /** Whether Alt shows the bar's letters: its tab is in front, with no context menu over it. */
   keytips: boolean;
+  onNewFolder: () => void;
   onUpload: () => void;
   onCut: () => void;
+  onCopy: () => void;
   onPaste: () => void;
   onDownload: () => void;
   onRename: () => void;
@@ -131,12 +135,14 @@ export function CommandBar({ hasFiles, canRename, canPaste, arrangement, selecti
   const restoreFocus = useRestoreFocusTarget();
   const commands: Command[] = [
     { id: 'cut', label: 'Cut', Icon: Cut20Regular, disabled: !hasFiles, act: onCut },
+    { id: 'copy', label: 'Copy', Icon: Copy20Regular, disabled: !hasFiles, act: onCopy },
     { id: 'paste', label: 'Paste', Icon: ClipboardPaste20Regular, disabled: !canPaste, act: onPaste },
     { id: 'download', label: 'Download', Icon: ArrowDownload20Regular, disabled: !hasFiles, act: onDownload },
     { id: 'rename', label: 'Rename', Icon: Rename20Regular, disabled: !canRename, act: onRename },
     { id: 'delete', label: 'Delete', Icon: Delete20Regular, disabled: !hasFiles, act: onDelete },
   ];
   const newKeytip = useKeytip(LETTERS.commands.new, keytips);
+  const news = { canNewFolder, onNewFolder, onUpload };
   return (
     <Overflow>
       <Toolbar aria-label="Commands" size="small" className={styles.commands}>
@@ -148,7 +154,7 @@ export function CommandBar({ hasFiles, canRename, canPaste, arrangement, selecti
           </MenuTrigger>
           <MenuPopover>
             <MenuList>
-              <MenuItem icon={<ArrowUpload20Regular />} onClick={onUpload}>Upload</MenuItem>
+              <NewItems {...news} />
             </MenuList>
           </MenuPopover>
         </Menu>
@@ -161,7 +167,7 @@ export function CommandBar({ hasFiles, canRename, canPaste, arrangement, selecti
         </OverflowDivider>
         <ArrangeButton id="view" label="View" Icon={Grid20Regular} keytips={keytips}><ViewMenuList arrangement={arrangement} /></ArrangeButton>
         <ArrangeButton id="sort" label="Sort" Icon={ArrowSort20Regular} keytips={keytips}><SortAndGroup arrangement={arrangement} /></ArrangeButton>
-        <SeeMore commands={commands} arrangement={arrangement} selection={selection} keytips={keytips} onUpload={onUpload} />
+        <SeeMore commands={commands} arrangement={arrangement} selection={selection} keytips={keytips} news={news} />
       </Toolbar>
     </Overflow>
   );

@@ -77,6 +77,8 @@ function computersFor(browser: AgentComputerBrowser, idleSeconds = 600) {
     link: unusedFilesOperation,
     remove: unusedFilesOperation,
     rename: unusedFilesOperation,
+    makeFolder: unusedFilesOperation,
+    copy: unusedFilesOperation,
     saveArtifact: unusedFilesOperation,
     restoreArtifact: unusedFilesOperation,
     writtenMemory: unusedFilesOperation,

@@ -3,6 +3,7 @@ import { Button, makeStyles, mergeClasses, Tab, TabList, tokens, Tooltip } from 
 import { Add16Regular, Dismiss12Regular, Folder16Filled, Home16Regular } from '@fluentui/react-icons';
 import { useRef, useState, type KeyboardEvent } from 'react';
 import { useWindowKeytips } from './files-explorer-keytips';
+import { EMPTY_CLIPBOARD, type Clipboard } from './files-explorer-actions';
 import { ExplorerTab, type TabProps } from './files-explorer-tab';
 import { useExplorerStyles } from './files-explorer-nav';
 import type { Place, View } from './files-items';
@@ -29,16 +30,16 @@ const keyOf = (place: Place) => (place === null ? 'home' : `/${place}`);
 /**
  * The Files window: its tabs, each a place of its own with its own history and view, above the open tab's Explorer. A
  * tab's ✕ closes it, + opens workspace in a new one; Ctrl+T and Ctrl+W do the same, Ctrl+Tab and Ctrl+Shift+Tab go to
- * the next and previous tab, and closing the last tab leaves workspace open. The tabs share the cut files and each
+ * the next and previous tab, and closing the last tab leaves workspace open. The tabs share the clipboard and each
  * folder's view. Alt shows the keytips of the tab in front.
  */
-export function FilesWindow(props: Omit<TabProps, 'cut' | 'onCut' | 'viewOf' | 'onViewOf' | 'keytipping'>) {
+export function FilesWindow(props: Omit<TabProps, 'clipboard' | 'onClipboard' | 'viewOf' | 'onViewOf' | 'keytipping'>) {
   const styles = useStyles();
   const explorer = useExplorerStyles();
   const nextTab = useRef(1);
   const [tabs, setTabs] = useState<readonly { id: number; place: Place }[]>([{ id: 0, place: '' }]);
   const [current, setCurrent] = useState(0);
-  const [cut, setCut] = useState<readonly string[]>([]);
+  const [clipboard, setClipboard] = useState<Clipboard>(EMPTY_CLIPBOARD);
   // The view each place was last shown in, this session.
   const [views, setViews] = useState<Readonly<Record<string, View>>>({});
   const newTab = () => {
@@ -97,8 +98,8 @@ export function FilesWindow(props: Omit<TabProps, 'cut' | 'onCut' | 'viewOf' | '
           {...props}
           active={id === current}
           className={mergeClasses(id !== current && explorer.hidden)}
-          cut={cut}
-          onCut={setCut}
+          clipboard={clipboard}
+          onClipboard={setClipboard}
           viewOf={(place) => views[keyOf(place)]}
           onViewOf={(place, view) => setViews((all) => ({ ...all, [keyOf(place)]: view }))}
           keytipping={() => showing.current}

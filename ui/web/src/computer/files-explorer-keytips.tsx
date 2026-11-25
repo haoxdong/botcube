@@ -5,16 +5,16 @@ import { MenuItem, type MenuItemProps } from '@fluentui/react-components';
 import { useRef, type KeyboardEvent } from 'react';
 
 /**
- * Each command's letter. Where Windows Explorer has one, it is Windows' access key: New N, Cut X, Paste V, Rename M and
- * Delete D on the bar; Open O, Cut T, Rename M, Delete D, Copy as path A and Properties R on an item; View V, Sort by O,
- * Group by P, Refresh E and Properties R on the folder. Any other takes the first letter of its name its neighbours
- * leave free: Download O on the bar and W on an item, Sort S, See more E, Upload U, and View I and Paste A where V and P
- * are taken.
+ * Each command's letter. Where Windows Explorer has one, it is Windows' access key: New N, Cut X, Copy C, Paste V, Rename
+ * M and Delete D on the bar; Open O, Cut T, Copy C, Rename M, Delete D, Copy as path A and Properties R on an item;
+ * View V, Sort by O, Group by P, Refresh E, New W and Properties R on the folder. Any other takes the first letter of its
+ * name its neighbours leave free: Download O on the bar and W on an item, Sort S, See more E, and View I and Paste A
+ * where V and P are taken.
  */
 export const LETTERS = {
-  commands: { new: 'n', cut: 'x', paste: 'v', download: 'o', rename: 'm', delete: 'd', view: 'i', sort: 's', more: 'e' },
-  row: { Open: 'o', Cut: 't', Download: 'w', Rename: 'm', Delete: 'd', 'Copy path': 'a', Properties: 'r' },
-  folder: { View: 'v', 'Sort by': 'o', 'Group by': 'p', Refresh: 'e', Paste: 'a', Upload: 'u', Properties: 'r' },
+  commands: { new: 'n', cut: 'x', copy: 'c', paste: 'v', download: 'o', rename: 'm', delete: 'd', view: 'i', sort: 's', more: 'e' },
+  row: { Open: 'o', Cut: 't', Copy: 'c', Download: 'w', Rename: 'm', Delete: 'd', 'Copy path': 'a', Properties: 'r' },
+  folder: { View: 'v', 'Sort by': 'o', 'Group by': 'p', Refresh: 'e', Paste: 'a', New: 'w', Properties: 'r' },
 } as const;
 
 /** Runs a keytip's command: a click of the part it is on. */

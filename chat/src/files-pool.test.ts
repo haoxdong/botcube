@@ -62,7 +62,7 @@ it('quarantines retirement, wipes late writes, and reuses an empty slot', async 
     await files.mount('acct_a');
     await mkdir(slot);
     await writeFile(path.join(slot, 'agent.txt'), 'agent output');
-    expect(await files.list('acct_a')).toEqual([expect.objectContaining({ name: 'agent.txt', size: 12 })]);
+    expect((await files.list('acct_a')).files).toEqual([expect.objectContaining({ name: 'agent.txt', size: 12 })]);
     const link = new URL(await files.downloadUrl('acct_a', 'agent.txt'), 'https://chat.test');
     const download = () => files.link({ method: 'GET', query: Object.fromEntries(link.searchParams), range: undefined });
     const response = await download();
@@ -76,7 +76,7 @@ it('quarantines retirement, wipes late writes, and reuses an empty slot', async 
     await files.recoverCleanup();
     expect(await store.filesPoolUsage()).toBe(0);
     await files.mount('acct_b');
-    expect(await files.list('acct_b')).toEqual([]);
+    expect((await files.list('acct_b')).files).toEqual([]);
     await expect(readFile(path.join(slot, 'late.txt'))).rejects.toThrow();
     await pool.delete(arn, 'acct_a');
     expect(await store.filesAccessPoint('acct_b')).toBe(arn);
@@ -282,6 +282,6 @@ it('recovers both claims of a crashed transfer without a DynamoDB edit', async (
     expect(await store.filesAccessPoint('acct_a')).toBeNull();
     expect(await store.filesPoolUsage()).toBe(1);
     await files.mount('acct_c');
-    expect(await files.list('acct_c')).toEqual([]);
+    expect((await files.list('acct_c')).files).toEqual([]);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

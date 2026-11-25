@@ -8,7 +8,7 @@ import { CommandBar } from './files-explorer-commands';
 import { DeleteDialog } from './files-explorer-delete';
 import { ItemsView } from './files-explorer-items';
 import { foundBy, onExplorerKey, type KeyActions, type Typed } from './files-explorer-keys';
-import type { ListActions, Reveal } from './files-explorer-actions';
+import { canPasteInto, EMPTY_CLIPBOARD, makeFolder, pasteInto, type Clipboard, type ListActions, type Reveal } from './files-explorer-actions';
 import { FolderMenu, type Arrangement, type Pane } from './files-explorer-menus';
 import { AddressRow, NavPane, useExplorerStyles, type Crumb } from './files-explorer-nav';
 import { DetailsPane, PreviewPane, PropertiesDialog, type Subject } from './files-explorer-panes';
@@ -16,8 +16,8 @@ import { UploadRows, useUploads } from './files-explorer-uploads';
 import {
   defaultView, foldersIn, groupsOf, itemsIn, parentOf, recentsIn, sizeText, sortItems, VIEWS, type FilesItem, type GroupBy, type Place, type Sort, type View,
 } from './files-items';
-import { clicked, everything, inverted, NOTHING, pointedAt } from './files-selection';
-import type { FileEntry, UploadOptions } from './files-service';
+import { afterPaste, clicked, everything, inverted, NOTHING, pointedAt } from './files-selection';
+import type { FileEntry, FolderEntry, UploadOptions } from './files-service';
 
 const useStyles = makeStyles({
   root: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 },
@@ -39,25 +39,30 @@ const sortFor = (place: Place): Sort => (place === null ? { sortColumn: 'modifie
 const countText = (count: number) => `${count} ${count === 1 ? 'item' : 'items'}`;
 
 /** The open place's items: none until Files has answered, Home's recent files, or a folder's own items. */
-function listingOf(files: readonly FileEntry[] | null, place: Place): FilesItem[] {
+function listingOf(files: readonly FileEntry[] | null, folders: readonly FolderEntry[], place: Place): FilesItem[] {
   if (files === null) return [];
-  return place === null ? recentsIn(files) : itemsIn(files, place);
+  return place === null ? recentsIn(files) : itemsIn(files, place, folders);
 }
 
 /** What the window gives each tab: Files, what to do to them, and what the tabs share. */
 export type TabProps = {
   files: readonly FileEntry[] | null;
+  /** Files' folders, the empty ones among them. */
+  folders?: readonly FolderEntry[];
   error: string | null;
   onDownload: (name: string) => void;
   onDelete: (name: string) => Promise<void> | void;
   onRename: (path: string, name: string) => string | null;
-  onMove: (path: string, folder: string) => void;
+  /** Each answers the path the file took. */
+  onMove: (path: string, folder: string) => Promise<string> | void;
+  onCopy: (path: string, folder: string) => Promise<string> | void;
+  /** Makes the first free `New folder` in a folder, answering its path. */
+  onNewFolder: (folder: string) => string;
   onReload: () => void;
   onUpload: (file: File, options: UploadOptions, folder: string) => Promise<string>;
   thumbnailUrl: (path: string) => Promise<string>;
-  /** The cut files, which Paste moves into the open folder: one clipboard for every tab. */
-  cut: readonly string[];
-  onCut: (paths: readonly string[]) => void;
+  clipboard: Clipboard;
+  onClipboard: (clipboard: Clipboard) => void;
   /** The view a place was last shown in, this session, if any. */
   viewOf: (place: Place) => View | undefined;
   onViewOf: (place: Place, view: View) => void;
@@ -72,7 +77,7 @@ export type TabProps = {
  * place, a chart opens live, any other file downloads. The listing reloads as a place opens.
  */
 export function ExplorerTab({ active, onPlace, className, ...props }: TabProps & { active: boolean; onPlace: (place: Place) => void; className?: string }) {
-  const { files, error, onDownload, onDelete, onRename, onMove, onReload, onUpload, thumbnailUrl, cut, onCut, viewOf, onViewOf, keytipping } = props;
+  const { files, folders: emptyFolders = [], error, onDownload, onDelete, onRename, onMove, onCopy, onNewFolder, onReload, onUpload, thumbnailUrl, clipboard, onClipboard, viewOf, onViewOf, keytipping } = props;
   const styles = useStyles();
   const explorer = useExplorerStyles();
   // The open place, and the places Back and Forward return to, nearest last and first.
@@ -85,7 +90,7 @@ export function ExplorerTab({ active, onPlace, className, ...props }: TabProps &
   const [pane, setPane] = useState<Pane | null>(null);
   // A chart opens live in the list's place.
   const [viewing, setViewing] = useState<FilesItem | null>(null);
-  const listed = listingOf(files, place);
+  const listed = listingOf(files, emptyFolders, place);
   const view = viewOf(place) ?? defaultView(listed);
   const items = sortItems(listed.filter(({ name }) => name.toLocaleLowerCase().includes(query.toLocaleLowerCase())), sort);
   const groups = groupsOf(items, groupBy);
@@ -95,7 +100,8 @@ export function ExplorerTab({ active, onPlace, className, ...props }: TabProps &
   const chosen = order.filter(({ path }) => selection.paths.includes(path));
   const chosenFiles = chosen.filter(({ folder }) => !folder);
   const [only] = chosen;
-  const file = chosen.length === 1 && only?.folder === false ? only : undefined;
+  const alone = chosen.length === 1 ? only : undefined;
+  const file = alone?.folder === false ? alone : undefined;
   const trail = place === null ? [] : place.split('/').slice(0, -1);
   const crumbs: [Crumb, ...Crumb[]] = place === null
     ? [{ name: 'Home', target: null }]
@@ -178,12 +184,10 @@ export function ExplorerTab({ active, onPlace, className, ...props }: TabProps &
     setSelection({ paths: [item.path], anchor: item.path });
     setRenaming(item);
   };
-  // Paste moves the cut files into the open folder; it does nothing in Home.
-  const paste = () => {
-    if (cut.length === 0 || place === null) return;
-    onCut([]);
-    for (const path of cut) if (path.slice(0, path.lastIndexOf('/') + 1) !== place) onMove(path, place);
-  };
+  const canPaste = canPasteInto(place, clipboard);
+  const paste = () => void pasteInto(place, clipboard, { onCopy, onMove, onClipboard }).then((pasted) => setSelection((now) => afterPaste(now, pasted)));
+  const take = (some: readonly FilesItem[], copy: boolean) => onClipboard({ paths: some.filter(({ folder }) => !folder).map(({ path }) => path), copy });
+  const newFolder = () => makeFolder(place, onNewFolder, startRename);
   // An item's menu acts on the selection it is part of, else on the item alone.
   const targets = (item: FilesItem) => (selection.paths.includes(item.path) ? chosen : [item]);
   const filesOf = (some: readonly FilesItem[]) => some.filter(({ folder }) => !folder);
@@ -192,7 +196,8 @@ export function ExplorerTab({ active, onPlace, className, ...props }: TabProps &
     onClick: (item, keys) => setSelection(clicked(selection, item.path, { toggle: keys.ctrlKey || keys.metaKey, range: keys.shiftKey }, paths)),
     onPoint: (item) => setSelection(pointedAt(selection, item.path)),
     onOpen: open,
-    onCut: (item) => onCut(filesOf(targets(item)).map(({ path }) => path)),
+    onCut: (item) => take(targets(item), false),
+    onCopy: (item) => take(targets(item), true),
     onDownload: (item) => filesOf(targets(item)).forEach(({ path }) => onDownload(path)),
     onStartRename: startRename,
     onDelete: (item) => remove(filesOf(targets(item))),
@@ -218,7 +223,7 @@ export function ExplorerTab({ active, onPlace, className, ...props }: TabProps &
   const typed = useRef<Typed>({ text: '', at: -Infinity });
   const keyActions: KeyActions = {
     selectAll: () => setSelection(everything(paths)),
-    rename: () => { if (file !== undefined) startRename(file); },
+    rename: () => { if (alone !== undefined) startRename(alone); },
     remove: () => remove(chosenFiles),
     back: goBack,
     forward: goForward,
@@ -242,9 +247,11 @@ export function ExplorerTab({ active, onPlace, className, ...props }: TabProps &
       bring(at);
       setMenu(at);
     },
-    cut: () => onCut(chosenFiles.map(({ path }) => path)),
+    cut: () => take(chosenFiles, false),
+    copy: () => take(chosenFiles, true),
     paste,
-    forgetCut: () => onCut([]),
+    newFolder,
+    forgetCut: () => onClipboard(EMPTY_CLIPBOARD),
     find: (text) => {
       const found = foundBy(text, order, selection.anchor);
       if (found === undefined) return;
@@ -258,9 +265,9 @@ export function ExplorerTab({ active, onPlace, className, ...props }: TabProps &
     typed.current = onExplorerKey(event, keyActions, { inList, typed: typed.current });
   };
 
-  const folders = files === null ? [] : foldersIn(files);
+  const folders = files === null ? [] : foldersIn(files, '', emptyFolders);
   const loading = files === null && error === null;
-  const empty = files !== null && files.length === 0;
+  const empty = files !== null && files.length === 0 && emptyFolders.length === 0;
   const selectedSize = chosenFiles.reduce((total, each) => total + (each.folder ? 0 : each.size), 0);
   return (
     <div ref={root} role="tabpanel" className={mergeClasses(styles.root, className)} onKeyDown={onKey}>
@@ -280,13 +287,16 @@ export function ExplorerTab({ active, onPlace, className, ...props }: TabProps &
       />
       <CommandBar
         hasFiles={chosenFiles.length > 0}
-        canRename={file !== undefined}
-        canPaste={cut.length > 0 && place !== null}
+        canRename={alone !== undefined}
+        canPaste={canPaste}
+        canNewFolder={place !== null}
         arrangement={arrangement}
         keytips={active && menu === null && !folderMenu}
         selection={{ onSelectAll: keyActions.selectAll, onSelectNone: () => setSelection(NOTHING), onInvert: () => setSelection(inverted(selection, paths)), onProperties: showProperties }}
         onUpload={chooseFiles}
+        onNewFolder={newFolder}
         onCut={keyActions.cut}
+        onCopy={keyActions.copy}
         onPaste={paste}
         onDownload={() => chosenFiles.forEach(({ path }) => onDownload(path))}
         onRename={keyActions.rename}
@@ -305,10 +315,10 @@ export function ExplorerTab({ active, onPlace, className, ...props }: TabProps &
               arrangement={arrangement}
               open={folderMenu}
               onOpenChange={setFolderMenu}
-              canPaste={cut.length > 0 && place !== null}
+              canPaste={canPaste}
+              news={{ canNewFolder: place !== null, onNewFolder: newFolder, onUpload: chooseFiles }}
               onRefresh={onReload}
               onPaste={paste}
-              onUpload={chooseFiles}
               onProperties={() => setProperties({ subject: placeSubject, open: true })}
             >
               <ListArea
@@ -329,7 +339,7 @@ export function ExplorerTab({ active, onPlace, className, ...props }: TabProps &
                   view={view}
                   sort={sort}
                   onSort={setSort}
-                  marks={{ selected: new Set(selection.paths), cut: new Set(cut), renaming: renaming?.path ?? null, menuOn: menu }}
+                  marks={{ selected: new Set(selection.paths), cut: new Set(clipboard.copy ? [] : clipboard.paths), renaming: renaming?.path ?? null, menuOn: menu }}
                   actions={actions}
                   shown={active && viewing === null}
                   thumbnailUrl={thumbnailUrl}

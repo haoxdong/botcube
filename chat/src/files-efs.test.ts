@@ -74,7 +74,7 @@ const claims = (link: string) => {
 describe('EFS account Files', () => {
   it('lists every file in the account, nested ones too, without hidden folders or another account', async () => {
     const { files } = setup();
-    expect(await files.list(ACCOUNT)).toEqual([]);
+    expect((await files.list(ACCOUNT)).files).toEqual([]);
     await put(HASH, 'report.csv', 'a,b');
     await put(HASH, 'charts/q3.png', 'png');
     await put(HASH, '.uploads/abc', 'partial');
@@ -82,9 +82,108 @@ describe('EFS account Files', () => {
     await put(HASH, 'charts/.git/objects/ab/cdef', 'git object');
     await put(HASH, 'botcube-harness/.state/x', 'mine');
     await put('ffffffffffffffffffffffffffffffff', 'theirs.txt');
-    const listed = await files.list(ACCOUNT);
+    const { files: listed } = await files.list(ACCOUNT);
     expect(listed.map(({ name, size }) => [name, size]).sort()).toEqual([['charts/q3.png', 3], ['report.csv', 3]]);
     expect(listed[0]?.lastModified).toMatch(/^\d{4}-\d\d-\d\dT/);
+  });
+
+  it('lists every visible folder, an empty one too, by its path with no trailing slash', async () => {
+    const { files } = setup();
+    expect((await files.list(ACCOUNT)).folders).toEqual([]);
+    await put(HASH, 'reports/2026/q3.csv');
+    await mkdir(path.join(root, HASH, 'empty'), { recursive: true });
+    await put(HASH, '.uploads/abc', 'partial');
+    await put(HASH, 'charts/.git/objects/ab/cdef', 'git object');
+    const { folders } = await files.list(ACCOUNT);
+    expect(folders.map(({ name }) => name).sort()).toEqual(['charts', 'empty', 'reports', 'reports/2026']);
+    expect(folders[0]?.lastModified).toMatch(/^\d{4}-\d\d-\d\dT/);
+  });
+
+  it('makes a folder, its parents too, and never one over anything already there', async () => {
+    const { files } = setup();
+    await files.makeFolder(ACCOUNT, 'reports/New folder');
+    expect((await files.list(ACCOUNT)).folders.map(({ name }) => name).sort()).toEqual(['reports', 'reports/New folder']);
+    await expect(files.makeFolder(ACCOUNT, 'reports/New folder')).rejects.toMatchObject({ status: 409, message: 'A folder named reports/New folder is already in Files' });
+    await put(HASH, 'notes.txt', 'kept');
+    await expect(files.makeFolder(ACCOUNT, 'notes.txt')).rejects.toMatchObject({ status: 409 });
+    expect(await readFile(path.join(root, HASH, 'notes.txt'), 'utf8')).toBe('kept');
+    for (const name of ['../x', 'a/../../x', '.hidden/x', '.hidden', 'reports/.cache', '']) {
+      // eslint-disable-next-line no-await-in-loop -- one name at a time
+      await expect(files.makeFolder(ACCOUNT, name)).rejects.toMatchObject({ status: 400 });
+    }
+  });
+
+  it('copies a file, into a new folder too, and never over another file', async () => {
+    const { files } = setup();
+    await put(HASH, 'a.txt', 'A');
+    await put(HASH, 'b.txt', 'B');
+    await files.copy(ACCOUNT, 'a.txt', 'archive/a.txt');
+    expect(await readFile(path.join(root, HASH, 'archive/a.txt'), 'utf8')).toBe('A');
+    expect(await readFile(path.join(root, HASH, 'a.txt'), 'utf8')).toBe('A');
+    await expect(files.copy(ACCOUNT, 'a.txt', 'b.txt')).rejects.toMatchObject({ status: 409, message: 'A file named b.txt is already in Files' });
+    expect(await readFile(path.join(root, HASH, 'b.txt'), 'utf8')).toBe('B');
+    await expect(files.copy(ACCOUNT, 'gone.txt', 'c.txt')).rejects.toMatchObject({ status: 404, message: 'No file gone.txt in Files' });
+    await expect(files.copy(ACCOUNT, 'archive', 'archive copy')).rejects.toMatchObject({ status: 400 });
+    for (const to of ['../x', 'a/../../x', '.hidden/x']) {
+      // eslint-disable-next-line no-await-in-loop -- one name at a time
+      await expect(files.copy(ACCOUNT, 'a.txt', to)).rejects.toMatchObject({ status: 400 });
+    }
+    expect((await files.list(ACCOUNT)).files.map(({ name }) => name).sort()).toEqual(['a.txt', 'archive/a.txt', 'b.txt']);
+  });
+
+  it('renames a folder with everything in it, but never over anything already there', async () => {
+    const { files } = setup();
+    await put(HASH, 'New folder/a.txt', 'A');
+    await put(HASH, 'New folder/deep/b.txt', 'B');
+    await files.rename(ACCOUNT, 'New folder', 'reports/2026');
+    expect((await files.list(ACCOUNT)).files.map(({ name }) => name).sort()).toEqual(['reports/2026/a.txt', 'reports/2026/deep/b.txt']);
+    await mkdir(path.join(root, HASH, 'empty'));
+    await put(HASH, 'taken.txt', 'T');
+    await expect(files.rename(ACCOUNT, 'reports', 'empty')).rejects.toMatchObject({ status: 409, message: 'A file named empty is already in Files' });
+    await expect(files.rename(ACCOUNT, 'reports', 'taken.txt')).rejects.toMatchObject({ status: 409 });
+    expect(await readdir(path.join(root, HASH, 'empty'))).toEqual([]);
+    expect(await readFile(path.join(root, HASH, 'taken.txt'), 'utf8')).toBe('T');
+    expect(await readFile(path.join(root, HASH, 'reports/2026/deep/b.txt'), 'utf8')).toBe('B');
+    // A folder never hides behind a dot, nor goes inside itself.
+    await expect(files.rename(ACCOUNT, 'reports', '.reports')).rejects.toMatchObject({ status: 400 });
+    await expect(files.rename(ACCOUNT, 'reports', 'reports/inside')).rejects.toMatchObject({ status: 400 });
+    expect(await readFile(path.join(root, HASH, 'reports/2026/a.txt'), 'utf8')).toBe('A');
+  });
+
+  describe('the Files routes', () => {
+    const service = () => {
+      const { files } = setup();
+      const app = new Hono()
+        .onError((error) => new Response(error.message, { status: error instanceof HttpError ? error.status : 500 }))
+        .route('/', computerFilesRoutes({
+          requester: async () => ({ owner: ACCOUNT }),
+          history: { owns: async () => true },
+          computers: { state: async () => { throw new Error('unused'); }, wake: async () => { throw new Error('unused'); } },
+          files: () => files,
+          writtenMemory: true,
+        }));
+      return {
+        post: async (route: string, body: unknown) => {
+          const response = await app.request(route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+          return [response.status, await response.text()];
+        },
+        list: async () => (await app.request('/files')).json() as Promise<{ files: Array<{ name: string }>; folders: unknown }>,
+      };
+    };
+
+    it('makes a folder, lists it, copies a file and answers a taken name with the message the web client retries on', async () => {
+      const { post, list } = service();
+      await put(HASH, 'a.txt', 'A');
+      expect(await post('/files/folder', { name: 'New folder' })).toEqual([201, JSON.stringify({ name: 'New folder' })]);
+      expect(await post('/files/folder', { name: 'New folder' })).toEqual([409, 'A folder named New folder is already in Files']);
+      expect(await post('/files/copy', { from: 'a.txt', to: 'New folder/a.txt' })).toEqual([200, JSON.stringify({ name: 'New folder/a.txt' })]);
+      expect(await post('/files/copy', { from: 'a.txt', to: 'New folder/a.txt' })).toEqual([409, 'A file named New folder/a.txt is already in Files']);
+      expect(await post('/files/copy', { from: 'a.txt' })).toEqual([422, 'from and to are required']);
+      expect(await post('/files/rename', { from: 'New folder', to: 'Reports' })).toEqual([200, JSON.stringify({ name: 'Reports' })]);
+      const listed = await list();
+      expect(listed.files.map(({ name }) => name).sort()).toEqual(['Reports/a.txt', 'a.txt']);
+      expect(listed.folders).toEqual([{ name: 'Reports', lastModified: expect.stringMatching(/^\d{4}-/) }]);
+    });
   });
 
   it('signs upload and download links on the Chat Service, for this account, for five minutes', async () => {
@@ -110,7 +209,7 @@ describe('EFS account Files', () => {
     const { files } = setup();
     await put(HASH, 'old.txt');
     await files.remove(ACCOUNT, 'old.txt');
-    expect(await files.list(ACCOUNT)).toEqual([]);
+    expect((await files.list(ACCOUNT)).files).toEqual([]);
     await expect(files.remove(ACCOUNT, 'old.txt')).rejects.toMatchObject({ status: 404 });
   });
 
@@ -131,7 +230,7 @@ describe('EFS account Files', () => {
     await expect(files.rename(ACCOUNT, 'a.txt', 'b.txt')).rejects.toMatchObject({ status: 409 });
     expect(await readFile(path.join(root, HASH, 'b.txt'), 'utf8')).toBe('B');
     await files.rename(ACCOUNT, 'a.txt', 'archive/a.txt');
-    expect((await files.list(ACCOUNT)).map(({ name }) => name).sort()).toEqual(['archive/a.txt', 'b.txt']);
+    expect((await files.list(ACCOUNT)).files.map(({ name }) => name).sort()).toEqual(['archive/a.txt', 'b.txt']);
     await expect(files.rename(ACCOUNT, 'a.txt', 'c.txt')).rejects.toMatchObject({ status: 404 });
   });
 
@@ -149,7 +248,7 @@ describe('EFS account Files', () => {
         await reader.close();
       }
       expect(await files.writtenMemory(ACCOUNT)).toBe('- Lives in Lisbon\n');
-      expect((await files.list(ACCOUNT)).map(({ name }) => name)).toEqual(['memories/AGENTS.md']);
+      expect((await files.list(ACCOUNT)).files.map(({ name }) => name)).toEqual(['memories/AGENTS.md']);
     });
 
     it('a save that cannot replace memories/AGENTS.md leaves no file of its own behind', async () => {
@@ -619,6 +718,24 @@ describe('EFS account Files', () => {
       expect(await snapshot(path.join(root, OTHER))).toEqual(before);
     });
 
+    it('makes no folder, copies nothing and renames no folder through a linked folder', async () => {
+      const { files } = setup();
+      await put(HASH, 'a.txt', 'A');
+      await put(HASH, 'mine/b.txt', 'B');
+      const before = await planted('out');
+      const names = async () => readdir(path.join(root, OTHER));
+      const linked = { status: 400, message: expect.stringContaining('is a symbolic link') };
+      await expect(files.makeFolder(ACCOUNT, 'out/New folder')).rejects.toMatchObject(linked);
+      await expect(files.makeFolder(ACCOUNT, 'out')).rejects.toMatchObject(linked);
+      await expect(files.copy(ACCOUNT, 'a.txt', 'out/a.txt')).rejects.toMatchObject(linked);
+      await expect(files.copy(ACCOUNT, 'out/theirs.txt', 'theirs.txt')).rejects.toMatchObject(linked);
+      await expect(files.rename(ACCOUNT, 'mine', 'out/mine')).rejects.toMatchObject(linked);
+      await expect(files.rename(ACCOUNT, 'out', 'in')).rejects.toMatchObject(linked);
+      expect(await names()).toEqual(['theirs.txt']);
+      expect(await snapshot(path.join(root, OTHER))).toEqual(before);
+      expect(await readFile(path.join(root, HASH, 'mine/b.txt'), 'utf8')).toBe('B');
+    });
+
     it('refuses a remove through a linked folder, and leaves the file it points into', async () => {
       const { files } = setup();
       const before = await planted('out');
@@ -663,7 +780,7 @@ describe('EFS account Files', () => {
     const claimedHash = path.basename(access.live.get(destination) ?? '');
     await put(claimedHash, 'report.csv', 'claimed');
     await files.transfer(ACCOUNT, 'acct_claimed');
-    expect((await files.list('acct_claimed')).map(({ name }) => name).sort()).toEqual(['report (1).csv', 'report.csv', 'sub/deep.txt']);
+    expect((await files.list('acct_claimed')).files.map(({ name }) => name).sort()).toEqual(['report (1).csv', 'report.csv', 'sub/deep.txt']);
     expect(await readFile(path.join(root, claimedHash, 'report.csv'), 'utf8')).toBe('claimed');
     expect(await readFile(path.join(root, claimedHash, 'report (1).csv'), 'utf8')).toBe('anonymous');
     await expect(readdir(path.join(root, HASH))).rejects.toMatchObject({ code: 'ENOENT' });

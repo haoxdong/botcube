@@ -11,7 +11,7 @@ const meta = {
   args: {
     agentName: 'BotCube',
     app: 'Chromium',
-    files: <FilesWindow files={[]} error={null} onReload={() => {}} onDownload={() => {}} onDelete={() => {}} onRename={() => null} onMove={() => {}} onUpload={() => Promise.reject(new Error('The fixture has no uploads'))} thumbnailUrl={() => Promise.reject(new Error('The fixture has no pictures'))} />,
+    files: <FilesWindow files={[]} error={null} onReload={() => {}} onDownload={() => {}} onDelete={() => {}} onRename={() => null} onMove={() => {}} onCopy={() => {}} onNewFolder={(folder) => `${folder}New folder/`} onUpload={() => Promise.reject(new Error('The fixture has no uploads'))} thumbnailUrl={() => Promise.reject(new Error('The fixture has no pictures'))} />,
     computer: { state: 'asleep', screenshot: null },
     commands: [{ command: 'fake-cli data', output: 'Sample item: 42' }],
     control: 'agent',

@@ -30,6 +30,17 @@ export interface FileEntry {
   lastModified: string;
 }
 
+/** A folder in Files, by its path from the account's root; an empty one shows too. */
+export interface FolderEntry {
+  name: string;
+  lastModified: string;
+}
+
+export interface FileListing {
+  files: FileEntry[];
+  folders: FolderEntry[];
+}
+
 /** What a Runtime session needs to mount its account's access point itself, and nothing more. */
 export interface FilesMountBinding {
   fileSystemId: string;
@@ -67,7 +78,11 @@ export interface AccountFiles {
   recoverCleanup(): Promise<void>;
   /** The account's access point, created on first use, mounted at FILES_MOUNT_PATH. */
   mount(accountId: string): Promise<FilesMount>;
-  list(accountId: string): Promise<FileEntry[]>;
+  list(accountId: string): Promise<FileListing>;
+  /** Make a folder, and its parents; 409 when anything is already at `name`. */
+  makeFolder(accountId: string, name: string): Promise<void>;
+  /** Copy a file without replacing anything at `to`. */
+  copy(accountId: string, from: string, to: string): Promise<void>;
   /** A signed link's path and query on the Chat Service, which uploads `name` as a new file. */
   uploadUrl(accountId: string, name: string): Promise<string>;
   /** A signed link's path and query on the Chat Service, which downloads `name`. */
@@ -76,7 +91,7 @@ export interface AccountFiles {
   link(request: LinkRequest): Promise<Response>;
   /** Delete a file; 404 when it is not there. */
   remove(accountId: string, name: string): Promise<void>;
-  /** Rename a file without replacing another file. */
+  /** Rename a file or a folder without replacing anything at `to`. */
   rename(accountId: string, from: string, to: string): Promise<void>;
   /** A User's save of an Artifact edited in place: its Source and its next Artifact Version, authored by the User. */
   saveArtifact(accountId: string, save: ArtifactSave): Promise<SavedArtifact>;

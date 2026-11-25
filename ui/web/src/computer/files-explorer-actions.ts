@@ -13,6 +13,7 @@ export interface ListActions {
   onPoint: (item: FilesItem) => void;
   onOpen: (item: FilesItem) => void;
   onCut: (item: FilesItem) => void;
+  onCopy: (item: FilesItem) => void;
   onDownload: (item: FilesItem) => void;
   onStartRename: (item: FilesItem) => void;
   onDelete: (item: FilesItem) => void;
@@ -30,3 +31,35 @@ export type ItemMarks = { selected: ReadonlySet<string>; cut: ReadonlySet<string
 
 /** What reveals an item of the virtual grid: it draws the item's row, scrolling to it. */
 export type Reveal = { scrollToItem: (index: number) => void };
+
+/** The files Cut or Copy took, which Paste moves or copies into the open folder: one clipboard for every tab. */
+export type Clipboard = { paths: readonly string[]; copy: boolean };
+export const EMPTY_CLIPBOARD: Clipboard = { paths: [], copy: false };
+
+/** Puts a file into a folder, resolving to the path it took; void where nothing waits on it. */
+type Put = (path: string, folder: string) => Promise<string> | void;
+type Pasting = { onCopy: Put; onMove: Put; onClipboard: (clipboard: Clipboard) => void };
+
+/** Whether Paste has anything to put in the open place, Home (null) taking nothing. */
+export const canPasteInto = (folder: string | null, clipboard: Clipboard) => folder !== null && clipboard.paths.length > 0;
+
+/**
+ * Paste into the open place: copied files copy, and stay to paste again; cut files move, those already there staying
+ * put. Nothing pastes into Home (null). Resolves to the paths the files took, which Windows then selects.
+ */
+export async function pasteInto(folder: string | null, clipboard: Clipboard, { onCopy, onMove, onClipboard }: Pasting): Promise<string[]> {
+  if (folder === null) return [];
+  if (!clipboard.copy && clipboard.paths.length > 0) onClipboard(EMPTY_CLIPBOARD);
+  const put = clipboard.copy ? onCopy : onMove;
+  const moving = clipboard.paths.filter((path) => clipboard.copy || path.slice(0, path.lastIndexOf('/') + 1) !== folder);
+  // A refused file says why through the window's error; the rest are still selected.
+  const settled = await Promise.allSettled(moving.map(async (path) => put(path, folder)));
+  return settled.flatMap((each) => (each.status === 'fulfilled' && typeof each.value === 'string' ? [each.value] : []));
+}
+
+/** New folder shows at once, in rename, as Windows makes one; none in Home. */
+export function makeFolder(place: string | null, onNewFolder: (folder: string) => string, startRename: (item: FilesItem) => void) {
+  if (place === null) return;
+  const path = onNewFolder(place);
+  startRename({ name: path.slice(place.length, -1), path, lastModified: new Date().toISOString(), folder: true });
+}

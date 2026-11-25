@@ -56,7 +56,7 @@ export class AccountTree {
 
   async copy(from: string, to: string, folder: boolean): Promise<void> {
     if (!folder) {
-      await this.write(to, await this.read(from), 'new');
+      await this.copyFile(from, to);
       return;
     }
 
@@ -69,6 +69,25 @@ export class AccountTree {
         this.copy(`${from}/${entry.name}`, `${to}/${entry.name}`, entry.isDirectory())));
       const failed = copied.find((entry) => entry.status === 'rejected');
       if (failed !== undefined) throw failed.reason;
+    } finally {
+      await source.close();
+    }
+  }
+
+  /** Streams the file `from` into a new file `to`, fd to fd: EEXIST when anything is at `to`, which is never replaced. */
+  private async copyFile(from: string, to: string): Promise<void> {
+    const source = await this.open(from, constants.O_RDONLY);
+    try {
+      await this.folders(path.posix.dirname(to));
+      const target = await this.open(to, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o640);
+      try {
+        await target.writeFile(source.createReadStream({ autoClose: false }));
+      } catch (error) {
+        await this.unlink(to);
+        throw error;
+      } finally {
+        await target.close();
+      }
     } finally {
       await source.close();
     }
@@ -118,6 +137,38 @@ export class AccountTree {
   /** Gives `from` the name `to` without ever replacing a file there: link refuses a taken name. */
   async moveNoClobber(from: string, to: string): Promise<boolean> {
     return this.moveTo(this, from, to);
+  }
+
+  /** Makes the folder `name`, its parents too; false when anything is already there, which is never replaced. */
+  async makeFolder(name: string): Promise<boolean> {
+    return this.inFolder(name, true, async (at) => {
+      try {
+        await mkdir(at, 0o750);
+        return true;
+      } catch (error) {
+        if (errorCode(error) === 'EEXIST') return false;
+        throw error;
+      }
+    });
+  }
+
+  async isFolder(name: string): Promise<boolean> {
+    return this.inFolder(name, false, async (at) => (await lstat(at)).isDirectory());
+  }
+
+  /**
+   * Gives the folder `from` the name `to`, false when anything is there: rename(2) would replace an empty folder, so
+   * `to` is looked for first through its pinned folder. One made there between the look and the rename is replaced.
+   */
+  async moveFolderNoClobber(from: string, to: string): Promise<boolean> {
+    return this.inFolder(from, false, (source) => this.inFolder(to, true, async (target) => {
+      const taken = await lstat(target).then(() => true, (error: unknown) => {
+        if (errorCode(error) === 'ENOENT') return false;
+        throw error;
+      });
+      if (!taken) await rename(source, target);
+      return !taken;
+    }));
   }
 
   /** Moves the file at `from` here to `to` in `destination`, never replacing one there: both go through their pinned folders. */

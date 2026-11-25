@@ -20,7 +20,9 @@ export interface KeyActions {
   /** Opens the context menu of the selection, or of the folder when nothing is selected. */
   contextMenu: () => void;
   cut: () => void;
+  copy: () => void;
   paste: () => void;
+  newFolder: () => void;
   forgetCut: () => void;
   /** Type-to-find in the list: the letters typed so far. */
   find: (text: string) => void;
@@ -35,9 +37,9 @@ export type Typed = { text: string; at: number };
 /**
  * Explorer's keys, as Windows 11 File Explorer has them: Ctrl+A; F2, Delete, Alt+Enter; Alt+Left, Alt+Right, Alt+Up and
  * Backspace, F5; Alt+D, Ctrl+L and F4 the address, Ctrl+F and Ctrl+E the search; Alt+P and Alt+Shift+P the panes;
- * Ctrl+Shift+1 to 8 the views; Shift+F10 and the menu key the context menu; Ctrl+X, Ctrl+V and Escape. In the list, a
- * letter finds the item it starts. Keys in a text field, or in a menu or dialog drawn outside the window, are left
- * alone. Returns the letters typed so far.
+ * Ctrl+Shift+1 to 8 the views, Ctrl+Shift+N a new folder; Shift+F10 and the menu key the context menu; Ctrl+X, Ctrl+C,
+ * Ctrl+V and Escape. In the list, a letter finds the item it starts. Keys in a text field, or in a menu or dialog drawn
+ * outside the window, are left alone. Returns the letters typed so far.
  */
 export function onExplorerKey(event: KeyboardEvent<HTMLElement>, actions: KeyActions, { inList, typed }: { inList: boolean; typed: Typed }): Typed {
   if (leftAlone(event)) return typed;
@@ -61,11 +63,13 @@ function leftAlone(event: KeyboardEvent<HTMLElement>) {
   return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
 }
 
-/** The keys held with Ctrl (or Cmd): Ctrl+Shift+1 to 8 the views, else the selection, cut and paste, and the boxes. */
+/** The keys held with Ctrl (or Cmd): Ctrl+Shift+1 to 8 the views and N a folder, else the selection, the clipboard and the boxes. */
 function commandChords(event: KeyboardEvent<HTMLElement>, key: string, actions: KeyActions): Chords {
-  if (!event.shiftKey) return { a: actions.selectAll, f: actions.focusSearch, e: actions.focusSearch, l: actions.focusAddress, x: actions.cut, v: actions.paste };
+  if (!event.shiftKey) {
+    return { a: actions.selectAll, f: actions.focusSearch, e: actions.focusSearch, l: actions.focusAddress, x: actions.cut, c: actions.copy, v: actions.paste };
+  }
   const digit = /^Digit([1-8])$/.exec(event.code)?.[1];
-  return digit === undefined ? {} : { [key]: () => actions.view(Number(digit) - 1) };
+  return digit === undefined ? { n: actions.newFolder } : { [key]: () => actions.view(Number(digit) - 1) };
 }
 
 /** The keys held with Alt: history, the address, Properties and the panes. */

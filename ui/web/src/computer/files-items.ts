@@ -1,5 +1,5 @@
 import { fileExtension, isImageName } from '../components/file-type-icon';
-import type { FileEntry } from './files-service';
+import type { FileEntry, FolderEntry } from './files-service';
 import { baseOf, filesPath, underOf } from '../app/files-path';
 
 /** An item of the open place: a file, with its size, or a folder holding files further down. */
@@ -14,8 +14,8 @@ export type FilesItem = {
 /** Where Files is: a folder ('' for workspace, the top, else its path with a trailing slash), or Home (null). */
 export type Place = string | null;
 
-/** The items inside a folder ('' for the top, else its path with a trailing slash). */
-export function itemsIn(files: readonly FileEntry[], folder: string): FilesItem[] {
+/** The items inside a folder ('' for the top, else its path with a trailing slash), empty folders among them. */
+export function itemsIn(files: readonly FileEntry[], folder: string, folders: readonly FolderEntry[] = []): FilesItem[] {
   // Keyed by path, so a file and a folder of the same name, which storage allows, both stay listed.
   const items = new Map<string, FilesItem>();
   for (const file of files) {
@@ -30,6 +30,10 @@ export function itemsIn(files: readonly FileEntry[], folder: string): FilesItem[
     const seen = items.get(path);
     const lastModified = seen === undefined || Date.parse(file.lastModified) > Date.parse(seen.lastModified) ? file.lastModified : seen.lastModified;
     items.set(path, { name, path, lastModified, folder: true });
+  }
+  for (const { name: path, lastModified } of folders) {
+    const [name = ''] = underOf(filesPath(folder), filesPath(`${path}/`))?.split('/') ?? [];
+    if (name !== '' && !items.has(`${folder}${name}/`)) items.set(`${folder}${name}/`, { name, path: `${folder}${name}/`, lastModified, folder: true });
   }
   return [...items.values()];
 }
@@ -50,11 +54,11 @@ type FolderNode = { name: string; path: string; folders: FolderTree };
 /** A folder's own folders, each with the folders inside it, in name order. */
 export type FolderTree = FolderNode[];
 
-export function foldersIn(files: readonly FileEntry[], folder = ''): FolderTree {
-  return itemsIn(files, folder)
+export function foldersIn(files: readonly FileEntry[], folder = '', folders: readonly FolderEntry[] = []): FolderTree {
+  return itemsIn(files, folder, folders)
     .filter(({ folder: isFolder }) => isFolder)
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map(({ name, path }) => ({ name, path, folders: foldersIn(files, path) }));
+    .map(({ name, path }) => ({ name, path, folders: foldersIn(files, path, folders) }));
 }
 
 /** The folder above an open one, or null at workspace and Home. */
