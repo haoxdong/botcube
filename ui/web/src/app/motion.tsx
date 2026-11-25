@@ -14,23 +14,44 @@ import { motion } from "./motion-tokens";
     once, as part of that one motion, rather than fading on its own. */
 export const Arriving = createContext(false);
 
-/** How shown `element` is now, mid-fade or not; an opacity no stylesheet resolves reads as fully shown. */
+// Each element's animation per channel: cancelling a handle reads nothing; getAnimations() first updates style.
+const playing = new WeakMap<Element, Map<string, Animation>>();
+
+/** Whether `element`'s animation on `channel` runs or holds its end. */
+function live(element: Element, channel: string) {
+  const animation = playing.get(element)?.get(channel);
+  return animation !== undefined && (animation.playState !== "finished" || animation.effect?.getTiming().fill === "forwards");
+}
+
+function stop(element: Element, channel: string) {
+  playing.get(element)?.get(channel)?.cancel();
+  playing.get(element)?.delete(channel);
+}
+
+function play(element: Element, channel: string, animation: Animation) {
+  playing.set(element, (playing.get(element) ?? new Map<string, Animation>()).set(channel, animation));
+  return animation;
+}
+
+/** How shown `element` is now, mid-fade; an opacity no stylesheet resolves reads as fully shown. */
 function shown(element: HTMLElement | SVGElement) {
   const opacity = getComputedStyle(element).opacity;
   return opacity === "" ? 1 : Number(opacity);
 }
 
 /**
- * Fades `element` to `to` on --motion-quick, from `from` or from where a running fade has it now. A fade out holds
- * its end until the element unmounts. Null where motion is off.
+ * Fades `element` to `to` on --motion-quick, from `from`, from where a running fade has it now, or at rest from its
+ * stylesheet, unread. A fade out holds its end until the element unmounts. Null where motion is off.
  */
 function fade(element: HTMLElement | SVGElement, to: 0 | 1, from?: number): Animation | null {
   const { quick: duration, ease: easing } = motion();
   if (duration === 0) return null;
-  const start = from ?? shown(element);
-  for (const running of element.getAnimations()) running.cancel();
+  const running = from === undefined && live(element, "shown");
+  const start = from ?? (running ? shown(element) : 1);
+  stop(element, "shown");
   if (start === to) return null;
-  return element.animate([{ opacity: start }, { opacity: to }], { duration, easing, fill: to === 0 ? "forwards" : "none" });
+  const frames = running || from !== undefined ? [{ opacity: start }, { opacity: to }] : [{ opacity: to }];
+  return play(element, "shown", element.animate(frames, { duration, easing, fill: to === 0 ? "forwards" : "none" }));
 }
 
 /**
@@ -43,17 +64,18 @@ function fold(element: HTMLElement | SVGElement, to: 0 | 1, from?: 0, edge: Keyf
   if (duration === 0) return null;
   // Every read before any write: one layout. Only an open that reverses a running fold measures again after the
   // cancel, since no read beforehand gives the settled height with its border and sub-pixels.
-  const running = element.getAnimations();
   const now = element.getBoundingClientRect().height;
-  const start = from === 0 ? { height: 0, opacity: 0 } : { height: now, opacity: shown(element) };
-  for (const animation of running) animation.cancel();
-  const height = to === 0 ? 0 : running.length ? element.getBoundingClientRect().height : now;
-  if (start.height === height && start.opacity === to) return null;
+  const running = live(element, "shown");
+  const opacity = from === 0 ? 0 : running ? shown(element) : undefined;
+  stop(element, "shown");
+  const height = to === 0 ? 0 : running ? element.getBoundingClientRect().height : now;
+  const start = from === 0 ? 0 : now;
+  if (start === height && (opacity ?? 1) === to) return null;
   const faded = Math.min(1, quick / duration);
-  return element.animate(
-    [{ height: `${start.height}px`, opacity: start.opacity }, { opacity: to, offset: faded }, { height: `${height}px`, opacity: to, ...edge }],
+  return play(element, "shown", element.animate(
+    [{ height: `${start}px`, ...(opacity === undefined ? {} : { opacity }) }, { opacity: to, offset: faded }, { height: `${height}px`, opacity: to, ...edge }],
     { duration, easing, fill: to === 0 ? "forwards" : "none" },
-  );
+  ));
 }
 
 /**
@@ -243,13 +265,13 @@ export function Rises({ arrives, replaced, children }: { arrives: boolean; repla
 function glide(element: HTMLElement, from: DOMRect, scales: boolean) {
   const { move: duration, ease: easing } = motion();
   if (duration === 0) return;
-  for (const running of element.getAnimations()) running.cancel();
+  stop(element, "glide");
   const to = element.getBoundingClientRect();
   const x = from.left - to.left;
   const y = from.top - to.top;
   const scale = scales && to.width > 0 && to.height > 0 ? ` scale(${from.width / to.width}, ${from.height / to.height})` : "";
   if (x === 0 && y === 0 && scale === "") return;
-  element.animate([{ transformOrigin: "0 0", transform: `translate(${x}px, ${y}px)${scale}` }, { transformOrigin: "0 0", transform: "none" }], { duration, easing });
+  play(element, "glide", element.animate([{ transformOrigin: "0 0", transform: `translate(${x}px, ${y}px)${scale}` }, { transformOrigin: "0 0", transform: "none" }], { duration, easing }));
 }
 
 type GlidesProps = { className?: string; style?: CSSProperties; on: boolean; dependency: string | boolean; scales?: boolean; children: ReactNode };
@@ -269,7 +291,7 @@ export class Glides extends Component<GlidesProps> {
 
   override componentDidUpdate(_props: GlidesProps, _state: unknown, from: DOMRect | null) {
     const { element } = this;
-    if (element !== null && !this.props.on && motion().move > 0) for (const running of element.getAnimations()) running.cancel();
+    if (element !== null && !this.props.on) stop(element, "glide");
     if (from === null || element === null) return;
     queueMicrotask(() => glide(element, from, this.props.scales ?? false));
   }
@@ -325,12 +347,14 @@ export function Folds({ ref, ...props }: FoldsProps & { ref?: Ref<Element> | und
  * at once where motion is off.
  */
 export function slide(element: HTMLElement, property: `--${string}`, to: number, done: () => void) {
-  const from = Number.parseFloat(getComputedStyle(element).getPropertyValue(property));
+  // At rest it is where the last slide or swipe set it inline.
+  const inline = element.style.getPropertyValue(property);
+  const from = Number.parseFloat(live(element, property) || inline === "" ? getComputedStyle(element).getPropertyValue(property) : inline);
   const { move: duration, ease: easing } = motion();
-  if (duration > 0) for (const running of element.getAnimations()) if (running.id === property) running.cancel();
+  stop(element, property);
   element.style.setProperty(property, String(to));
   if (duration === 0 || Number.isNaN(from) || from === to) return done();
-  const animation = element.animate([{ [property]: from }, { [property]: to }], { duration, easing, id: property });
+  const animation = play(element, property, element.animate([{ [property]: from }, { [property]: to }], { duration, easing, id: property }));
   animation.onfinish = done;
 }
 

@@ -60,7 +60,7 @@ describe('Shows', () => {
     const box = screen.getByText('Error');
     expect(box).toHaveAttribute('inert');
     expect(fades).toHaveLength(1);
-    expect(opacities(only())).toEqual([1, 0]);
+    expect(opacities(only())).toEqual([0]);
     expect(only().options.fill).toBe('forwards');
     only().finish();
     expect(screen.queryByText('Error')).toBeNull();
@@ -121,7 +121,7 @@ describe('Fades', () => {
     view.rerender(buttons(false));
     expect(screen.getByText('Cancel editing')).toHaveAttribute('inert');
     expect(screen.getByText('Save changes')).toHaveAttribute('inert');
-    expect(fades.map(opacities)).toEqual([[1, 0], [1, 0]]);
+    expect(fades.map(opacities)).toEqual([[0], [0]]);
     fades[1]?.finish();
     expect(screen.queryByText('Save changes')).toBeNull();
     expect(screen.getByText('Cancel editing')).toBeVisible();
@@ -138,10 +138,27 @@ describe('Fades', () => {
     expect(button).not.toHaveAttribute('inert');
   });
 
+  it('starts a fade out from its stylesheet, reading nothing, and turns a running one back from where it stands', () => {
+    const style = window.getComputedStyle;
+    let reads = 0;
+    window.getComputedStyle = (element) => {
+      if (element.tagName !== 'BUTTON') return style(element);
+      reads += 1;
+      return new Proxy(style(element), { get: (real, key) => (key === 'opacity' ? '0.4' : Reflect.get(real, key)) });
+    };
+    onTestFinished(() => { window.getComputedStyle = style; });
+    const view = render(<Fades>{<button>Retry upload</button>}</Fades>);
+    view.rerender(<Fades>{false}</Fades>);
+    expect(reads).toBe(0);
+    view.rerender(<Fades>{<button>Retry upload</button>}</Fades>);
+    expect(fades.map(opacities)).toEqual([[0], [0.4, 1]]);
+    expect(fades[0]?.cancelled).toBe(true);
+  });
+
   it('crosses a keyed change in one stage: the old child fades out in its place as the new one fades in', () => {
     const view = render(<Fades>{<img key="a" alt="Picture" />}</Fades>);
     view.rerender(<Fades>{<span key="b">Mark</span>}</Fades>);
-    expect(fades.map((fade) => [fade.element.tagName, ...opacities(fade)])).toEqual([['IMG', 1, 0], ['SPAN', 0, 1]]);
+    expect(fades.map((fade) => [fade.element.tagName, ...opacities(fade)])).toEqual([['IMG', 0], ['SPAN', 0, 1]]);
     expect(screen.getByAltText('Picture').nextElementSibling).toBe(screen.getByText('Mark'));
   });
 
