@@ -347,6 +347,11 @@ test('stages the session API source without the Sandbox tools virtualenv', () =>
     const refreshWindows = 'credential-source/src/botcube_credential_source/refresh-windows.json';
     mkdirSync(dirname(resolve(fixture, refreshWindows)), { recursive: true });
     writeFileSync(resolve(fixture, refreshWindows), '{}');
+    const configFiles = ['config/pyproject.toml', 'config/bot.schema.json', 'config/src/botcube_config/__init__.py'];
+    mkdirSync(resolve(fixture, 'config/src/botcube_config'), { recursive: true });
+    for (const file of [...configFiles, 'config/schema.ts']) {
+      writeFileSync(resolve(fixture, file), file);
+    }
     writeFileSync(resolve(source, 'tools/.venv/lib/numpy-fixture.py'), 'installed dependency');
     mkdirSync(resolve(source, '.tool-dist/bot/cli'), { recursive: true });
     writeFileSync(resolve(source, '.tool-dist/bot/cli/tool.js'), 'unrelated staged CLI');
@@ -366,6 +371,10 @@ test('stages the session API source without the Sandbox tools virtualenv', () =>
       'source fixture'
     );
     expect(readFileSync(resolve(app.outdir, sessionAsset, refreshWindows), 'utf8')).toBe('{}');
+    for (const file of configFiles) {
+      expect(readFileSync(resolve(app.outdir, sessionAsset, file), 'utf8')).toBe(file);
+    }
+    expect(existsSync(resolve(app.outdir, sessionAsset, 'config/schema.ts'))).toBe(false);
     for (const file of ['pyproject.toml', 'uv.lock']) {
       expect(readFileSync(resolve(app.outdir, sessionAsset, harness, file), 'utf8')).toBe(file);
     }

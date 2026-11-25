@@ -19,6 +19,11 @@ export function sessionApiCode(codeLocation: string, buildArgs: Record<string, s
     ignoreMode: IgnoreMode.GIT,
     exclude: [
       '/*',
+      '!/config',
+      '/config/*',
+      '!/config/pyproject.toml',
+      '!/config/bot.schema.json',
+      '!/config/src',
       '!/credential-source',
       '!/harness',
       '/harness/*',
