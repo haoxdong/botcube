@@ -3,39 +3,17 @@
 services:
   chat-table-init:
     image: botcube-production-harness
-    # BotCube's Harness image, with no bot; the harness service builds the example bot FROM it.
-    build:
-      context: ../..
-      dockerfile: harness/deepagents/Dockerfile
-      target: harness
   chat-service:
     image: botcube-production-chat
-    build:
-      dockerfile: chat/Dockerfile
-      args:
-        BOTCUBE_ROOT: .
-    environment:
-      BOTCUBE_LOCAL_HARNESS_URL: http://harness:8080
-      BOTCUBE_LOCAL_SESSION_API_URL: http://session-api:8081
   harness:
     image: botcube-production-example-bot
-    build:
-      additional_contexts:
-        harness: service:chat-table-init
     environment:
       OTEL_TRACES_EXPORTER: console
   session-api:
     image: botcube-production-session-api
-    build:
-      context: ../..
-      dockerfile: harness/deepagents/session-api.Dockerfile
-    # Production uses Lambda's adapter; locally exercise that same installed
-    # package's HTTP entrypoint against the Harness checkpoints.
-    entrypoint: ["python", "-m", "botcube_harness_deepagents.session_api"]
-    command: []
   ui:
     image: botcube-production-ui
     build:
-      dockerfile: ui/web/Dockerfile
+      target: runtime
       args:
         NEXT_PUBLIC_CHAT_SERVICE_URL: ${NEXT_PUBLIC_CHAT_SERVICE_URL:-http://localhost:${BOTCUBE_LOCAL_CHAT_PORT:-8123}}

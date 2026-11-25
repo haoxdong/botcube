@@ -6,10 +6,9 @@ Run `./run.sh -d`, wait for the services, then run `./smoke.sh` and open
 `http://localhost:3001`. No cloud or model-provider credentials are used.
 See [Integrating BotCube](../../INTEGRATING.md#configuration) for the BotCube Config and the allowed environment variables.
 
-The stack runs the public example: the Chat Service reads
-`examples/public/botcube.yaml`, and the `harness` service is the example bot's image
-(`examples/bot/Dockerfile`): BotCube's Harness image, the one `session-api` runs, plus the bot's
-settings and skills. The UI builds with its default UI plugin.
+The stack resolves `deployment/botcube.yaml` for the public example. The example bot image adds
+its settings and skills to BotCube’s Harness image. The session API runs its production image
+with the HTTP entrypoint. The UI builds with its default UI plugin.
 
 `stand-ins/` holds the local stand-ins the `credential-service.Dockerfile` image copies and runs as
 plain scripts: the fake site (`fake_site.py`), which also answers the Chat Service's Bedrock calls,

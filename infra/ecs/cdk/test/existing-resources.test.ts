@@ -267,7 +267,6 @@ test('builds every image FROM the mirror registry', () => {
 /** The Dockerfiles of the images BotCube builds, relative to botcube/, and the local stack's. */
 const DOCKERFILES = ['chat/Dockerfile', 'credential-service/Dockerfile', 'harness/deepagents/Dockerfile',
   'harness/deepagents/session-api.Dockerfile', 'examples/bot/Dockerfile', 'ui/web/Dockerfile'];
-const LOCAL_DOCKERFILES = ['infra/local/chat.Dockerfile', 'infra/local/ui.Dockerfile', 'infra/local/harness.Dockerfile', 'infra/local/credential-service.Dockerfile'];
 const readDockerfile = (file: string) => fs.readFileSync(path.resolve(__dirname, '../../../..', file), 'utf8');
 
 /**
@@ -294,7 +293,7 @@ function baseImages(dockerfile: string, registry: string): string[] {
   });
 }
 
-test.each([...DOCKERFILES, ...LOCAL_DOCKERFILES])('%s pulls only images in the one registry its REGISTRY build arg names', file => {
+test.each([...DOCKERFILES, 'infra/local/credential-service.Dockerfile'])('%s pulls only images in the one registry its REGISTRY build arg names', file => {
   const images = baseImages(readDockerfile(file), MIRROR);
   expect(images.filter(image => !image.startsWith(`${MIRROR}/`))).toEqual([]);
 });

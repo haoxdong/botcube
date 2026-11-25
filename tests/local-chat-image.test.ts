@@ -1,25 +1,19 @@
-import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { expect, it } from 'vitest';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { it } from 'vitest';
 
-const botcube = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const chat = fileURLToPath(new URL('../chat/', import.meta.url));
 
-const esbuild = createRequire(join(botcube, 'chat/package.json')).resolve('esbuild/bin/esbuild');
-
-it('builds a local Chat Service image bundle that Node can load', () => {
-  const dockerfile = readFileSync(join(botcube, 'infra/local/chat.Dockerfile'), 'utf8');
-  const command = /^RUN chat\/node_modules\/\.bin\/esbuild ([\s\S]*?--outfile=dist\/main\.js)$/m.exec(dockerfile)?.[1];
-  expect(command, 'the image bundles the Chat Service with esbuild').toBeDefined();
-  const directory = mkdtempSync(join(tmpdir(), 'local-chat-image-'));
+it('builds a Chat Service image bundle that Node can load', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'chat-image-'));
   try {
-    const bundle = join(directory, 'main.mjs');
-    const script = `"$ESBUILD" ${command?.replaceAll('\\\n', ' ').replace('--outfile=dist/main.js', '--outfile="$BUNDLE"')} --log-level=warning`;
-    execFileSync('sh', ['-c', script], { cwd: botcube, env: { ...process.env, ESBUILD: esbuild, BUNDLE: bundle }, stdio: 'pipe' });
-    execFileSync(process.execPath, ['--check', bundle], { stdio: 'pipe' });
+    execFileSync('npm', ['--prefix', chat, 'run', 'build', '--', `--outdir=${directory}`, '--out-extension:.js=.mjs'], {
+      stdio: 'pipe',
+    });
+    execFileSync(process.execPath, ['--check', join(directory, 'main.mjs')], { stdio: 'pipe' });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

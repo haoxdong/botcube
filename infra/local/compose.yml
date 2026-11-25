@@ -2,10 +2,11 @@ services:
   config-resolve:
     build:
       context: ../..
-      dockerfile: infra/local/chat.Dockerfile
+      dockerfile: chat/Dockerfile
       target: build
       args:
         REGISTRY: ${BOTCUBE_LOCAL_REGISTRY:-public.ecr.aws}
+        BOTCUBE_ROOT: .
     command: ["sh", "-ec", "node config/cli.ts resolve /source/botcube.yaml > /resolved/botcube.tmp && mv /resolved/botcube.tmp /resolved/botcube.json"]
     volumes:
       - ./deployment/botcube.yaml:/source/botcube.yaml:ro
@@ -22,8 +23,9 @@ services:
   chat-table-init:
     build:
       context: ../..
-      dockerfile: infra/local/harness.Dockerfile
-      args: &harness-build-args
+      dockerfile: harness/deepagents/Dockerfile
+      target: harness
+      args: &registry-build-args
         REGISTRY: ${BOTCUBE_LOCAL_REGISTRY:-public.ecr.aws}
     depends_on:
       - dynamodb
@@ -43,7 +45,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/local/credential-service.Dockerfile
-      args: *harness-build-args
+      args: *registry-build-args
     depends_on:
       - dynamodb
     environment:
@@ -57,7 +59,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/local/credential-service.Dockerfile
-      args: *harness-build-args
+      args: *registry-build-args
     # The fake site the Credential Service signs in to; it also answers the Chat Service's Bedrock calls.
     command: ["python", "/opt/stand-ins/fake_site.py"]
     environment:
@@ -73,7 +75,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/local/credential-service.Dockerfile
-      args: *harness-build-args
+      args: *registry-build-args
     depends_on:
       config-resolve:
         condition: service_completed_successfully
@@ -98,12 +100,13 @@ services:
       timeout: 2s
       retries: 30
 
-  # The example bot's image, built FROM the Harness image the session API runs.
+  # The example bot's image, built FROM the same Harness image as chat-table-init.
   harness:
     build:
-      context: ../../examples/bot
+      context: ../..
+      dockerfile: examples/bot/Dockerfile
       additional_contexts:
-        harness: service:session-api
+        harness: service:chat-table-init
     depends_on:
       config-resolve:
         condition: service_completed_successfully
@@ -125,9 +128,10 @@ services:
   session-api:
     build:
       context: ../..
-      dockerfile: infra/local/harness.Dockerfile
-      args: *harness-build-args
-    command: ["botcube-session-api"]
+      dockerfile: harness/deepagents/session-api.Dockerfile
+      args: *registry-build-args
+    entrypoint: ["python", "-m", "botcube_harness_deepagents.session_api"]
+    command: []
     environment:
       NO_PROXY: ${NO_PROXY:-},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
       no_proxy: ${no_proxy:-${NO_PROXY:-}},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
@@ -144,9 +148,10 @@ services:
   chat-service:
     build:
       context: ../..
-      dockerfile: infra/local/chat.Dockerfile
+      dockerfile: chat/Dockerfile
       args:
         REGISTRY: ${BOTCUBE_LOCAL_REGISTRY:-public.ecr.aws}
+        BOTCUBE_ROOT: .
     depends_on:
       config-resolve:
         condition: service_completed_successfully
@@ -160,6 +165,8 @@ services:
         condition: service_healthy
     environment:
       <<: *dynamodb-environment
+      BOTCUBE_LOCAL_HARNESS_URL: http://harness:8080
+      BOTCUBE_LOCAL_SESSION_API_URL: http://session-api:8081
       BOTCUBE_CREDENTIAL_SERVICE_URL: http://credential-service:8125
       BOTCUBE_CREDENTIAL_INVOCATION_SECRET: local-invocation-secret
       BOTCUBE_AGENT_COMPUTER_CDP_URL: ws://chat-service:8123/agent-computer/cdp
@@ -172,7 +179,8 @@ services:
   ui:
     build:
       context: ../..
-      dockerfile: infra/local/ui.Dockerfile
+      dockerfile: ui/web/Dockerfile
+      target: dev
       args:
         REGISTRY: ${BOTCUBE_LOCAL_REGISTRY:-public.ecr.aws}
     environment:
