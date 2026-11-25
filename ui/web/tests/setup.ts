@@ -5,6 +5,7 @@ import { cleanup } from '@testing-library/react';
 import { Storage } from 'happy-dom';
 import { afterEach, beforeEach, expect } from 'vitest';
 
+import { forgetMotion } from '../src/app/motion-tokens';
 import { installBrowserLocks } from './browser-locks';
 
 expect.extend(matchers);
@@ -31,4 +32,5 @@ if (typeof Animation !== 'undefined') {
 // production image leaves it out (botcube/.dockerignore), and `next build` type-checks every test file.
 beforeEach(installBrowserLocks);
 
-afterEach(cleanup);
+// Each test styles its own motion tokens.
+afterEach(() => { cleanup(); forgetMotion(); });

@@ -9,6 +9,9 @@ beforeAll(async () => {
   ({ useDrawerSwipe } = await import('./drawer-swipe'));
 });
 beforeEach(() => {
+  const tokens = document.head.appendChild(document.createElement('style'));
+  tokens.textContent = ':root { --motion-move: 300ms; }';
+  onTestFinished(() => tokens.remove());
   tick = 100;
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 300 } as DOMRect);
 });

@@ -5,7 +5,7 @@ import {
   type CSSProperties, type KeyboardEventHandler, type ReactElement, type ReactNode, type Ref,
 } from "react";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
-import { moveMs } from "./motion-tokens";
+import { motion } from "./motion-tokens";
 
 // The web app's one motion engine (ADR 0094's motion part): one motion per user action, each on the Web Animations
 // API, so `document.getAnimations()` sees every one and the Storybook motion budget holds them.
@@ -13,16 +13,6 @@ import { moveMs } from "./motion-tokens";
 /** True while what holds it slides in (a phone drawer, the Agent Profile): what comes or goes in it then shows or goes at
     once, as part of that one motion, rather than fading on its own. */
 export const Arriving = createContext(false);
-
-function cssMs(name: string) {
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  const amount = Number.parseFloat(value);
-  if (Number.isNaN(amount)) return 0;
-  return value.endsWith("ms") ? amount : amount * 1000;
-}
-
-/** The motion tokens' curve, --ease, for the Web Animations API. */
-const easing = () => getComputedStyle(document.documentElement).getPropertyValue("--ease").trim() || "ease";
 
 /** How shown `element` is now, mid-fade or not; an opacity no stylesheet resolves reads as fully shown. */
 function shown(element: HTMLElement | SVGElement) {
@@ -35,12 +25,12 @@ function shown(element: HTMLElement | SVGElement) {
  * its end until the element unmounts. Null where motion is off.
  */
 function fade(element: HTMLElement | SVGElement, to: 0 | 1, from?: number): Animation | null {
-  const duration = cssMs("--motion-quick");
+  const { quick: duration, ease: easing } = motion();
   if (duration === 0) return null;
   const start = from ?? shown(element);
   for (const running of element.getAnimations()) running.cancel();
   if (start === to) return null;
-  return element.animate([{ opacity: start }, { opacity: to }], { duration, easing: easing(), fill: to === 0 ? "forwards" : "none" });
+  return element.animate([{ opacity: start }, { opacity: to }], { duration, easing, fill: to === 0 ? "forwards" : "none" });
 }
 
 /**
@@ -49,16 +39,20 @@ function fade(element: HTMLElement | SVGElement, to: 0 | 1, from?: number): Anim
  * unmounts. Null where motion is off.
  */
 function fold(element: HTMLElement | SVGElement, to: 0 | 1, from?: 0, edge: Keyframe = {}): Animation | null {
-  const duration = cssMs("--motion-move");
+  const { move: duration, quick, ease: easing } = motion();
   if (duration === 0) return null;
-  const start = from === 0 ? { height: 0, opacity: 0 } : { height: element.getBoundingClientRect().height, opacity: shown(element) };
-  for (const running of element.getAnimations()) running.cancel();
-  const height = to === 0 ? 0 : element.getBoundingClientRect().height;
+  // Every read before any write: one layout. Only an open that reverses a running fold measures again after the
+  // cancel, since no read beforehand gives the settled height with its border and sub-pixels.
+  const running = element.getAnimations();
+  const now = element.getBoundingClientRect().height;
+  const start = from === 0 ? { height: 0, opacity: 0 } : { height: now, opacity: shown(element) };
+  for (const animation of running) animation.cancel();
+  const height = to === 0 ? 0 : running.length ? element.getBoundingClientRect().height : now;
   if (start.height === height && start.opacity === to) return null;
-  const faded = Math.min(1, cssMs("--motion-quick") / duration);
+  const faded = Math.min(1, quick / duration);
   return element.animate(
     [{ height: `${start.height}px`, opacity: start.opacity }, { opacity: to, offset: faded }, { height: `${height}px`, opacity: to, ...edge }],
-    { duration, easing: easing(), fill: to === 0 ? "forwards" : "none" },
+    { duration, easing, fill: to === 0 ? "forwards" : "none" },
   );
 }
 
@@ -77,7 +71,7 @@ export function useAfterMove(on: boolean) {
   const [after, setAfter] = useState(false);
   useLayoutEffect(() => {
     if (!on) return;
-    const wait = moveMs();
+    const wait = motion().move;
     if (wait === 0) setAfter(true);
     const timer = setTimeout(() => setAfter(true), wait);
     return () => {
@@ -235,9 +229,9 @@ export function Rises({ arrives, replaced, children }: { arrives: boolean; repla
   }, [own]);
   useLayoutEffect(() => {
     const target = node.current;
-    const duration = cssMs("--motion-move");
+    const { move: duration, ease: easing } = motion();
     if (!arrives || !(target instanceof HTMLElement) || duration === 0) return;
-    rising.current = target.animate([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration, easing: easing() });
+    rising.current = target.animate([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration, easing });
   }, [arrives]);
   useLayoutEffect(() => {
     if (replaced) rising.current?.cancel();
@@ -247,7 +241,7 @@ export function Rises({ arrives, replaced, children }: { arrives: boolean; repla
 
 /** Moves `element` from the box it had, `from`, to where it is now, on --motion-move: by its position, or its whole box. */
 function glide(element: HTMLElement, from: DOMRect, scales: boolean) {
-  const duration = cssMs("--motion-move");
+  const { move: duration, ease: easing } = motion();
   if (duration === 0) return;
   for (const running of element.getAnimations()) running.cancel();
   const to = element.getBoundingClientRect();
@@ -255,7 +249,7 @@ function glide(element: HTMLElement, from: DOMRect, scales: boolean) {
   const y = from.top - to.top;
   const scale = scales && to.width > 0 && to.height > 0 ? ` scale(${from.width / to.width}, ${from.height / to.height})` : "";
   if (x === 0 && y === 0 && scale === "") return;
-  element.animate([{ transformOrigin: "0 0", transform: `translate(${x}px, ${y}px)${scale}` }, { transformOrigin: "0 0", transform: "none" }], { duration, easing: easing() });
+  element.animate([{ transformOrigin: "0 0", transform: `translate(${x}px, ${y}px)${scale}` }, { transformOrigin: "0 0", transform: "none" }], { duration, easing });
 }
 
 type GlidesProps = { className?: string; style?: CSSProperties; on: boolean; dependency: string | boolean; scales?: boolean; children: ReactNode };
@@ -275,7 +269,7 @@ export class Glides extends Component<GlidesProps> {
 
   override componentDidUpdate(_props: GlidesProps, _state: unknown, from: DOMRect | null) {
     const { element } = this;
-    if (element !== null && !this.props.on && cssMs("--motion-move") > 0) for (const running of element.getAnimations()) running.cancel();
+    if (element !== null && !this.props.on && motion().move > 0) for (const running of element.getAnimations()) running.cancel();
     if (from === null || element === null) return;
     queueMicrotask(() => glide(element, from, this.props.scales ?? false));
   }
@@ -304,12 +298,12 @@ class FoldingBox extends Component<FoldsProps & { box: Ref<Element> | undefined 
 
   override componentDidUpdate(_props: FoldsProps, _state: unknown, from: number | null) {
     const { element } = this;
-    const duration = cssMs("--motion-move");
+    const { move: duration, ease: easing } = motion();
     if (from === null || element === null || duration === 0) return;
     for (const running of element.getAnimations()) running.cancel();
     const to = element.getBoundingClientRect().height;
     if (from === to) return;
-    element.animate([{ height: `${from}px`, flex: "none" }, { height: `${to}px`, flex: "none" }], { duration, easing: easing() });
+    element.animate([{ height: `${from}px`, flex: "none" }, { height: `${to}px`, flex: "none" }], { duration, easing });
   }
 
   override render() {
@@ -332,11 +326,11 @@ export function Folds({ ref, ...props }: FoldsProps & { ref?: Ref<Element> | und
  */
 export function slide(element: HTMLElement, property: `--${string}`, to: number, done: () => void) {
   const from = Number.parseFloat(getComputedStyle(element).getPropertyValue(property));
-  const duration = cssMs("--motion-move");
+  const { move: duration, ease: easing } = motion();
   if (duration > 0) for (const running of element.getAnimations()) if (running.id === property) running.cancel();
   element.style.setProperty(property, String(to));
   if (duration === 0 || Number.isNaN(from) || from === to) return done();
-  const animation = element.animate([{ [property]: from }, { [property]: to }], { duration, easing: easing(), id: property });
+  const animation = element.animate([{ [property]: from }, { [property]: to }], { duration, easing, id: property });
   animation.onfinish = done;
 }
 

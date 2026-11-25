@@ -16,6 +16,7 @@ vi.mock('./browser-live-frame', () => ({
   },
 }));
 
+import { forgetMotion } from '../app/motion-tokens';
 import { AgentComputer, type DockApp } from './agent-computer';
 import { FilesWindow } from './files-app';
 
@@ -408,10 +409,12 @@ describe("the Agent Computer's Terminal", () => {
   });
 });
 
-// The label waits out a full --motion-move (300ms with no stylesheet), then shows at once.
+// The label waits out a full --motion-move, then shows at once.
 describe("the Agent Computer cover's Starting…", () => {
-  beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
-  afterEach(() => vi.useRealTimers());
+  const tokens = document.createElement('style');
+  tokens.textContent = ':root { --motion-move: 300ms; }';
+  beforeEach(() => { document.head.append(tokens); vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }); });
+  afterEach(() => { tokens.remove(); forgetMotion(); vi.useRealTimers(); });
 
   const asleep = { state: 'asleep', screenshot: null } as const;
   const label = () => container.querySelector('.agent-computer-starting')?.textContent ?? null;

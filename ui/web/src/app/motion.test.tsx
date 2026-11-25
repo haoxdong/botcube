@@ -2,6 +2,7 @@ import { act, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 
 import { Arrives, Fades, Folds, foldAway, Glides, Rises, Shows, slide } from './motion';
+import { forgetMotion } from './motion-tokens';
 
 type Fade = { element: Element; keyframes: Keyframe[]; options: KeyframeAnimationOptions; finish: () => void; cancelled: boolean };
 let fades: Fade[] = [];
@@ -189,6 +190,20 @@ describe('Fades folds', () => {
     only().finish();
     expect(screen.queryByText('Weekly digest')).toBeNull();
   });
+
+  it('opens a fold reversed mid-way to its settled height, border and sub-pixels included', () => {
+    const folding = (box: Element) => fades.some((fade) => fade.element === box && !fade.cancelled);
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value(this: HTMLElement) { return new DOMRect(0, 0, 100, folding(this) ? 120.25 : 400.5); },
+    });
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get: () => 398 });
+    onTestFinished(() => { Reflect.deleteProperty(HTMLElement.prototype, 'getBoundingClientRect'); Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight'); });
+    const view = render(rows(['Morning recap', 'Weekly digest']));
+    view.rerender(rows(['Morning recap']));
+    view.rerender(rows(['Morning recap', 'Weekly digest']));
+    expect(fades.map((fade) => [fade.keyframes[0]?.height, fade.keyframes.at(-1)?.height])).toEqual([['400.5px', '0px'], ['120.25px', '400.5px']]);
+  });
 });
 
 describe('foldAway', () => {
@@ -205,6 +220,7 @@ describe('foldAway', () => {
     only().finish();
     expect(done).toBe(1);
     document.documentElement.style.setProperty('--motion-move', '0ms');
+    forgetMotion();
     onTestFinished(() => { document.documentElement.style.removeProperty('--motion-move'); });
     foldAway(element, () => { done += 1; });
     expect(done).toBe(2);

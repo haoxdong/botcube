@@ -2,7 +2,7 @@ import { useDrag } from '@use-gesture/react';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 
 import { slide } from './motion';
-import { moveMs } from './motion-tokens';
+import { motion } from './motion-tokens';
 
 type DragSession =
   | { phase: 'idle' }
@@ -142,7 +142,7 @@ export function useDrawerSwipe({ layoutRef, drawerRef, side, name, enabled, dock
       // A tap's open starts with no width: the panel has it now it is shown.
       const width = current.width || (drawerRef.current?.getBoundingClientRect().width ?? 0);
       changeSession({ ...current, width, offset: current.targetExpanded ? width : 0, held: false });
-      timer = window.setTimeout(() => changeSession(IDLE), moveMs() + 20);
+      timer = window.setTimeout(() => changeSession(IDLE), motion().move + 20);
     });
     return () => { cancelAnimationFrame(frame); window.clearTimeout(timer); };
   }, [session.phase]);
