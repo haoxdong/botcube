@@ -3,7 +3,7 @@
 import { Arriving, Fades, useAfterMove } from "./motion";
 
 import { Check, ChevronLeft, Clock, Fingerprint, Heart, IdCard, MessageSquare, Monitor, Pencil, ShieldCheck, X, Zap, type LucideIcon } from "lucide-react";
-import { lazy, Suspense, useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type Ref } from "react";
+import { lazy, memo, Suspense, useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type Ref } from "react";
 
 import type { AgentProfileTab } from "../plugin/index.js";
 import type { SignInsControl } from "../plugin/types";
@@ -653,8 +653,10 @@ const TABS: readonly (readonly [AgentProfileTab, LucideIcon])[] = [
 /**
  * The Agent Profile: a panel on desktop, a full-screen sheet on phones. Closed, it hides rather than unmounting, and
  * the Computer tab stays mounted under the other tabs, so its live view stays connected for the user's return.
+ * While it stays closed it skips renders that change only its callbacks, and opens on the latest ones; new data still
+ * renders, so it opens complete.
  */
-export function AgentProfile({
+function AgentProfile({
   open = true,
   chatServiceUrl,
   profile,
@@ -786,3 +788,7 @@ export function AgentProfile({
     </Arriving>
   );
 }
+
+const DATA = ["chatServiceUrl", "profile", "error", "revision", "signIns", "memory"] as const;
+const KeptAgentProfile = memo(AgentProfile, (prev, next) => prev.open === false && next.open === false && DATA.every((key) => prev[key] === next[key]));
+export { KeptAgentProfile as AgentProfile };
