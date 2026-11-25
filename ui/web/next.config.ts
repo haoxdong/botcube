@@ -63,9 +63,10 @@ export default async function createConfig(phase: string): Promise<AppConfig> {
   const botUi = uiBuildConfig.botUiEntry ?? botUiPackage;
   const botSettings = botSettingsModule(uiBuildConfig.botSettings ?? path.join(appRoot, '../../examples/bot/bot.yaml'));
 
+  const privateCi = process.env.COLLECTIVE_PRIVATE_CI === 'true';
   const config: AppConfig = {
     output: 'export',
-    typescript: { ignoreBuildErrors: process.env.COLLECTIVE_PRIVATE_CI === 'true' },
+    typescript: { ignoreBuildErrors: privateCi },
     distDir: phase === PHASE_DEVELOPMENT_SERVER
       ? '.next'
       : process.env.BOTCUBE_UI_PACKAGE ? '.next-bot' : '.next-standalone',
@@ -91,10 +92,11 @@ export default async function createConfig(phase: string): Promise<AppConfig> {
     // Don't let Next auto-generate AGENTS.md/CLAUDE.md — the repo manages its own.
     agentRules: false,
     experimental: {
-      turbopackFileSystemCacheForBuild: process.env.COLLECTIVE_PRIVATE_CI !== 'true',
+      ...(privateCi ? { cpus: 1 } : {}),
+      turbopackFileSystemCacheForBuild: !privateCi,
       // Private CI only checks that the export builds; minifying it cost about 30 CPU-s of each build.
       // Deploys and the nightly cold-open export set no COLLECTIVE_PRIVATE_CI, so they stay minified.
-      turbopackMinify: process.env.COLLECTIVE_PRIVATE_CI !== 'true',
+      turbopackMinify: !privateCi,
       // Next 16.3+ turns on turbopack's dev filesystem cache AND in-memory cache
       // eviction (`turbopackMemoryEviction: 'full'`) by default — that's the real
       // dev-memory lever: it evicts inactive-route cache and bounds long-session
