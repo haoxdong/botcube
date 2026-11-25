@@ -19,6 +19,7 @@ import { Sheet } from "../components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
 import { agentFiles } from "./agent-files";
 import { AlertLine } from "./alert-line";
+import { PrepareDocEditor } from "./artifact-doc";
 import { Refusal, useExports } from "./artifact-exports";
 import { readBytes, readFile } from "./artifact-files";
 import { newestInFiles, useNewestInFiles } from "./artifact-newest";
@@ -119,6 +120,7 @@ export function ArtifactLayout({ agent, profile = null, children, header, accoun
   const shown = useMemo(() => shownOf(opened, artifact), [opened, artifact]);
   const kept = useKept(shown);
   const phone = useViewport() === "phone";
+  const hasDoc = useMemo(() => Object.values(newest).some(({ type }) => type === "doc"), [newest]);
   useAgentPublications(agent, seen);
   const failures = useNewestInFiles(opened?.id, artifact, newestOf, seen);
   useRenderTool({
@@ -141,7 +143,7 @@ export function ArtifactLayout({ agent, profile = null, children, header, accoun
   const panel = { agent: author, shown, open, seen, failures };
   return (
     <Panel.Provider value={panel}>
-      <ArtifactSplit phone={phone} accountId={accountId} shown={phone ? null : shown} close={() => open(null)}><div className="artifact-chat-column">{header}{children}</div></ArtifactSplit>
+      <ArtifactSplit phone={phone} hasDoc={hasDoc} accountId={accountId} shown={phone ? null : shown} close={() => open(null)}><div className="artifact-chat-column">{header}{children}</div></ArtifactSplit>
       {/* Mounted closed before the first open, so Base UI plays its starting style instead of painting the Sheet in place. */}
       {phone && (
         <Sheet open={shown !== null} onClose={() => open(null)} title={kept && titleOf(kept)} container={null} className="artifact-sheet">
@@ -174,7 +176,7 @@ function useAgentPublications(agent: AbstractAgent, seen: (artifact: Published) 
   }, [agent, seen]);
 }
 
-function ArtifactSplit({ shown, close, children, accountId, phone }: { phone: boolean; shown: Shown | null; close: () => void; children: ReactNode; accountId: string }) {
+function ArtifactSplit({ shown, close, children, accountId, phone, hasDoc }: { phone: boolean; shown: Shown | null; close: () => void; children: ReactNode; accountId: string; hasDoc: boolean }) {
   const preference = `botcube.artifact-side.${accountId}`;
   const [position, setPosition] = useState<"left" | "right">("left");
   useEffect(() => {
@@ -225,11 +227,13 @@ function ArtifactSplit({ shown, close, children, accountId, phone }: { phone: bo
         onTransitionEnd={(event) => {
           if (event.target === event.currentTarget && event.propertyName === "flex-grow") settling.end();
         }}>
-        {inPane && (
-          <div key={pathOf(inPane)} className="artifact-side" inert={!isOpen}>
-            <Glides className="artifact-view-motion" on={!inPane.full} dependency={`${isOpen} ${position}`} style={{ direction: "ltr" }}><ArtifactView shown={inPane} heading={<DesktopHeading shown={inPane} />} controls={<DesktopControls shown={inPane} position={position} switchSide={switchSide} />} /></Glides>
-          </div>
-        )}
+        <PrepareDocEditor ready={hasDoc && shown !== null && shown.artifact.type !== "doc" && !settling.on}>
+          {inPane && (
+            <div key={pathOf(inPane)} className="artifact-side" inert={!isOpen}>
+              <Glides className="artifact-view-motion" on={!inPane.full} dependency={`${isOpen} ${position}`} style={{ direction: "ltr" }}><ArtifactView shown={inPane} heading={<DesktopHeading shown={inPane} />} controls={<DesktopControls shown={inPane} position={position} switchSide={switchSide} />} /></Glides>
+            </div>
+          )}
+        </PrepareDocEditor>
       </ResizablePanel>
     </ResizablePanelGroup>
   );

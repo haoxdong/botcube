@@ -4,11 +4,12 @@ import Image from "@tiptap/extension-image";
 import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { TableKit } from "@tiptap/extension-table";
 import { Markdown } from "@tiptap/markdown";
-import { Editor, EditorContent, useEditor } from "@tiptap/react";
+import { EditorState } from "@tiptap/pm/state";
+import { createDocument, Editor, EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Fades } from "./motion";
 import { FileTextIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import {
   pdfOf, saveFile, storedVersion, type ArtifactVersion, type Export, type ExportTarget, type ViewerProps,
@@ -40,6 +41,47 @@ function docOptions(title: string, markdown: string, editable: boolean) {
     editable,
     editorProps: { attributes: docAttributes(title, editable) },
   };
+}
+
+type PreparedEditor = { editor: Editor; style: HTMLStyleElement };
+const PreparedDoc = createContext<RefObject<PreparedEditor | null> | null>(null);
+
+export function PrepareDocEditor({ ready, children }: { ready: boolean; children: ReactNode }) {
+  const prepared = useRef<PreparedEditor | null>(null);
+  useEffect(() => {
+    if (!ready || prepared.current || typeof requestIdleCallback !== "function") return;
+    const idle = requestIdleCallback(() => {
+      const editor = new Editor(docOptions("", "", true));
+      const style = document.head.querySelector<HTMLStyleElement>("style[data-tiptap-style]");
+      if (style) prepared.current = { editor, style };
+      else editor.destroy();
+    });
+    return () => cancelIdleCallback(idle);
+  }, [ready]);
+  useEffect(() => () => {
+    prepared.current?.editor.destroy();
+    prepared.current = null;
+  }, []);
+  return <PreparedDoc.Provider value={prepared}>{children}</PreparedDoc.Provider>;
+}
+
+function openEditor(prepared: RefObject<PreparedEditor | null> | null, title: string, markdown: string) {
+  const ready = prepared?.current;
+  if (!prepared || !ready) return new Editor(docOptions(title, markdown, true));
+  const { editor, style } = ready;
+  // TipTap removes its shared stylesheet when the last attached editor goes away.
+  if (!style.isConnected || !editor.markdown) {
+    editor.destroy();
+    prepared.current = null;
+    return new Editor(docOptions(title, markdown, true));
+  }
+  const json = editor.markdown.parse(markdown);
+  const doc = createDocument(json.content?.length ? json : markdown, editor.schema);
+  const state = EditorState.create({ doc, plugins: editor.state.plugins });
+  // Recreate the document state so loading it never enters the User's undo history.
+  editor.view.update({ ...editor.view.props, state, attributes: docAttributes(title, true) });
+  prepared.current = null;
+  return editor;
 }
 
 export function DocFrame({ title, markdown }: { title: string; markdown: string }) {
@@ -115,13 +157,12 @@ export function EditableDoc({ artifact: newest, read, save, shows }: ViewerProps
 function DocEditor({ title, markdown, onEdit }: { title: string; markdown: string; onEdit: (markdown: string) => void }) {
   const host = useRef<HTMLDivElement>(null);
   const editor = useRef<Editor | null>(null);
+  const prepared = useContext(PreparedDoc);
   const edited = useEffectEvent(onEdit);
-  const create = useEffectEvent(() => new Editor({
-    ...docOptions(title, markdown, true),
-    onUpdate: ({ editor }) => edited(editor.getMarkdown()),
-  }));
+  const create = useEffectEvent(() => openEditor(prepared, title, markdown));
   useLayoutEffect(() => {
     const instance = create();
+    instance.on("update", () => edited(instance.getMarkdown()));
     editor.current = instance;
     // Doc node views are native. EditorContent would redraw them to initialize React node views.
     host.current?.append(instance.view.dom);

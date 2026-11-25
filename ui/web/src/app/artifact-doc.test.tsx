@@ -11,8 +11,9 @@ import path from 'node:path';
 import { crc32, deflateSync, inflateRawSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DocFrame } from './artifact-doc';
+import { DocFrame, EditableDoc, PrepareDocEditor } from './artifact-doc';
 import { ArtifactLayout } from './artifact-panel';
+import { Published } from './artifact-published';
 
 const PLAN = `# Q4 plan
 
@@ -152,6 +153,34 @@ function caretAt(doc: HTMLElement, node: HTMLElement) {
     document.dispatchEvent(new Event('selectionchange'));
   });
 }
+
+it.each([{ detachedStyle: false }, { detachedStyle: true }])('uses the published text as the undo baseline after idle preparation (detached stylesheet: $detachedStyle)', async ({ detachedStyle }) => {
+  const schedule = vi.fn<(callback: IdleRequestCallback) => number>(() => 1);
+  vi.stubGlobal('requestIdleCallback', schedule);
+  vi.stubGlobal('cancelIdleCallback', vi.fn());
+  const read = vi.fn(async () => PLAN);
+  const { rerender } = render(<PrepareDocEditor ready>{null}</PrepareDocEditor>);
+  const callback = schedule.mock.calls[0]?.[0];
+  if (!callback) throw new Error('The desktop pane did not schedule editor preparation');
+  act(() => callback({ didTimeout: false, timeRemaining: () => 50 }));
+  expect(screen.queryByRole('textbox')).toBeNull();
+  const style = document.head.querySelector('style[data-tiptap-style]');
+  expect(style).not.toBeNull();
+  if (detachedStyle) style?.remove();
+  rerender(<PrepareDocEditor ready={false}>
+    <EditableDoc artifact={Published.parse(PUBLISHED)} read={read} readBytes={vi.fn()} save={vi.fn()} frame={{ current: null }} shows={vi.fn()} />
+  </PrepareDocEditor>);
+
+  const doc = await screen.findByRole('textbox', { name: 'Q4 plan' });
+  expect(document.head.querySelector('style[data-tiptap-style]')).not.toBeNull();
+  const title = within(doc).getByRole('heading', { level: 1 });
+  expect(within(doc).getByRole('table')).toBeVisible();
+  caretAt(doc, title);
+  await userEvent.keyboard('Draft ');
+  expect(title).toHaveTextContent('Draft Q4 plan');
+  await userEvent.keyboard('{Control>}z{/Control}');
+  expect(title).toHaveTextContent(/^Q4 plan$/);
+});
 
 type Event = { atMs: number; type: string } & Record<string, unknown>;
 const CHUNK = 12;
