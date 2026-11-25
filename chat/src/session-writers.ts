@@ -194,7 +194,8 @@ export class SessionWriters {
       .map((row) => this.acknowledgement(session, row.sk, true, row.runtime_stop_confirmed === session.session_id, runtimeTarget, row.writer_control));
   }
 
-  async acknowledgeSuccessfulDispatch(session: SessionPurge, token: string, kind: 'session-post'): Promise<void> {
+  async settlePostedWriter(session: SessionPurge, token: string): Promise<void> {
+    const kind = 'session-post';
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(token)) throw new SessionDispatchPendingError('Successful writer identity is unproved');
     const Key = dispatchKey(session, token);
     const { Item } = await this.documents.send(new GetCommand({ TableName: this.tableName, Key, ConsistentRead: true }));
@@ -215,7 +216,7 @@ export class SessionWriters {
       row.writer_succeeded === 'session-post' &&
       row.session_id === session.session_id && row.filing_user_id === session.filing_user_id &&
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(row.sk)
-    ).map((row) => this.acknowledgeSuccessfulDispatch(session, row.sk, 'session-post')));
+    ).map((row) => this.settlePostedWriter(session, row.sk)));
   }
 
   async stopAfterWriters(session: SessionPurge, upstream: WriterStop, local: boolean): Promise<void | 'absent'> {
@@ -280,14 +281,16 @@ export class SessionWriters {
     } };
   }
 
-  async settleExpired(session: SessionPurge, now = Date.now()): Promise<void> {
+  async settleExpired(session: SessionPurge, now = Date.now(), runtimeOnly = false): Promise<boolean> {
     const expired = (await this.queryPartition(dispatchKey(session, '').pk))
-      .filter((item) => registrationExpired(String(item.created_at), now) && item.writer_succeeded !== 'session-post');
+      .filter((item) => (!runtimeOnly || item.writer_control === 'runtime') &&
+        registrationExpired(String(item.created_at), now) && item.writer_succeeded !== 'session-post');
     for (const item of expired) {
       const kind = item.writer_control === 'runtime' || item.writer_control === 'session-post' ? item.writer_control : undefined;
       // eslint-disable-next-line no-await-in-loop -- archive each registration before rechecking
       await this.archiveExpired(session, item.sk, String(item.created_at), kind);
     }
+    return expired.length > 0;
   }
 
   private async archiveExpired(session: SessionPurge, token: string, created: string, kind?: 'runtime' | 'session-post'): Promise<void> {

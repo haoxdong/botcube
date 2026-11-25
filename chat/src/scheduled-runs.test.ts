@@ -13,7 +13,7 @@ import type { ScheduledRunSource } from './scheduled-runs.js';
 import { runScheduledTask } from './scheduled-runs.js';
 import { ScheduledTasks } from './scheduled-tasks.js';
 import { sessionLifecycle } from './session-lifecycle.js';
-import { SessionDeletedError } from './session-metadata.js';
+import { SessionBusyError, SessionDeletedError } from './session-metadata.js';
 
 import { catalogPlan, activity, mainChat, owner, posted, request, run, scheduler, signInChecks, snapshot, stack, stream, text } from '../test/scheduled-run-fixture.js';
 import { motoAws } from '../test/fakes/moto.js';
@@ -21,6 +21,26 @@ import { eventually } from '../test/eventually.js';
 import { filed } from '../test/stock-bot.js';
 
 describe('a scheduled run', () => {
+  it('posts to Main Chat after an abandoned Runtime writer expires', async () => {
+    const account = owner();
+    const main = await mainChat(account);
+    await stack.sessionMetadata.recordTurn(account, main, { filingUserId: filed(account), title: 'Main Chat' });
+    const release = await stack.sessionMetadata.beginDispatch(account, main);
+    const registeredBy = Date.now();
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      await expect(stack.sessionMetadata.beginDispatch(account, main, undefined, undefined, 'session-post')).rejects.toBeInstanceOf(SessionBusyError);
+      clock.mockImplementation(() => registeredBy + 3 * 3_600_000 + 1);
+      await run(account, stream(...text('brief', 'Delivered after expiry.')));
+      expect(await posted(main)).toEqual([{
+        content: 'Scheduled task "Morning brief": Delivered after expiry.', userId: filed(account),
+      }]);
+    } finally {
+      clock.mockRestore();
+      await release();
+    }
+  });
+
   it.each([
     { status: 503, code: 'POST_REFUSED' },
     { status: 504, code: 'SESSION_READ_TIMEOUT' },

@@ -12,13 +12,14 @@ it('acknowledges only exact proved writers', async () => {
     const writer = await stack.sessionMetadata.beginDispatch('acct_account-1', 'proof-session');
     const session = defined(writer.session, 'registered writer identity');
     const token = defined(writer.token, 'registered writer token');
+    const posted = { phase: 'posted', postSession: session, postToken: token, owner: 'acct_account-1', mainChat: 'proof-session', postMessageId: 'proof' } as const;
     const mark = defined(writer.markSucceeded, 'durable successful writer marker');
     const Key = { pk: `DISPATCH#${JSON.stringify([filed('original'), 'proof-session'])}`, sk: token };
-    await expect(stack.sessionMetadata.acknowledgeSuccessfulDispatch(session, token, 'session-post')).rejects.toThrow('settlement is unproved');
+    await expect(stack.sessionMetadata.resumePost(posted)).rejects.toThrow('settlement is unproved');
     await mark('session-post');
     const row = defined((await documents.send(new GetCommand({ TableName: stack.table.name, Key, ConsistentRead: true }))).Item, 'successful writer proof');
     expect(row).toMatchObject({ session_id: 'proof-session', filing_user_id: filed('original'), writer_succeeded: 'session-post' });
-    await Promise.all([stack.sessionMetadata.acknowledgeSuccessfulDispatch(session, token, 'session-post'), stack.sessionMetadata.acknowledgeSuccessfulDispatch(session, token, 'session-post')]);
+    await Promise.all([stack.sessionMetadata.resumePost(posted), stack.sessionMetadata.resumePost(posted)]);
     expect((await documents.send(new GetCommand({ TableName: stack.table.name, Key, ConsistentRead: true }))).Item).toBeUndefined();
     await expect(mark('session-post')).rejects.toMatchObject({ name: 'ConditionalCheckFailedException' });
     expect((await documents.send(new GetCommand({ TableName: stack.table.name, Key, ConsistentRead: true }))).Item).toBeUndefined();
@@ -34,11 +35,12 @@ it.each(['filing_user_id', 'session_id', 'writer_succeeded'] as const)('keeps a 
     const writer = await stack.sessionMetadata.beginDispatch('acct_account-1', 'proof-session');
     const session = defined(writer.session, 'registered Session');
     const token = defined(writer.token, 'registered token');
+    const posted = { phase: 'posted', postSession: session, postToken: token, owner: 'acct_account-1', mainChat: 'proof-session', postMessageId: 'proof' } as const;
     await defined(writer.markSucceeded, 'writer marker')('session-post');
     const Key = { pk: `DISPATCH#${JSON.stringify([filed('original'), 'proof-session'])}`, sk: token };
     const row = defined((await documents.send(new GetCommand({ TableName: stack.table.name, Key, ConsistentRead: true }))).Item, 'successful proof');
     await documents.send(new PutCommand({ TableName: stack.table.name, Item: { ...row, [field]: 'different' } }));
-    await expect(stack.sessionMetadata.acknowledgeSuccessfulDispatch(session, token, 'session-post')).rejects.toThrow('settlement is unproved');
+    await expect(stack.sessionMetadata.resumePost(posted)).rejects.toThrow('settlement is unproved');
     await expect(stack.sessionMetadata.assertNoDispatch(session)).rejects.toThrow('still registered');
     expect((await documents.send(new GetCommand({ TableName: stack.table.name, Key, ConsistentRead: true }))).Item).toBeDefined();
   } finally { await stack.stop(); }

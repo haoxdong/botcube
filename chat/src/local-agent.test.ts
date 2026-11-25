@@ -89,6 +89,7 @@ const bot: StockOverrides = {
 
 const sessionMetadata: SessionMetadata = {
   runPost: async () => { throw new Error('Scheduled posts are unavailable'); },
+  resumePost: async () => { throw new Error('Scheduled posts are unavailable'); },
   prepareTurn: async (_owner, sessionId, { filingUserId }) => ({ session: { session_id: sessionId, filing_user_id: filingUserId }, dispatch: async () => Object.assign(async () => undefined, { session: { session_id: sessionId, filing_user_id: filingUserId } }) }),
   beginDispatch: async (_owner, sessionId, filingUserId) => Object.assign(async () => undefined, { session: { session_id: sessionId, filing_user_id: filingUserId ?? 'filed-acct_owner' } }),
   stopAfterWriters: (session, upstream) => upstream.stop(session),

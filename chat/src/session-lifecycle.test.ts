@@ -29,7 +29,7 @@ describe('Session deletion dispatch barrier', () => {
       let rejected = [complete];
       complete.mockImplementation(async () => { rejected = []; });
       const writers = new SessionWriters('chat', DynamoDBDocumentClient.from(new DynamoDBClient({})));
-      vi.spyOn(writers, 'settleExpired').mockResolvedValue(undefined);
+      vi.spyOn(writers, 'settleExpired').mockResolvedValue(false);
       vi.spyOn(writers, 'rejectedDispatches').mockImplementation(async (session) => session === SESSION ? rejected : []);
       vi.spyOn(writers, 'assertNoDispatch').mockResolvedValue(undefined);
       const erase = vi.fn(async () => ({}));
@@ -119,7 +119,7 @@ describe('Session deletion dispatch barrier', () => {
     else await expect((await answer).text()).rejects.toBe(ackError);
     expect(complete.markRejected).toHaveBeenCalledWith('authoritative-runtime');
     const writers = new SessionWriters('chat', DynamoDBDocumentClient.from(new DynamoDBClient({})));
-    vi.spyOn(writers, 'settleExpired').mockResolvedValue(undefined);
+    vi.spyOn(writers, 'settleExpired').mockResolvedValue(false);
     vi.spyOn(writers, 'rejectedDispatches').mockResolvedValue([complete]);
     vi.spyOn(writers, 'assertNoDispatch').mockResolvedValue(undefined);
     const recover = () => writers.stopAfterWriters(SESSION, lifecycle, false);

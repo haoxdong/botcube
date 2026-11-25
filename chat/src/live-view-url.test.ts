@@ -33,6 +33,7 @@ const unused = async (): Promise<never> => {
 };
 const sessionMetadata: SessionMetadata = {
   runPost: async () => { throw new Error('Scheduled posts are unavailable'); },
+  resumePost: async () => { throw new Error('Scheduled posts are unavailable'); },
   owns: async () => { throw new Error('not used'); },
   checkHealth: unused,
   recordTurn: unused,

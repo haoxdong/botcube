@@ -162,11 +162,7 @@ async function resumeScheduledDelivery(sessionMetadata: SessionMetadata, previou
   const store = sessionMetadata.scheduledRuns;
   if (store === undefined) throw new HttpError(503, 'Scheduled delivery storage is unavailable');
   if (previous.phase !== 'completed') {
-    if (previous.phase !== 'posted' || previous.postSession === undefined || previous.postToken === undefined || sessionMetadata.acknowledgeSuccessfulDispatch === undefined) {
-      throw new HttpError(503, 'Scheduled delivery outcome is unproved; delivery remains pending');
-    }
-    await sessionMetadata.markPosted(previous.owner, previous.mainChat, previous.postMessageId);
-    await sessionMetadata.acknowledgeSuccessfulDispatch(previous.postSession, previous.postToken, 'session-post');
+    await sessionMetadata.resumePost(previous);
     await store.complete(previous);
   }
   // Its end may not have reached the task before the delivery failed; recording it again changes nothing.

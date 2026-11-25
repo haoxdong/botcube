@@ -1,7 +1,8 @@
+import { HttpError } from './http-error.js';
 import { namedTransaction, type FailedWrites, type TransactionWrite } from './named-transaction.js';
 import { SessionBusyError, type WriterLease } from './session-writer-runtime.js';
 import { randomUUID } from 'node:crypto';
-import { ScheduledRunStore } from './scheduled-run-store.js';
+import { ScheduledRunStore, type ScheduledDelivery } from './scheduled-run-store.js';
 import { assertContinuable, oneIdSession, type SessionIdentity, type SessionPurge } from './session-identity.js';
 import { REGISTRATION_EXPIRY_MS, SessionWriters, type RejectedWriterRecovery } from './session-writers.js';
 
@@ -136,6 +137,8 @@ function assertWarmupContinuable(existing: SessionItem | null, warmupFilingUserI
 
 const readOnlyMark = (row?: Record<string, unknown>): Pick<SessionIdentity, 'read_only'> => row?.read_only === true ? { read_only: true } : {};
 
+type PostedDelivery = Pick<ScheduledDelivery, 'phase' | 'postSession' | 'postToken' | 'owner' | 'mainChat' | 'postMessageId'>;
+
 /**
  * Session Metadata (ADR 0067 §2): the only index of Sessions. The item shape is
  * live production data and must stay byte-compatible with the items already stored:
@@ -150,7 +153,7 @@ export interface SessionMetadata {
   /** Accept a Turn with immutable filing/Runtime identity; dispatch registers its writer against the latest deletion/Claim fences. */
   prepareTurn(owner: string, sessionId: string, turn: TurnAdmission): Promise<PreparedTurn>;
   stopAfterWriters: SessionWriters['stopAfterWriters'];
-  acknowledgeSuccessfulDispatch?(session: SessionPurge, token: string, kind: 'session-post'): Promise<void>;
+  resumePost(delivery: PostedDelivery): Promise<void>;
   /** Durable fenced cleanup work, including work left by a replaced Chat Service task. */
   pendingPurges(): Promise<SessionPurge[]>;
   /** Acknowledge only after Runtime stop and durable event purge succeed. */
@@ -531,7 +534,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       await this.documents.send(transaction.command);
     } catch (error) {
       const { failed } = transaction.conditions(error);
-      if (await this.writerAdmissionChanged(failed, identity) || await this.retryDispatch(error, failed, owner, identity, acceptedTurn)) {
+      if (await this.writerAdmissionChanged(failed, identity, postLeaseExpiresAt === undefined ? undefined : now) || await this.retryDispatch(error, failed, owner, identity, acceptedTurn)) {
         return this.beginDispatch(owner, sessionId, warmupFilingUserId, acceptedTurn, kind, recovery, expectedSession);
       }
     }
@@ -545,10 +548,14 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     } };
   }
 
-  private async writerAdmissionChanged(failed: FailedWrites<'ownerFence' | 'destinationFence' | 'writerControl' | 'session' | 'claimFence' | 'recovery'>, identity: DispatchIdentity): Promise<boolean> {
+  private async writerAdmissionChanged(failed: FailedWrites<'ownerFence' | 'destinationFence' | 'writerControl' | 'session' | 'claimFence' | 'recovery'>, identity: DispatchIdentity, postAttemptAt?: number): Promise<boolean> {
     if (failed.has('ownerFence') || failed.has('destinationFence')) throw new SessionDeletedError(identity.session.session_id);
     const writerControl = failed.get('writerControl');
-    if (writerControl !== undefined) throw writerBusy(writerControl);
+    if (writerControl !== undefined) {
+      if (postAttemptAt !== undefined && Number(writerControl.Item?.runtime_writers?.N) > 0 &&
+        await this.writers.settleExpired(identity.session, postAttemptAt, true)) return true;
+      throw writerBusy(writerControl);
+    }
     if (failed.has('session')) {
       const current = await this.getSessionItem(identity.dispatchOwner, identity.session.session_id);
       return current !== null && current.snapshot_epoch !== identity.snapshotEpoch;
@@ -571,12 +578,13 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     return this.writers.rejectedDispatches(session, runtimeTarget);
   }
 
-  settleExpiredDispatches(session: SessionPurge): Promise<void> {
-    return this.writers.settleExpired(session);
-  }
-
-  acknowledgeSuccessfulDispatch(session: SessionPurge, token: string, kind: 'session-post'): Promise<void> {
-    return this.writers.acknowledgeSuccessfulDispatch(session, token, kind);
+  async resumePost(delivery: PostedDelivery): Promise<void> {
+    const { phase, postSession, postToken, owner, mainChat, postMessageId } = delivery;
+    if (phase !== 'posted' || postSession === undefined || postToken === undefined) {
+      throw new HttpError(503, 'Scheduled delivery outcome is unproved; delivery remains pending');
+    }
+    await this.markPosted(owner, mainChat, postMessageId);
+    await this.writers.settlePostedWriter(postSession, postToken);
   }
 
   async assertNoDispatch(session: SessionPurge, failedAdmissionTokens: readonly string[] = []): Promise<void> {
