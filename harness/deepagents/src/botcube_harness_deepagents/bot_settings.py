@@ -46,15 +46,18 @@ class BotSettingsError(RuntimeError):
 class BotSettings:
     agent_name: str
     # The models a User picks from; the first is the default.
-    models: tuple[str, ...]
+    models: dict[str, BotModel]
     # Each skill's directory, holding its SKILL.md.
     skills: tuple[Path, ...]
     # The bot's instructions to every User, joined to the system prompt after BotCube's own; empty, none.
     instructions: str = ''
-    calls: Mapping[str, BotModel] = field(default_factory=dict)
     environment: Mapping[str, str] = field(default_factory=dict)
     written_memory: bool = True
     extracted_memory: bool = True
+
+    @property
+    def default_model(self) -> str:
+        return next(iter(self.models))
 
 
 def load_bot_settings(path: Path) -> BotSettings:
@@ -75,8 +78,7 @@ def load_bot_settings(path: Path) -> BotSettings:
     skills = _skills(path, settings, source)
     return BotSettings(
         agent_name=settings['agentIdentity']['name'],
-        models=tuple(model['key'] for model in settings['models']),
-        calls={model['key']: BotModel(model['provider'], model.get('maxTokens')) for model in settings['models']},
+        models={model['key']: BotModel(model['provider'], model.get('maxTokens')) for model in settings['models']},
         skills=skills,
         instructions=_instructions(path, settings, source),
         environment=settings.get('environment', {}),
@@ -112,12 +114,12 @@ def bot_from_env() -> tuple[HarnessDefinition, str]:
     gateway = resolved['config']['integrations']['modelGateway']
     path = Path('/bot/bot.yaml')
     bot = load_bot_settings(path)
-    for index, (key, model) in enumerate(bot.calls.items()):
+    for index, (key, model) in enumerate(bot.models.items()):
         if (unreached := resolved['modelGateway'][model.provider]['unreachableReason']) is not None:
             raise BotSettingsError(f"BotCube Config {os.environ[CONFIG_ENV]}: the bot settings' model {key} is on provider {model.provider}, but {unreached}")
         if gateway['kind'] != 'bedrock' and model.provider != ECHO_PROVIDER and model.max_tokens is None and not has_model_profile(key, model.provider):
             raise BotSettingsError(f'Bot settings {path}: models.{index}.maxTokens: LangChain has no model profile for {key} to take its output ceiling from: set maxTokens')
-    return bot_definition(bot), bot.models[0]
+    return bot_definition(bot), bot.default_model
 
 
 def _yaml_document(text: str) -> Any:
@@ -147,7 +149,7 @@ def bot_definition(bot: BotSettings) -> HarnessDefinition:
         session_id_env_var='BOTCUBE_SESSION_ID',
         environment_cache_key=environment_cache_key(_RESOURCE_ATTRIBUTES),
         system_prompt=bot.instructions,
-        models=bot.calls,
+        models=bot.models,
         shell_environment=bot.environment,
         written_memory=bot.written_memory,
     )

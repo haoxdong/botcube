@@ -270,7 +270,7 @@ def test_the_example_bot_is_servable() -> None:
 
     bot = load_bot_settings(example / 'bot.yaml')
 
-    assert (bot.agent_name, bot.models[0], bot.skills) == ('BotCube', 'echo', (example / 'skills' / 'computer',))
+    assert (bot.agent_name, bot.default_model, bot.skills) == ('BotCube', 'echo', (example / 'skills' / 'computer',))
 
 
 @pytest.mark.parametrize('case', json.loads((Path(__file__).resolve().parents[3] / 'tests/fixtures/model-provider-reachability.json').read_text()))
