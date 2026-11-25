@@ -65,6 +65,17 @@ function chatService(workspace?: string) {
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
 describe('a signed Files link the Chat Service serves', () => {
+  it('fails an upload when the storage parent is missing without creating it', async () => {
+    const service = chatService();
+    const upload = await service.linkFor('acct_alice', 'upload-url', 'report.txt');
+    await rm(root, { recursive: true });
+
+    const response = await service.fetch(`${upload}&offset=0`, { method: 'PUT', body: 'report' });
+
+    expect(response.status).toBe(500);
+    await expect(readdir(root)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it.each([
     ['/mnt/workspace', 'mnt/workspace'],
     ['/mnt/workspace/files', 'mnt/workspace/files'],

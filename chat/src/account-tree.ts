@@ -19,6 +19,19 @@ export class AccountTree {
     return new AccountTree(await realpath(directory));
   }
 
+  static async account(directory: string, create = false): Promise<AccountTree | null> {
+    if (create) await mkdir(directory).catch((error: unknown) => {
+      if (errorCode(error) !== 'EEXIST') throw error;
+    });
+    const status = await lstat(directory).catch((error: unknown) => {
+      if (errorCode(error) === 'ENOENT') return null;
+      throw error;
+    });
+    if (status === null) return null;
+    if (!status.isDirectory()) throw new HttpError(400, 'Files directory is not a folder');
+    return AccountTree.at(directory);
+  }
+
   async names(folder: string): Promise<string[]> {
     await this.refuseLink(folder);
     try {

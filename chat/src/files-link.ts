@@ -1,11 +1,11 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { constants } from 'node:fs';
-import { type FileHandle, lstat, mkdir } from 'node:fs/promises';
+import { type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { z } from 'zod';
-import { AccountTree } from './account-tree.js';
+import { AccountTree, errorCode } from './account-tree.js';
 import { HttpError } from './http-error.js';
 
 export const UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
@@ -37,7 +37,7 @@ export async function answerFilesLink({ key, directoryForUser }: {
   const claims = verify(key, request.query.t);
   if (claims?.op !== request.method) return refused();
   try {
-    const tree = await treeOf(await directoryForUser(claims.userId), request.method === 'PUT');
+    const tree = await AccountTree.account(await directoryForUser(claims.userId), request.method === 'PUT');
     if (tree === null) return text(404, 'No such file');
     const part = `.uploads/${createHash('sha256').update(claims.name).digest('hex')}`;
     return request.method === 'PUT' ? await upload(tree, { name: claims.name, part }, request.query, request.body) : await download(tree, claims.name, request.range);
@@ -55,18 +55,6 @@ function verify(key: string, token: string | undefined): LinkClaims | null {
   if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
   const claims = LinkClaims.safeParse(JSON.parse(Buffer.from(payload, 'base64url').toString()));
   return claims.success && claims.data.expiresAtSeconds * 1000 > Date.now() ? claims.data : null;
-}
-
-/** The account's Files; an upload makes the folder, a download finds none (null) before the first file. */
-async function treeOf(directory: string, create: boolean): Promise<AccountTree | null> {
-  if (create) await mkdir(directory, { recursive: true });
-  const status = await lstat(directory).catch((error: unknown) => {
-    if (missing(error)) return null;
-    throw error;
-  });
-  if (status === null) return null;
-  if (!status.isDirectory()) throw new HttpError(400, 'Files directory is not a folder');
-  return AccountTree.at(directory);
 }
 
 const LINK_HEADERS = { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'access-control-expose-headers': 'content-range, content-length' };
@@ -129,7 +117,7 @@ function rangeOf(header: string, size: number): { start: number; end: number } |
 
 async function openIfFound(tree: AccountTree, name: string, flags: number): Promise<FileHandle | null> {
   return tree.open(name, flags).catch((error: unknown) => {
-    if (missing(error)) return null;
+    if (errorCode(error) === 'ENOENT') return null;
     throw error;
   });
 }
@@ -156,8 +144,4 @@ async function write(tree: AccountTree, part: string, offset: number, body: Buff
   } finally {
     await file.close();
   }
-}
-
-export function missing(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException).code === 'ENOENT';
 }

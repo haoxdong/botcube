@@ -1,16 +1,16 @@
 import { localCleanupWorker, type CleanupWorker } from './files-cleanup-worker.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readdir, rmdir, stat } from 'node:fs/promises';
+import { readdir, rmdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   AccessPointNotFound, CreateAccessPointCommand, DeleteAccessPointCommand, DescribeAccessPointsCommand, EFSClient,
 } from '@aws-sdk/client-efs';
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
-import { AccountTree } from './account-tree.js';
+import { AccountTree, errorCode } from './account-tree.js';
 import { restoreArtifact, saveArtifact } from './artifact-save.js';
 import { HttpError } from './http-error.js';
-import { answerFilesLink, missing, signFilesLink } from './files-link.js';
+import { answerFilesLink, signFilesLink } from './files-link.js';
 import {
   FILES_MOUNT_PATH, HIDDEN, POSIX_ID, RETIREMENT_GRACE_MS, MOUNT_SECONDS, URL_SECONDS, WRITTEN_MEMORY,
   directoryOf, fileDestination, filePath, freeName,
@@ -133,7 +133,7 @@ export function accountFilesEfs({
     try {
       entries = await readdir(path.join(base, prefix), { withFileTypes: true });
     } catch (error) {
-      if (missing(error)) return [];
+      if (errorCode(error) === 'ENOENT') return [];
       throw error;
     }
     const found: Array<FileEntry & { file: string }> = [];
@@ -158,40 +158,29 @@ export function accountFilesEfs({
       await stat(file);
       return true;
     } catch (error) {
-      if (missing(error)) return false;
-      throw error;
-    }
-  }
-
-  /** The account's Files, walked without following a link the agent planted there; null before its folder exists. */
-  async function treeOf(userId: string, create = false): Promise<AccountTree | null> {
-    const folder = await directory(userId);
-    if (create) await mkdir(folder, { recursive: true });
-    try {
-      return await AccountTree.at(folder);
-    } catch (error) {
-      if (missing(error)) return null;
+      if (errorCode(error) === 'ENOENT') return false;
       throw error;
     }
   }
 
   /** Removes an account's Files. Its agent may still write until its credentials expire, so the tree is emptied by fd, never by path. */
   async function removeFiles(userId: string): Promise<void> {
-    await (await treeOf(userId))?.removeTree();
-    await rmdir(await directory(userId)).catch((error: unknown) => {
-      if (!missing(error)) throw error;
+    const folder = await directory(userId);
+    await (await AccountTree.account(folder))?.removeTree();
+    await rmdir(folder).catch((error: unknown) => {
+      if (errorCode(error) !== 'ENOENT') throw error;
     });
   }
 
   /** A missing file, or a missing account folder, answers 404. */
   async function inFiles<T>(userId: string, name: string, body: (tree: AccountTree) => Promise<T>): Promise<T> {
     const notFound = (cause?: unknown) => Object.assign(new HttpError(404, `No file ${name} in Files`), { cause });
-    const tree = await treeOf(userId);
+    const tree = await AccountTree.account(await directory(userId));
     if (tree === null) throw notFound();
     try {
       return await body(tree);
     } catch (error) {
-      if (missing(error)) throw notFound(error);
+      if (errorCode(error) === 'ENOENT') throw notFound(error);
       throw error;
     }
   }
@@ -230,9 +219,9 @@ export function accountFilesEfs({
     await retirementOperation(destinationUserId, async () => {
       await requireActive(destinationUserId);
       const taken = new Set((await walk(await directory(destinationUserId))).map(({ name }) => name));
-      const destination = await treeOf(destinationUserId, true);
+      const destination = await AccountTree.account(await directory(destinationUserId), true);
       if (destination === null) throw new HttpError(503, 'The claiming account has no Files folder');
-      const source = await treeOf(sourceUserId);
+      const source = await AccountTree.account(await directory(sourceUserId));
       // The source walk never descends a link (a Dirent is not a directory); each move then goes through
       // folders opened in both trees, so a link either agent swaps in after the walk is refused.
       if (source !== null) {
@@ -363,16 +352,16 @@ export function accountFilesEfs({
       return restoreArtifact(await directory(userId), restore);
     },
     async writtenMemory(userId) {
-      const tree = await treeOf(userId);
+      const tree = await AccountTree.account(await directory(userId));
       if (tree === null) return '';
       return tree.read(WRITTEN_MEMORY).then((content) => content.toString('utf8'), (error: unknown) => {
-        if (missing(error)) return '';
+        if (errorCode(error) === 'ENOENT') return '';
         throw error;
       });
     },
     async saveWrittenMemory(userId, content) {
       await requireActive(userId);
-      const tree = await treeOf(userId, true);
+      const tree = await AccountTree.account(await directory(userId), true);
       if (tree === null) throw new HttpError(503, 'This account has no Files folder');
       const saving = `${path.posix.dirname(WRITTEN_MEMORY)}/.${path.posix.basename(WRITTEN_MEMORY)}.saving-${randomUUID()}`;
       try {
