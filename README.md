@@ -35,7 +35,8 @@ The shell itself ships the rest: the effort levels the harness takes, reply file
 links and composer uploads through the Chat Service's Files routes, the Agent
 Computer and its live browser panel, the Sign-ins tab, and the Soul and Memory
 card colours. The bot settings (`bot.yaml`) set the four agent colours, the
-Memory gate, and whether the Agent Computer and its live browser panel show.
+two Memory gates (`writtenMemory.enabled` and `extractedMemory.enabled`, both on
+unless false), and whether the Agent Computer and its live browser panel show.
 
 The UI imports the selected plugin only through `@bot-ui`.
 `ui/web/src/plugin/default.tsx` is the neutral standalone implementation.

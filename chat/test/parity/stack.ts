@@ -21,6 +21,8 @@ interface StackOptions {
   table?: 'created' | 'missing';
   /** The web UI origins: the BotCube Config's `domains.web`, then its `domains.webAliases`. */
   corsOrigins?: string[];
+  /** Bot settings over the parity bot's, as an Operator's bot.yaml gives them. */
+  bot?: Record<string, unknown>;
 }
 
 export type Stack = Awaited<ReturnType<typeof startStack>>;
@@ -56,7 +58,7 @@ export async function startStack(options: StackOptions = {}) {
   const address = unreachable.address();
   const agentcoreUrl = address && typeof address !== 'string' ? `http://127.0.0.1:${address.port}` : agentcore.url;
   const [web, ...webAliases] = options.corsOrigins ?? [];
-  const imageConfig = testBotCubeConfig(PARITY_BOT, web === undefined ? {} : { domains: { web, webAliases, chatService: 'https://chat.example.invalid' } });
+  const imageConfig = testBotCubeConfig({ ...PARITY_BOT, ...options.bot }, web === undefined ? {} : { domains: { web, webAliases, chatService: 'https://chat.example.invalid' } });
   const env: NodeJS.ProcessEnv = {
     PATH: process.env.PATH, HOME: home,
     AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,

@@ -26,7 +26,16 @@ const webUiSettings = {
     .strictObject({ agentBody: agentColour, agentOutline: agentColour, agentDeep: agentColour, agentDeepest: agentColour })
     .optional()
     .describe("The agent's four colours, for its illustrations; absent, BotCube's own. The avatar is the Agent Identity's."),
-  memory: z.boolean().default(true).describe('Whether the agent keeps a Memory across Sessions, and the Agent Profile shows it.'),
+  writtenMemory: z
+    .strictObject({
+      enabled: z.boolean().default(true).describe("Whether the agent keeps a Written Memory: notes it writes to the User's memories/AGENTS.md and reads back the next Session."),
+    })
+    .default({ enabled: true }),
+  extractedMemory: z
+    .strictObject({
+      enabled: z.boolean().default(true).describe("Whether the agent keeps an Extracted Memory of a User's Sessions, and has its memory tool."),
+    })
+    .default({ enabled: true }),
   agentComputer: z
     .strictObject({
       enabled: z.boolean().default(true).describe("Whether the Agent Profile shows the open chat's Agent Computer."),

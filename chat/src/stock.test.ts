@@ -77,10 +77,10 @@ describe('the stock Chat Service', () => {
     expect(service.models).toEqual([{ key: 'echo', label: 'Echo', provider: 'echo' }, { key: 'echo-2', label: 'Echo 2', description: 'Also echoes', provider: 'echo' }]);
   });
 
-  it.each([[undefined, true], [false, false]])('takes its Memory gate from the bot settings (memory %j)', (memory, kept) => {
-    const service = stockChatService({ BOTCUBE_CONFIG: botcubeConfig({ agentIdentity: { name: 'Quill', character: 'A drafting agent' }, accountKey: 'quill', ...(memory === undefined ? {} : { memory }), models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] }) })(history);
+  it.each([[undefined, true], [{}, true], [{ enabled: false }, false]])('takes its Extracted Memory gate from the bot settings (extractedMemory %j)', (extractedMemory, kept) => {
+    const service = stockChatService({ BOTCUBE_CONFIG: botcubeConfig({ agentIdentity: { name: 'Quill', character: 'A drafting agent' }, accountKey: 'quill', ...(extractedMemory === undefined ? {} : { extractedMemory }), models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] }) })(history);
 
-    expect(service.memory).toBe(kept);
+    expect(service.extractedMemory).toBe(kept);
   });
 
   it('stops before serving when its bot settings are wrong, naming the field', () => {
@@ -205,7 +205,7 @@ describe("the stock Chat Service's filing ID", () => {
       BOTCUBE_CHAT_TABLE: table,
       BOTCUBE_LOCAL_SESSION_API_URL: sessionApi.url,
       BOTCUBE_LOCAL_HARNESS_URL: harness.url,
-      BOTCUBE_CONFIG: botcubeConfig({ agentIdentity: { name: 'Quill', character: 'A drafting agent', avatar: '🪶' }, accountKey: 'quill', memory: true, models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] }),
+      BOTCUBE_CONFIG: botcubeConfig({ agentIdentity: { name: 'Quill', character: 'A drafting agent', avatar: '🪶' }, accountKey: 'quill', writtenMemory: { enabled: true }, extractedMemory: { enabled: true }, models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] }),
     };
     const service = stockChatService(env);
     const server = serveChatService(env);

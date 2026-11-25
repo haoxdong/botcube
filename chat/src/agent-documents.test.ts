@@ -527,9 +527,9 @@ it('refuses an anonymous Memory addition before calling the session API', async 
   }
 });
 
-// The bot settings' Memory gate. A bot with Memory off keeps none: its routes refuse, and its Turns say so.
-it('refuses Memory and tells each Turn when the bot settings turn Memory off', async () => {
-  const forgetful = await startInProcess({ overrides: { memory: false } });
+// The bot settings' Extracted Memory gate. A bot with it off keeps no AgentCore Memory: its routes refuse, and its Turns say so.
+it('refuses Memory and tells each Turn when the bot settings turn Extracted Memory off', async () => {
+  const forgetful = await startInProcess({ overrides: { extractedMemory: false } });
   try {
     const user = { 'x-test-owner': 'acct_memory-off' };
     expect((await forgetful.app.request('/agent/memory', { headers: user })).status).toBe(404);
@@ -537,7 +537,7 @@ it('refuses Memory and tells each Turn when the bot settings turn Memory off', a
       method: 'POST', headers: { ...user, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'Prefers tea' }),
     });
     expect(added.status).toBe(404);
-    expect(await added.json()).toEqual({ detail: 'Memory is off for this bot' });
+    expect(await added.json()).toEqual({ detail: 'Extracted Memory is off for this bot' });
     expect(forgetful.sessionApi.events()).toEqual([]);
 
     await forgetful.allocate('acct_memory-off', 'memory-off-turn');

@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { agentTheme, BOT_SETTINGS } from './bot-settings';
 
 it('is built with the bot settings its build names, checked by the seam file (the example bot here)', () => {
-  expect(BOT_SETTINGS).toMatchObject({ agentIdentity: { name: 'BotCube', avatar: '🧊' }, memory: true, agentComputer: { enabled: true, liveBrowser: true } });
+  expect(BOT_SETTINGS).toMatchObject({ agentIdentity: { name: 'BotCube', avatar: '🧊' }, writtenMemory: { enabled: true }, extractedMemory: { enabled: true }, agentComputer: { enabled: true, liveBrowser: true } });
 });
 
 it("paints the agent's four colours from the bot settings' theme", () => {

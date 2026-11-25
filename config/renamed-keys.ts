@@ -29,5 +29,6 @@ export const renamedKeys = {
 
 /** Each key the bot settings no longer take, and what replaced it. */
 export const renamedBotKeys: Readonly<Record<string, string>> = {
+  memory: 'writtenMemory.enabled and extractedMemory.enabled, each a switch for one kind of Memory',
   userTokenInShell: 'environment, where a CLI reaches its Relay provider at ${BOTCUBE_RELAY_URL}/<provider> with no credential in the shell',
 };

@@ -9,7 +9,8 @@
   "productName": "BotCube",
   "models": [{ "key": "echo", "label": "Echo", "provider": "openai", "maxTokens": 4096 }],
   "skills": ["skills/computer"],
-  "memory": true,
+  "writtenMemory": { "enabled": true },
+  "extractedMemory": { "enabled": true },
   "agentComputer": {
     "enabled": true,
     "liveBrowser": true

@@ -10,6 +10,7 @@ import os
 import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
@@ -56,6 +57,8 @@ class BotSettings:
     instructions: str = ''
     calls: Mapping[str, BotModel] = field(default_factory=dict)
     environment: Mapping[str, str] = field(default_factory=dict)
+    written_memory: bool = True
+    extracted_memory: bool = True
 
 
 def load_bot_settings(path: Path) -> BotSettings:
@@ -81,6 +84,8 @@ def load_bot_settings(path: Path) -> BotSettings:
         skills=skills,
         instructions=_instructions(path, settings, source),
         environment=settings.get('environment', {}),
+        written_memory=settings.get('writtenMemory', {}).get('enabled', True),
+        extracted_memory=settings.get('extractedMemory', {}).get('enabled', True),
     )
 
 
@@ -140,7 +145,7 @@ def bot_definition(bot: BotSettings) -> HarnessDefinition:
     return HarnessDefinition(
         skills=(SKILLS,) if bot.skills else (),
         agent_name=bot.agent_name,
-        prepare_invocation=_prepare_invocation,
+        prepare_invocation=partial(_prepare_invocation, extracted_memory=bot.extracted_memory),
         prepare_root=prepare_root,
         session_id_env_var='BOTCUBE_SESSION_ID',
         environment_cache_key=environment_cache_key(_RESOURCE_ATTRIBUTES),
@@ -150,8 +155,8 @@ def bot_definition(bot: BotSettings) -> HarnessDefinition:
     )
 
 
-def _prepare_invocation(input_data: Invocation, token: str | None) -> InvocationAuth:
-    """The Turn's User, with Memory, and the Credential Service's model relay when Chat bound one for the Session.
+def _prepare_invocation(input_data: Invocation, token: str | None, *, extracted_memory: bool) -> InvocationAuth:
+    """The Turn's User, with Extracted Memory unless the bot settings turn it off, and the Credential Service's model relay when Chat bound one for the Session.
 
     The User is the Turn identity's actor; the Session's filing ID differs for a Session filed under an older ID.
     The shell names the User and Chat's traffic marker to the spans of any CLI the agent runs.
@@ -162,7 +167,7 @@ def _prepare_invocation(input_data: Invocation, token: str | None) -> Invocation
         raise ValueError('The Credential Service binding needs both its URL and its invocation token')
     relay = openai_model_relay(url, token, input_data.thread_id) if url and token else None
     actor = turn_actor(input_data.turn_identity) or options.session_user_id
-    return InvocationAuth(actor_id=actor, persistent_memory=True, environment=_span_resource(actor, options.traffic), model_relay=relay)
+    return InvocationAuth(actor_id=actor, persistent_memory=extracted_memory, environment=_span_resource(actor, options.traffic), model_relay=relay)
 
 
 def _span_resource(actor: Any, traffic: Any) -> dict[str, str] | None:

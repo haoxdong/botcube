@@ -43,10 +43,10 @@ function taskInstant(value: unknown, field: 'startDate' | 'endDate', required: b
   return new Date(value).toISOString();
 }
 
-/** Refuses every Memory route of a bot whose settings turn Memory off. */
-function memoryOff(bot: Pick<TurnSource, 'memory'>) {
+/** Refuses every Extracted Memory route of a bot whose settings turn Extracted Memory off. */
+function extractedMemoryOff(bot: Pick<TurnSource, 'extractedMemory'>) {
   return async (_c: unknown, next: () => Promise<void>) => {
-    if (bot.memory === false) throw new HttpError(404, 'Memory is off for this bot');
+    if (bot.extractedMemory === false) throw new HttpError(404, 'Extracted Memory is off for this bot');
     await next();
   };
 }
@@ -61,7 +61,7 @@ export function accountRoutes(
   scheduledTasks: ScheduledTasks | null,
   online: boolean,
 ) {
-  const memoryGate = memoryOff(bot);
+  const memoryGate = extractedMemoryOff(bot);
   const documentsOf = async (owner: string) => agentDocuments.get(owner, bot.agentDocuments);
 
   app.get('/agent', async (c) => {

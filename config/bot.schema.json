@@ -70,10 +70,29 @@
       "required": ["agentBody", "agentOutline", "agentDeep", "agentDeepest"],
       "additionalProperties": false
     },
-    "memory": {
-      "default": true,
-      "description": "Whether the agent keeps a Memory across Sessions, and the Agent Profile shows it.",
-      "type": "boolean"
+    "writtenMemory": {
+      "default": { "enabled": true },
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Whether the agent keeps a Written Memory: notes it writes to the User's memories/AGENTS.md and reads back the next Session.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "extractedMemory": {
+      "default": { "enabled": true },
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Whether the agent keeps an Extracted Memory of a User's Sessions, and has its memory tool.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
     },
     "agentComputer": {
       "default": {
@@ -151,6 +170,7 @@
     }
   },
   "x-renamed-keys": {
+    "memory": "writtenMemory.enabled and extractedMemory.enabled, each a switch for one kind of Memory",
     "userTokenInShell": "environment, where a CLI reaches its Relay provider at ${BOTCUBE_RELAY_URL}/<provider> with no credential in the shell"
   }
 }

@@ -688,7 +688,7 @@ function AgentProfile({
   isAccountCurrent?: (() => boolean) | undefined;
   /** The Sign-ins tab's actions and state, from the page's sign-in provider; without them, the tab has nothing yet. */
   signIns?: SignInsControl | undefined;
-  /** The bot settings' Memory gate: off, Personalization shows only the Soul. */
+  /** The bot settings' Extracted Memory gate: off, Personalization shows only the Soul. */
   memory?: boolean | undefined;
   /** The sheet, whose width a phone's swipe measures as the chat slides off it. */
   ref?: Ref<HTMLDivElement> | undefined;

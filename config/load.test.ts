@@ -20,7 +20,8 @@ const EXAMPLE_BOT = {
   accountKey: 'template',
   models: [{ key: 'echo', label: 'Echo', provider: 'openai' }],
   skills: ['skills/computer'],
-  memory: true,
+  writtenMemory: { enabled: true },
+  extractedMemory: { enabled: true },
   agentComputer: { enabled: true, liveBrowser: true },
 };
 
@@ -542,7 +543,8 @@ describe('bot settings', () => {
     ['a theme with three of the four colours', { ...EXAMPLE_BOT, theme: { agentBody: '#aabbcc', agentOutline: '#aabbcc', agentDeep: '#aabbcc' } }, 'theme.agentDeepest: '],
     ['a theme reaching past the agent colours', { ...EXAMPLE_BOT, theme: { ...THEME, '--color-blue': '#2563eb' } }, 'theme.--color-blue: Unrecognized key'],
     ['instructions naming no file', { ...EXAMPLE_BOT, instructions: '' }, 'instructions: '],
-    ['a Memory gate that is not a switch', { ...EXAMPLE_BOT, memory: 'on' }, 'memory: '],
+    ['a Written Memory gate that is not a switch', { ...EXAMPLE_BOT, writtenMemory: { enabled: 'on' } }, 'writtenMemory.enabled: '],
+    ['an Extracted Memory gate that is not a switch', { ...EXAMPLE_BOT, extractedMemory: { enabled: 'on' } }, 'extractedMemory.enabled: '],
     ['a live browser without the Agent Computer', { ...EXAMPLE_BOT, agentComputer: { enabled: false, liveBrowser: true } }, 'agentComputer.liveBrowser: The live browser is part of the Agent Computer'],
     ['an empty product name', { ...EXAMPLE_BOT, productName: ' ' }, 'productName: '],
     ['a started path relative to nothing', { ...EXAMPLE_BOT, productService: { agentComputerStartedPath: 'me/agent-computer/seed' } },
@@ -558,20 +560,26 @@ describe('bot settings', () => {
     expect(() => loadBotCube(path)).toThrow('Bot settings /bot/bot.yaml: userTokenInShell: renamed to environment, ');
   });
 
-  it('change the theme, the Memory gate and the Agent Computer switches', () => {
-    const bot = { ...EXAMPLE_BOT, theme: THEME, memory: false, agentComputer: { enabled: false, liveBrowser: false } };
+  it('stop on memory and name writtenMemory and extractedMemory as its replacements', () => {
+    const path = configFile({  }, { ...EXAMPLE_BOT, memory: true });
+    expect(() => loadBotCube(path)).toThrow('Bot settings /bot/bot.yaml: memory: renamed to writtenMemory.enabled and extractedMemory.enabled');
+  });
+
+  it('change the theme, the Memory gates and the Agent Computer switches', () => {
+    const bot = { ...EXAMPLE_BOT, theme: THEME, writtenMemory: { enabled: false }, extractedMemory: { enabled: false }, agentComputer: { enabled: false, liveBrowser: false } };
     expect(loadBotCube(configFile({  }, bot)).bot).toMatchObject({
       theme: { agentBody: '#f5d0a9', agentOutline: '#d9915a', agentDeep: '#9a5a2b', agentDeepest: '#4a2810' },
-      memory: false,
+      writtenMemory: { enabled: false },
+      extractedMemory: { enabled: false },
       agentComputer: { enabled: false, liveBrowser: false },
     });
   });
 
-  it("leave out the Web UI's, for BotCube's colours, a Memory and the Agent Computer without its live browser", () => {
+  it("leave out the Web UI's, for BotCube's colours, both kinds of Memory and the Agent Computer without its live browser", () => {
     const { agentIdentity, accountKey, models } = EXAMPLE_BOT;
     const { bot } = loadBotCube(configFile({  }, { agentIdentity, accountKey, models }));
     expect(bot).not.toHaveProperty('theme');
-    expect(bot).toMatchObject({ memory: true, agentComputer: { enabled: true, liveBrowser: false, profileOmitsCookieDomains: [] } });
+    expect(bot).toMatchObject({ writtenMemory: { enabled: true }, extractedMemory: { enabled: true }, agentComputer: { enabled: true, liveBrowser: false, profileOmitsCookieDomains: [] } });
   });
 
   it("name the product and the path its service is called on as an Agent Computer's browser starts", () => {

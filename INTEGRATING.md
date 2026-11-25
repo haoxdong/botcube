@@ -81,7 +81,7 @@ The sandbox uses local plain HTTP. Memory IDs and runtime ARNs may be supported 
 
 ## Supply your bot
 
-- **Bot settings and skills.** Copy [`examples/bot/`](examples/bot/). [`bot.yaml`](examples/bot/bot.yaml) follows [the bot settings schema](config/bot.schema.json): agent identity, account key, models, skills, Memory, and Agent Computer. Each skill is a directory holding a `SKILL.md`.
+- **Bot settings and skills.** Copy [`examples/bot/`](examples/bot/). [`bot.yaml`](examples/bot/bot.yaml) follows [the bot settings schema](config/bot.schema.json): agent identity, account key, models, skills, Written Memory and Extracted Memory (`writtenMemory.enabled` and `extractedMemory.enabled`, each on unless false; `memory` was renamed to them), and Agent Computer. Each skill is a directory holding a `SKILL.md`.
 - **Bot image.** The bot's [`Dockerfile`](examples/bot/Dockerfile) builds `FROM harness`, and copies the settings to `/bot/bot.yaml` and the skills beside them. Install your bot's CLIs there, on the `PATH`. The bot runs no code in BotCube's processes.
 - **BotCube Config.** Copy [`examples/public/botcube.yaml`](examples/public/botcube.yaml), a complete deployment: its name, account and region, domains, the AgentCore and network resources BotCube creates, and the existing VPC, link browser and slot bucket it uses. [The Configuration section](#configuration) describes each key; [`examples/enterprise/botcube.yaml`](examples/enterprise/botcube.yaml) replaces every integration default.
 - **Deploy directory.** Copy [`examples/public/deploy/`](examples/public/deploy/) for its acceptance hook [`ecs/acceptance.py`](examples/public/deploy/ecs/acceptance.py). Build images from their own Dockerfiles before synthesis.

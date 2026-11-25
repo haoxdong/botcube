@@ -162,6 +162,40 @@ def test_a_traffic_change_reaches_the_cached_agent_without_a_rebuild(bot_service
     assert len(serving._AGENTS) == 1
 
 
+def test_a_member_of_a_bot_that_keeps_extracted_memory_gets_the_memory_tool(bot_service: _Service) -> None:
+    bot_service.turn('hello')
+
+    assert 'memory' in bot_service.recorder.tools[-1]
+
+
+@pytest.mark.parametrize('bot_service', [{'extractedMemory': {'enabled': False}}], indirect=True)
+def test_a_bot_whose_settings_turn_extracted_memory_off_gives_a_member_no_memory(bot_service: _Service) -> None:
+    bot_service.turn('hello')
+
+    assert 'memory' not in bot_service.recorder.tools[-1]
+    assert all(agent.graph.store is None for agent in serving._AGENTS.values())
+
+
+@pytest.mark.parametrize(('settings', 'written', 'extracted'), [
+    ({}, True, True),
+    ({'writtenMemory': {'enabled': False}}, False, True),
+    ({'extractedMemory': {'enabled': False}}, True, False),
+    ({'writtenMemory': {}, 'extractedMemory': {}}, True, True),
+])
+def test_each_kind_of_memory_is_on_unless_its_settings_turn_it_off(tmp_path: Path, settings: dict[str, Any], written: bool, extracted: bool) -> None:
+    bot = load_bot_settings(_bot(tmp_path, **settings))
+
+    assert (bot.written_memory, bot.extracted_memory) == (written, extracted)
+
+
+def test_memory_stops_startup_naming_both_kinds_of_memory(start: Start, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = _bot(tmp_path, memory=True)
+    _deployed(monkeypatch, tmp_path, path)
+
+    with pytest.raises(BotSettingsError, match=rf'^Bot settings {re.escape(str(path.resolve()))}: memory: renamed to writtenMemory.enabled and extractedMemory.enabled'):
+        start()
+
+
 @pytest.mark.parametrize(
     ('settings', 'field'),
     [

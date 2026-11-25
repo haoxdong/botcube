@@ -7,15 +7,15 @@ import type { RunAgentInput } from '@ag-ui/client';
 import type { AgentModel, ModelSource } from './models.js';
 import type { Requester, RequesterSource } from './requester.js';
 
-/** What a Turn, chat or scheduled, needs from the bot: its documents, models, Memory gate and upstream payload. */
+/** What a Turn, chat or scheduled, needs from the bot: its documents, models, Extracted Memory gate and upstream payload. */
 export interface TurnSource<R extends Requester = Requester> extends ModelSource<R> {
   /** The Agent Identity and Soul templates every account's agent starts from. */
   readonly agentDocuments: AgentDocumentSet;
   /**
-   * The bot settings' Memory gate (`memory`): false keeps no Memory for anyone. Its routes refuse,
-   * and each Turn tells the Harness (`forwardedProps.botMemory`). On unless false.
+   * The bot settings' Extracted Memory gate (`extractedMemory.enabled`): false keeps no Extracted Memory for anyone.
+   * Its routes refuse, and each Turn tells the Harness (`forwardedProps.botMemory`), which then gives no `memory` tool. On unless false.
    */
-  readonly memory?: boolean;
+  readonly extractedMemory?: boolean;
   /** The user ID an account's Sessions are filed under in the Session record. */
   filingUserId(owner: string): string;
   /**
@@ -52,9 +52,9 @@ export type InvocationPayload = Record<string, unknown> & {
   forwardedProps: Record<string, unknown>;
 };
 
-/** Tells a Turn's Harness the bot settings' Memory gate; only the Chat Service sets it, never a client. */
-export function botMemory(forwardedProps: Record<string, unknown>, settings: { memory?: boolean | undefined }): void {
-  if (settings.memory === false) forwardedProps.botMemory = false;
+/** Tells a Turn's Harness the bot settings' Extracted Memory gate; only the Chat Service sets it, never a client. */
+export function botMemory(forwardedProps: Record<string, unknown>, settings: { extractedMemory?: boolean | undefined }): void {
+  if (settings.extractedMemory === false) forwardedProps.botMemory = false;
   else delete forwardedProps.botMemory;
 }
 
