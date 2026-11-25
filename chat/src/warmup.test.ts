@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { HttpError } from './http-error.js';
+import { preparationFrame, type UpstreamScript } from '../test/fakes/fake-agentcore.js';
 import { HttpFake } from '../test/fakes/http-fake.js';
 import { RUNTIME_ARN } from '../test/fakes/stack.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
@@ -78,7 +79,9 @@ describe('POST /warmup', () => {
     await stack.allocate('acct_account-1', 'warm-then-send');
     let release = () => {};
     const hold = new Promise<void>((resolve) => { release = resolve; });
-    stack.agentcore.script('warm-then-send', { kind: 'stream', frames: ['data: {"type":"RUN_STARTED"}', 'data: {"type":"RUN_FINISHED"}'], hold });
+    stack.agentcore.script('warm-then-send', { kind: 'stream', frames: (props) => props.warmup === true
+      ? [preparationFrame('warm-then-send', '__warmup__')]
+      : ['data: {"type":"RUN_STARTED"}', 'data: {"type":"RUN_FINISHED"}'], hold });
     const warming = postWarmup(stack, '{"threadId":"warm-then-send"}');
     await vi.waitFor(() => expect(stack.agentcore.invocationFor('warm-then-send')).toBeDefined());
 
@@ -108,7 +111,7 @@ describe('POST /warmup', () => {
     await stack.allocate('acct_account-1', sessionId);
     let release = () => {};
     const hold = new Promise<void>((resolve) => { release = resolve; });
-    stack.agentcore.script(sessionId, { kind: 'stream', frames: ['data: {"type":"RUN_FINISHED"}'], hold });
+    stack.agentcore.script(sessionId, { kind: 'stream', frames: [preparationFrame(sessionId, '__warmup__')], hold });
     const body = JSON.stringify({ threadId: sessionId, model: 'quick' });
     const first = postWarmup(stack, body);
     let second: ReturnType<typeof postWarmup> | undefined;
@@ -204,7 +207,7 @@ describe('POST /warmup', () => {
     expect(await response.json()).toEqual({ error: 'Invalid warmup JSON', details: 'Expected JSON object.' });
   });
 
-  it.each([400, 500])('reports a warmup the Runtime answers with HTTP %i as 503', async (status) => {
+  it.each([400, 429, 500, 504])('reports a warmup the Runtime answers with HTTP %i as 503', async (status) => {
     await stack.allocate('acct_account-1', `warm-rejected-${status}`);
     stack.agentcore.script(`warm-rejected-${status}`, { kind: 'error', status, body: '{}' });
 
@@ -214,21 +217,28 @@ describe('POST /warmup', () => {
     expect(await response.json()).toEqual({ error: 'AgentCore warmup failed', details: `HTTP ${status}` });
   });
 
-  it('accepts a warmup the Runtime answers below HTTP 400', async () => {
-    await stack.allocate('acct_account-1', 'warm-redirected');
-    stack.agentcore.script('warm-redirected', { kind: 'error', status: 399, body: '{}' });
+  it.each([
+    ['redirect', { kind: 'error', status: 302, body: '{}' }, 'HTTP 302'],
+    ['no content', { kind: 'error', status: 204, body: '' }, 'Missing successful Session preparation receipt'],
+    ['early EOF', { kind: 'stream', frames: [': keepalive'] }, 'Missing successful Session preparation receipt'],
+    ['wrong Session', { kind: 'stream', frames: [preparationFrame('other-session', '__warmup__')] }, 'Missing successful Session preparation receipt'],
+  ] satisfies [string, UpstreamScript, string][])('reports a named warmup with %s as 503', async (scenario, script, details) => {
+    const threadId = `warm-${scenario}`;
+    await stack.allocate('acct_account-1', threadId);
+    stack.agentcore.script(threadId, script);
 
-    const response = await postWarmup(stack, '{"threadId":"warm-redirected"}');
+    const response = await postWarmup(stack, JSON.stringify({ threadId }));
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ status: 'ok' });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'AgentCore warmup failed', details });
   });
 
-  it('accepts a warmup the Runtime answers with no body', async () => {
-    await stack.allocate('acct_account-1', 'warm-empty');
-    stack.agentcore.script('warm-empty', { kind: 'error', status: 204, body: '' });
+  it('accepts a matching skipped-busy receipt when the Session is already preparing', async () => {
+    const threadId = 'warm-busy';
+    await stack.allocate('acct_account-1', threadId);
+    stack.agentcore.script(threadId, { kind: 'stream', frames: [preparationFrame(threadId, '__warmup__', 'skipped-busy')] });
 
-    const response = await postWarmup(stack, '{"threadId":"warm-empty"}');
+    const response = await postWarmup(stack, JSON.stringify({ threadId }));
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: 'ok' });
@@ -294,7 +304,7 @@ describe('POST /warmup', () => {
     await stack.allocate('acct_account-1', 'warm-recovered');
     stack.agentcore.script('warm-recovered', { kind: 'stream', frames: [
       'data: not-json',
-      'data: {"type":"RUN_FINISHED"}',
+      preparationFrame('warm-recovered', '__warmup__'),
     ] });
     const response = await postWarmup(stack, '{"threadId":"warm-recovered"}');
     expect(response.status).toBe(200);

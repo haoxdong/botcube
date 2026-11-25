@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DynamoDBDocumentClient, PutCommand, ScanCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
 import * as purges from './purges.js';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { FakeAgentCore } from '../test/fakes/fake-agentcore.js';
 import { RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
 import type { AgentDocuments } from './agent-documents.js';
 import type { AccountHistory } from './account-history.js';
@@ -921,7 +922,8 @@ describe('a Turn against a local Harness', () => {
   });
 
   it('warms the same physical Sandbox as a Turn under its persisted filing identity', async () => {
-    const agent = await localHarness((response) => { response.writeHead(200, { 'content-type': 'text/event-stream' }); response.end('data: {"type":"RUN_FINISHED"}\n\n'); });
+    const agent = await new FakeAgentCore().listen();
+    closers.push(() => agent.close());
     const claimed = { session_id: TURN.threadId, filing_user_id: 'filed-before-claim', title: 'hello', created_at: '', updated_at: '' };
     const url = await chatService(agent.url, {
       config: { localHarnessUrl: null, agentCore: { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: agent.url } },
@@ -929,10 +931,11 @@ describe('a Turn against a local Harness', () => {
     });
     await (await sendTurn(url)).text();
     expect((await fetch(`${url}/warmup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ threadId: TURN.threadId }) })).status).toBe(200);
-    const headers = agent.received.map(({ headers }) => headers['x-amzn-bedrock-agentcore-runtime-session-id']);
+    const invocations = agent.invocations();
+    const headers = invocations.map(({ headers }) => headers['x-amzn-bedrock-agentcore-runtime-session-id']);
     expect(headers[1]).toBe(headers[0]);
     expect(headers[1]).toBe(TURN.threadId);
-    expect(JSON.parse(defined(agent.received[1], 'warmup invocation').body)).toMatchObject({ threadId: TURN.threadId, forwardedProps: { warmup: true } });
+    expect(JSON.parse(defined(invocations[1], 'warmup invocation').body)).toMatchObject({ threadId: TURN.threadId, forwardedProps: { warmup: true } });
   });
 
   it('finishes purging a fenced pre-cutover chat after retiring the namespace gate', async () => {

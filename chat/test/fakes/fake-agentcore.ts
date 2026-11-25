@@ -67,8 +67,9 @@ export class FakeAgentCore extends HttpFake {
         this.starting.add(sessionId);
         response.on('close', () => this.starting.delete(sessionId));
       }
-      const payload = JSON.parse(request.body) as { threadId: string; forwardedProps: Record<string, unknown>; messages: { content: unknown }[] };
-      playRuntime(this.scripts.get(payload.threadId) ?? this.promptScripts.get(String(payload.messages.at(-1)?.content)) ?? { kind: 'stream', frames: ['data: {"type":"RUN_STARTED"}', 'data: {"type":"RUN_FINISHED"}'] }, payload.forwardedProps, request.headers, response);
+      const payload = JSON.parse(request.body) as InvocationPayload & { runId: string; messages: { content: unknown }[] };
+      const script = this.scripts.get(payload.threadId) ?? this.promptScripts.get(String(payload.messages.at(-1)?.content));
+      playRuntime(script ?? { kind: 'stream', frames: defaultFrames(payload) }, payload.forwardedProps, request.headers, response);
     });
   }
   startBrowser(): string {
@@ -93,6 +94,16 @@ export class FakeAgentCore extends HttpFake {
     return invocation;
   }
   invocations(): RecordedRequest[] { return this.requests.filter((request) => request.path.startsWith('/runtimes/') && request.path.includes('/invocations')); }
+}
+
+function defaultFrames(payload: InvocationPayload & { runId: string }): string[] {
+  if (payload.forwardedProps.warmup !== true) return ['data: {"type":"RUN_STARTED"}', 'data: {"type":"RUN_FINISHED"}'];
+  if (payload.forwardedProps.sessionUserId === undefined) return [];
+  return [preparationFrame(payload.threadId, payload.runId)];
+}
+
+export function preparationFrame(sessionId: string, runId: string, outcome = 'prepared'): string {
+  return `data: ${JSON.stringify({ type: 'CUSTOM', name: 'SESSION_PREPARATION', value: { sessionId, runId, outcome } })}`;
 }
 
 function playRuntime(script: UpstreamScript, forwardedProps: Record<string, unknown>, headers: RecordedRequest['headers'], response: ServerResponse): void {
