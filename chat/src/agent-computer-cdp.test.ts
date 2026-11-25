@@ -2,22 +2,16 @@ import { execFileSync } from 'node:child_process';
 import { createServer, type IncomingHttpHeaders } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
-import { serve, type ServerType, type WebSocketServerLike } from '@hono/node-server';
 import { HttpError } from './index.js';
-import { Hono } from 'hono';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WebSocketServer, type WebSocket as UpstreamSocket } from 'ws';
+import { describe, expect, it, vi } from 'vitest';
+import { cdpChannelFixture, type Wake } from '../test/cdp-channel-fixture.js';
 import { realBrowserClient, realSingleClientBrowser } from '../test/real-browser.js';
 import { memoryDocuments } from '../test/memory-documents.js';
 import { AccountResources } from './account-resources.js';
 import { agentComputers, type AgentComputerBrowser } from './agent-computer.js';
 import type { AccountFiles } from './files.js';
-import { agentComputerCdp } from './agent-computer-cdp.js';
 
-const cleanups: (() => Promise<void>)[] = [];
-afterEach(async () => {
-  await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
-});
+const { automationStream, channel, addCleanup } = cdpChannelFixture();
 
 /**
  * What `settling` settles to, failing the test within 2 s otherwise: a Mutant that hangs the channel
@@ -31,124 +25,10 @@ function soon<T>(settling: Promise<T>): Promise<T> {
   return Promise.race([settling, deadline]).finally(() => clearTimeout(timer));
 }
 
-/**
- * The Session's browser automation stream: records what it receives and the headers it was opened with. With
- * `oneClient`, it refuses a second client while one is connected, as AgentCore's does.
- */
-async function automationStream({ oneClient = false } = {}) {
-  const server = new WebSocketServer({
-    port: 0,
-    host: '127.0.0.1',
-    verifyClient: (_info, admit) =>
-      oneClient && server.clients.size > 0
-        ? admit(false, 429, 'Too many connections. Concurrent connections to the same session are not supported.')
-        : admit(true),
-  });
-  await new Promise<void>((resolve) => server.on('listening', resolve));
-  const stream = {
-    url: `ws://127.0.0.1:${(server.address() as AddressInfo).port}/automation`,
-    received: [] as string[],
-    headers: [] as IncomingHttpHeaders[],
-    sockets: [] as UpstreamSocket[],
-    closed: 0,
-  };
-  server.on('connection', (socket, request) => {
-    stream.headers.push(request.headers);
-    stream.sockets.push(socket);
-    let root = '';
-    const send = socket.send.bind(socket);
-    socket.send = ((data: Parameters<typeof socket.send>[0]) => {
-      if (typeof data !== 'string') throw new Error('The CDP fixture accepts text frames');
-      const message = JSON.parse(data) as Record<string, unknown>;
-      if (message.sessionId === undefined) message.sessionId = root;
-      send(JSON.stringify(message));
-    }) as typeof socket.send;
-    socket.on('message', (data: Buffer) => {
-      const command = JSON.parse(data.toString()) as { id: number; method: string; sessionId?: string };
-      if (command.method === 'Target.attachToBrowserTarget') {
-        root = `browser-root-${stream.sockets.length}`;
-        send(JSON.stringify({ id: command.id, result: { sessionId: root } }));
-        return;
-      }
-      if (command.method === 'Target.detachFromTarget') {
-        send(JSON.stringify({ id: command.id, result: {} }));
-        return;
-      }
-      if (command.sessionId === root) delete command.sessionId;
-      stream.received.push(JSON.stringify(command));
-    });
-    socket.on('close', () => (stream.closed += 1));
-  });
-  cleanups.push(() => {
-    for (const socket of server.clients) socket.terminate();
-    return new Promise((resolve) => server.close(() => resolve()));
-  });
-  return stream;
-}
-
-type Wake = () => Promise<{ state: 'awake'; browserSessionId: string; control: 'user' | 'agent' } | { state: 'asleep' }>;
-
-/** The CDP channel served on a real port, over fake Agent Computers. */
-async function channel(
-  endpoint: string,
-  wake: Wake = async () => ({ state: 'awake', browserSessionId: 'browser-1', control: 'agent' }),
-  issuedToken = 'good',
-  control: () => Promise<'user' | 'agent'> = async () => 'agent',
-  use: () => boolean | Promise<boolean> = () => true,
-  claimStream: (accountId: string, sessionId: string, letGo: () => Promise<void>) => (() => void) | null | Promise<(() => void) | null> = () => () => {},
-  opening: () => Promise<void> = async () => {},
-) {
-  const calls: string[][] = [];
-  const route = agentComputerCdp({
-    computers: {
-      async wake(accountId, threadId) {
-        calls.push(['wake', accountId, threadId]);
-        return wake();
-      },
-      use(accountId, sessionId) {
-        calls.push(['use', accountId, sessionId]);
-        return use();
-      },
-      claimStream,
-    },
-    browser: () => ({
-      async automationStream(sessionId) {
-        calls.push(['automationStream', sessionId]);
-        await opening();
-        return { endpoint, headers: { 'x-amz-date': 'signed' } };
-      },
-      async control(sessionId) {
-        calls.push(['control', sessionId]);
-        return control();
-      },
-    }),
-    verify: (token) => (token === issuedToken ? { accountId: 'acct-1', threadId: 'thread-1' } : null),
-  });
-  const app = new Hono().get('/cdp', route);
-  const server = await new Promise<ServerType>((resolve) => {
-    const started: ServerType = serve(
-      {
-        fetch: app.fetch,
-        port: 0,
-        hostname: '127.0.0.1',
-        // The unit suite shares one process: leave the global Request and Response as they were.
-        overrideGlobalObjects: false,
-        websocket: { server: new WebSocketServer({ noServer: true }) as unknown as WebSocketServerLike },
-      },
-      () => resolve(started),
-    );
-  });
-  cleanups.push(() => {
-    if ('closeAllConnections' in server) server.closeAllConnections();
-    return new Promise((resolve) => server.close(() => resolve()));
-  });
-  return { url: `ws://127.0.0.1:${(server.address() as AddressInfo).port}/cdp`, calls };
-}
-
 /** The agent's end of the channel. */
 function agent(url: string) {
   const socket = new WebSocket(url);
-  cleanups.push(async () => socket.close());
+  addCleanup(async () => socket.close());
   const received: unknown[] = [];
   socket.addEventListener('message', (event) => received.push(JSON.parse(String(event.data))));
   const opened = new Promise<boolean>((resolve) => {
@@ -207,7 +87,7 @@ function computersFor(browser: AgentComputerBrowser, idleSeconds = 600) {
     delete: unusedFilesOperation,
   };
   const computers = agentComputers({ browser: () => browser, records: () => store, files: () => files, idleSeconds });
-  cleanups.push(() => computers.revoke('acct-1'));
+  addCleanup(() => computers.revoke('acct-1'));
   return computers;
 }
 
@@ -222,7 +102,7 @@ const until = (condition: () => boolean) =>
         clearInterval(poll);
         resolve();
       }, 10);
-      cleanups.push(async () => clearInterval(poll));
+      addCleanup(async () => clearInterval(poll));
     }),
   );
 
@@ -699,11 +579,11 @@ it('drains both retained agent channels at task stop and preserves the browser f
 
 it('records the real refused setup and downstream close in order without exposing connection secrets', async () => {
   const info = vi.spyOn(console, 'info').mockImplementation(() => {});
-  cleanups.push(async () => info.mockRestore());
+  addCleanup(async () => info.mockRestore());
   const canary = 'secret-connection-canary';
   const http = createServer((_request, response) => { response.writeHead(429); response.end(canary); });
   await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
-  cleanups.push(() => new Promise((resolve) => http.close(() => resolve())));
+  addCleanup(() => new Promise((resolve) => http.close(() => resolve())));
   const { url } = await channel(`ws://127.0.0.1:${(http.address() as AddressInfo).port}/stream?token=${canary}`);
   const client = agent(`${url}?token=good`);
   expect(await soon(client.closed)).toEqual({ code: 1011, reason: 'Agent Computer browser could not be reached' });
@@ -721,7 +601,7 @@ it('records the real refused setup and downstream close in order without exposin
 
 it('preserves the sanitized reason when the actual downstream closes first', async () => {
   const info = vi.spyOn(console, 'info').mockImplementation(() => {});
-  cleanups.push(async () => info.mockRestore());
+  addCleanup(async () => info.mockRestore());
   const stream = await automationStream();
   const { url } = await channel(stream.url);
   const client = agent(`${url}?token=good`);
