@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startOnFreePort, type RunningProcess } from '../fakes/process.js';
+import type { RunningProcess } from '../fakes/process.js';
+import { startFakeSite } from './fake-site.js';
 import { HttpFake } from '../fakes/http-fake.js';
 import { FIXTURES, HARNESS_BIN, startLocalStack, type LocalStack } from './local-stack.js';
 import { frameData, sseFrames } from './browser.js';
@@ -29,12 +30,7 @@ it(
   'opens the actual browser event on a default Echo Turn without a model-generated Session marker',
   { timeout: 120_000 },
   async () => {
-    site = await startOnFreePort((port) => ({
-      command: `${HARNESS_BIN}/python ${join(FIXTURES, 'fake-site.py')}`,
-      env: { PORT: String(port) },
-      url: `http://127.0.0.1:${port}/login`,
-      listening: `Fake site listening on :${port}`,
-    }));
+    site = await startFakeSite();
     stack = await startLocalStack({
       chatServiceCommand: inject('fakeSiteServiceCommand'),
       chatEnv: {
@@ -95,12 +91,7 @@ it(
     const deepTemp = resolve(temporaryRoot, 'generated-workspace-with-a-temporary-directory-longer-than-a-unix-socket-path');
     await mkdir(deepTemp);
     vi.stubEnv('TMPDIR', deepTemp);
-    site = await startOnFreePort((port) => ({
-      command: `${HARNESS_BIN}/python ${join(FIXTURES, 'fake-site.py')}`,
-      env: { PORT: String(port) },
-      url: `http://127.0.0.1:${port}/login`,
-      listening: `Fake site listening on :${port}`,
-    }));
+    site = await startFakeSite();
     // `/account/session` asks the Credential Service which Linked Accounts the account holds; this account holds none,
     // and nothing else here may reach the Credential Service.
     credentialService = new HttpFake((request, response) => {

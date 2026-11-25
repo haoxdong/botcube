@@ -30,7 +30,7 @@ export const HARNESS_BIN = fileURLToPath(new URL('../../../harness/deepagents/.v
 /** The Credential Service's own Python environment, for the fixtures that compose a Credential Service. */
 export const CREDENTIAL_SERVICE_BIN = fileURLToPath(new URL('../../../credential-service/.venv/bin', import.meta.url));
 
-/** The parity fixtures, run by path: the fake site, its CLI, its Credential Service provider and its Harness definition. */
+/** Fixtures launched by the parity suites. */
 export const FIXTURES = fileURLToPath(new URL('fixtures', import.meta.url));
 
 const HARNESS_COMMAND =

@@ -2,8 +2,9 @@ import { afterAll, afterEach, expect, it, inject } from 'vitest';
 import { join } from 'node:path';
 import { testChromiumPath } from '../chromium.js';
 import { frameData, sseFrames } from './browser.js';
-import { CREDENTIAL_SERVICE_BIN, FIXTURES, HARNESS_BIN, startLocalStack, type LocalStack } from './local-stack.js';
-import { startOnFreePort, type RunningProcess } from '../fakes/process.js';
+import { FIXTURES, HARNESS_BIN, startLocalStack, type LocalStack } from './local-stack.js';
+import type { RunningProcess } from '../fakes/process.js';
+import { startFakeSite, startFakeSiteCredentials } from './fake-site.js';
 
 let stack: LocalStack | undefined;
 let site: RunningProcess | undefined;
@@ -21,19 +22,9 @@ afterAll(async () => {
 });
 
 it('tears down scheduled Browsers after success, failed site access and recovery', { timeout: 120_000 }, async () => {
-  site = await startOnFreePort((port) => ({
-    command: `${HARNESS_BIN}/python ${join(FIXTURES, 'fake-site.py')}`,
-    env: { PORT: String(port) },
-    url: `http://127.0.0.1:${port}/login`,
-    listening: `Fake site listening on :${port}`,
-  }));
+  site = await startFakeSite();
   const siteUrl = new URL(site.url).origin;
-  credentials = await startOnFreePort((port) => ({
-    command: `${CREDENTIAL_SERVICE_BIN}/python ${join(FIXTURES, 'fake-site-credential-service.py')}`,
-    env: { PORT: String(port), FAKE_SITE_URL: siteUrl, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'local-secret', AWS_ACCESS_KEY_ID: 'testing', AWS_SECRET_ACCESS_KEY: 'testing', AWS_DEFAULT_REGION: 'us-east-1' },
-    url: `http://127.0.0.1:${port}/health`,
-    listening: `Uvicorn running on http://127.0.0.1:${port}`,
-  }));
+  credentials = await startFakeSiteCredentials(siteUrl);
   const credentialServiceUrl = new URL(credentials.url).origin;
   stack = await startLocalStack({
     scheduling: true,
