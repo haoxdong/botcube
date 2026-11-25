@@ -7381,7 +7381,7 @@ describe('agent profile', () => {
     await click(panel, 'Edit Soul');
     await saveSoul();
 
-    expect(panel.getByRole('alert')).toHaveTextContent(/^Saving Soul failed: 503$/);
+    expect(panel.getByRole('alert')).toHaveTextContent("Couldn't save Soul. 503");
     expect(panel.queryByRole('status')).toBeNull();
 
     service.failing.delete('PUT /agent/soul');

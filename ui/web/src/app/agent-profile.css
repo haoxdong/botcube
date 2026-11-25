@@ -414,6 +414,14 @@
   color: var(--color-white);
 }
 
+.agent-file-reading {
+  display: grid;
+}
+
+.agent-file-reading > * {
+  grid-area: 1 / 1;
+}
+
 .agent-file-text {
   padding: var(--space-16);
   line-height: var(--leading-loose);

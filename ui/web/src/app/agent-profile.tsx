@@ -50,8 +50,15 @@ export async function loadAgentProfile({ chatServiceUrl }: { chatServiceUrl: str
   return (await response.json()) as AgentProfileData;
 }
 
-async function loadAgentFile(chatServiceUrl: string, path: "agent/identity" | "agent/soul" | "files/written-memory", file: AgentFile): Promise<unknown> {
-  const response = await fetch(`${chatServiceUrl}/${path}`, { credentials: "include", cache: "no-store" });
+type TextDocument = { content: string };
+type AgentFiles = { Identity: AgentIdentityData; Soul: TextDocument; Memory: TextDocument };
+type AgentFile = keyof AgentFiles;
+type TextFileName = Exclude<AgentFile, "Identity">;
+
+const FILE_PATH = { Identity: "agent/identity", Soul: "agent/soul", Memory: "files/written-memory" } as const;
+
+async function loadAgentFile<File extends AgentFile>(chatServiceUrl: string, file: File): Promise<AgentFiles[File]> {
+  const response = await fetch(`${chatServiceUrl}/${FILE_PATH[file]}`, { credentials: "include", cache: "no-store" });
   if (!response.ok) {
     console.error(new Error(`Loading ${file} failed: ${response.status}`));
     throw new Error(`${file} could not be loaded.`);
@@ -66,13 +73,8 @@ const send = (url: string, method: string, body?: unknown) =>
     ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
   });
 
-async function saveWrittenMemory(chatServiceUrl: string, content: string) {
-  await throwIfRefused(await send(`${chatServiceUrl}/files/written-memory`, "PUT", { content }), "Saving Memory failed");
-}
-
-async function saveDocument(chatServiceUrl: string, document: "identity" | "soul", body: unknown, label: string) {
-  const response = await send(`${chatServiceUrl}/agent/${document}`, "PUT", body);
-  if (!response.ok) throw new Error(`Saving ${label} failed: ${response.status}`);
+async function saveAgentFile<File extends AgentFile>(chatServiceUrl: string, file: File, body: AgentFiles[File]) {
+  await throwIfRefused(await send(`${chatServiceUrl}/${FILE_PATH[file]}`, "PUT", body), `Couldn't save ${file}.`, " ");
 }
 
 /** Keeps this picture as the agent's, or clears it with null; a refusal names the Chat Service's reason. */
@@ -86,9 +88,6 @@ async function savePicture(chatServiceUrl: string, picture: string | null) {
 const ABOUT_USE =
   "The agent reads it at the start of every message and uses your edits from your next message on. " +
   "It may change this file itself, and tells you in the chat when it does.";
-
-/** The agent's files: Identity opens from the avatar's pencil, Soul and Memory from the Personalization tab. */
-type AgentFile = "Identity" | "Soul" | "Memory";
 
 /** What each file is and how the agent uses it, shown above the file. */
 const ABOUT: Record<AgentFile, string> = {
@@ -114,7 +113,7 @@ const fieldLabel = (field: (typeof IDENTITY_FIELDS)[number]) => field.charAt(0).
 /** Runs one change to a file, saying whether it worked. */
 type RunChange = (change: () => Promise<void>) => Promise<boolean>;
 
-function useChanges(before = () => {}, after = () => {}) {
+function useChanges() {
   const [error, setError] = useState<string | null>(null);
   const active = useRef(true);
   useEffect(() => {
@@ -124,11 +123,9 @@ function useChanges(before = () => {}, after = () => {}) {
     };
   }, []);
   const run: RunChange = async (change) => {
-    before();
     setError(null);
     try {
       await change();
-      after();
       return true;
     } catch (failure) {
       setError((failure as Error).message);
@@ -141,19 +138,10 @@ function useChanges(before = () => {}, after = () => {}) {
   return { setError, active, run, alert };
 }
 
-/** What every open file gets from the Personalization tab. */
-interface FileProps {
-  run: RunChange;
-  /** Called when the file switches between reading and editing. */
-  onModeChange: () => void;
-  /** Whether the last change saved, shown in the file's header. */
-  saved: boolean;
-}
-
 /** What an open file's header offers: nothing to change, Edit, or, while editing, Cancel and Save. */
 type FileMode =
   | { kind: "read-only" }
-  | { kind: "editable"; onEdit: () => void }
+  | { kind: "editable"; disabled: boolean; onEdit: () => void }
   | { kind: "editing"; onSave: () => Promise<unknown>; onCancel: () => void };
 
 /**
@@ -165,15 +153,15 @@ function FileDocument({
   saved,
   onBack,
   mode,
+  alert,
   children,
-  actions,
 }: {
   file: AgentFile;
   saved: boolean;
   onBack: () => void;
   mode: FileMode;
+  alert?: ReactNode;
   children: ReactNode;
-  actions?: ReactNode;
 }) {
   const formId = useId();
   const { tint, Icon } = FILE_LOOK[file];
@@ -193,9 +181,8 @@ function FileDocument({
             Saved
           </p>
         )}</Fades>
-        {actions}
         <Fades>{mode.kind === "editable" && (
-          <Button type="button" aria-label={`Edit ${file}`} onClick={mode.onEdit}>
+          <Button type="button" aria-label={`Edit ${file}`} disabled={mode.disabled} onClick={mode.onEdit}>
             Edit
           </Button>
         )}</Fades>
@@ -210,6 +197,7 @@ function FileDocument({
           </>
         )}</Fades>
       </header>
+      {alert}
       <section className="agent-file-about" aria-label={`About ${file}`}>
         <p>{ABOUT[file]}</p>
       </section>
@@ -231,20 +219,6 @@ function FileDocument({
   );
 }
 
-/** A file's draft while it is being edited, or null while it is read-only. */
-function useDraft<T>(onModeChange: () => void) {
-  const [draft, setDraft] = useState<T | null>(null);
-  const edit = (value: T) => {
-    onModeChange();
-    setDraft(value);
-  };
-  const cancel = () => {
-    onModeChange();
-    setDraft(null);
-  };
-  return { draft, setDraft, edit, cancel };
-}
-
 /** Agent Identity's draft: its fields, and the agent's picture (null for the emoji or initial). */
 interface IdentityDraft {
   identity: AgentIdentityData;
@@ -259,6 +233,7 @@ function IdentityFile({
   onError,
   onClose,
   run,
+  alert,
 }: {
   identity: AgentIdentityData;
   picture: string | null;
@@ -267,6 +242,7 @@ function IdentityFile({
   onError: (message: string) => void;
   onClose: () => void;
   run: RunChange;
+  alert: ReactNode;
 }) {
   const id = useId();
   const [draft, setDraft] = useState<IdentityDraft>({ identity, picture });
@@ -274,7 +250,7 @@ function IdentityFile({
     if (await run(() => onSave(draft.identity, draft.picture === picture ? undefined : draft.picture))) onClose();
   };
   return (
-    <FileDocument file="Identity" saved={false} onBack={onClose} mode={{ kind: "editing", onSave: save, onCancel: onClose }}>
+    <FileDocument file="Identity" alert={alert} saved={false} onBack={onClose} mode={{ kind: "editing", onSave: save, onCancel: onClose }}>
       <PictureField
         picture={draft.picture ?? undefined}
         emoji={draft.identity.avatar}
@@ -299,36 +275,48 @@ function IdentityFile({
   );
 }
 
-function TextFile({
-  file,
-  text,
-  empty,
-  onSave,
-  onBack,
-  run,
-  onModeChange,
-  saved,
-}: FileProps & { file: "Soul" | "Memory"; text: string; empty?: string | undefined; onSave: (text: string) => Promise<void>; onBack: () => void }) {
-  const { draft, setDraft, edit, cancel } = useDraft<string>(onModeChange);
+function TextFile({ file, text, empty, refreshing, onSave, onBack }: {
+  file: TextFileName;
+  text: string;
+  empty: string;
+  refreshing: boolean;
+  onSave: (text: string) => Promise<void>;
+  onBack: () => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const { setError, run, alert } = useChanges();
   const id = useId();
-  const save = async () => {
-    if (draft !== null && (await run(() => onSave(draft)))) setDraft(null);
+  const changeDraft = (value: string | null) => {
+    setError(null);
+    setSaved(false);
+    setDraft(value);
   };
-  const reading = () =>
-    empty !== undefined && text.trim() === "" ? (
-      <Empty key="0"><EmptyDescription>{empty}</EmptyDescription></Empty>
-    ) : (
-      <div key="0" className="agent-file-group agent-file-text">{text}</div>
-    );
+  const save = async () => {
+    if (draft !== null && await run(() => onSave(draft))) {
+      setDraft(null);
+      setSaved(true);
+    }
+  };
+  const reading = file === "Memory" && text.trim() === "" ? (
+    <Empty key={text}><EmptyDescription>{empty}</EmptyDescription></Empty>
+  ) : (
+    <div key={text} className="agent-file-group agent-file-text">{text}</div>
+  );
   return (
     <FileDocument
       file={file}
       saved={saved}
       onBack={onBack}
-      mode={draft === null ? { kind: "editable", onEdit: () => edit(text) } : { kind: "editing", onSave: save, onCancel: cancel }}
+      alert={alert}
+      mode={draft === null
+        ? { kind: "editable", disabled: refreshing, onEdit: () => changeDraft(text) }
+        : { kind: "editing", onSave: save, onCancel: () => changeDraft(null) }}
     >
-      <Fades>{draft === null ? reading() : (
-        <Field key="1">
+      <Fades>{draft === null ? (
+        <div key="reading" className="agent-file-reading"><Fades>{reading}</Fades></div>
+      ) : (
+        <Field key="editing">
           <FieldLabel htmlFor={id}>{file}</FieldLabel>
           <Textarea id={id} rows={12} value={draft} onChange={(event) => setDraft(event.target.value)} />
         </Field>
@@ -359,10 +347,6 @@ function LoadedFile<T>({
 /** Agent Identity's load, which the profile's header and its editor share. */
 type IdentityLoad = ReturnType<typeof useLoad<AgentIdentityData>>;
 
-function loadIdentity(chatServiceUrl: string) {
-  return loadAgentFile(chatServiceUrl, "agent/identity", "Identity") as Promise<AgentIdentityData>;
-}
-
 /** Agent Identity's editor, opened from the avatar's pencil in place of the tab the user was on, which closing returns to. */
 function IdentityEditor({
   chatServiceUrl,
@@ -382,7 +366,7 @@ function IdentityEditor({
 }) {
   const { setError, active, run, alert } = useChanges();
   const save = async (identity: AgentIdentityData, changedPicture: string | null | undefined) => {
-    await saveDocument(chatServiceUrl, "identity", identity, "Identity");
+    await saveAgentFile(chatServiceUrl, "Identity", identity);
     if (!active.current) throw new Error("Saving Identity cancelled: its editor closed.");
     if (isAccountCurrent?.() === false) throw new Error("Saving Identity cancelled: its account changed or is switching.");
     identityFile.update(() => identity);
@@ -394,9 +378,8 @@ function IdentityEditor({
   };
   return (
     <div className="agent-files">
-      {alert}
       <LoadedFile file="Identity" load={identityFile} onBack={onClose}>
-        {(identity) => <IdentityFile identity={identity} picture={picture} onSave={save} onError={setError} onClose={onClose} run={run} />}
+        {(identity) => <IdentityFile identity={identity} picture={picture} onSave={save} onError={setError} onClose={onClose} run={run} alert={alert} />}
       </LoadedFile>
     </div>
   );
@@ -409,58 +392,37 @@ const CARD = {
 } as const;
 
 /** How many lines a card's file holds once it loads, or that it holds none; until then nothing. */
-function count(file: "Soul" | "Memory", state: LoadState<string>): string {
+function count(file: TextFileName, state: LoadState<string>): string {
   if (state.status !== "loaded") return "";
   const lines = state.value.split("\n").filter((line) => line.trim() !== "").length;
   if (lines === 0) return CARD[file].none;
   return `${lines} ${lines === 1 ? "line" : "lines"}`;
 }
 
-/**
- * The Personalization tab: Soul and Memory as side-by-side cards (Muse Fig 16), each opening its file as a read-only document with Edit;
- * each file loads on its own, so one that fails says why without hiding the other, and they reload whenever `revision` changes.
- */
 function PersonalizationPanel({ chatServiceUrl, revision, onSaved, memory }: { chatServiceUrl: string; revision: number; onSaved: () => void; memory: boolean }) {
   const key = `${chatServiceUrl} ${revision}`;
-  const soulFile = useLoad(async () => ((await loadAgentFile(chatServiceUrl, "agent/soul", "Soul")) as { content: string }).content, key);
-  const memoryFile = useLoad(async () => memory ? ((await loadAgentFile(chatServiceUrl, "files/written-memory", "Memory")) as { content: string }).content : "", key);
-  const [open, setOpen] = useState<"Soul" | "Memory" | null>(null);
-  const [saved, setSaved] = useState(false);
-  const { setError, run, alert } = useChanges(() => setSaved(false), () => setSaved(true));
-  const clear = () => {
-    setSaved(false);
-    setError(null);
+  const soul = useLoad(async () => (await loadAgentFile(chatServiceUrl, "Soul")).content, key);
+  const writtenMemory = useLoad(async () => memory ? (await loadAgentFile(chatServiceUrl, "Memory")).content : "", `${key} ${memory}`);
+  const files = { Soul: soul, Memory: writtenMemory };
+  const [selected, setSelected] = useState<TextFileName | null>(null);
+  const open = selected === "Memory" && !memory ? null : selected;
+  const show = (file: TextFileName) => {
+    if (files[file].state.status === "loaded") files[file].refresh();
+    setSelected(file);
   };
-  const show = (file: "Soul" | "Memory" | null) => {
-    clear();
-    setOpen(file);
+  const save = async (file: TextFileName, content: string) => {
+    await saveAgentFile(chatServiceUrl, file, { content });
+    files[file].update(() => content);
+    if (file === "Soul") onSaved();
   };
-  const saveSoul = async (soul: string) => {
-    await saveDocument(chatServiceUrl, "soul", { content: soul }, "Soul");
-    soulFile.update(() => soul);
-    onSaved();
-  };
-  const saveMemory = async (content: string) => {
-    await saveWrittenMemory(chatServiceUrl, content);
-    memoryFile.update(() => content);
-  };
-
-  const files = {
-    Soul: { load: soulFile, save: saveSoul, empty: undefined },
-    Memory: { load: memoryFile, save: saveMemory, empty: "No memories yet." },
-  };
-  const fileProps = { run, onModeChange: clear, saved, onBack: () => show(null) };
-  const openFile = (file: "Soul" | "Memory") => (
-    <LoadedFile file={file} load={files[file].load} onBack={fileProps.onBack}>
-      {(text) => <TextFile file={file} text={text} empty={files[file].empty} onSave={files[file].save} {...fileProps} />}
-    </LoadedFile>
-  );
+  const back = () => setSelected(null);
 
   return (
     <div className="agent-files">
-      {alert}
       {open ? (
-        openFile(open)
+        <LoadedFile file={open} load={files[open]} onBack={back}>
+          {(text) => <TextFile key={open} file={open} text={text} refreshing={files[open].refreshing} empty="No memories yet." onSave={(content) => save(open, content)} onBack={back} />}
+        </LoadedFile>
       ) : (
         <div className="agent-file-cards">
           {(memory ? (["Soul", "Memory"] as const) : (["Soul"] as const)).map((file) => {
@@ -469,7 +431,7 @@ function PersonalizationPanel({ chatServiceUrl, revision, onSaved, memory }: { c
               <Item key={file} render={<button type="button" />} className={`agent-file-card flex-nowrap items-stretch gap-0 ${tint}`} aria-label={`Open ${file}`} onClick={() => show(file)}>
                 <span className="agent-file-card-title">{file}</span>
                 <span className="agent-file-card-hint">{CARD[file].hint}</span>
-                <span className="agent-file-card-count">{count(file, files[file].load.state)}</span>
+                <span className="agent-file-card-count">{count(file, files[file].state)}</span>
                 <Icon className="agent-file-card-icon" fill="currentColor" aria-hidden="true" />
               </Item>
             );
@@ -546,7 +508,7 @@ function AgentProfile({
       setEditing(false);
     }
   }
-  const identityFile = useLoad(() => loadIdentity(chatServiceUrl), `${chatServiceUrl} ${revision}`);
+  const identityFile = useLoad(() => loadAgentFile(chatServiceUrl, "Identity"), `${chatServiceUrl} ${revision}`);
   const character = identityFile.state.status === "loaded" ? identityFile.state.value.character.trim() : "";
   const editor = editing && profile !== null;
   const keptComputer = computer !== undefined && tab === "Computer" && !editor;

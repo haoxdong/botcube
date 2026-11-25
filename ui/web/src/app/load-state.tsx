@@ -12,18 +12,19 @@ export type LoadState<T> = { status: "loading" } | { status: "loaded"; value: T 
 
 /**
  * Loads `load()` on mount and again whenever `key` changes, keeping what it showed until the new
- * answer arrives; `retry` loads again from the loading state, and `update` changes the loaded value.
+ * answer arrives. `refresh` also keeps the last result visible, while `retry` starts from the loading state.
  */
 export function useLoad<T>(load: () => Promise<T>, key: unknown) {
-  const [state, setState] = useState<LoadState<T>>({ status: "loading" });
+  const [result, setResult] = useState<{ state: LoadState<T>; key: unknown; attempt: number }>();
+  const state: LoadState<T> = result?.state ?? { status: "loading" };
   const [attempt, setAttempt] = useState(0);
 
   useEffect(
     () => {
       let current = true;
       load().then(
-        (value) => current && setState({ status: "loaded", value }),
-        (failure: Error) => current && setState({ status: "failed", error: failure.message }),
+        (value) => current && setResult({ state: { status: "loaded", value }, key, attempt }),
+        (failure: Error) => current && setResult({ state: { status: "failed", error: failure.message }, key, attempt }),
       );
       return () => {
         current = false;
@@ -33,13 +34,18 @@ export function useLoad<T>(load: () => Promise<T>, key: unknown) {
     [key, attempt],
   );
 
+  const refresh = () => setAttempt((count) => count + 1);
   const retry = () => {
-    setState({ status: "loading" });
-    setAttempt((count) => count + 1);
+    setResult(undefined);
+    refresh();
   };
   const update = (change: (value: T) => T) =>
-    setState((current) => (current.status === "loaded" ? { status: "loaded", value: change(current.value) } : current));
-  return { state, retry, update };
+    setResult((current) => current?.state.status === "loaded"
+      ? { ...current, state: { status: "loaded", value: change(current.state.value) } }
+      : current);
+  const refreshing = result?.state.status === "loaded" &&
+    (!Object.is(result.key, key) || result.attempt !== attempt);
+  return { state, retry, refresh, refreshing, update };
 }
 
 /** A placeholder in the shape of text, shown while `label` loads. */

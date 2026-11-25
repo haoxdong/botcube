@@ -86,7 +86,9 @@ it('keeps a failed save as a draft and says why', async () => {
 
   edit(memory, '- Trades gold\n');
 
-  expect(await screen.findByRole('alert')).toHaveTextContent(/^Saving Memory failed: Files are unavailable$/);
+  const alert = await memory.findByRole('alert');
+  expect(alert).toHaveTextContent("Couldn't save Memory. Files are unavailable");
+  expect(alert.previousElementSibling?.tagName).toBe('HEADER');
   expect(memory.getByRole('textbox', { name: 'Memory' })).toHaveValue('- Trades gold\n');
   expect(memory.queryByText('Saved')).toBeNull();
   expect(stored.content).toBe('- Trades copper\n');
@@ -99,4 +101,28 @@ it('shows no Memory card and loads no Written Memory when the User keeps none', 
   expect(await screen.findByRole('button', { name: 'Open Soul' })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Open Memory' })).toBeNull();
   expect(stored.reads).toBe(0);
+});
+
+it('opens the current Written Memory after it changes in Files', async () => {
+  writtenMemory('- Lives in Paris\n');
+  renderProfile();
+  const first = await openMemory('- Lives in Paris');
+  fireEvent.click(first.getByRole('button', { name: 'Back' }));
+
+  const refresh = Promise.withResolvers<void>();
+  chatService.use(http.get('http://chat.test/files/written-memory', async () => {
+    await refresh.promise;
+    return HttpResponse.json({ content: '- Lives in London\n' });
+  }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open Memory' }));
+  const current = within(screen.getByRole('article', { name: 'Memory' }));
+  expect(current.getByText('- Lives in Paris')).toBeVisible();
+  const editButton = current.getByRole('button', { name: 'Edit Memory' });
+  expect(editButton).toBeDisabled();
+
+  refresh.resolve();
+  expect(await current.findByText('- Lives in London')).toBeVisible();
+  expect(editButton).toBeEnabled();
+  fireEvent.click(editButton);
+  expect(current.getByRole('textbox', { name: 'Memory' })).toHaveValue('- Lives in London\n');
 });
