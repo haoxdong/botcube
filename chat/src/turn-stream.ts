@@ -3,6 +3,7 @@ import { runFinishedOutcome } from './run-outcome.js';
 import type { TurnTiming } from './turn-timing.js';
 import { AbstractAgent, CompatibilityBoundary, EventType, transformChunks, type BaseEvent } from '@ag-ui/client';
 import { Subject } from 'rxjs';
+import { createParser } from 'eventsource-parser';
 import { applyPatch, type Operation } from 'fast-json-patch';
 import { AGENT_DOCUMENT_EDITED } from './agent-documents.js';
 import { LiveViewInjector } from './live-view.js';
@@ -30,12 +31,6 @@ function decoded(text: string): Record<string, unknown> {
   } catch {
     return {};
   }
-}
-
-/** SSE joins all of a frame's data fields with a newline before decoding JSON. */
-export function sseFrameData(lines: readonly string[]): string | null {
-  const data = lines.filter((line) => line.startsWith('data:')).map((line) => line.slice(5).replace(/^ /, ''));
-  return data.length === 0 ? null : data.join('\n');
 }
 
 export function credentialValues(forwardedProps: Record<string, unknown>, credentialProps: readonly string[], invocationToken?: string): string[] {
@@ -655,6 +650,8 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
   let monotonicReadAt = performance.now();
   let pending = '';
   let frame: string[] = [];
+  let events: Record<string, unknown>[] = [];
+  const parser = createParser({ onEvent: ({ data }) => events.push(decoded(data)) });
   const guard = turnCredentialGuard(credentials, turn.initialMessages, turn.held);
   const withheld: Frame[] = [];
   let hold: { since: number; kinds: string[] } | undefined;
@@ -693,16 +690,13 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
 
   const flush = () => {
     if (frame.length === 0) return [];
-    const data = sseFrameData(frame);
-    const events = data === null ? [] : [decoded(data)];
-    const dataLines = frame.filter((line) => line.startsWith('data:'));
-    const liveViewEvents = dataLines.length === 1 && dataLines[0]?.startsWith('data: ')
-      ? events
-      : dataLines.filter((line) => line.startsWith('data: ')).map((line) => decoded(line.slice(6)));
-    const injected = liveView.after(liveViewEvents);
-    const text = `${frame.join('\n')}\n\n${injected.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('')}`;
+    const wire = `${frame.join('\n')}\n\n`;
+    parser.feed(wire);
+    const injected = liveView.after(events);
+    const text = wire + injected.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('');
     const out = { text, events, emittedEvents: [...events, ...injected], readAt, monotonicReadAt };
     frame = [];
+    events = [];
     return [out];
   };
 

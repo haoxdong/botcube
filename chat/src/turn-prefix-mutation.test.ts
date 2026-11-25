@@ -1,15 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { sseFrameData, turnCredentialGuard, credentialValues } from './turn-stream.js';
+import { turnCredentialGuard, credentialValues } from './turn-stream.js';
 
 const text = (delta: string, messageId = 'answer') => ({ type: 'TEXT_MESSAGE_CONTENT', messageId, delta });
 const start = (messageId = 'answer') => ({ type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' });
 const snapshot = (messages: unknown[]) => ({ type: 'MESSAGES_SNAPSHOT', messages });
 
 describe('Turn credential prefix boundaries', () => {
-  it('removes only the optional leading SSE data space', () => {
-    expect(sseFrameData(['data:answer has spaces', 'data:  indented', 'event: custom'])).toBe('answer has spaces\n indented');
-  });
-
   it('collects only existing, nonempty credentials and URL query values', () => {
     expect(credentialValues({}, ['missing'])).toEqual([]);
     expect(credentialValues({ files: [], cdp: 'ordinary text' }, ['cdp'])).toEqual(['ordinary text']);

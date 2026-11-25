@@ -871,8 +871,6 @@ describe('a relayed Turn', () => {
     ['a JSON string', 'data: "Session: abc-1 "'],
     ['a JSON array', 'data: ["Session: abc-1 "]'],
     ['a non-data field', 'event:{"type":"X","delta":"Session: abc-1 "}'],
-    ['an unspaced data line', 'data:{"type":"X","delta":"Session: abc-1 "}'],
-    ['a JSON event split over data lines', 'data: {"type":"X",\ndata: "delta":"Session: abc-1 "}'],
   ])('preserves %s without injecting a live view', async (_, line) => {
     const frame = `${line}\n\n`;
     expect((await chunksOf(await relay([frame]))).join('')).toBe(frame + incomplete);
@@ -885,6 +883,16 @@ describe('a relayed Turn', () => {
     );
   });
 
+  it.each([
+    'data: {"type":"TOOL_CALL_RESULT",\ndata: "content":"Session: browser-1"}\n\n',
+    'data:{"type":"TOOL_CALL_RESULT","content":"Session: browser-1"}\n\n',
+  ])('opens Browser Live View for a complete SSE event: %j', async (frame) => {
+    const finished = 'data: {"type":"RUN_FINISHED"}\n\n';
+    expect((await chunksOf(await relay([frame, finished]))).join('')).toBe(
+      frame + 'data: {"type":"CUSTOM","name":"botcube:browser-live-view","value":{"open":true,"sessionId":"browser-1"}}\n\n' + finished,
+    );
+  });
+
   it('follows a frame that opens the browser live view with the live-view event', async () => {
     const frame = 'data: {"type":"TOOL_CALL_RESULT","content":"Session: browser-1"}\n\n';
 
@@ -894,14 +902,10 @@ describe('a relayed Turn', () => {
     ]);
   });
 
-  it('follows a frame with the live-view event of each data line that opens or closes the live view', async () => {
+  it('preserves malformed SSE data without interpreting its lines as separate Live View events', async () => {
     const frame = 'data: {"type":"TOOL_CALL_RESULT","content":"Session: browser-1"}\ndata: {"type":"TOOL_CALL_RESULT","content":"browser closed"}\n\n';
 
-    expect(await chunksOf(await relay([frame]))).toEqual([
-      `${frame}data: {"type":"CUSTOM","name":"botcube:browser-live-view","value":{"open":true,"sessionId":"browser-1"}}\n\n` +
-        'data: {"type":"CUSTOM","name":"botcube:browser-live-view","value":{"open":false}}\n\n',
-      incomplete,
-    ]);
+    expect(await chunksOf(await relay([frame]))).toEqual([frame, incomplete]);
   });
 
   it('ends with a run error after the frame in flight when the upstream stream fails', async () => {
