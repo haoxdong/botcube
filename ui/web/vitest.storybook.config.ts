@@ -124,7 +124,7 @@ export default defineConfig({
         provide: { screen: name, [STORYBOOK_TEST_INITIAL_GLOBALS_PROVIDE_KEY]: { viewport: { value: name, isRotated: false } } },
         provider: playwright({
           contextOptions: { ...viewports[name], viewport: { width: name === 'phone' ? 390 : 1440, height: 900 }, isMobile: false, deviceScaleFactor: 1, colorScheme: 'light', locale: 'en-US', timezoneId: 'UTC' },
-          launchOptions: { args: renderingProfile('software').args },
+          launchOptions: { args: [...renderingProfile('software').args, '--disable-skia-runtime-opts'] },
         }),
       })) : [{ browser: 'chromium' }],
       expect: {
