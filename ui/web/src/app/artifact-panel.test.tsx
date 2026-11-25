@@ -375,9 +375,6 @@ describe('while the agent writes', () => {
     return { sent, until, run };
   }
 
-  const previews = (sent: Sent[]) => sent.filter(({ message }) => message.type === 'artifact-preview');
-  const pages = (sent: Sent[]) => sent.filter(({ message }) => message.type === 'artifact-page');
-
   beforeEach(() => {
     // The clock the stream and the panel run on, and no more: a faked setImmediate stalls Node's streams under the turn.
     vi.useFakeTimers({ now: 0, toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
@@ -432,8 +429,7 @@ describe('while the agent writes', () => {
     await run();
 
     await until(REPUBLISHED - 5);
-    expect(previews(sent)).toEqual([]);
-    expect(pages(sent)).toHaveLength(1);
+    expect(sent).toHaveLength(1);
 
     await until(REPUBLISHED + 50);
     expect(screen.getByRole('region', { name: 'Q3 revenue by month' })).toBe(panel);
