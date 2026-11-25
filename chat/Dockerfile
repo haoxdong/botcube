@@ -9,8 +9,6 @@ COPY ${BOTCUBE_ROOT}/patches/ patches/
 COPY ${BOTCUBE_ROOT}/chat/ chat/
 COPY ${BOTCUBE_ROOT}/config/ config/
 COPY ${BOTCUBE_ROOT}/examples/bot/bot.yaml /bot/bot.yaml
-COPY ${BOTCUBE_ROOT}/examples/enterprise/botcube.yaml examples/enterprise/botcube.yaml
-COPY ${BOTCUBE_ROOT}/examples/public/botcube.yaml examples/public/botcube.yaml
 COPY ${BOTCUBE_ROOT}/harness/deepagents/artifact-check/package.json harness/deepagents/artifact-check/
 COPY ${BOTCUBE_ROOT}/credential-source/src/botcube_credential_source/refresh-windows.json credential-source/src/botcube_credential_source/refresh-windows.json
 COPY ${BOTCUBE_ROOT}/harness/deepagents/artifact-check/src/ harness/deepagents/artifact-check/src/
@@ -29,7 +27,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends chromium \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/chat-service
 COPY --from=build /workspace/botcube/chat/dist/ dist/
-COPY --from=build /workspace/botcube/examples/ examples/
 COPY --from=build /bot/ /bot/
 ENV PORT=8123
 EXPOSE 8123

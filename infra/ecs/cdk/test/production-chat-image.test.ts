@@ -1,5 +1,5 @@
 // The preview origin's Chat Service and Credential Service images: the one the BotCube Config names, else a build of
-// the Dockerfile the bot's own ECS app names, else the stock image (the Chat Service on a BotCube Config its image ships).
+// the Dockerfile the bot's own ECS app names, else the stock image.
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -43,21 +43,20 @@ test('the public example, with no chat of its own, builds the stock Chat Service
   const image = productionChatImage(botcubeRoot, path.join(botcubeRoot, 'examples/public/deploy'));
   expect(image).toEqual({
     file: 'chat/Dockerfile', config: path.join(botcubeRoot, 'examples/public/botcube.yaml'),
-    botcubeConfig: '/opt/chat-service/examples/public/botcube.yaml',
   });
   expect(repositoryImageProps(botcubeRoot, image.file).file).toBe('chat/Dockerfile');
   expect(fs.readFileSync(path.join(botcubeRoot, image.file), 'utf8'))
-    .toContain('COPY ${BOTCUBE_ROOT}/examples/public/botcube.yaml examples/public/botcube.yaml');
+    .not.toContain('botcube.yaml');
 });
 
 test("a bot's own Credential Service Dockerfile, which its ECS app names, builds", () => {
   expect(productionCredentialImage(botcubeRoot, 'product/credential-service/Dockerfile')).toBe('product/credential-service/Dockerfile');
 });
 
-test('the public example, with no Credential Service of its own, builds the stock one from the package and the example BotCube Configs it copies', () => {
+test('the public example, with no Credential Service of its own, builds the stock one from its packages', () => {
   const file = productionCredentialImage(botcubeRoot);
   expect(file).toBe('credential-service/Dockerfile');
-  expect(repositoryImageProps(botcubeRoot, file).exclude).toEqual(['*', '!credential-service/Dockerfile', '!credential-source', '!credential-service', '!examples/enterprise/botcube.yaml', '!examples/public/botcube.yaml', '**/*.test.ts']);
+  expect(repositoryImageProps(botcubeRoot, file).exclude).toEqual(['*', '!credential-service/Dockerfile', '!credential-source', '!credential-service', '**/*.test.ts']);
 });
 
 /** The task's container image and execution role grants, and the audit-copy function's image, the images give. */

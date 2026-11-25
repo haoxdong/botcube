@@ -8,8 +8,6 @@ from pathlib import Path
 import deploy_identity
 import pytest
 
-from botcube_credential_service.botcube_config import yaml_document
-
 INFRA = Path(__file__).resolve().parents[1]
 PUBLIC_EXAMPLE = INFRA.parent / 'examples/public/deploy'
 NAME, RETIRED_REPOSITORY = 'BOTCUBE_DEPLOY_ROOT', 'BOTCUBE_DEPLOY_REPOSITORY_ROOT'
@@ -21,7 +19,9 @@ ALL_NAMES = (NAME, RETIRED_REPOSITORY, OLD_NAME, OLD_REPOSITORY, SUBJECT)
 
 def deploy_root(tmp_path: Path, name: str) -> Path:
     """A deploy root beside the public example's BotCube Config, named `own-<name>`, so a reader that found it shows its names."""
-    config = yaml_document((PUBLIC_EXAMPLE.parent / 'botcube.yaml').read_text())
+    config = json.loads(subprocess.check_output([
+        'node', str(INFRA.parent / 'config/cli.ts'), 'resolve', str(PUBLIC_EXAMPLE.parent / 'botcube.yaml'),
+    ]))['config']
     config.update(name=f'own-{name.lower().replace("_", "-")}')
     config['names'].update(clusterName=f'{name.lower()}-cluster', deployRoleName=f'{name.lower()}-role')
     root = tmp_path / name / 'deploy'

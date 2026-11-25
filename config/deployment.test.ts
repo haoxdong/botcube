@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -87,14 +86,10 @@ describe("a deploy root's native BotCube Config", () => {
     expect(() => readDeployment(deployRoot(config))).toThrow('names.runtimeAgentRuntimeName:');
   });
 
-  it.each(['acme-bot', 'example', 'a-b-c'])('derives fixed names identically in Node and Python for %s', (name) => {
+  it.each(['acme-bot', 'example', 'a-b-c'])('derives fixed names and keeps overrides for %s', (name) => {
     const config = { name, names: { clusterName: 'custom-cluster', chatServiceTaskRoleName: 'custom-role' } };
-    const reader = fileURLToPath(new URL('../credential-service/src/botcube_credential_service/botcube_config.py', import.meta.url));
-    const python = execFileSync('python3', ['-c',
-      'import json, runpy, sys; print(json.dumps(runpy.run_path(sys.argv[1])["deployment_names"](json.loads(sys.argv[2]))))',
-      reader, JSON.stringify(config)], { encoding: 'utf8' });
-    expect(deploymentNames(config)).toEqual(JSON.parse(python));
     expect(deploymentNames(config)).toMatchObject({
+      clusterName: 'custom-cluster', chatServiceTaskRoleName: 'custom-role',
       parkStateParameterName: `/${name}/production/park-state`,
       originPullClientSecretName: `/${name}/cloudflare/origin-pull-client`,
       originTokenSecretName: `/${name}/cloudflare/origin-api-token`,

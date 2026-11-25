@@ -5,5 +5,3 @@
 FROM harness
 COPY examples/bot/bot.yaml /bot/bot.yaml
 COPY examples/bot/skills/ /bot/skills/
-COPY examples/public/botcube.yaml /opt/botcube/examples/public/botcube.yaml
-COPY examples/enterprise/botcube.yaml /opt/botcube/examples/enterprise/botcube.yaml

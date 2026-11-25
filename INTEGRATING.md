@@ -48,7 +48,7 @@ docker build -f chat/Dockerfile --build-arg BOTCUBE_ROOT=. -t chat .
 docker build -f credential-service/Dockerfile --build-arg BOTCUBE_ROOT=. -t credential .
 ```
 
-The Chat Service image is stock and ships the BotCube Configs under `examples/`; set `BOTCUBE_CONFIG` to the one it runs, such as `/opt/chat-service/examples/public/botcube.yaml`. The stock Credential Service serves OpenAI and any models Endpoint, with no site provider. It reads its Vault from `BOTCUBE_VAULT_TABLE` and `BOTCUBE_VAULT_KMS_KEY_ID` and its invocation secret from `BOTCUBE_CREDENTIAL_INVOCATION_SECRET`.
+The deploy publishes the resolved BotCube Config and sets `BOTCUBE_CONFIG` to its locator. The stock Credential Service serves OpenAI and any models Endpoint, with no site provider. It reads its Vault from `BOTCUBE_VAULT_TABLE` and `BOTCUBE_VAULT_KMS_KEY_ID` and its invocation secret from `BOTCUBE_CREDENTIAL_INVOCATION_SECRET`.
 
 Export the static UI with the URL of your deployed Chat Service:
 
@@ -276,7 +276,7 @@ The rule has no other exceptions: any other name fails the test.
 
 ### Migrate from deploy-root files
 
-Before synthesis reads `botcube.yaml`, it checks the bot directory: the TypeScript reader's `botDirectoryErrors` in [`config/read.cjs`](config/read.cjs), and the Python twin's `bot_directory_errors` in [`botcube_config.py`](credential-service/src/botcube_credential_service/botcube_config.py). Each error names what to do.
+Before synthesis reads `botcube.yaml`, it checks the bot directory: the TypeScript reader calls `botDirectoryErrors` in [`config/read.cjs`](config/read.cjs). Each error names what to do.
 
 **A retired file.** A deploy root that still holds `identity.json`, `agentcore/agentcore.json` or `agentcore/aws-targets.json` fails with one line for the file and one for each field it holds:
 

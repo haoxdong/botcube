@@ -277,7 +277,4 @@ export const jsonSchemas = () => ({
 
 export const jsonSchemaCopies: Readonly<Partial<Record<string, readonly string[]>>> = {
   'bot.schema.json': ['../harness/deepagents/src/botcube_harness_deepagents/bot.schema.json'],
-  'botcube.schema.json': [
-    '../credential-service/src/botcube_credential_service/botcube.schema.json',
-  ],
 };

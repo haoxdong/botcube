@@ -19,15 +19,14 @@ const BOTCUBE = path.resolve(cdkPackageRoot, '../../..');
 /**
  * The preview origin's Chat Service Dockerfile and the BotCube Config it serves (`config`). A bot's own (`own`) builds on
  * the BotCube Config beside its deploy root, as an image the BotCube Config names (`named`) runs on; the stock Chat
- * Service runs on the public example's, which its image ships.
+ * Service uses the public example.
  */
-export function productionChatImage(repositoryRoot: string, deployRoot: string, own?: string, named?: string): { file: string; config: string; botcubeConfig?: string } {
+export function productionChatImage(repositoryRoot: string, deployRoot: string, own?: string, named?: string): { file: string; config: string } {
   const file = own ?? path.relative(repositoryRoot, path.join(BOTCUBE, 'chat/Dockerfile'));
   if (own || named) return { file, config: path.join(deployRoot, '../botcube.yaml') };
   return {
     file,
     config: path.join(BOTCUBE, 'examples/public/botcube.yaml'),
-    botcubeConfig: '/opt/chat-service/examples/public/botcube.yaml',
   };
 }
 
