@@ -22,9 +22,9 @@ from deepagents.backends.protocol import (
     FileUploadResponse,
     WriteResult,
 )
-from deepagents.graph import DeepAgentState
 from deepagents.middleware._utils import append_to_system_message
 from deepagents.middleware.filesystem import FilesystemMiddleware, FilesystemPermission
+from deepagents.middleware.memory import MemoryState
 from deepagents.middleware.skills import (
     SKILLS_SYSTEM_PROMPT,
     SkillsMiddleware,
@@ -42,12 +42,11 @@ from langchain.agents.middleware.types import (
     OmitFromOutput,
     PrivateStateAttr,
 )
-from langchain_core.messages import AnyMessage, ToolMessage
+from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from langgraph.constants import CONFIG_KEY_CHECKPOINTER
 from langgraph.errors import GraphBubbleUp
-from langgraph.graph.message import add_messages
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
@@ -76,14 +75,10 @@ class _SkillMetadata(TypedDict):
     allowed_tools: list[str]
 
 
-class PlainState(DeepAgentState):
-    """deepagents' state with `messages` as a plain list: each checkpoint holds every message,
-    so no read walks ancestor checkpoints (ADR 0067 decision 9)."""
+class PlainState(MemoryState):
+    """Stock LangChain messages and Deep Agents memory for all Session checkpoints (ADR 0067 decision 9)."""
 
-    messages: Annotated[list[AnyMessage], add_messages]  # type: ignore[assignment]
-    # Memory blocks (`session_memory`, deepagents' MemoryState) every Session graph keeps in its checkpoint.
     session_memory: NotRequired[Annotated[str, PrivateStateAttr]]
-    memory_contents: NotRequired[Annotated[dict[str, str], PrivateStateAttr]]
     last_model_call_at: NotRequired[Annotated[float, PrivateStateAttr]]
 
 

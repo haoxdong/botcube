@@ -2201,6 +2201,23 @@ def test_a_line_the_agent_writes_to_written_memory_opens_the_users_next_session(
     assert 'memories/AGENTS.md' in _keys(files_bucket)
 
 
+def test_a_session_post_keeps_the_written_memory_loaded_on_opening(
+    service: _Service, files_bucket: MountedFiles, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bot_writes_memory(monkeypatch)
+    files_bucket.write('memories/AGENTS.md', b'- Prefers copper')
+    assert service.turn('hello', files=_files())[-1]['type'] == 'RUN_FINISHED'
+    assert '- Prefers copper' in _written_memory(service.recorder.prompts[-1])
+
+    files_bucket.write('memories/AGENTS.md', b'- Prefers gold')
+    asyncio.run(session_api.post_message('user-1', 'thread-1', 'A scheduled note.'))
+
+    assert service.turn('continue', files=_files())[-1]['type'] == 'RUN_FINISHED'
+    assert _written_memory(service.recorder.prompts[-1]) == '/memories/AGENTS.md\n\n- Prefers copper'
+    assert service.turn('hello', thread='chat-new', files=_files())[-1]['type'] == 'RUN_FINISHED'
+    assert _written_memory(service.recorder.prompts[-1]) == '/memories/AGENTS.md\n\n- Prefers gold'
+
+
 def test_a_user_with_no_written_memory_starts_empty(service: _Service, files_bucket: MountedFiles, monkeypatch: pytest.MonkeyPatch) -> None:
     _bot_writes_memory(monkeypatch)
 
