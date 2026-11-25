@@ -49,7 +49,7 @@ it('retains an uncertain Browser start and refuses to confirm teardown', async (
       control: unused, automationStream: unused, screenshot: unused, beforeProfileSave: unused,
       createProfile: unused, saveProfile: unused, deleteProfile: unused, stop: unused, handBack: unused }),
     files: () => ({ mount: async () => ({ accessPointArn: 'access', fileSystemArn: 'files', mountPath: '/mnt/files' }),
-      list: unused, uploadUrl: unused, downloadUrl: unused, link: unused, remove: unused, rename: unused, saveArtifact: unused, restoreArtifact: unused,
+      list: unused, uploadUrl: unused, downloadUrl: unused, link: unused, remove: unused, rename: unused, saveArtifact: unused, restoreArtifact: unused, writtenMemory: unused, saveWrittenMemory: unused,
       recoverCleanup: unused, mountBinding: unused, transfer: unused, delete: unused }) });
   await expect(computers.wake('owner', 'side')).rejects.toThrow('lost Browser receipt');
   expect(starts).toBe(1);

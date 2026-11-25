@@ -385,7 +385,7 @@ export default function App({
           }}
           isAccountCurrent={() => auth.isAccountCurrent?.(accountId) !== false}
           signIns={auth.signIns}
-          memory={BOT_SETTINGS.extractedMemory.enabled}
+          memory={BOT_SETTINGS.writtenMemory.enabled && auth.guest !== true}
         />,
         layoutElement,
       )}

@@ -49,7 +49,7 @@ const ANSWERS: Record<string, unknown> = {
     avatar: bot.agentIdentity.avatar,
   },
   '/agent/soul': { content: 'Lead with the answer, then the evidence behind it.\nBe candid about what you found, what you could not find, and how sure you are.\nRespect the user\'s time: no filler, no flattery.\nLearn how this user likes to work, and adapt to it.' },
-  '/agent/memory': { lines: [] },
+  '/files/written-memory': { content: '' },
   '/agent-computer': { state: 'asleep', screenshot: null },
   '/main-chat': { id: 'main-shots', messages },
   '/threads': {

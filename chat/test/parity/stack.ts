@@ -3,16 +3,19 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
+import { randomUUID } from 'node:crypto';
 import { inject } from 'vitest';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { FakeAgentCore } from '../fakes/fake-agentcore.js';
 import { FakeSessionApi } from '../fakes/fake-backends.js';
 import { HttpFake, sendJson } from '../fakes/http-fake.js';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable, RUNTIME_ARN } from '../fakes/stack.js';
-import { motoEndpoint } from '../fakes/moto.js';
+import { motoAws, motoEndpoint } from '../fakes/moto.js';
 import { BIND_ADDRESS, startOnFreePort } from '../fakes/process.js';
 import { Browser } from './browser.js';
 import { FakeEfs } from './fake-efs.js';
-import { testBotCubeConfig } from '../stock-bot.js';
+import { TestAccounts, testBotCubeConfig } from '../stock-bot.js';
 
 export { AWS_ACCESS_KEY_ID, createChatTable, RUNTIME_ARN };
 
@@ -93,10 +96,17 @@ export async function startStack(options: StackOptions = {}) {
     throw error;
   });
   const url = new URL(service.url).origin;
+  const accounts = new TestAccounts(name, DynamoDBDocumentClient.from(new DynamoDBClient(motoAws())), PARITY_BOT.accountKey);
   return {
     get url() { return url; },
     agentcore, sessionApi,  files,
     browser: () => new Browser(url),
+    /** A browser signed in to a new registered account, as a User whose Sign-in saved them. */
+    async signedInBrowser() {
+      const browser = new Browser(url);
+      browser.cookies.set(`${PARITY_BOT.accountKey}_session`, await accounts.signIn(`acct_${randomUUID()}`));
+      return browser;
+    },
     logs: () => service.output(),
     async stop() {
       await service.stop();

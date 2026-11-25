@@ -249,7 +249,7 @@ export const COMPONENTS: readonly Part[] = [
     name: 'error line',
     kind: 'ours',
     file: 'src/app/alert-line.tsx',
-    stories: [...WHOLE_APP, 'composer-file-upload-failed', 'reply-file-card-failed', 'memory-add-failed', 'scheduled-failed', 'sidebar-load-failed'],
+    stories: [...WHOLE_APP, 'composer-file-upload-failed', 'reply-file-card-failed', 'memory-save-failed-390', 'memory-save-failed-1440', 'scheduled-failed', 'sidebar-load-failed'],
     intended: [],
     marks: [
       // On one line, so stock parts that spell out their own role (Alert, FieldError) across lines are not copies.

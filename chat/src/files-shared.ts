@@ -14,6 +14,8 @@ export const URL_SECONDS = 300;
 export const POSIX_ID = 1000;
 /** How long the agent's Files credentials last: role chaining's ceiling, and the Runtime's longest microVM. */
 export const MOUNT_SECONDS = 3600;
+/** The User's Written Memory in their Files, which the agent loads when a Session starts (ADR 0095). */
+export const WRITTEN_MEMORY = 'memories/AGENTS.md';
 export const RETIREMENT_GRACE_MS = 24 * 60 * 60 * 1000;
 /** An EFS access point a browser Session mounts, as StartBrowserSession takes it. */
 export interface FilesMount {
@@ -79,6 +81,10 @@ export interface AccountFiles {
   /** A User's save of an Artifact edited in place: its Source and its next Artifact Version, authored by the User. */
   saveArtifact(accountId: string, save: ArtifactSave): Promise<SavedArtifact>;
   restoreArtifact(accountId: string, restore: ArtifactRestore): Promise<SavedArtifact>;
+  /** The text of the account's Written Memory; empty before it has one. */
+  writtenMemory(accountId: string): Promise<string>;
+  /** Replaces the account's Written Memory with `content`, creating it if need be: the last save wins. */
+  saveWrittenMemory(accountId: string, content: string): Promise<void>;
   mountBinding(accountId: string): Promise<FilesMountBinding>;
   /** Move every file into another account's Files for Account Claim, then retire the source access point. */
   transfer(sourceAccountId: string, destinationAccountId: string): Promise<void>;

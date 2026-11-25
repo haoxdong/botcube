@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { cp, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PutCommand } from '@aws-sdk/lib-dynamodb';
@@ -137,6 +137,45 @@ describe('EFS account Files', () => {
     await expect(files.rename(ACCOUNT, 'a.txt', 'c.txt')).rejects.toMatchObject({ status: 404 });
   });
 
+  describe('Written Memory', () => {
+    const AGENTS = () => path.join(root, HASH, 'memories/AGENTS.md');
+
+    it('a reader that opened the old text before a save still reads all of it, and the next read gets all the new', async () => {
+      const { files } = setup();
+      await put(HASH, 'memories/AGENTS.md', '- Lives in Paris\n');
+      const reader = await open(AGENTS(), 'r');
+      try {
+        await files.saveWrittenMemory(ACCOUNT, '- Lives in Lisbon\n');
+        expect(await reader.readFile('utf8')).toBe('- Lives in Paris\n');
+      } finally {
+        await reader.close();
+      }
+      expect(await files.writtenMemory(ACCOUNT)).toBe('- Lives in Lisbon\n');
+      expect((await files.list(ACCOUNT)).map(({ name }) => name)).toEqual(['memories/AGENTS.md']);
+    });
+
+    it('a save that cannot replace memories/AGENTS.md leaves no file of its own behind', async () => {
+      const { files } = setup();
+      await put(HASH, 'memories/AGENTS.md/kept.txt', 'kept');
+
+      await expect(files.saveWrittenMemory(ACCOUNT, '- Lives in Lisbon\n')).rejects.toThrow();
+
+      expect(await snapshot(path.join(root, HASH))).toEqual({ [path.join(root, HASH, 'memories/AGENTS.md/kept.txt')]: 'kept' });
+    });
+
+    it('refuses to save through a memories folder the agent swapped for a link, writing nothing there', async () => {
+      const { files } = setup();
+      const elsewhere = await mkdtemp(path.join(tmpdir(), 'elsewhere-'));
+      await mkdir(path.join(root, HASH), { recursive: true });
+      await symlink(elsewhere, path.join(root, HASH, 'memories'));
+
+      await expect(files.saveWrittenMemory(ACCOUNT, '- Lives in Lisbon\n')).rejects.toThrow();
+
+      expect(await readdir(elsewhere)).toEqual([]);
+      await rm(elsewhere, { recursive: true, force: true });
+    });
+  });
+
   describe('POST /files/artifact-restore', () => {
     const post = () => {
       const { files } = setup();
@@ -150,6 +189,7 @@ describe('EFS account Files', () => {
             wake: async () => { throw new Error('unused'); },
           },
           files: () => files,
+          writtenMemory: true,
         }));
       return (id: string, from: number, version: number) => app.request('/files/artifact-restore', {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, from, version }),

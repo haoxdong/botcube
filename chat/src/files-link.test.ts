@@ -48,6 +48,7 @@ function chatService(workspace?: string) {
     computers: { state: async () => { throw new Error('unused'); }, wake: async () => { throw new Error('unused'); } },
     files: () => files,
     workspace,
+    writtenMemory: true,
   }));
   return {
     linkFor: async (user: string, route: 'upload-url' | 'download-url', name: string, reply = false) => {

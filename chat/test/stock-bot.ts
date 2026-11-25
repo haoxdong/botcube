@@ -46,8 +46,8 @@ export const filed = (owner: string) => filingUserId(TEST_ACCOUNT_KEY, owner);
 export class TestAccounts extends AccountStore {
   private readonly sessions = new Map<string, Promise<string>>();
 
-  constructor(table: string, documents?: Pick<DynamoDBDocumentClient, 'send'>) {
-    super(table, { key: TEST_ACCOUNT_KEY, product: TEST_BOT.agentIdentity.name }, documents);
+  constructor(table: string, documents?: Pick<DynamoDBDocumentClient, 'send'>, key = TEST_ACCOUNT_KEY) {
+    super(table, { key, product: TEST_BOT.agentIdentity.name }, documents);
   }
 
   /** A live session token for `accountId`, registering the account on first use; a test's fake clock can expire one. */

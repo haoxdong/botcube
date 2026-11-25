@@ -12,12 +12,14 @@ import type { AgentComputerState } from './agent-computer.js';
 import { jsonPayload } from './payload.js';
 
 /** The reusable UI routes; account authentication and sandbox ownership are existing by the bot. */
-export function computerFilesRoutes({ requester, history, computers, files, workspace }: {
+export function computerFilesRoutes({ requester, history, computers, files, workspace, writtenMemory }: {
   requester(c: Context): Promise<Requester>;
   history: Pick<AccountHistory, 'owns'>;
   computers: { state(owner: string, threadId: string): Promise<AgentComputerState>; wake(owner: string, threadId: string): Promise<AgentComputerState> };
   workspace?: string | undefined;
-  files(c: Context): Pick<AccountFiles, 'list' | 'downloadUrl' | 'link' | 'remove' | 'rename' | 'uploadUrl' | 'saveArtifact' | 'restoreArtifact'>;
+  /** The bot settings' Written Memory gate (`writtenMemory.enabled`): false leaves the Memory panel no route. */
+  writtenMemory: boolean;
+  files(c: Context): Pick<AccountFiles, 'list' | 'downloadUrl' | 'link' | 'remove' | 'rename' | 'uploadUrl' | 'saveArtifact' | 'restoreArtifact' | 'writtenMemory' | 'saveWrittenMemory'>;
 }): Hono {
   const routes = new Hono();
   const threadIdOf = (c: Context) => { const value = c.req.query('thread_id')?.trim(); if (!value) throw new HttpError(422, 'thread_id must not be blank'); return value; };
@@ -73,6 +75,20 @@ export function computerFilesRoutes({ requester, history, computers, files, work
     const restore = ArtifactRestore.safeParse(await jsonPayload(c));
     if (!restore.success) throw new HttpError(422, 'id, from and version are required');
     return c.json(await files(c).restoreArtifact(owner, restore.data));
+  });
+  const writtenMemoryOwner = async (c: Context) => {
+    if (!writtenMemory) throw new HttpError(404, 'Written Memory is off for this bot');
+    const { owner, anonymous } = await requester(c);
+    if (anonymous === true) throw new HttpError(403, 'Sign in to keep Written Memory');
+    return owner;
+  };
+  routes.get('/files/written-memory', async (c) => c.json({ content: await files(c).writtenMemory(await writtenMemoryOwner(c)) }));
+  routes.put('/files/written-memory', async (c) => {
+    const owner = await writtenMemoryOwner(c);
+    const content = (await jsonPayload(c))?.content;
+    if (typeof content !== 'string') throw new HttpError(422, 'Written Memory must be text');
+    await files(c).saveWrittenMemory(owner, content);
+    return c.body(null, 204);
   });
   return routes;
 }

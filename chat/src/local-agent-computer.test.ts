@@ -149,7 +149,7 @@ function newComputer({
 function computerApp(local: ReturnType<typeof localAgentComputer>, history: Pick<AccountHistory, 'owns'> = owning()) {
   const app = new Hono()
     .route('/', local.routes)
-    .route('/', computerFilesRoutes({ requester, history, computers: local, files: () => { throw new Error('This test has no Files'); } }));
+    .route('/', computerFilesRoutes({ requester, history, computers: local, files: () => { throw new Error('This test has no Files'); }, writtenMemory: true }));
   app.onError((error, c) =>
     error instanceof HttpError ? c.json({ detail: error.detail }, error.status as 503) : c.json({ detail: error.message }, 500)
   );

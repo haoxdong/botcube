@@ -367,7 +367,8 @@ const service = {
   failing: new Map<string, number>(),
   agentIdentity: { name: 'Ada Bot', character: 'A research assistant', vibe: 'Warm', avatar: '' },
   soul: 'Be candid.',
-  memory: [] as { id: string; text: string }[],
+  /** The User's Written Memory, `memories/AGENTS.md` in their Files. */
+  writtenMemory: '',
   agentPicture: null as string | null,
   models: [] as { key: string; label: string; description?: string; provider: string }[],
 };
@@ -391,17 +392,10 @@ function scheduledTasks(route: string, pathname: string, init?: RequestInit): Re
   return undefined;
 }
 
-/** The agent's Memory: listed, and each line edited or deleted by its record ID. */
-function memoryService(pathname: string, init?: RequestInit): Response {
-  const method = init?.method ?? 'GET';
-  if (method === 'GET') return answer(200, { lines: service.memory });
-  const id = pathname.replace('/agent/memory/', '');
-  if (method === 'PUT') {
-    const { text } = JSON.parse(init?.body as string) as { text: string };
-    service.memory = service.memory.map((line) => (line.id === id ? { ...line, text } : line));
-  } else {
-    service.memory = service.memory.filter((line) => line.id !== id);
-  }
+/** The User's Written Memory, read and replaced whole. */
+function writtenMemoryService(init?: RequestInit): Response {
+  if (init?.method !== 'PUT') return answer(200, { content: service.writtenMemory });
+  service.writtenMemory = (JSON.parse(init.body as string) as { content: string }).content;
   return answer(204);
 }
 
@@ -445,7 +439,7 @@ async function chatService(url: string, init?: RequestInit): Promise<Response> {
   const profile = profileService(route, init);
   if (profile !== undefined) return profile;
   if (route === 'GET /account/sign-ins') return answer(200, { signIns: [{ site: 'example', name: 'Example site', status: 'not_linked', username: null }] });
-  if (pathname.startsWith('/agent/memory')) return memoryService(pathname, init);
+  if (pathname === '/files/written-memory') return writtenMemoryService(init);
   if (route === 'PUT /agent/identity') {
     service.agentIdentity = JSON.parse(init?.body as string);
     return answer(204);
@@ -640,10 +634,7 @@ beforeEach(() => {
     { key: 'deep', label: 'Deep', description: 'Slower, more thorough', provider: 'anthropic' },
     { key: 'fast', label: 'Fast', provider: 'anthropic' },
   ];
-  service.memory = [
-    { id: 'mem-copper', text: 'Trades copper futures' },
-    { id: 'mem-paris', text: 'Lives in Paris' },
-  ];
+  service.writtenMemory = '- Trades copper futures\n- Lives in Paris\n';
   window.history.replaceState(null, '', '/');
   uuids = 0;
   vi.spyOn(crypto, 'randomUUID').mockImplementation(() => `new-${++uuids}`);
@@ -7173,17 +7164,17 @@ describe('agent profile', () => {
     expect(panel.getAllByRole('button').map((card) => card.getAttribute('aria-label'))).toEqual(['Open Soul', 'Open Memory']);
     expect(panel.getAllByRole('button').map((card) => card.textContent)).toEqual([
       'SoulValues and habits2 lines',
-      'MemoryWhat it knows2 memories',
+      'MemoryWhat it knows2 lines',
     ]);
     expect(panel.queryByRole('textbox')).toBeNull();
   });
 
   it.each([
-    { soul: 'Be candid.', lines: [], counts: ['1 line', 'No memories yet'] },
-    { soul: '  ', lines: [{ id: 'mem-paris', text: 'Lives in Paris' }], counts: ['Empty', '1 memory'] },
-  ])('counts $counts', async ({ soul, lines, counts }) => {
+    { soul: 'Be candid.', memory: '', counts: ['1 line', 'No memories yet'] },
+    { soul: '  ', memory: '- Lives in Paris\n', counts: ['Empty', '1 line'] },
+  ])('counts $counts', async ({ soul, memory, counts }) => {
     service.soul = soul;
-    service.memory = lines;
+    service.writtenMemory = memory;
     await renderPage();
 
     await openPersonalization();
@@ -7282,267 +7273,28 @@ describe('agent profile', () => {
     expect(panel.getByRole<HTMLTextAreaElement>('textbox', { name: 'Soul' }).value).toBe('Be candid.');
   });
 
-  const memoryLines = (panel: Panel) =>
-    panel.getAllByRole('textbox', { name: /^Memory line \d+$/ }).map((line: HTMLElement) => (line as HTMLInputElement).value);
-  const memoryText = (panel: Panel) => panel.getAllByRole('listitem').map((line: HTMLElement) => line.textContent);
+  const memoryText = (panel: Panel) => panel.getByText('- Trades copper futures - Lives in Paris');
 
-  it('shows Memory as one line per memory, with a note on what it is', async () => {
+  it("shows Memory as the User's Written Memory, with a note on what it is", async () => {
     await renderPage();
     const panel = await openPersonalization();
 
     const memory = await openFile(panel, 'Memory');
 
-    expect(memoryText(memory)).toEqual(['Trades copper futures', 'Lives in Paris']);
-    expect(panel.queryByRole('textbox')).toBeNull();
-    expect(fetchMock).toHaveBeenCalledWith('http://chat.test/agent/memory', { credentials: 'include', cache: 'no-store' });
+    expect(memoryText(memory)).toHaveClass('agent-file-text');
+    expect(fetchMock).toHaveBeenCalledWith('http://chat.test/files/written-memory', { credentials: 'include', cache: 'no-store' });
     expect(memory.getByRole('region', { name: 'About Memory' })).toHaveTextContent(
-      /^What your agent has learned about you and keeps from chat to chat, one memory per line\. The agent reads it once when a chat starts\. Chats already open, including your Main chat, keep what they read\. Side chats you start later get your edits, but a memory the agent saved less than 15 minutes ago keeps its old text until then\. To fix or remove a fact, edit or delete every line that holds it\.$/,
+      /^What your agent keeps about you, saved as memories\/AGENTS\.md in your Files\. It reads the file when a chat starts, so Side chats you start later get your edits\.$/,
     );
-
-    await click(panel, 'Edit Memory');
-
-    expect(memoryLines(panel)).toEqual(['Trades copper futures', 'Lives in Paris']);
   });
 
-  const memoryPuts = () => fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT');
+  it('shows no Memory to a Guest, who keeps none', async () => {
+    await renderPage(auth({ status: 'unauthed', guest: true }));
 
-  it('saves the Memory lines the user edited, and only those', async () => {
-    await renderPage();
-    const panel = await openPersonalization();
-    const memory = await editFile(panel, 'Memory');
-
-    await userEvent.clear(panel.getByRole('textbox', { name: 'Memory line 2' }));
-    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), 'Lives in London');
-    await click(panel, 'Save Memory');
-
-    expect(memoryText(memory)).toEqual(['Trades copper futures', 'Lives in London']);
-    expect(panel.getByRole('status')).toHaveTextContent(/^Saved$/);
-
-    // A saved line is no longer an edit: saving again sends nothing.
-    await click(panel, 'Edit Memory');
-    await click(panel, 'Save Memory');
-
-    expect(fetchMock).toHaveBeenCalledWith('http://chat.test/agent/memory/mem-paris', {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text: 'Lives in London' }),
-    });
-    expect(memoryPuts()).toHaveLength(1);
-    expect(memoryText(memory)).toEqual(['Trades copper futures', 'Lives in London']);
-  });
-
-  const memoryDeletes = () => fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE');
-
-  it('deletes a Memory line on Save', async () => {
-    await renderPage();
-    const panel = await openPersonalization();
-    const memory = await editFile(panel, 'Memory');
-
-    await click(panel, 'Delete Memory line 1');
-
-    expect(memoryDeletes()).toHaveLength(0);
-    expect(memoryLines(panel)).toEqual(['Lives in Paris']);
-
-    // The lines left after a delete are not edits.
-    await click(panel, 'Save Memory');
-
-    expect(fetchMock).toHaveBeenCalledWith('http://chat.test/agent/memory/mem-copper', { method: 'DELETE', credentials: 'include' });
-    expect(memoryPuts()).toHaveLength(0);
-    expect(memoryText(memory)).toEqual(['Lives in Paris']);
-    expect(service.memory.map((line) => line.text)).toEqual(['Lives in Paris']);
-  });
-
-  it('keeps a deleted Memory line when the edit is cancelled', async () => {
-    await renderPage();
-    const panel = await openPersonalization();
-    const memory = await editFile(panel, 'Memory');
-
-    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
-    await click(panel, 'Delete Memory line 1');
-    await click(panel, 'Cancel editing Memory');
-
-    expect(memoryPuts()).toHaveLength(0);
-    expect(memoryDeletes()).toHaveLength(0);
-    expect(memoryText(memory)).toEqual(['Trades copper futures', 'Lives in Paris']);
-  });
-
-  it('says a saved Memory line was already removed and refreshes the list', async () => {
-    await renderPage();
-    const panel = await openPersonalization();
-    await editFile(panel, 'Memory');
-    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
-    service.memory = service.memory.filter((line) => line.id !== 'mem-paris');
-    service.failing.set('PUT /agent/memory/mem-paris', 404);
-
-    await click(panel, 'Save Memory');
-
-    expect(panel.getByRole('alert')).toHaveTextContent(/^This Memory line was already removed\.$/);
-    await waitFor(() => expect(memoryText(panel)).toEqual(['Trades copper futures']));
-    expect(panel.queryByText('Saved')).toBeNull();
-    expect(panel.queryByRole('textbox', { name: 'Memory line 2' })).toBeNull();
-  });
-
-  it.each([false, true])('preserves an unsent Memory draft after a removed first edit and refresh failure %s', async (refreshFails) => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    await renderPage();
-    const panel = await openPersonalization();
-    await editFile(panel, 'Memory');
-    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 1' }), ' and gold');
-    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
-    service.memory = service.memory.filter((line) => line.id !== 'mem-copper');
-    service.failing.set('PUT /agent/memory/mem-copper', 404);
-    if (refreshFails) service.failing.set('GET /agent/memory', 503);
-
-    await click(panel, 'Save Memory');
-
-    expect(panel.getByText('This Memory line was already removed.')).toHaveAttribute('role', 'alert');
-    expect(memoryPuts().map(([url]) => url)).toEqual(['http://chat.test/agent/memory/mem-copper']);
-    expect(service.memory).toEqual([{ id: 'mem-paris', text: 'Lives in Paris' }]);
-    if (refreshFails) {
-      expect(await panel.findByText('Memory could not be loaded.')).toBeInTheDocument();
-      service.failing.delete('GET /agent/memory');
-      await click(panel, 'Retry');
-    }
-    await waitFor(() => expect(memoryLines(panel)).toEqual(['Lives in Paris and London']));
-    expect(panel.queryByText('Trades copper futures and gold')).toBeNull();
-    expect(panel.queryByText('Saved')).toBeNull();
-
-    await click(panel, 'Save Memory');
-
-    expect(service.memory).toEqual([{ id: 'mem-paris', text: 'Lives in Paris and London' }]);
-    expect(memoryPuts().map(([url]) => url)).toEqual([
-      'http://chat.test/agent/memory/mem-copper',
-      'http://chat.test/agent/memory/mem-paris',
-    ]);
-    expect(memoryText(panel)).toEqual(['Lives in Paris and London']);
-    expect(panel.getByRole('status')).toHaveTextContent(/^Saved$/);
-  });
-
-  it('recovers only unsent edits and retains fresh remote lines after a middle Memory edit disappears', async () => {
-    service.memory.push({ id: 'mem-third', text: 'Prefers tea' });
-    await renderPage();
-    const panel = await openPersonalization();
-    await editFile(panel, 'Memory');
-    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 1' }), ' and gold');
-    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
-    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 3' }), ' and coffee');
-    service.memory = service.memory.filter((line) => line.id !== 'mem-paris');
-    service.memory.push({ id: 'mem-new', text: 'Works remotely' });
-    service.failing.set('PUT /agent/memory/mem-paris', 404);
-
-    await click(panel, 'Save Memory');
-
-    await waitFor(() => expect(memoryLines(panel)).toEqual([
-      'Trades copper futures and gold', 'Prefers tea and coffee', 'Works remotely',
-    ]));
-    expect(memoryPuts().map(([url]) => url)).toEqual([
-      'http://chat.test/agent/memory/mem-copper', 'http://chat.test/agent/memory/mem-paris',
-    ]);
-    expect(service.memory.map((line) => line.text)).toEqual([
-      'Trades copper futures and gold', 'Prefers tea', 'Works remotely',
-    ]);
-
-    await click(panel, 'Save Memory');
-
-    expect(memoryPuts().map(([url]) => url)).toEqual([
-      'http://chat.test/agent/memory/mem-copper', 'http://chat.test/agent/memory/mem-paris',
-      'http://chat.test/agent/memory/mem-third',
-    ]);
-    expect(memoryDeletes()).toHaveLength(0);
-    expect(service.memory.map((line) => line.text)).toEqual([
-      'Trades copper futures and gold', 'Prefers tea and coffee', 'Works remotely',
-    ]);
-  });
-
-  it('discards recovered Memory edits when cancelling', async () => {
-    await renderPage();
-    const panel = await openPersonalization();
-    await editFile(panel, 'Memory');
-    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 1' }), ' and gold');
-    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
-    service.memory = service.memory.filter((line) => line.id !== 'mem-copper');
-    service.failing.set('PUT /agent/memory/mem-copper', 404);
-    await click(panel, 'Save Memory');
-    await waitFor(() => expect(memoryLines(panel)).toEqual(['Lives in Paris and London']));
-
-    await click(panel, 'Cancel editing Memory');
-    await click(panel, 'Edit Memory');
-
-    expect(memoryLines(panel)).toEqual(['Lives in Paris']);
-  });
-
-  it('shows a failed refresh after a removed Memory line without claiming it was saved', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    await renderPage();
-    const panel = await openPersonalization();
-    await editFile(panel, 'Memory');
-    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
-    service.memory = service.memory.filter((line) => line.id !== 'mem-paris');
-    service.failing.set('PUT /agent/memory/mem-paris', 404);
-    service.failing.set('GET /agent/memory', 503);
-
-    await click(panel, 'Save Memory');
-
-    expect(panel.getByText('This Memory line was already removed.')).toHaveAttribute('role', 'alert');
-    expect(await panel.findByText('Memory could not be loaded.')).toBeInTheDocument();
-    expect(panel.queryByText('Saved')).toBeNull();
-    expect(panel.queryByRole('textbox', { name: 'Memory line 2' })).toBeNull();
-    service.failing.delete('GET /agent/memory');
-    await click(panel, 'Retry');
-    await waitFor(() => expect(memoryText(panel)).toEqual(['Trades copper futures']));
-    expect(panel.queryByText('Saved')).toBeNull();
-  });
-
-  it('says why a Memory edit could not be saved, until the next save', async () => {
-    service.failing.set('PUT /agent/memory/mem-paris', 503);
-    await renderPage();
-    const panel = await openPersonalization();
-    await editFile(panel, 'Memory');
-
-    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
-    await click(panel, 'Save Memory');
-
-    expect(panel.getByRole('alert')).toHaveTextContent(/^Saving Memory failed: 503$/);
-    expect(panel.queryByRole('status')).toBeNull();
-
-    service.failing.delete('PUT /agent/memory/mem-paris');
-    await click(panel, 'Save Memory');
-
-    expect(panel.queryByRole('alert')).toBeNull();
-    expect(panel.getByRole('status')).toHaveTextContent(/^Saved$/);
-    expect(service.memory.map((line) => line.text)).toEqual(['Trades copper futures', 'Lives in Paris and London']);
-  });
-
-  it('says why a Memory line could not be deleted', async () => {
-    service.failing.set('DELETE /agent/memory/mem-copper', 502);
-    await renderPage();
-    const panel = await openPersonalization();
-    await editFile(panel, 'Memory');
-
-    await click(panel, 'Delete Memory line 1');
-    await click(panel, 'Save Memory');
-
-    expect(panel.getByRole('alert')).toHaveTextContent(/^Deleting a Memory line failed: 502$/);
-    expect(memoryLines(panel)).toEqual(['Lives in Paris']);
-
-    service.failing.delete('DELETE /agent/memory/mem-copper');
-    await click(panel, 'Save Memory');
-
-    expect(panel.queryByRole('alert')).toBeNull();
-    expect(service.memory.map((line) => line.text)).toEqual(['Lives in Paris']);
-  });
-
-  it('says when the agent has no Memory yet', async () => {
-    service.memory = [];
-    await renderPage();
     const panel = await openPersonalization();
 
-    await openFile(panel, 'Memory');
-
-    expect(panel.getByText('No memories yet.')).toBeInTheDocument();
-    expect(panel.queryByRole('button', { name: 'Edit Memory' })).toBeNull();
-    expect(panel.queryByRole('button', { name: 'Save Memory' })).toBeNull();
+    expect(panel.getAllByRole('button').map((card) => card.getAttribute('aria-label'))).toEqual(['Open Soul']);
+    expect(fetchMock.mock.calls.map(([url]) => url)).not.toContain('http://chat.test/files/written-memory');
   });
 
   it('shows a file loading until it arrives, while the other files open', async () => {
@@ -7557,8 +7309,7 @@ describe('agent profile', () => {
     expect(soul.getByRole('status')).toHaveAccessibleName('Loading Soul');
     expect(soul.queryByRole('button', { name: 'Edit Soul' })).toBeNull();
     await click(panel, 'Back');
-    const memory = await openFile(panel, 'Memory');
-    expect(memory.getAllByRole('listitem').map((line) => line.textContent)).toEqual(['Trades copper futures', 'Lives in Paris']);
+    expect(memoryText(await openFile(panel, 'Memory'))).toHaveClass('agent-file-text');
   });
 
   it('says why one file could not load on that file only, and loads it on Retry', async () => {
@@ -7569,8 +7320,7 @@ describe('agent profile', () => {
 
     expect(panel.queryByRole('alert')).toBeNull();
     expect(panel.getByRole('button', { name: 'Open Soul' })).toHaveTextContent(/^SoulValues and habits$/);
-    const memory = await openFile(panel, 'Memory');
-    expect(memory.getAllByRole('listitem').map((line) => line.textContent)).toEqual(['Trades copper futures', 'Lives in Paris']);
+    expect(memoryText(await openFile(panel, 'Memory'))).toHaveClass('agent-file-text');
     await click(panel, 'Back');
     const soul = await openFile(panel, 'Soul');
     expect(soul.getByRole('alert')).toHaveTextContent(/^Soul could not be loaded\.$/);

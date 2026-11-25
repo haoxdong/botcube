@@ -12,7 +12,7 @@ import { restoreArtifact, saveArtifact } from './artifact-save.js';
 import { HttpError } from './http-error.js';
 import { answerFilesLink, missing, signFilesLink } from './files-link.js';
 import {
-  FILES_MOUNT_PATH, HIDDEN, POSIX_ID, RETIREMENT_GRACE_MS, MOUNT_SECONDS, URL_SECONDS,
+  FILES_MOUNT_PATH, HIDDEN, POSIX_ID, RETIREMENT_GRACE_MS, MOUNT_SECONDS, URL_SECONDS, WRITTEN_MEMORY,
   directoryOf, fileDestination, filePath, freeName,
   type AccountFiles, type FileEntry, type FilesMount, type FilesMountBinding, type FilesRecords,
 } from './files-shared.js';
@@ -357,6 +357,27 @@ export function accountFilesEfs({
     async restoreArtifact(userId, restore) {
       await requireActive(userId);
       return restoreArtifact(await directory(userId), restore);
+    },
+    async writtenMemory(userId) {
+      const tree = await treeOf(userId);
+      if (tree === null) return '';
+      return tree.read(WRITTEN_MEMORY).then((content) => content.toString('utf8'), (error: unknown) => {
+        if (missing(error)) return '';
+        throw error;
+      });
+    },
+    async saveWrittenMemory(userId, content) {
+      await requireActive(userId);
+      const tree = await treeOf(userId, true);
+      if (tree === null) throw new HttpError(503, 'This account has no Files folder');
+      const saving = `${path.posix.dirname(WRITTEN_MEMORY)}/.${path.posix.basename(WRITTEN_MEMORY)}.saving-${randomUUID()}`;
+      try {
+        await tree.write(saving, content, 'new');
+        await tree.rename(saving, WRITTEN_MEMORY);
+      } catch (error) {
+        await tree.unlink(saving).catch(() => undefined);
+        throw error;
+      }
     },
     async mountBinding(userId) {
       await requireActive(userId);

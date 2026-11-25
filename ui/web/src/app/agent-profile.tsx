@@ -50,26 +50,13 @@ export async function loadAgentProfile({ chatServiceUrl }: { chatServiceUrl: str
   return (await response.json()) as AgentProfileData;
 }
 
-/** One line of the agent's Memory: a memory record and its text, as `GET /agent/memory` lists it. */
-interface MemoryLine {
-  id: string;
-  text: string;
-}
-
-/** One of the agent's files, as `GET /agent/<document>` answers it; a failure names the file, its status going to the console. */
-async function loadDocument(chatServiceUrl: string, document: "identity" | "soul" | "memory", file: AgentFile): Promise<unknown> {
-  const response = await fetch(`${chatServiceUrl}/agent/${document}`, { credentials: "include", cache: "no-store" });
+async function loadAgentFile(chatServiceUrl: string, path: "agent/identity" | "agent/soul" | "files/written-memory", file: AgentFile): Promise<unknown> {
+  const response = await fetch(`${chatServiceUrl}/${path}`, { credentials: "include", cache: "no-store" });
   if (!response.ok) {
     console.error(new Error(`Loading ${file} failed: ${response.status}`));
     throw new Error(`${file} could not be loaded.`);
   }
   return response.json();
-}
-
-class MemoryLineRemovedError extends Error {
-  constructor() {
-    super("This Memory line was already removed.");
-  }
 }
 
 const send = (url: string, method: string, body?: unknown) =>
@@ -79,21 +66,8 @@ const send = (url: string, method: string, body?: unknown) =>
     ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
   });
 
-async function editMemoryLine(chatServiceUrl: string, line: MemoryLine) {
-  const response = await send(`${chatServiceUrl}/agent/memory/${encodeURIComponent(line.id)}`, "PUT", { text: line.text });
-  if (response.status === 404) throw new MemoryLineRemovedError();
-  if (!response.ok) throw new Error(`Saving Memory failed: ${response.status}`);
-}
-
-async function addMemoryLine(chatServiceUrl: string, text: string): Promise<MemoryLine> {
-  const response = await send(`${chatServiceUrl}/agent/memory`, "POST", { text });
-  await throwIfRefused(response, "Saving Memory failed");
-  return ((await response.json()) as { line: MemoryLine }).line;
-}
-
-async function deleteMemoryLine(chatServiceUrl: string, id: string) {
-  const response = await send(`${chatServiceUrl}/agent/memory/${encodeURIComponent(id)}`, "DELETE");
-  if (!response.ok) throw new Error(`Deleting a Memory line failed: ${response.status}`);
+async function saveWrittenMemory(chatServiceUrl: string, content: string) {
+  await throwIfRefused(await send(`${chatServiceUrl}/files/written-memory`, "PUT", { content }), "Saving Memory failed");
 }
 
 async function saveDocument(chatServiceUrl: string, document: "identity" | "soul", body: unknown, label: string) {
@@ -123,10 +97,8 @@ const ABOUT: Record<AgentFile, string> = {
     `The values and habits your agent keeps in every chat. ${ABOUT_USE} ` +
     "Soul shapes only its manner: its rules for grounding answers and running commands live in its skills, which Soul cannot change.",
   Memory:
-    "What your agent has learned about you and keeps from chat to chat, one memory per line. " +
-    "The agent reads it once when a chat starts. Chats already open, including your Main chat, keep what they read. " +
-    "Side chats you start later get your edits, but a memory the agent saved less than 15 minutes ago keeps its old text until then. " +
-    "To fix or remove a fact, edit or delete every line that holds it.",
+    "What your agent keeps about you, saved as memories/AGENTS.md in your Files. " +
+    "It reads the file when a chat starts, so Side chats you start later get your edits.",
 };
 
 /** Each file's tint (a CSS class) and icon, on its card in the Personalization tab and its page's header tile. */
@@ -182,7 +154,7 @@ interface FileProps {
 type FileMode =
   | { kind: "read-only" }
   | { kind: "editable"; onEdit: () => void }
-  | { kind: "editing"; onSave: () => Promise<unknown>; onCancel: () => void; busy?: boolean };
+  | { kind: "editing"; onSave: () => Promise<unknown>; onCancel: () => void };
 
 /**
  * An open file: its name, its "About this file" note, and its body. Editable, its header holds Edit; while editing,
@@ -229,10 +201,10 @@ function FileDocument({
         )}</Fades>
         <Fades>{mode.kind === "editing" && (
           <>
-            <Button key="0" type="button" aria-label={`Cancel editing ${file}`} disabled={mode.busy} onClick={mode.onCancel}>
+            <Button key="0" type="button" aria-label={`Cancel editing ${file}`} onClick={mode.onCancel}>
               Cancel
             </Button>
-            <Button key="1" type="submit" form={formId} variant="primary" disabled={mode.busy} aria-label={`Save ${file}`}>
+            <Button key="1" type="submit" form={formId} variant="primary" aria-label={`Save ${file}`}>
               Save
             </Button>
           </>
@@ -260,8 +232,8 @@ function FileDocument({
 }
 
 /** A file's draft while it is being edited, or null while it is read-only. */
-function useDraft<T>(onModeChange: () => void, initial: T | null = null) {
-  const [draft, setDraft] = useState<T | null>(initial);
+function useDraft<T>(onModeChange: () => void) {
+  const [draft, setDraft] = useState<T | null>(null);
   const edit = (value: T) => {
     onModeChange();
     setDraft(value);
@@ -327,141 +299,39 @@ function IdentityFile({
   );
 }
 
-function SoulFile({
-  soul,
+function TextFile({
+  file,
+  text,
+  empty,
   onSave,
   onBack,
   run,
   onModeChange,
   saved,
-}: FileProps & { soul: string; onSave: (soul: string) => Promise<void>; onBack: () => void }) {
+}: FileProps & { file: "Soul" | "Memory"; text: string; empty?: string | undefined; onSave: (text: string) => Promise<void>; onBack: () => void }) {
   const { draft, setDraft, edit, cancel } = useDraft<string>(onModeChange);
   const id = useId();
   const save = async () => {
     if (draft !== null && (await run(() => onSave(draft)))) setDraft(null);
   };
+  const reading = () =>
+    empty !== undefined && text.trim() === "" ? (
+      <Empty key="0"><EmptyDescription>{empty}</EmptyDescription></Empty>
+    ) : (
+      <div key="0" className="agent-file-group agent-file-text">{text}</div>
+    );
   return (
     <FileDocument
-      file="Soul"
+      file={file}
       saved={saved}
       onBack={onBack}
-      mode={draft === null ? { kind: "editable", onEdit: () => edit(soul) } : { kind: "editing", onSave: save, onCancel: cancel }}
+      mode={draft === null ? { kind: "editable", onEdit: () => edit(text) } : { kind: "editing", onSave: save, onCancel: cancel }}
     >
-      <Fades>{draft === null ? (
-        <div key="0" className="agent-file-group agent-file-text">{soul}</div>
-      ) : (
+      <Fades>{draft === null ? reading() : (
         <Field key="1">
-          <FieldLabel htmlFor={id}>Soul</FieldLabel>
+          <FieldLabel htmlFor={id}>{file}</FieldLabel>
           <Textarea id={id} rows={12} value={draft} onChange={(event) => setDraft(event.target.value)} />
         </Field>
-      )}</Fades>
-    </FileDocument>
-  );
-}
-
-function MemoryFile({
-  lines,
-  pending,
-  onSave,
-  onAdd,
-  onBack,
-  run,
-  onModeChange,
-  saved,
-}: FileProps & {
-  lines: MemoryLine[];
-  pending: MemoryLine[];
-  /** Deletes the lines with the `deleted` ids, then saves the `edited` lines. */
-  onSave: (deleted: string[], edited: MemoryLine[]) => Promise<void>;
-  onAdd: (text: string) => Promise<void>;
-  onBack: () => void;
-}) {
-  const [addition, setAddition] = useState<{ text: string; saving: boolean } | null>(null);
-  const additionId = useId();
-  const adding = useRef(false);
-  const add = async () => {
-    if (!addition || adding.current || !addition.text.trim()) return;
-    adding.current = true;
-    setAddition({ ...addition, saving: true });
-    const ok = await run(() => onAdd(addition.text.trim()));
-    adding.current = false;
-    setAddition(ok ? null : { ...addition, saving: false });
-  };
-  const pendingById = new Map(pending.map((line) => [line.id, line]));
-  const { draft, setDraft, edit, cancel } = useDraft<MemoryLine[]>(
-    onModeChange,
-    lines.some((line) => pendingById.has(line.id)) ? lines.map((line) => pendingById.get(line.id) ?? line) : null,
-  );
-  const save = async () => {
-    if (!draft) return;
-    const kept = new Set(draft.map((line) => line.id));
-    const deleted = lines.filter((line) => !kept.has(line.id)).map((line) => line.id);
-    const saved = new Map(lines.map((line) => [line.id, line.text]));
-    const edited = draft.filter((line) => line.text !== saved.get(line.id));
-    if (await run(() => onSave(deleted, edited))) setDraft(null);
-  };
-  const mode: FileMode = addition
-    ? { kind: "editing", onSave: add, onCancel: () => { setAddition(null); onModeChange(); }, busy: addition.saving }
-    : draft
-    ? { kind: "editing", onSave: save, onCancel: cancel }
-    : lines.some((line) => !line.id.startsWith("pending:"))
-      ? { kind: "editable", onEdit: () => edit(lines) }
-      : { kind: "read-only" };
-  return (
-    <FileDocument file="Memory" saved={saved} onBack={onBack} mode={mode}
-      actions={draft === null && addition === null && (
-        <Button type="button" aria-label="Add Memory" onClick={() => { onModeChange(); setAddition({ text: "", saving: false }); }}>
-          Add
-        </Button>
-      )}
-    >
-      <Fades>{addition && (
-        <Field>
-          <FieldLabel htmlFor={additionId}>New Memory</FieldLabel>
-          <Input id={additionId} autoFocus required value={addition.text} disabled={addition.saving}
-            onChange={(event) => setAddition({ ...addition, text: event.target.value })} />
-        </Field>
-      )}</Fades>
-      <Fades>{draft === null && lines.length === 0 && <Empty><EmptyDescription>No memories yet.</EmptyDescription></Empty>}</Fades>
-      <Fades>{draft === null && lines.length > 0 && (
-        <ol className="agent-file-group">
-          {lines.map((line) => (
-            <li key={line.id} className="agent-file-row">
-              {line.text}
-            </li>
-          ))}
-        </ol>
-      )}</Fades>
-      <Fades>{draft && (
-        <ol className="agent-memory">
-          {draft.map((line, index) => (
-            <li key={line.id} className="agent-memory-line">
-              {/* A disabled control takes no pointer: the tooltip's trigger is a box around it, as stock shows. */}
-              <Tooltip disabled={!line.id.startsWith("pending:")}>
-                <TooltipTrigger render={<span className="flex min-w-0 flex-1" />}>
-                  <Input
-                    aria-label={`Memory line ${index + 1}`}
-                    value={line.text}
-                    disabled={line.id.startsWith("pending:")}
-                    onChange={(event) =>
-                      setDraft(draft.map((other) => (other.id === line.id ? { ...other, text: event.target.value } : other)))
-                    }
-                  />
-                </TooltipTrigger>
-                <TooltipContent>Available to edit after Memory extraction</TooltipContent>
-              </Tooltip>
-              <Button
-                type="button"
-                variant="destructive"
-                aria-label={`Delete Memory line ${index + 1}`}
-                disabled={line.id.startsWith("pending:")}
-                onClick={() => setDraft(draft.filter((other) => other.id !== line.id))}
-              >
-                Delete
-              </Button>
-            </li>
-          ))}
-        </ol>
       )}</Fades>
     </FileDocument>
   );
@@ -490,7 +360,7 @@ function LoadedFile<T>({
 type IdentityLoad = ReturnType<typeof useLoad<AgentIdentityData>>;
 
 function loadIdentity(chatServiceUrl: string) {
-  return loadDocument(chatServiceUrl, "identity", "Identity") as Promise<AgentIdentityData>;
+  return loadAgentFile(chatServiceUrl, "agent/identity", "Identity") as Promise<AgentIdentityData>;
 }
 
 /** Agent Identity's editor, opened from the avatar's pencil in place of the tab the user was on, which closing returns to. */
@@ -532,19 +402,18 @@ function IdentityEditor({
   );
 }
 
-/** The line under each card's title, on what its file holds. */
-const CARD_HINT = { Soul: "Values and habits", Memory: "What it knows" } as const;
+/** Each card's line under its title, on what its file holds, and its count when the file holds nothing. */
+const CARD = {
+  Soul: { hint: "Values and habits", none: "Empty" },
+  Memory: { hint: "What it knows", none: "No memories yet" },
+} as const;
 
-/** How much a card's file holds once it loads: Soul's lines, Memory's memories; until then nothing. */
-function count(file: "Soul" | "Memory", soul: LoadState<string>, memory: LoadState<MemoryLine[]>): string {
-  if (file === "Soul") {
-    if (soul.status !== "loaded") return "";
-    const lines = soul.value.split("\n").filter((line) => line.trim() !== "").length;
-    return lines === 0 ? "Empty" : `${lines} ${lines === 1 ? "line" : "lines"}`;
-  }
-  if (memory.status !== "loaded") return "";
-  const memories = memory.value.length;
-  return memories === 0 ? "No memories yet" : `${memories} ${memories === 1 ? "memory" : "memories"}`;
+/** How many lines a card's file holds once it loads, or that it holds none; until then nothing. */
+function count(file: "Soul" | "Memory", state: LoadState<string>): string {
+  if (state.status !== "loaded") return "";
+  const lines = state.value.split("\n").filter((line) => line.trim() !== "").length;
+  if (lines === 0) return CARD[file].none;
+  return `${lines} ${lines === 1 ? "line" : "lines"}`;
 }
 
 /**
@@ -553,21 +422,13 @@ function count(file: "Soul" | "Memory", soul: LoadState<string>, memory: LoadSta
  */
 function PersonalizationPanel({ chatServiceUrl, revision, onSaved, memory }: { chatServiceUrl: string; revision: number; onSaved: () => void; memory: boolean }) {
   const key = `${chatServiceUrl} ${revision}`;
-  const soulFile = useLoad(async () => ((await loadDocument(chatServiceUrl, "soul", "Soul")) as { content: string }).content, key);
-  // A bot whose settings turn Memory off has none to load.
-  const memoryFile = useLoad(async () => memory ? ((await loadDocument(chatServiceUrl, "memory", "Memory")) as { lines: MemoryLine[] }).lines : [], key);
+  const soulFile = useLoad(async () => ((await loadAgentFile(chatServiceUrl, "agent/soul", "Soul")) as { content: string }).content, key);
+  const memoryFile = useLoad(async () => memory ? ((await loadAgentFile(chatServiceUrl, "files/written-memory", "Memory")) as { content: string }).content : "", key);
   const [open, setOpen] = useState<"Soul" | "Memory" | null>(null);
   const [saved, setSaved] = useState(false);
-  const [memoryRecovery, setMemoryRecovery] = useState<{ key: string; lines: MemoryLine[] } | null>(null);
-  const memoryEditor = useRef(0);
-  const reset = () => {
-    memoryEditor.current += 1;
-    setMemoryRecovery(null);
-    setSaved(false);
-  };
-  const { setError, active, run, alert } = useChanges(reset, () => setSaved(true));
+  const { setError, run, alert } = useChanges(() => setSaved(false), () => setSaved(true));
   const clear = () => {
-    reset();
+    setSaved(false);
     setError(null);
   };
   const show = (file: "Soul" | "Memory" | null) => {
@@ -579,44 +440,21 @@ function PersonalizationPanel({ chatServiceUrl, revision, onSaved, memory }: { c
     soulFile.update(() => soul);
     onSaved();
   };
-  const addMemory = async (text: string) => {
-    const editor = memoryEditor.current;
-    const line = await addMemoryLine(chatServiceUrl, text);
-    if (active.current && editor === memoryEditor.current) memoryFile.update((current) => [line, ...current]);
-  };
-  const saveMemory = async (deleted: string[], edited: MemoryLine[]) => {
-    const editor = memoryEditor.current;
-    for (const id of deleted) {
-      // eslint-disable-next-line no-await-in-loop -- one delete at a time, so a failure leaves the rest unsent
-      await deleteMemoryLine(chatServiceUrl, id);
-      memoryFile.update((current) => current.filter((line) => line.id !== id));
-    }
-    for (const [index, line] of edited.entries()) {
-      try {
-        // eslint-disable-next-line no-await-in-loop -- one edit at a time, so a failure leaves the rest unsent
-        await editMemoryLine(chatServiceUrl, line);
-        memoryFile.update((current) => current.map((other) => (other.id === line.id ? line : other)));
-      } catch (failure) {
-        if (failure instanceof MemoryLineRemovedError && active.current && editor === memoryEditor.current) {
-          setMemoryRecovery({ key, lines: edited.slice(index + 1) });
-          memoryFile.retry();
-        }
-        throw failure;
-      }
-    }
+  const saveMemory = async (content: string) => {
+    await saveWrittenMemory(chatServiceUrl, content);
+    memoryFile.update(() => content);
   };
 
+  const files = {
+    Soul: { load: soulFile, save: saveSoul, empty: undefined },
+    Memory: { load: memoryFile, save: saveMemory, empty: "No memories yet." },
+  };
   const fileProps = { run, onModeChange: clear, saved, onBack: () => show(null) };
-  const openFile = (file: "Soul" | "Memory") =>
-    file === "Soul" ? (
-      <LoadedFile file={file} load={soulFile} onBack={fileProps.onBack}>
-        {(soul) => <SoulFile soul={soul} onSave={saveSoul} {...fileProps} />}
-      </LoadedFile>
-    ) : (
-      <LoadedFile file={file} load={memoryFile} onBack={fileProps.onBack}>
-        {(lines) => <MemoryFile lines={lines} pending={memoryRecovery?.key === key ? memoryRecovery.lines : []} onAdd={addMemory} onSave={saveMemory} {...fileProps} />}
-      </LoadedFile>
-    );
+  const openFile = (file: "Soul" | "Memory") => (
+    <LoadedFile file={file} load={files[file].load} onBack={fileProps.onBack}>
+      {(text) => <TextFile file={file} text={text} empty={files[file].empty} onSave={files[file].save} {...fileProps} />}
+    </LoadedFile>
+  );
 
   return (
     <div className="agent-files">
@@ -630,8 +468,8 @@ function PersonalizationPanel({ chatServiceUrl, revision, onSaved, memory }: { c
             return (
               <Item key={file} render={<button type="button" />} className={`agent-file-card flex-nowrap items-stretch gap-0 ${tint}`} aria-label={`Open ${file}`} onClick={() => show(file)}>
                 <span className="agent-file-card-title">{file}</span>
-                <span className="agent-file-card-hint">{CARD_HINT[file]}</span>
-                <span className="agent-file-card-count">{count(file, soulFile.state, memoryFile.state)}</span>
+                <span className="agent-file-card-hint">{CARD[file].hint}</span>
+                <span className="agent-file-card-count">{count(file, files[file].load.state)}</span>
                 <Icon className="agent-file-card-icon" fill="currentColor" aria-hidden="true" />
               </Item>
             );
@@ -688,7 +526,7 @@ function AgentProfile({
   isAccountCurrent?: (() => boolean) | undefined;
   /** The Sign-ins tab's actions and state, from the page's sign-in provider; without them, the tab has nothing yet. */
   signIns?: SignInsControl | undefined;
-  /** The bot settings' Extracted Memory gate: off, Personalization shows only the Soul. */
+  /** Whether the User keeps Written Memory (the bot settings' `writtenMemory.enabled`, and not a Guest): if not, Personalization shows only the Soul. */
   memory?: boolean | undefined;
   /** The sheet, whose width a phone's swipe measures as the chat slides off it. */
   ref?: Ref<HTMLDivElement> | undefined;

@@ -318,7 +318,7 @@
   fill: currentColor;
 }
 
-/* A grouped list, as iOS Settings and Contacts: one white card, rows split by hairlines inset to the text. */
+/* A grouped card, as iOS Settings and Contacts: one white card. */
 .agent-file-group {
   margin: 0;
   padding: 0;
@@ -327,21 +327,6 @@
   border-radius: var(--radius-lg);
   background: var(--color-white);
   font-size: var(--font-body);
-}
-
-.agent-file-row {
-  position: relative;
-  padding: var(--space-12) var(--space-16);
-  overflow-wrap: anywhere;
-}
-
-.agent-file-row + .agent-file-row::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 16px;
-  border-top: 1px solid var(--color-line);
 }
 
 /* Personalization's files as Muse's side-by-side cards (Fig 16): white type over a grained mesh, the whole card a button. */
@@ -479,24 +464,6 @@
 .agent-file-saved svg {
   width: 14px;
   height: 14px;
-}
-
-.agent-memory {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-  list-style: none;
-}
-
-.agent-memory-line {
-  display: flex;
-  gap: var(--space-8);
-  font-size: var(--font-body);
-}
-
-.agent-memory-line input {
-  flex: 1;
-  min-width: 0;
 }
 
 /* ── Agent Profile: Sign-ins tab ── */
