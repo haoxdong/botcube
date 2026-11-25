@@ -2,4 +2,5 @@ export { ComputerView, shellCommands, TerminalArgumentsError } from './computer-
 export { default as BrowserView } from './browser-view';
 export * from './agent-computer';
 export * from './files-app';
+export * from './files-explorer';
 export * from './files-service';

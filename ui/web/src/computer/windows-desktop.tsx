@@ -25,7 +25,6 @@ const TASKBAR_APPS: readonly DockApp[] = ['Files', 'Chrome', 'Terminal'];
 // Stock Fluent (ADR 0093): its parts keep their own look and theme; these rules only place them and draw the desktop's
 // own surfaces, from Fluent's tokens.
 const useStyles = makeStyles({
-  provider: { position: 'absolute', inset: 0 },
   screen: {
     position: 'absolute',
     top: 0,
@@ -215,7 +214,8 @@ export function WindowsDesktop({ windows, front, interactive, onFront }: { windo
   return (
     // A preview takes no focus or presses: the sheet is where the desktop is used.
     <div ref={box} className="agent-computer-windows" data-layout={phoneLayout ? 'phone' : 'desktop'} inert={!interactive}>
-      <FluentProvider theme={webLightTheme} className={mergeClasses('agent-computer-fluent', styles.provider)}>
+      {/* Its className reaches every Portal under it (styles.css relies on that); its place, inline, does not. */}
+      <FluentProvider theme={webLightTheme} className="agent-computer-fluent" style={{ position: 'absolute', inset: 0 }}>
         <div ref={screen} className={mergeClasses(styles.screen, phoneLayout && styles.phoneScreen)} style={screenStyle}>
           <div className={styles.area} style={{ height }}>
             {windows.map((win) => {

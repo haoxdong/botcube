@@ -17,6 +17,7 @@ const ACCELERATE = 'cubic-bezier(0.9, 0.1, 1, 0.2)';
 // Its curveEasyEase for close: an accelerate curve leaves the change to the last frames, so it reads as a cut.
 const EASY_EASE = 'cubic-bezier(0.33, 0, 0.67, 1)';
 // Windows 11's folder yellow: Fluent's icons ship no coloured folder.
+export const FOLDER = '#f8c246';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export type Life = 'open' | 'minimised' | 'closed';
@@ -43,6 +44,8 @@ const useStyles = makeStyles({
     width: '100%',
     height: '100%',
     overflow: 'hidden',
+    // The provider around it draws no box (display: contents), so the window paints its theme's surface itself.
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: tokens.borderRadiusXLarge,
     // Windows 11: every window has a hairline edge and a shadow, deeper on the active one.
     boxShadow: `${tokens.shadow28}, 0 0 0 ${tokens.strokeWidthThin} ${tokens.colorNeutralStroke2}`,
@@ -186,9 +189,13 @@ export function WindowFrame({ window: win, life, opening, active, away, place, f
         onTransitionEnd={(event: TransitionEvent<HTMLElement>) => { if (event.target === event.currentTarget && event.propertyName === 'opacity' && life === 'closed') onClosed(); }}
       >
         {/* Each window in its own theme: Fluent draws its surface, in dark for Terminal. */}
-        <FluentProvider theme={win.dark === true ? webDarkTheme : webLightTheme} className={mergeClasses('agent-computer-windows-window', styles.window, opening && styles.opening, active && styles.windowActive, full && styles.windowFull)}>
-          <TitleBar window={win} active={active} full={full} onMinimise={onMinimise} onMaximise={onMaximise} onClose={onClose} />
-          <div className={mergeClasses(styles.content, phone && styles.phoneContent)}>{win.children}</div>
+        {/* Fluent copies a provider's className onto every Portal under it (Dialog, Menu, Tooltip), so the provider
+            carries the theme and styles.css's shield alone, and the window is the div inside it; an inline style is not copied. */}
+        <FluentProvider theme={win.dark === true ? webDarkTheme : webLightTheme} className="agent-computer-fluent" style={{ display: 'contents' }}>
+          <div className={mergeClasses('agent-computer-windows-window', styles.window, opening && styles.opening, active && styles.windowActive, full && styles.windowFull)}>
+            <TitleBar window={win} active={active} full={full} onMinimise={onMinimise} onMaximise={onMaximise} onClose={onClose} />
+            <div className={mergeClasses(styles.content, phone && styles.phoneContent)}>{win.children}</div>
+          </div>
         </FluentProvider>
       </div>
     </Rnd>

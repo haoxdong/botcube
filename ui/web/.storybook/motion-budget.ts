@@ -103,7 +103,8 @@ export async function expectMotionBudget(
   observer.observe({ type: 'layout-shift' });
   const sample = () => {
     for (const animation of document.getAnimations()) {
-      if (before.has(animation)) continue;
+      // One already finished when first sampled never drew a frame: Fluent's presence parts set their starting styles that way.
+      if (before.has(animation) || (!started.has(animation) && animation.playState === 'finished')) continue;
       const found = seen(document, animation);
       if (found && moves(found)) started.set(animation, found);
     }

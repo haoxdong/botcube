@@ -12,7 +12,7 @@ const meta = {
     agentName: 'BotCube',
     chatId: 'example-chat',
     app: 'Chrome',
-    files: <FilesWindow files={[]} error={null} onReload={() => {}} onDownload={() => {}} onDelete={() => {}} onRename={() => null} thumbnailUrl={() => Promise.reject(new Error('The fixture has no pictures'))} />,
+    files: <FilesWindow files={[]} error={null} onReload={() => {}} onDownload={() => {}} onDelete={() => {}} onRename={() => null} onMove={() => {}} onUpload={() => Promise.reject(new Error('The fixture has no uploads'))} thumbnailUrl={() => Promise.reject(new Error('The fixture has no pictures'))} />,
     computer: { state: 'asleep', screenshot: null },
     commands: [{ command: 'fake-cli data', output: 'Sample item: 42' }],
     control: 'agent',

@@ -18,7 +18,7 @@ vi.mock('./browser-live-frame', () => ({
 
 import { forgetMotion } from '../app/motion-tokens';
 import { AgentComputer, type DockApp } from './agent-computer';
-import { FilesWindow } from './files-app';
+import { FilesWindow } from './files-explorer';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -354,27 +354,23 @@ describe("the Agent Computer's preview in the profile on a phone, while the agen
 describe("the Agent Computer's Files on a phone", () => {
   inWindow({ width: 390, height: 844 });
 
-  it('packs files and folders into columns 60px wide at least, under 34px icons, with a 44px toolbar and sidebar targets', () => {
+  it("sizes Files as Explorer's window, so its narrow layout keeps to Back, Up, the path, and each item's name and size", () => {
     const files = [
       { name: 'prices.csv', size: 1, lastModified: '2026-10-01T09:00:00.000Z' },
       { name: 'reports/q3.pdf', size: 1, lastModified: '2026-10-01T09:00:00.000Z' },
     ];
-    const thumbnailUrl = async () => 'https://s3.test/picture.png';
     renderComputer('agent', {
       app: 'Files',
-      files: React.createElement(FilesWindow, { files, error: null, onDownload: () => {}, onDelete: () => {}, onRename: () => null, onReload: () => {}, thumbnailUrl }),
+      files: React.createElement(FilesWindow, {
+        files, error: null, onDownload: () => {}, onDelete: () => {}, onRename: () => null, onMove: () => {}, onReload: () => {},
+        onUpload: () => Promise.reject(new Error('The test has no uploads')), thumbnailUrl: async () => 'https://s3.test/chart.json',
+      }),
     });
-    const icons = [...container.querySelectorAll('.agent-computer-file svg')].map((icon) => getComputedStyle(icon));
-    const grid = styleOf('.agent-computer-files-grid');
 
-    expect([grid.display, grid.gridTemplateColumns]).toEqual(['grid', 'repeat(auto-fill, minmax(60px, 1fr))']);
-    // A wide folder beside a page.
-    expect(icons.map(({ width, height }) => [width, height])).toEqual([['28px', '34px'], ['42px', '34px']]);
-    expect([styleOf('.agent-computer-files-toolbar').height, styleOf('.agent-computer-files-sidebar button').height]).toEqual(['44px', '44px']);
-    expect(styleOf('.agent-computer-files-crumbs button').height).toBe('44px');
-    // Back and Forward are the stock icon Button, at its own size.
-    expect(['Back', 'Forward'].map((name) => button(name)?.dataset.slot)).toEqual(['button', 'button']);
-    expect(styleOf('.agent-computer-files-toolbar > button').width).not.toBe('44px');
+    expect(styleOf('.agent-computer-files').containerType).toBe('inline-size');
+    expect(['Back', 'Up'].map((name) => button(name)?.className.includes('fui-Button'))).toEqual([true, true]);
+    expect(container.querySelector('[aria-label="Path"]')?.textContent).toBe('workspace');
+    expect([...container.querySelectorAll('.agent-computer-file')].map((row) => row.getAttribute('data-file-path'))).toEqual(['reports/', 'prices.csv']);
   });
 });
 

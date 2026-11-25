@@ -93,7 +93,8 @@ export async function withUploadsSettled<T>(change: () => Promise<T>): Promise<T
   }
 }
 
-function uploadCopyName(name: string, copy: number): string {
+/** The name of a file's copy, as a file manager gives it: `plan (2).txt`, within 255 bytes. */
+export function uploadCopyName(name: string, copy: number): string {
   const dot = name.lastIndexOf('.');
   const extension = [...(dot > 0 ? name.slice(dot) : '')];
   const stem = [...(dot > 0 ? name.slice(0, dot) : name)];
@@ -137,3 +138,34 @@ export async function uploadFile(file: File, options: UploadOptions, service: Ch
   return pending;
 }
 
+
+/** How many names a move into a folder tries before it gives up: the file's own, then its copies. */
+const MOVE_TRIES = 100;
+
+/**
+ * Moves a file into a folder ('' for workspace) under `name`, its own name unless given, or the first copy name
+ * (`plan (2).txt`) the folder doesn't hold; resolves to its new path.
+ */
+export async function moveIntoFolder(from: string, folder: string, service: ChatServiceOptions, name = from.slice(from.lastIndexOf('/') + 1), copy = 1): Promise<string> {
+  const to = `${folder}${copy === 1 ? name : uploadCopyName(name, copy)}`;
+  try {
+    await renameFile(from, to, service);
+    return to;
+  } catch (error) {
+    const taken = error instanceof HttpStatusError && error.status === 409 && error.message === `A file named ${to} is already in Files`;
+    if (taken && copy < MOVE_TRIES) return moveIntoFolder(from, folder, service, name, copy + 1);
+    throw error;
+  }
+}
+
+/**
+ * Uploads `file` into a folder of Files ('' for workspace) and resolves to its path there. The Chat Service takes
+ * uploads at the top of workspace only, so the file is then moved down.
+ */
+export async function uploadInto(file: File, options: UploadOptions, folder: string, service: ChatServiceOptions): Promise<string> {
+  const uploaded = (await uploadFile(file, options, service)).slice(1);
+  if (folder === '') return uploaded;
+  return moveIntoFolder(uploaded, folder, service, file.name).catch((error: unknown) => {
+    throw new Error(`“${uploaded}” was uploaded to workspace: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  });
+}

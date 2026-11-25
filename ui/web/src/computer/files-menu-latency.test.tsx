@@ -10,6 +10,8 @@ let root: Root;
 let listings: ((response: Response) => void)[];
 const BrowserFrame = () => <div />;
 const activity = { messages: [], running: false, stop: null, subscribeToCustomEvents: () => () => {} };
+/** Whether an element shows: mounted, and not hidden by its class. */
+const shows = (element: Element | null) => element !== null && getComputedStyle(element).display !== 'none';
 const measures = () => performance.getEntriesByName('latency:files-menu', 'measure');
 
 beforeEach(() => {
@@ -52,10 +54,10 @@ it.each([{ empty: false, automated: false }, { empty: true, automated: true }])(
   const clickedAt = performance.now();
   await click('Files');
   expect(measures()).toHaveLength(0);
-  expect(host.querySelector('[aria-label="Loading Files"]')).not.toBeNull();
+  expect(shows(host.querySelector('.agent-computer-files [role="progressbar"]'))).toBe(true);
 
   await answer(empty ? [] : [{ name: 'report.csv', size: 12, lastModified: '2026-11-10T00:00:00Z' }]);
-  expect(host.querySelector(empty ? '.agent-computer-files-empty' : '.agent-computer-file')).not.toBeNull();
+  expect(shows(host.querySelector(empty ? '.agent-computer-files-empty' : '.agent-computer-file'))).toBe(true);
   expect(measures()).toHaveLength(1);
   expect(measures()[0]?.startTime).toBeGreaterThanOrEqual(clickedAt);
   const recordEvent = vi.fn<LatencyRecorder['recordEvent']>();
@@ -83,9 +85,7 @@ it('does not report a failed Files opening after a later successful reload', asy
   await act(async () => listings.splice(0).forEach((resolve) => resolve(Response.json({ detail: 'unavailable' }, { status: 503 }))));
   expect(host.querySelector('[role="alert"]')?.textContent).toBe('unavailable');
   expect(measures()).toHaveLength(0);
-  const recents = [...host.querySelectorAll('button')].find((button) => button.textContent === 'Recents');
-  if (recents === undefined) throw new Error('Missing Recents button');
-  await act(async () => recents.click());
+  await click('Refresh');
   await answer();
   expect(measures()).toHaveLength(0);
 });
