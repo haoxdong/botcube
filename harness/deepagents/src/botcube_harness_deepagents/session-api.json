@@ -5,10 +5,7 @@
     "SESSION_NOT_FOUND": { "status": 404, "publicCode": false },
     "STALE_REPLAY_CURSOR": { "status": 409, "publicCode": true },
     "SESSION_FORMAT_LEGACY": { "status": 410, "publicCode": true },
-    "SESSION_READ_TIMEOUT": { "status": 504, "publicCode": false },
-    "MEMORY_NOT_CONFIGURED": { "status": 503, "publicCode": false },
-    "MEMORY_SAVE_FAILED": { "status": 503, "publicCode": false },
-    "MEMORY_LINE_NOT_FOUND": { "status": 404, "publicCode": false }
+    "SESSION_READ_TIMEOUT": { "status": 504, "publicCode": false }
   },
   "deadlines": { "request": 50, "invocation": 900 },
   "operations": {
@@ -51,50 +48,6 @@
       "optionalResult": {},
       "errors": [],
       "deadline": "invocation"
-    },
-    "memory": {
-      "required": { "userId": "" },
-      "optional": {},
-      "result": { "lines": [{ "id": "", "text": "" }] },
-      "optionalResult": {},
-      "errors": ["MEMORY_NOT_CONFIGURED", "SESSION_READ_TIMEOUT"],
-      "deadline": "request"
-    },
-    "memory-add": {
-      "required": { "userId": "", "text": "" },
-      "optional": {},
-      "result": { "line": { "id": "", "text": "" } },
-      "optionalResult": {},
-      "errors": [
-        "MEMORY_NOT_CONFIGURED",
-        "MEMORY_SAVE_FAILED",
-        "SESSION_READ_TIMEOUT"
-      ],
-      "deadline": "request"
-    },
-    "memory-edit": {
-      "required": { "userId": "", "recordId": "", "text": "" },
-      "optional": {},
-      "result": {},
-      "optionalResult": {},
-      "errors": [
-        "MEMORY_NOT_CONFIGURED",
-        "MEMORY_LINE_NOT_FOUND",
-        "SESSION_READ_TIMEOUT"
-      ],
-      "deadline": "request"
-    },
-    "memory-delete": {
-      "required": { "userId": "", "recordId": "" },
-      "optional": {},
-      "result": {},
-      "optionalResult": {},
-      "errors": [
-        "MEMORY_NOT_CONFIGURED",
-        "MEMORY_LINE_NOT_FOUND",
-        "SESSION_READ_TIMEOUT"
-      ],
-      "deadline": "request"
     },
     "forget": {
       "required": { "userId": "" },

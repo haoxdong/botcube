@@ -8,7 +8,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Barrier, Lock
 from typing import Any
@@ -24,7 +24,7 @@ from langgraph.checkpoint.base import empty_checkpoint
 from langgraph_checkpoint_aws.checkpoint.deferred_saver import PendingWrite
 
 from agentcore_fake import MEMORY_ID, FakeAgentCoreMemory
-from botcube_harness_deepagents import memory_document, session_api
+from botcube_harness_deepagents import session_api
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.llm import EchoChatModel
 from botcube_harness_deepagents.memory import agentcore
@@ -541,8 +541,7 @@ def test_session_api_timing_preserves_classified_and_unexpected_failures(
 
 
 @pytest.mark.parametrize(('operation', 'status'), [
-    ('post', 200), ('purge', 200), ('memory', 503), ('memory-edit', 503), ('memory-delete', 503), ('memory-add', 503),
-    ('private invalid operation', 400),
+    ('post', 200), ('purge', 200), ('private invalid operation', 400),
 ])
 def test_session_api_timing_attributes_other_operations(
     local_record: None, caplog: pytest.LogCaptureFixture, operation: str, status: int,
@@ -636,259 +635,9 @@ def memory(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> FakeAgentCore
     return fake
 
 
-def test_the_memory_page_shows_the_users_preferences_then_facts_and_no_one_elses(
-    client: TestClient, memory: FakeAgentCoreMemory
-) -> None:
-    memory.records += [
-        _record('mem-preference-000000000000000000000000000', 'Prefers tea', 'user-1', 'preferences'),
-        _record('mem-summary-0000000000000000000000000000000', 'Discussed copper', 'user-1', 'summaries/session-1'),
-        _record('mem-others-preference-00000000000000000000', 'Prefers coffee', OTHER_USER, 'preferences'),
-    ]
-
-    assert _memory(client) == (200, {'lines': [
-        {'id': 'mem-preference-000000000000000000000000000', 'text': 'Prefers tea'},
-        {'id': OWN_RECORD, 'text': 'Trades copper'},
-    ]})
-
-
-@pytest.mark.parametrize(
-    'event',
-    [
-        {'operation': 'memory-edit', 'userId': 'user-1', 'recordId': OTHERS_RECORD, 'text': 'Trades silver'},
-        {'operation': 'memory-delete', 'userId': 'user-1', 'recordId': OTHERS_RECORD},
-    ],
-)
-def test_a_user_cannot_touch_a_record_outside_their_memory(
-    client: TestClient, memory: FakeAgentCoreMemory, event: dict[str, str]
-) -> None:
-    response = client.post('/invocations', json=event)
-
-    assert response.status_code == 404
-    assert response.json() == {'error': f'Memory has no line {OTHERS_RECORD}', 'code': 'MEMORY_LINE_NOT_FOUND'}
-    assert [record['content']['text'] for record in memory.records] == ['Trades copper', 'Trades gold']
-
-
-@pytest.mark.parametrize(
-    ('event', 'error'),
-    [
-        ({'operation': 'memory'}, 'userId is required'),
-        ({'operation': 'memory-add', 'text': 'Tea'}, 'userId is required'),
-        ({'operation': 'memory-add', 'userId': 'user-1', 'text': ' '}, 'text is required'),
-        ({'operation': 'memory-delete', 'userId': 'user-1'}, 'recordId is required'),
-        ({'operation': 'memory-edit', 'userId': 'user-1', 'recordId': OWN_RECORD, 'text': ' '}, 'text is required'),
-    ],
-)
-def test_malformed_memory_events_are_rejected(
-    client: TestClient, memory: FakeAgentCoreMemory, event: dict[str, str], error: str
-) -> None:
-    response = client.post('/invocations', json=event)
-
-    assert response.status_code == 400
-    assert response.json() == {'error': error, 'code': 'INVALID_REQUEST'}
-    assert [record['content']['text'] for record in memory.records] == ['Trades copper', 'Trades gold']
-
-
-@pytest.mark.parametrize(
-    ('failed', 'reason'),
-    [
-        ({'memoryRecordId': OWN_RECORD, 'status': 'FAILED', 'errorCode': 500, 'errorMessage': 'Throttled'}, 'Throttled'),
-        # errorMessage is optional in AgentCore's response: the status still says why.
-        ({'memoryRecordId': OWN_RECORD, 'status': 'FAILED'}, 'FAILED'),
-    ],
-)
-def test_a_record_agentcore_fails_to_update_fails_the_edit(
-    client: TestClient, memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch, failed: dict[str, Any], reason: str
-) -> None:
-    monkeypatch.setattr(
-        memory, 'batch_update_memory_records', lambda **_params: {'successfulRecords': [], 'failedRecords': [failed]}
-    )
-
-    with pytest.raises(RuntimeError, match=f'^Updating memory record {OWN_RECORD} failed: {reason}$'):
-        client.post(
-            '/invocations', json={'operation': 'memory-edit', 'userId': 'user-1', 'recordId': OWN_RECORD, 'text': 'x'}
-        )
-
-
-@pytest.mark.parametrize('boundary', ['http', 'lambda'])
-def test_editing_a_deleted_line_still_listed_by_agentcore_is_not_found(
-    client: TestClient, memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch, boundary: str
-) -> None:
-    listed = client.post('/invocations', json={'operation': 'memory', 'userId': 'user-1'})
-    assert listed.json() == {'lines': [{'id': OWN_RECORD, 'text': 'Trades copper'}]}
-    monkeypatch.setattr(
-        memory,
-        'batch_update_memory_records',
-        lambda **_params: {
-            'successfulRecords': [],
-            'failedRecords': [{
-                'memoryRecordId': OWN_RECORD,
-                'status': 'FAILED',
-                'errorCode': 404,
-                'errorMessage': 'Memory record not found',
-            }],
-        },
-    )
-    event = {'operation': 'memory-edit', 'userId': 'user-1', 'recordId': OWN_RECORD, 'text': 'Trades silver'}
-
-    if boundary == 'lambda':
-        result = session_api.lambda_handler(event, None)
-    else:
-        response = client.post('/invocations', json=event)
-        result = {'statusCode': response.status_code, 'body': response.json()}
-
-    assert result == {
-        'statusCode': 404,
-        'body': {'error': f'Memory has no line {OWN_RECORD}', 'code': 'MEMORY_LINE_NOT_FOUND'},
-    }
-
-
-def _memory(client: TestClient, operation: str = 'memory', **fields: str) -> Any:
+def _memory(client: TestClient, operation: str, **fields: str) -> Any:
     response = client.post('/invocations', json={'operation': operation, 'userId': 'user-1', **fields})
     return response.status_code, response.json()
-
-
-def test_a_reload_shows_a_saved_edit_while_agentcore_lists_the_old_line(
-    client: TestClient, memory: FakeAgentCoreMemory
-) -> None:
-    memory.lag_listing()
-
-    _memory(client, 'memory-edit', recordId=OWN_RECORD, text='Trades silver')
-    reloaded = _memory(client)
-
-    assert reloaded == (200, {'lines': [{'id': OWN_RECORD, 'text': 'Trades silver'}]})
-
-
-def test_a_reload_drops_a_deleted_line_while_agentcore_still_lists_it(
-    client: TestClient, memory: FakeAgentCoreMemory
-) -> None:
-    memory.lag_listing()
-
-    _memory(client, 'memory-delete', recordId=OWN_RECORD)
-
-    assert _memory(client) == (200, {'lines': []})
-    assert _memory(client, 'memory-edit', recordId=OWN_RECORD, text='Trades silver') == (
-        404, {'error': f'Memory has no line {OWN_RECORD}', 'code': 'MEMORY_LINE_NOT_FOUND'}
-    )
-
-
-def test_a_reload_shows_the_latest_of_two_saved_edits(client: TestClient, memory: FakeAgentCoreMemory) -> None:
-    memory.lag_listing()
-
-    _memory(client, 'memory-edit', recordId=OWN_RECORD, text='Trades silver')
-    _memory(client, 'memory-edit', recordId=OWN_RECORD, text='Trades platinum')
-
-    assert _memory(client) == (200, {'lines': [{'id': OWN_RECORD, 'text': 'Trades platinum'}]})
-
-
-def test_a_saved_edit_never_reaches_memory_extraction(client: TestClient, memory: FakeAgentCoreMemory) -> None:
-    _memory(client, 'memory-edit', recordId=OWN_RECORD, text='Trades silver')
-    _memory(client, 'memory-delete', recordId=OWN_RECORD)
-
-    assert list(memory.extraction_modes.values()) == [['SKIP', 'SKIP']]
-
-
-def test_five_minutes_after_a_save_the_listing_alone_says_what_memory_holds(
-    client: TestClient, memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    saved_at = datetime(2026, 10, 6, 11, 39, 59, tzinfo=UTC)
-    monkeypatch.setattr(memory_document, 'utc_now', lambda: saved_at)
-    _memory(client, 'memory-edit', recordId=OWN_RECORD, text='Trades silver')
-    # Another writer, such as Memory extraction, rewrites the line after the save.
-    [own] = [record for record in memory.records if record['memoryRecordId'] == OWN_RECORD]
-    own['content'] = {'text': 'Trades platinum'}
-
-    monkeypatch.setattr(memory_document, 'utc_now', lambda: saved_at + timedelta(minutes=5))
-    within = _memory(client)
-    monkeypatch.setattr(memory_document, 'utc_now', lambda: saved_at + timedelta(minutes=5, seconds=1))
-    after = _memory(client)
-
-    assert within == (200, {'lines': [{'id': OWN_RECORD, 'text': 'Trades silver'}]})
-    assert after == (200, {'lines': [{'id': OWN_RECORD, 'text': 'Trades platinum'}]})
-
-
-def test_memory_needs_agentcore_memory(client: TestClient) -> None:
-    response = client.post('/invocations', json={'operation': 'memory', 'userId': 'user-1'})
-
-    assert response.status_code == 503
-    assert response.json() == {
-        'error': 'Memory needs AgentCore Memory: set AGENTCORE_MEMORY_ID',
-        'code': 'MEMORY_NOT_CONFIGURED',
-    }
-
-
-def test_an_edit_stamps_the_record_with_the_time_in_utc(
-    client: TestClient, memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    updates: list[dict[str, Any]] = []
-    monkeypatch.setattr(
-        memory,
-        'batch_update_memory_records',
-        lambda **params: updates.append(params) or {'successfulRecords': [], 'failedRecords': []},
-    )
-
-    client.post('/invocations', json={'operation': 'memory-edit', 'userId': 'user-1', 'recordId': OWN_RECORD, 'text': 'x'})
-
-    [[record]] = [update['records'] for update in updates]
-    assert record['timestamp'].utcoffset() == timedelta(0)
-
-
-def test_added_memory_is_visible_before_extraction_and_only_to_its_actor(
-    client: TestClient, memory: FakeAgentCoreMemory,
-) -> None:
-    response = client.post('/invocations', json={
-        'operation': 'memory-add', 'userId': 'user-1', 'text': 'Prefers jasmine tea',
-    })
-    assert response.status_code == 200
-    line = response.json()['line']
-    assert line['text'] == 'Prefers jasmine tea'
-    assert _memory(client) == (200, {'lines': [line, {'id': OWN_RECORD, 'text': 'Trades copper'}]})
-    other = client.post('/invocations', json={'operation': 'memory', 'userId': OTHER_USER})
-    assert other.json() == {'lines': [{'id': OTHERS_RECORD, 'text': 'Trades gold'}]}
-    assert memory.records == [
-        _record(OWN_RECORD, 'Trades copper', 'user-1'), _record(OTHERS_RECORD, 'Trades gold', OTHER_USER),
-    ]
-
-
-def test_failed_memory_add_is_an_error_not_a_saved_line(
-    client: TestClient, memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from botocore.exceptions import ClientError
-
-    def refuse(**_params: Any) -> dict[str, Any]:
-        raise ClientError({'Error': {'Code': 'ThrottlingException', 'Message': 'Busy'}}, 'CreateEvent')
-
-    monkeypatch.setattr(memory, 'create_event', refuse)
-    response = client.post('/invocations', json={
-        'operation': 'memory-add', 'userId': 'user-1', 'text': 'Prefers jasmine tea',
-    })
-    assert response.status_code == 503
-    assert response.json() == {'error': 'Saving Memory failed', 'code': 'MEMORY_SAVE_FAILED'}
-    assert _memory(client) == (200, {'lines': [{'id': OWN_RECORD, 'text': 'Trades copper'}]})
-
-
-def test_editing_an_extracted_addition_does_not_resurrect_its_pending_text(
-    client: TestClient, memory: FakeAgentCoreMemory,
-) -> None:
-    client.post('/invocations', json={
-        'operation': 'memory-add', 'userId': 'user-1', 'text': 'Prefers jasmine tea',
-    })
-    memory.records.append({**_record('mem-tea-000000000000000000000000000000000', 'Prefers jasmine tea', 'user-1'),
-                           'createdAt': datetime(2026, 7, 2, tzinfo=UTC)})
-    assert _memory(client, 'memory-edit', recordId='mem-tea-000000000000000000000000000000000', text='Prefers coffee') == (200, {})
-    assert _memory(client) == (200, {'lines': [
-        {'id': 'mem-tea-000000000000000000000000000000000', 'text': 'Prefers coffee'},
-        {'id': OWN_RECORD, 'text': 'Trades copper'},
-    ]})
-
-
-def test_a_new_addition_can_restore_text_from_an_earlier_correction(
-    client: TestClient, memory: FakeAgentCoreMemory,
-) -> None:
-    assert _memory(client, 'memory-edit', recordId=OWN_RECORD, text='Trades silver') == (200, {})
-    added = client.post('/invocations', json={
-        'operation': 'memory-add', 'userId': 'user-1', 'text': 'Trades copper',
-    }).json()['line']
-    assert _memory(client) == (200, {'lines': [added, {'id': OWN_RECORD, 'text': 'Trades silver'}]})
 
 
 def test_concurrent_session_purges_both_succeed(

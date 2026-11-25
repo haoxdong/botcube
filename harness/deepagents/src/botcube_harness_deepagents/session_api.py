@@ -7,16 +7,14 @@ import json
 import logging
 import os
 import uuid
-from collections.abc import Awaitable, Callable, Generator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
-from functools import partial
 from itertools import dropwhile, islice
 from pathlib import Path
 from time import perf_counter
 from typing import Any
 
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from langchain_core.messages import AIMessage, BaseMessage
@@ -30,14 +28,7 @@ from .memory import agentcore as agentcore_memory_backend
 from .memory import local as local_memory_backend
 from .memory.agentcore.forget import forget_extracted_memory
 from .memory.agentcore.purge import purge_session
-from .memory_document import (
-    MemoryLineNotFoundError,
-    delete_memory_line,
-    edit_memory_line,
-    memory_lines,
-)
 from .memory_tools import AGENTCORE_MEMORY_ID, AWS_REGION
-from .pending_memory import record_pending_memory
 from .session_format import SessionFormatLegacyError, latest_checkpoint
 
 log = logging.getLogger(__name__)
@@ -214,42 +205,10 @@ async def purge(user_id: str, session_id: str) -> None:
         await checkpointer.adelete_session(user_id, session_id)
 
 
-def _memory_client(user_id: str) -> tuple[Any, dict[str, str]]:
-    if not AGENTCORE_MEMORY_ID:
-        raise SessionApiError('Memory needs AgentCore Memory: set AGENTCORE_MEMORY_ID', 'MEMORY_NOT_CONFIGURED')
-    return boto3.client('bedrock-agentcore', region_name=AWS_REGION), {
-        'memory_id': AGENTCORE_MEMORY_ID,
-        'actor_id': user_id,
-    }
-
-
-def _list_memory(args: dict[str, Any]) -> dict[str, Any]:
-    client, identity = _memory_client(args['userId'])
-    return {'lines': memory_lines(client, **identity)}
-
-
-def _add_memory(args: dict[str, Any]) -> dict[str, Any]:
-    client, identity = _memory_client(args['userId'])
-    try:
-        return {'line': record_pending_memory(client, **identity, text=args['text'])}
-    except (BotoCoreError, ClientError) as exc:
-        raise SessionApiError('Saving Memory failed', 'MEMORY_SAVE_FAILED') from exc
-
-
-def _change_memory(change: Any, args: dict[str, Any]) -> dict[str, Any]:
-    client, identity = _memory_client(args['userId'])
-    text = {'text': args['text']} if 'text' in args else {}
-    try:
-        change(client, **identity, record_id=args['recordId'], **text)
-    except MemoryLineNotFoundError as exc:
-        raise SessionApiError(str(exc), 'MEMORY_LINE_NOT_FOUND') from exc
-    return {}
-
-
-def _forget(args: dict[str, Any]) -> dict[str, Any]:
+async def _forget(args: dict[str, Any], _phases: dict[str, float]) -> dict[str, Any]:
     if AGENTCORE_MEMORY_ID:
-        client, identity = _memory_client(args['userId'])
-        forget_extracted_memory(client, **identity)
+        client = boto3.client('bedrock-agentcore', region_name=AWS_REGION)
+        await asyncio.to_thread(forget_extracted_memory, client, memory_id=AGENTCORE_MEMORY_ID, actor_id=args['userId'])
     return {}
 
 
@@ -267,24 +226,11 @@ async def _purge(args: dict[str, Any], _phases: dict[str, float]) -> dict[str, A
     return {}
 
 
-def _memory_handler(
-    work: Callable[[dict[str, Any]], dict[str, Any]],
-) -> Callable[[dict[str, Any], dict[str, float]], Awaitable[dict[str, Any]]]:
-    async def run(args: dict[str, Any], _phases: dict[str, float]) -> dict[str, Any]:
-        return await asyncio.to_thread(work, args)
-
-    return run
-
-
 HANDLERS = {
     'get': _replay,
     'post': _post,
     'purge': _purge,
-    'memory': _memory_handler(_list_memory),
-    'memory-add': _memory_handler(_add_memory),
-    'memory-edit': _memory_handler(partial(_change_memory, edit_memory_line)),
-    'memory-delete': _memory_handler(partial(_change_memory, delete_memory_line)),
-    'forget': _memory_handler(_forget),
+    'forget': _forget,
 }
 
 

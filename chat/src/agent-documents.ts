@@ -67,13 +67,6 @@ export function agentDocumentEdit(value: unknown): AgentDocumentEdit {
   throw new HttpError(422, 'The edit names no agent document');
 }
 
-/** The text of an edited Memory line, or a 422. */
-export function memoryLine(value: unknown): string {
-  const { text } = (value ?? {}) as Record<string, unknown>;
-  if (typeof text !== 'string' || !text.trim()) throw new HttpError(422, 'A Memory line must be non-blank text');
-  return text;
-}
-
 /** Per-account Agent Identity and Soul, each falling back to the bot's template until edited. */
 export interface AgentDocuments {
   get(owner: string, templates: AgentDocumentSet): Promise<AgentDocumentSet>;

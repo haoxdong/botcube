@@ -5,18 +5,12 @@ import { DeleteTableCommand, DynamoDBClient, ResourceNotFoundException, Transact
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createChatTable } from '../test/fakes/stack.js';
 import { DynamoDBAgentDocuments } from './agent-documents.js';
-import { dispatcherFetch } from './dispatcher-fetch.js';
 import { HttpError } from './http-error.js';
 import { DynamoDBSessionMetadata } from './session-metadata.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { eventually } from '../test/eventually.js';
 import { filed } from '../test/stock-bot.js';
-
-vi.mock('./dispatcher-fetch.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./dispatcher-fetch.js')>();
-  return { dispatcherFetch: vi.fn(actual.dispatcherFetch) };
-});
 
 // The test bot's templates (botcube/chat/test/stock-bot.ts), its vibe the bot settings' default.
 const TEMPLATE_IDENTITY = { name: 'Test Bot', character: 'A test agent', vibe: 'Direct, precise, and calm', avatar: '' };
@@ -335,122 +329,33 @@ describe("The agent's picture", () => {
   });
 });
 
-describe('Memory', () => {
-  const remembering = (owner: string) => {
-    stack.sessionApi.memories.set(filed(owner), [
-      { id: 'mem-copper', text: 'Trades copper' },
-      { id: 'mem-paris', text: 'Lives in Paris' },
-    ]);
-    return as(owner);
-  };
+// The Memory panel shows Written Memory (ADR 0095): no route serves Extracted Memory records.
+it.each([
+  ['GET', '/agent/memory'],
+  ['POST', '/agent/memory'],
+  ['PUT', '/agent/memory/mem-paris'],
+  ['DELETE', '/agent/memory/mem-paris'],
+])('answers %s %s with 404, never asking the session API', async (method, path) => {
+  const user = as('acct_memory-retired');
 
-  it("reads the account's Memory lines from the session API", async () => {
-    const user = remembering('acct_memory-read');
-
-    expect(await (await user.request('/agent/memory')).json()).toEqual({
-      lines: [
-        { id: 'mem-copper', text: 'Trades copper' },
-        { id: 'mem-paris', text: 'Lives in Paris' },
-      ],
-    });
-    expect(stack.sessionApi.events()).toContainEqual({ operation: 'memory', userId: filed('acct_memory-read') });
+  const response = await user.request(path, {
+    method, headers: { 'content-type': 'application/json' }, body: method === 'GET' ? null : JSON.stringify({ text: 'Lives in London' }),
   });
 
-  it('adds a line to the account Memory through Pending Memory', async () => {
-    const user = remembering('acct_memory-added');
-    const response = await user.request('/agent/memory', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text: 'Prefers jasmine tea' }),
-    });
-    expect(response.status).toBe(201);
-    const { line } = await response.json() as { line: { id: string; text: string } };
-    expect(line.text).toBe('Prefers jasmine tea');
-    expect(await (await user.request('/agent/memory')).json()).toEqual({ lines: [
-      line, { id: 'mem-copper', text: 'Trades copper' }, { id: 'mem-paris', text: 'Lives in Paris' },
-    ] });
-    expect(stack.sessionApi.events()).toContainEqual({ operation: 'memory-add', userId: filed('acct_memory-added'), text: 'Prefers jasmine tea' });
-  });
-
-  it('edits and deletes lines through the session API', async () => {
-    const user = remembering('acct_memory-edited');
-
-    expect((await user.put('/agent/memory/mem-paris', { text: 'Lives in London' })).status).toBe(204);
-    expect((await user.request('/agent/memory/mem-copper', { method: 'DELETE' })).status).toBe(204);
-
-    expect(stack.sessionApi.events()).toEqual(
-      expect.arrayContaining([
-        { operation: 'memory-edit', userId: filed('acct_memory-edited'), recordId: 'mem-paris', text: 'Lives in London' },
-        { operation: 'memory-delete', userId: filed('acct_memory-edited'), recordId: 'mem-copper' },
-      ]),
-    );
-    expect(await (await user.request('/agent/soul')).json()).toEqual({ content: TEMPLATE_SOUL });
-  });
-
-  it('answers 404 for a delete or edit of a line Memory does not have', async () => {
-    const user = remembering('acct_memory-missing');
-
-    const response = await user.request('/agent/memory/mem-gold', { method: 'DELETE' });
-
-    expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ detail: 'Memory has no line mem-gold' });
-    expect((await user.put('/agent/memory/mem-gold', { text: 'Trades gold' })).status).toBe(404);
-  });
-
-  it('surfaces a failed deletion with the session API diagnostics', async () => {
-    const user = remembering('acct_memory-upstream-failure');
-    const diagnostics = { error: 'Memory unavailable', stackTrace: ['at memory_delete (/var/task/session_api.py:3484)'] };
-    const transport = vi.mocked(dispatcherFetch);
-    const { dispatcherFetch: passThrough } = await vi.importActual<typeof import('./dispatcher-fetch.js')>('./dispatcher-fetch.js');
-    transport.mockImplementation((url, init) => {
-      if (url === `${stack.sessionApi.url}/invocations` && typeof init.body === 'string' && JSON.parse(init.body).operation === 'memory-delete') {
-        return Promise.resolve(new Response(JSON.stringify(diagnostics), { status: 503 }));
-      }
-      return passThrough(url, init);
-    });
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    try {
-      const response = await user.request('/agent/memory/mem-copper', { method: 'DELETE' });
-      expect(response.status).toBe(503);
-      expect(await response.json()).toEqual({ detail: 'Session API returned HTTP 503' });
-      expect(errors).toHaveBeenCalledWith('DELETE /agent/memory/mem-copper failed', expect.objectContaining({
-        status: 503, detail: 'Session API returned HTTP 503', cause: diagnostics,
-      }));
-      expect(stack.sessionApi.memories.get(filed('acct_memory-upstream-failure'))).toHaveLength(2);
-    } finally {
-      transport.mockImplementation(passThrough);
-      errors.mockRestore();
-    }
-  });
-
-  it.each([{ text: '' }, { text: ' \n' }, { text: null }, 'not json'])('refuses the line %j without asking the session API', async (body) => {
-    const user = remembering('acct_memory-malformed');
-
-    const response = await user.request('/agent/memory/mem-paris', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: typeof body === 'string' ? body : JSON.stringify(body),
-    });
-
-    expect(response.status).toBe(422);
-    expect(await response.json()).toEqual({ detail: 'A Memory line must be non-blank text' });
-    expect(stack.sessionApi.events()).not.toContainEqual(expect.objectContaining({ userId: filed('acct_memory-malformed') }));
-  });
+  expect(response.status).toBe(404);
+  expect(stack.sessionApi.events()).not.toContainEqual(expect.objectContaining({ userId: filed('acct_memory-retired') }));
 });
 
-
 describe('bounded document recovery probes', () => {
-  it('keeps concurrent Soul, Identity and Memory updates in one account without losing fields', async () => {
+  it('keeps concurrent Soul and Identity updates in one account without losing fields', async () => {
     const user = as('acct_probe-concurrent');
-    stack.sessionApi.memories.set(filed('acct_probe-concurrent'), [{ id: 'line', text: 'old' }]);
     const responses = await Promise.all([
       user.put('/agent/soul', { content: 'Concurrent instructions' }),
       user.put('/agent/identity', { ...TEMPLATE_IDENTITY, name: 'Concurrent Agent' }),
-      user.put('/agent/memory/line', { text: 'new' }),
     ]);
-    expect(responses.map((response) => response.status)).toEqual([204, 204, 204]);
+    expect(responses.map((response) => response.status)).toEqual([204, 204]);
     await user.turn('probe-concurrent-turn');
     expect(forwarded('probe-concurrent-turn')).toMatchObject({ soul: 'Concurrent instructions', agentIdentity: { name: 'Concurrent Agent' } });
-    expect(stack.sessionApi.memories.get(filed('acct_probe-concurrent'))).toEqual([{ id: 'line', text: 'new' }]);
     expect(await (await as('acct_probe-concurrent-other').request('/agent/soul')).json()).toEqual({ content: TEMPLATE_SOUL });
   });
 
@@ -514,32 +419,11 @@ describe('Agent document deletion boundary probe', () => {
   });
 });
 
-it('refuses an anonymous Memory addition before calling the session API', async () => {
-  const anonymous = await startInProcess({ overrides: { requester: async () => ({ owner: 'acct_anonymous-memory', anonymous: true }) } });
-  try {
-    const response = await anonymous.app.request('/agent/memory', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'Prefers tea' }),
-    });
-    expect(response.status).toBe(403);
-    expect(anonymous.sessionApi.events()).toEqual([]);
-  } finally {
-    await anonymous.stop();
-  }
-});
-
-// The bot settings' Extracted Memory gate. A bot with it off keeps no AgentCore Memory: its routes refuse, and its Turns say so.
-it('refuses Memory and tells each Turn when the bot settings turn Extracted Memory off', async () => {
+// The bot settings' Extracted Memory gate. A bot with it off keeps no AgentCore Memory, and its Turns say so.
+it('tells each Turn when the bot settings turn Extracted Memory off', async () => {
   const forgetful = await startInProcess({ overrides: { extractedMemory: false } });
   try {
     const user = { 'x-test-owner': 'acct_memory-off' };
-    expect((await forgetful.app.request('/agent/memory', { headers: user })).status).toBe(404);
-    const added = await forgetful.app.request('/agent/memory', {
-      method: 'POST', headers: { ...user, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'Prefers tea' }),
-    });
-    expect(added.status).toBe(404);
-    expect(await added.json()).toEqual({ detail: 'Extracted Memory is off for this bot' });
-    expect(forgetful.sessionApi.events()).toEqual([]);
-
     await forgetful.allocate('acct_memory-off', 'memory-off-turn');
     await (await forgetful.app.request('/', {
       method: 'POST',

@@ -29,7 +29,6 @@ export const RUNTIME_IDLE_TIMEOUT_SECONDS = 300;
 const RUNTIME_IDLE_TIMEOUT_CAP_SECONDS = 900;
 const RUNTIME_SESSION_STORAGE = '/mnt/workspace';
 /** Every actor's long-term records: the trailing slashes refuse `/actors/` and an actor ID without its slash (ADR 0033). */
-const MEMORY_ACTOR_NAMESPACES = { StringLike: { 'bedrock-agentcore:namespace': '/actors/*/' } };
 const MEMORY_ACTOR_NAMESPACE_PATHS = { StringLike: { 'bedrock-agentcore:namespacePath': '/actors/*/' } };
 
 /** The `@aws/agentcore-cdk` L3 also names each Memory as `MEMORY_<NAME>_ID`; the Harness reads only AGENTCORE_MEMORY_ID. */
@@ -325,14 +324,6 @@ export class AgentCoreStack extends Stack {
         resources: [memory.memoryArn],
       })
     );
-    // A member's Memory document: their records, listed under their actor prefix, edited, and deleted.
-    role.addToPrincipalPolicy(
-      new iam.PolicyStatement({
-        actions: ['bedrock-agentcore:ListMemoryRecords'],
-        resources: [memory.memoryArn],
-        conditions: MEMORY_ACTOR_NAMESPACES,
-      })
-    );
     role.addToPrincipalPolicy(
       new iam.PolicyStatement({
         actions: ['bedrock-agentcore:ListMemoryRecords'],
@@ -342,7 +333,7 @@ export class AgentCoreStack extends Stack {
     );
     role.addToPrincipalPolicy(
       new iam.PolicyStatement({
-        actions: ['bedrock-agentcore:BatchUpdateMemoryRecords', 'bedrock-agentcore:DeleteMemoryRecord'],
+        actions: ['bedrock-agentcore:DeleteMemoryRecord'],
         resources: [memory.memoryArn],
       })
     );

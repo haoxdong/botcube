@@ -62,6 +62,8 @@ class FakeAgentCoreMemory:
         self.records: list[dict[str, Any]] = []
         # What ListMemoryRecords serves while it lags writes, as AgentCore's does for about a minute.
         self.listing: list[dict[str, Any]] | None = None
+        # What every ListMemoryRecords page raises while set, as AgentCore throttling them does.
+        self.listing_error: Exception | None = None
         # DeleteMemoryRecord calls that succeed before AgentCore throttles the rest, or None for no throttling.
         self.deletes_before_throttling: int | None = None
         self.list_events_calls = 0
@@ -190,13 +192,6 @@ class FakeAgentCoreMemory:
         raise EXCEPTIONS.ResourceNotFoundException(
             {'Error': {'Code': 'ResourceNotFoundException', 'Message': 'Memory record not found'}}, operation)
 
-    def batch_update_memory_records(self, **params: Any) -> dict[str, Any]:
-        params = validated('BatchUpdateMemoryRecords', params)
-        for update in params['records']:
-            self._record(update['memoryRecordId'], 'BatchUpdateMemoryRecords')['content'] = update['content']
-        successful = [{'memoryRecordId': update['memoryRecordId'], 'status': 'SUCCEEDED'} for update in params['records']]
-        return {'successfulRecords': successful, 'failedRecords': []}
-
     def delete_memory_record(self, **params: Any) -> dict[str, Any]:
         params = validated('DeleteMemoryRecord', params)
         if self.deletes_before_throttling == 0:
@@ -212,6 +207,8 @@ class FakeAgentCoreMemory:
 
         def paginate(*, PaginationConfig: dict[str, int], **params: Any) -> list[dict[str, Any]]:
             validated('ListMemoryRecords', {**params, 'maxResults': PaginationConfig['PageSize']})
+            if self.listing_error is not None:
+                raise self.listing_error
             listed = self._under(params)
             size = PaginationConfig['PageSize']
             return [{'memoryRecordSummaries': listed[start:start + size]} for start in range(0, len(listed), size)] or [

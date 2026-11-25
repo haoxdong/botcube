@@ -74,7 +74,6 @@ from botcube_harness_deepagents import (
     artifact,
     files,
     llm,
-    memory_document,
     memory_tools,
     message_times,
     serving,
@@ -2634,9 +2633,6 @@ def test_on_agentcore_a_continuing_sessions_turn_reaches_its_model_after_one_mem
     service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
     checkpoint_write_gate: threading.Event,
 ) -> None:
-    pending_sessions = memory_document.pending_memory_session_ids
-    monkeypatch.setattr(memory_document, 'pending_memory_session_ids',
-                        lambda now: pending_sessions(now.replace(hour=12, minute=0)))
     reached: list[float] = []
     calls = agentcore_memory.sts.memory_calls
     before_model: list[tuple[str, str, bool]] = []
@@ -2672,11 +2668,10 @@ def test_on_agentcore_a_continuing_sessions_turn_reaches_its_model_after_one_mem
     # The Memory block reads alongside them too, though the Session keeps its block.
     session_reads = sorted(read for read in before_model if read[1] in ('lgw-', 'thre'))
     assert session_reads == [('list_events', 'lgw-', True), ('list_events', 'thre', False)]
-    # Three reads of the Session, three ListEvents each, took nine round trips. Count the round trips the
-    # model waited for one after another, not the wall time, which a busy CI host stretches: every Memory
-    # read at once, under the Session's credentials, with no exchange for new ones (ADR 0067 §8).
+    # Count the round trips the model waited for one after another, not the wall time, which a busy CI host
+    # stretches: every Memory read at once, under the Session's credentials, with no exchange for new ones (ADR 0067 §8).
     waited, depth = _waited_for(agentcore_memory, reached[-1])
-    assert (sorted(waited), depth) == (['list_events'] * 7 + ['list_memory_records'] * 2, 1)
+    assert (sorted(waited), depth) == (['list_events'] * 2 + ['list_memory_records'] * 2, 1)
 
 
 @pytest.mark.parametrize('slow_preparation', [False, True])
@@ -2695,9 +2690,6 @@ def test_on_agentcore_a_new_sessions_turn_reaches_its_model_after_two_serial_rou
             return modify_request(self, request)
 
         monkeypatch.setattr(_SchemaSkillsMiddleware, 'modify_request', prepare_slowly)
-    pending_sessions = memory_document.pending_memory_session_ids
-    monkeypatch.setattr(memory_document, 'pending_memory_session_ids',
-                        lambda now: pending_sessions(now.replace(hour=12, minute=0)))
     reached: list[float] = []
     stream = _ScriptedModel._stream
 
@@ -2716,7 +2708,7 @@ def test_on_agentcore_a_new_sessions_turn_reaches_its_model_after_two_serial_rou
     # The Turn identity's exchange for credentials, then every Memory read at once.
     waited, depth = _waited_for(agentcore_memory, reached[0])
     assert (waited[0], sorted(waited[1:]), depth) == (
-        'assume_role_with_web_identity', ['list_events'] * 6 + ['list_memory_records'] * 2, 2)
+        'assume_role_with_web_identity', ['list_events'] * 1 + ['list_memory_records'] * 2, 2)
 
 
 def _waited_for(memory: FakeAgentCoreMemory, reached: float) -> tuple[list[str], int]:
@@ -2774,12 +2766,13 @@ def _memory_record(
 
 
 RECORD_REPLY = (
-    '{"status": "success", "content": [{"text": "Saved to memory. A new conversation sees it right away, '
-    'and it reaches long-term memory within about two minutes."}]}'
+    '{"status": "success", "content": [{"text": "Saved to memory. It reaches long-term memory within about two minutes."}]}'
 )
 
 
-def test_on_agentcore_a_members_memory_opens_their_next_conversation(service: _Service, agentcore_memory: _ScopedMemory) -> None:
+def test_on_agentcore_a_members_memory_opens_their_next_conversation_once_extracted(
+    service: _Service, agentcore_memory: _ScopedMemory,
+) -> None:
     agentcore_memory.records += [
         _memory_record('{"preference": "Prefers dark mode"}', 'UserPreferences-1', 'actor-1'),
         _memory_record('{"preference": "Prefers light mode"}', 'UserPreferences-1', 'actor-2'),
@@ -2793,12 +2786,14 @@ def test_on_agentcore_a_members_memory_opens_their_next_conversation(service: _S
     service.turn('hello', thread='thread-b', **member)
 
     assert _tool_output(saved) == RECORD_REPLY
+    [save] = [event for (actor, session), events in agentcore_memory.events.items() if actor == 'actor-1'
+              and session.startswith('pending-memory-') for event in events]
+    assert save['payload'] == [{'conversational': {'content': {'text': 'prefers copper'}, 'role': 'USER'}}]
     assert _memory_block(service.recorder.prompts[-1]) == (
         'user preferences:\n'
         '- record-{ Prefers dark mode\n'
         '\n'
         'semantic facts:\n'
-        '- prefers copper\n'
         '- record-T Trades copper futures'
     )
     assert agentcore_memory.sts.regions == ['eu-west-1', 'eu-west-1']
@@ -2852,66 +2847,10 @@ def test_on_agentcore_the_memory_tool_lists_retrieves_gets_and_deletes_only_the_
     assert [record['memoryRecordId'] for record in agentcore_memory.records] == [PARIS, DARK_MODE]
 
 
-def _memory_operation(operation: str, user: str = 'actor-1', **fields: str) -> dict[str, Any]:
-    response = TestClient(session_api.app).post('/invocations', json={'operation': operation, 'userId': user, **fields})
-    assert response.status_code == 200, response.text
-    return response.json()
-
-
 # AgentCore memory record IDs are at least 40 characters.
 DARK_MODE = 'mem-dark-mode-000000000000000000000000000'
 COPPER = 'mem-copper-0000000000000000000000000000000'
 PARIS = 'mem-paris-00000000000000000000000000000000'
-
-
-def test_on_agentcore_a_memory_page_edit_reaches_the_next_session_and_leaves_the_current_ones_block_unchanged(
-    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
-    agentcore_memory.records += [
-        _memory_record('{"preference": "Prefers dark mode"}', 'UserPreferences-1', 'actor-1', DARK_MODE),
-        _memory_record('{"preference": "Prefers light mode"}', 'UserPreferences-1', 'actor-2'),
-        _memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1', COPPER),
-        _memory_record('Lives in Paris', 'SemanticFacts-1', 'actor-1', PARIS),
-    ]
-    member: _Member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
-    service.turn('hello', thread='thread-a', **member)
-    opened = service.recorder.prompts[-1]
-
-    document = _memory_operation('memory')
-    _memory_operation('memory-edit', recordId=PARIS, text='Lives in London')
-    _memory_operation('memory-delete', recordId=COPPER)
-    service.turn('hello again', thread='thread-a', **member)
-    continued = service.recorder.prompts[-1]
-    another_microvm()
-    service.turn('hello', thread='thread-b', **member)
-
-    assert document == {
-        'lines': [
-            {'id': DARK_MODE, 'text': 'Prefers dark mode'},
-            {'id': COPPER, 'text': 'Trades copper futures'},
-            {'id': PARIS, 'text': 'Lives in Paris'},
-        ]
-    }
-    assert continued == opened
-    assert _memory_block(opened).endswith('semantic facts:\n- copper-0 Trades copper futures\n- paris-00 Lives in Paris')
-    assert _memory_block(service.recorder.prompts[-1]) == (
-        'user preferences:\n'
-        '- dark-mod Prefers dark mode\n'
-        '\n'
-        'semantic facts:\n'
-        '- paris-00 Lives in London\n'
-        '\n'
-        'Memory page corrections (authoritative):\n'
-        'These corrections override conflicting memories above, including paraphrases and parts of compound saves. '
-        'Each previousText is superseded by text; null means forgotten and must not be used. '
-        'Keep unrelated facts from those saves.\n'
-        '{"previousText": "Trades copper futures", "text": null}\n'
-        '{"previousText": "Lives in Paris", "text": "Lives in London"}'
-    )
-    assert _memory_operation('memory') == {
-        'lines': [{'id': DARK_MODE, 'text': 'Prefers dark mode'}, {'id': PARIS, 'text': 'Lives in London'}]
-    }
 
 
 def test_on_agentcore_a_scheduled_runs_summary_leaves_the_sessions_memory_block_unchanged(
@@ -2933,44 +2872,6 @@ def test_on_agentcore_a_scheduled_runs_summary_leaves_the_sessions_memory_block_
     assert response.status_code == 200, response.text
     assert _memory_block(opened) == 'semantic facts:\n- copper-0 Trades copper futures'
     assert service.recorder.prompts[-1] == opened
-
-
-def test_on_agentcore_a_memory_page_edit_reaches_a_new_session_while_agentcore_lists_the_old_lines(
-    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
-    agentcore_memory.records += [
-        _memory_record('{"preference": "Prefers dark mode"}', 'UserPreferences-1', 'actor-1', DARK_MODE),
-        _memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1', COPPER),
-        _memory_record('Lives in Paris', 'SemanticFacts-1', 'actor-1', PARIS),
-    ]
-    member: _Member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
-    service.turn('hello', thread='thread-a', **member)
-    agentcore_memory.lag_listing()
-
-    _memory_operation('memory-edit', recordId=PARIS, text='Lives in London')
-    _memory_operation('memory-delete', recordId=COPPER)
-    document = _memory_operation('memory')
-    another_microvm()
-    service.turn('hello', thread='thread-b', **member)
-
-    assert document == {
-        'lines': [{'id': DARK_MODE, 'text': 'Prefers dark mode'}, {'id': PARIS, 'text': 'Lives in London'}]
-    }
-    assert _memory_block(service.recorder.prompts[-1]) == (
-        'user preferences:\n'
-        '- dark-mod Prefers dark mode\n'
-        '\n'
-        'semantic facts:\n'
-        '- paris-00 Lives in London\n'
-        '\n'
-        'Memory page corrections (authoritative):\n'
-        'These corrections override conflicting memories above, including paraphrases and parts of compound saves. '
-        'Each previousText is superseded by text; null means forgotten and must not be used. '
-        'Keep unrelated facts from those saves.\n'
-        '{"previousText": "Trades copper futures", "text": null}\n'
-        '{"previousText": "Lives in Paris", "text": "Lives in London"}'
-    )
 
 
 def _fed_events(memory: FakeAgentCoreMemory, actor: str, thread: str) -> list[list[tuple[str, str]]]:
@@ -3054,21 +2955,14 @@ def test_on_agentcore_a_throttled_turn_feed_preserves_the_answer_and_the_next_tu
 
 
 def test_on_agentcore_a_failed_memory_load_fails_the_sessions_first_turn_and_the_next_turn_loads_again(
-    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
+    service: _Service, agentcore_memory: _ScopedMemory,
 ) -> None:
     agentcore_memory.records.append(_memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'))
-    list_events = agentcore_memory.list_events
-
-    def throttled(**params: Any) -> dict[str, Any]:
-        if params['sessionId'].startswith('pending-memory-'):
-            raise RuntimeError('Memory throttled')
-        return list_events(**params)
-
-    monkeypatch.setattr(agentcore_memory, 'list_events', throttled)
+    agentcore_memory.listing_error = RuntimeError('Memory throttled')
     member: _Member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
 
     [run_error] = [event for event in service.turn('hello', thread='thread-a', **member) if event['type'] == 'RUN_ERROR']
-    monkeypatch.setattr(agentcore_memory, 'list_events', list_events)
+    agentcore_memory.listing_error = None
     retried = service.turn('hello again', thread='thread-a', message='message-retry', **member)
 
     assert run_error['message'] == 'Memory throttled'
@@ -3098,7 +2992,6 @@ def test_on_agentcore_an_anonymous_actor_gets_no_memory_block_tool_or_memory_rea
     assert {operation for operation, _ in agentcore_memory.sts.memory_calls} <= {'create_event', 'list_events'}
     assert all(params['sessionId'] == 'thread-a' or params['sessionId'].startswith(writes)
                for _, params in agentcore_memory.sts.memory_calls)
-    assert not [session for session in agentcore_memory.listed if session.startswith('pending-memory-')]
 
 
 # -- Configuration and startup ---------------------------------------------------
@@ -3571,7 +3464,8 @@ def test_invocation_eof_waits_for_real_record_settlement_before_purge(
     else:
         assert events[-1]['type'] == 'RUN_FINISHED'
         assert _replay('user-1', 'thread-1')[-1] == ('assistant', 'Echo: next question')
-    assert _memory_operation('purge', user='user-1', sessionId='thread-1') == {}
+    purged = TestClient(session_api.app).post('/invocations', json={'operation': 'purge', 'userId': 'user-1', 'sessionId': 'thread-1'})
+    assert (purged.status_code, purged.json()) == (200, {})
     with pytest.raises(session_api.SessionApiError, match='has no record') as missing:
         _replay('user-1', 'thread-1')
     assert missing.value.code == 'SESSION_NOT_FOUND'

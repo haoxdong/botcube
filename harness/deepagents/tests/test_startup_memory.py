@@ -186,18 +186,11 @@ def test_failed_cold_memory_refresh_fails_the_turn_and_retries(
     agentcore_memory.records.append(_memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'))
     assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
     now = 1301.0
-    list_events = agentcore_memory.list_events
-
-    def throttled(**params: Any) -> dict[str, Any]:
-        if params['sessionId'].startswith('pending-memory-'):
-            raise RuntimeError('Memory throttled')
-        return list_events(**params)
-
-    monkeypatch.setattr(agentcore_memory, 'list_events', throttled)
+    agentcore_memory.listing_error = RuntimeError('Memory throttled')
     [error] = [event for event in service.turn('refresh', **member) if event['type'] == 'RUN_ERROR']
     assert error['message'] == 'Memory throttled'
     assert len(service.recorder.prompts) == 1
-    monkeypatch.setattr(agentcore_memory, 'list_events', list_events)
+    agentcore_memory.listing_error = None
     agentcore_memory.records.append(_memory_record('Lives in Paris', 'SemanticFacts-1', 'actor-1'))
     assert service.turn('retry', **member)[-1]['type'] == 'RUN_FINISHED'
     assert 'Lives in Paris' in _memory_block(service.recorder.prompts[-1])
@@ -214,14 +207,7 @@ def test_a_failed_memory_read_the_turn_never_used_is_logged_not_raised(
     agentcore_memory.records.append(_memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'))
     assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
     now = 1200.0
-    list_events = agentcore_memory.list_events
-
-    def throttled(**params: Any) -> dict[str, Any]:
-        if params['sessionId'].startswith('pending-memory-'):
-            raise RuntimeError('Memory throttled')
-        return list_events(**params)
-
-    monkeypatch.setattr(agentcore_memory, 'list_events', throttled)
+    agentcore_memory.listing_error = RuntimeError('Memory throttled')
     caplog.set_level(logging.WARNING, logger=session_memory.__name__)
     # Inside the prompt-cache window the Turn keeps its block, so the read it started alongside its history goes unused.
     assert service.turn('hello again', **member)[-1]['type'] == 'RUN_FINISHED'

@@ -250,14 +250,14 @@ describe('AWS mode', () => {
     );
   });
 
-  it('keeps Lambda stack traces and file paths out of the client error for a Memory save', async () => {
+  it('keeps Lambda stack traces and file paths out of the client error for a Forget', async () => {
     lambda(async () => new Response(JSON.stringify({
-      errorMessage: 'Updating memory record mem-deleted failed: Memory record not found',
-      errorType: 'RuntimeError',
-      stackTrace: [['/var/task/botcube_harness_deepagents/memory_document.py', 104, 'edit_memory_line', 'client.batch_update_memory_records(...)']],
+      errorMessage: 'An error occurred (ThrottledException) when calling the DeleteMemoryRecord operation: Rate exceeded',
+      errorType: 'ClientError',
+      stackTrace: [['/var/task/botcube_harness_deepagents/memory/agentcore/forget.py', 30, 'forget_extracted_memory', 'client.delete_memory_record(...)']],
     }), { status: 200, headers: { 'x-amz-function-error': 'Unhandled' } }));
 
-    await expect(invoke('memory-edit', { userId: 'user-1', recordId: 'mem-deleted', text: 'Trades silver' }))
+    await expect(invoke('forget', { userId: 'user-1' }))
       .rejects.toEqual(httpError(503, 'Session API function failed'));
   });
 

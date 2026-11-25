@@ -1,5 +1,5 @@
 import type { Hono } from 'hono';
-import { agentIdentity, memoryLine, soul, type AgentDocuments } from './agent-documents.js';
+import { agentIdentity, soul, type AgentDocuments } from './agent-documents.js';
 import type { RequesterSource } from './requester.js';
 import type { TurnSource } from './turn-preparation.js';
 import { HttpError } from './http-error.js';
@@ -9,7 +9,6 @@ import { accountModelList, namedModel } from './models.js';
 import { isScheduledInstant } from './schedule-time.js';
 import type { ScheduledTasks, ScheduledTask, ScheduledTaskDefinition, TaskChanges } from './scheduled-tasks.js';
 import type { SessionMetadata } from './session-metadata.js';
-import type { SessionApi } from './session-api.js';
 import { type sessionOperations } from './sessions.js';
 
 const TASK_FIELDS = ['title', 'prompt', 'schedule', 'timezone'] as const;
@@ -43,25 +42,15 @@ function taskInstant(value: unknown, field: 'startDate' | 'endDate', required: b
   return new Date(value).toISOString();
 }
 
-/** Refuses every Extracted Memory route of a bot whose settings turn Extracted Memory off. */
-function extractedMemoryOff(bot: Pick<TurnSource, 'extractedMemory'>) {
-  return async (_c: unknown, next: () => Promise<void>) => {
-    if (bot.extractedMemory === false) throw new HttpError(404, 'Extracted Memory is off for this bot');
-    await next();
-  };
-}
-
 export function accountRoutes(
   app: Hono,
   bot: Omit<TurnSource, 'invocationPayload' | 'credentialProps' | 'turnStarting'> & RequesterSource,
   sessionMetadata: SessionMetadata,
   agentDocuments: AgentDocuments,
-  invokeSessionApi: SessionApi,
   sessions: ReturnType<typeof sessionOperations>,
   scheduledTasks: ScheduledTasks | null,
   online: boolean,
 ) {
-  const memoryGate = extractedMemoryOff(bot);
   const documentsOf = async (owner: string) => agentDocuments.get(owner, bot.agentDocuments);
 
   app.get('/agent', async (c) => {
@@ -107,39 +96,6 @@ export function accountRoutes(
     const { owner } = await bot.requester(c);
     const body = (await c.req.json().catch(() => undefined)) as { content?: unknown } | undefined;
     await agentDocuments.save(owner, { document: 'soul', content: soul(body?.content) });
-    return c.body(null, 204);
-  });
-
-  // The bot settings' Memory gate: a bot with Memory off has none to read or change.
-  app.use('/agent/memory', memoryGate);
-  app.use('/agent/memory/*', memoryGate);
-
-  app.get('/agent/memory', async (c) => {
-    const { owner } = await bot.requester(c);
-    const { lines } = await invokeSessionApi('memory', { userId: bot.filingUserId(owner) });
-    return c.json({ lines });
-  });
-
-  app.post('/agent/memory', async (c) => {
-    const { owner, anonymous } = await bot.requester(c);
-    if (anonymous) throw new HttpError(403, 'Your work lives in this browser until you save it. Sign in to save it, then save Memory.');
-    const text = memoryLine(await c.req.json().catch(() => undefined));
-    const { line } = await invokeSessionApi('memory-add', { userId: bot.filingUserId(owner), text });
-    return c.json({ line }, 201);
-  });
-
-  app.put('/agent/memory/:id', async (c) => {
-    const { owner } = await bot.requester(c);
-    const text = memoryLine(await c.req.json().catch(() => undefined));
-    const recordId = c.req.param('id');
-    await invokeSessionApi('memory-edit', { userId: bot.filingUserId(owner), recordId, text });
-    return c.body(null, 204);
-  });
-
-  app.delete('/agent/memory/:id', async (c) => {
-    const { owner } = await bot.requester(c);
-    const recordId = c.req.param('id');
-    await invokeSessionApi('memory-delete', { userId: bot.filingUserId(owner), recordId });
     return c.body(null, 204);
   });
 

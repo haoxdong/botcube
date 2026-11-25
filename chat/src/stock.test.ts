@@ -222,15 +222,11 @@ describe("the stock Chat Service's filing ID", () => {
     const { accountId: owner } = await session.json() as { accountId: string };
     // What the earlier Chat filed: its Memory and Main Chat under quill_<hex>.
     const filed = filingUserId('quill', owner);
-    sessionApi.memories.set(filed, [{ id: 'memory-1', text: 'Prefers short answers' }]);
     const client = new DynamoDBClient(motoAws());
     closers.push(async () => { client.destroy(); });
     const metadata = new DynamoDBSessionMetadata(table, client);
     const mainChat = await metadata.mainChat(owner, filed);
 
-    expect(await (await fetch(`${url}/agent/memory`, { headers: { Cookie: cookie } })).json()).toEqual({
-      lines: [{ id: 'memory-1', text: 'Prefers short answers' }],
-    });
     const { id: sideChat } = await (await fetch(`${url}/threads`, { method: 'POST', headers: { Cookie: cookie } })).json() as { id: string };
     const turn = await fetch(url, {
       method: 'POST',
@@ -946,7 +942,7 @@ describe('a signed-in User deleting their own account', () => {
       await withService(async (service, restart) => {
         const browser = service.browser();
         const { accountId } = await signIn(browser, 'ada');
-        expect((await browser.post('/agent/memory', { text: 'Prefers tea' })).status).toBe(201);
+        sessionApi.memories.set(filingUserId('template', accountId), [{ id: 'memory-ada', text: 'Prefers tea' }]);
         sessionApi.memories.set('someone-else', [{ id: 'memory-kept', text: 'Prefers coffee' }]);
         await throughProvider(browser, await startDeletion(browser), 'ada');
         sessionApi.failForget = 1;
@@ -987,7 +983,7 @@ describe('a signed-in User deleting their own account', () => {
       await withService(async (service, restart, table) => {
         const browser = service.browser();
         const { accountId } = await signIn(browser, 'ada');
-        expect((await browser.post('/agent/memory', { text: 'Prefers tea' })).status).toBe(201);
+        sessionApi.memories.set(filingUserId('template', accountId), [{ id: 'memory-ada', text: 'Prefers tea' }]);
         await new DynamoDBSessionMetadata(table).recordTurn(accountId, 'older-session', { filingUserId: 'older-user-id', title: 'Earlier', allocation: true });
         sessionApi.memories.set('older-user-id', [{ id: 'memory-older', text: 'Lives in Leeds' }]);
         sessionApi.memories.set('someone-else', [OTHER_USERS_MEMORY]);

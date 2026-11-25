@@ -239,7 +239,7 @@ export function createChatService(
     return c.json({ status: 'Healthy' });
   });
 
-  accountRoutes(app, bot, sessionMetadata, agentDocuments, invokeSessionApi, sessions, scheduledTasks, upstream !== null);
+  accountRoutes(app, bot, sessionMetadata, agentDocuments, sessions, scheduledTasks, upstream !== null);
 
   app.get('/browser-live-view-url', async (c) => {
     const sessionId = c.req.query('session_id');

@@ -16,7 +16,6 @@ from langgraph_checkpoint_aws import AgentCoreMemoryStore
 
 from agentcore_fake import MEMORY_ID as FAKE_MEMORY_ID
 from agentcore_fake import FakeAgentCoreMemory, TaggedMemoryClient
-from botcube_harness_deepagents import memory_document
 from botcube_harness_deepagents.memory_tools import (
     RECORD_REPLY,
     VALID_ACTIONS,
@@ -210,7 +209,7 @@ class TestExtractText:
 class TestRecord:
     def test_success(self) -> None:
         store = MagicMock()
-        with patch('botcube_harness_deepagents.pending_memory.utc_now', return_value=datetime(2026, 7, 2, tzinfo=UTC)):
+        with patch('botcube_harness_deepagents.memory_tools.utc_now', return_value=datetime(2026, 7, 2, tzinfo=UTC)):
             result = _invoke('record', store=store, content='User prefers dark mode')
 
         assert result == {'status': 'success', 'content': [{'text': RECORD_REPLY}]}
@@ -224,10 +223,10 @@ class TestRecord:
             'payload': [{'conversational': {'content': {'text': 'User prefers dark mode'}, 'role': 'USER'}}],
         }
 
-    def test_record_writes_to_date_keyed_pending_memory_session(self) -> None:
+    def test_record_writes_to_the_date_keyed_save_session(self) -> None:
         store = MagicMock()
 
-        with patch('botcube_harness_deepagents.pending_memory.utc_now', return_value=datetime(2026, 7, 2, tzinfo=UTC)):
+        with patch('botcube_harness_deepagents.memory_tools.utc_now', return_value=datetime(2026, 7, 2, tzinfo=UTC)):
             _invoke(
                 'record',
                 store=store,
@@ -248,7 +247,7 @@ class TestRecord:
 
     def test_custom_actor_id(self) -> None:
         store = MagicMock()
-        with patch('botcube_harness_deepagents.pending_memory.utc_now', return_value=datetime(2026, 7, 2, tzinfo=UTC)):
+        with patch('botcube_harness_deepagents.memory_tools.utc_now', return_value=datetime(2026, 7, 2, tzinfo=UTC)):
             _invoke('record', store=store, content='test', actor_id='custom-actor')
         assert store.client.create_event.call_args.kwargs['actorId'] == 'custom-actor'
         assert store.client.create_event.call_args.kwargs['sessionId'] == 'pending-memory-20260702'
@@ -308,7 +307,7 @@ def _saved(memory: FakeAgentCoreMemory, text: str, record_id: str, *, actor_id: 
 def test_memory_tool_reads_page_records_and_all_four_kinds(
     memory: FakeAgentCoreMemory, action: str, expected: list[dict[str, str]],
 ) -> None:
-    """An exact actor-root read is empty while the Memory page has records."""
+    """An exact actor-root read is empty while the actor has records under it."""
     _saved(memory, 'Prefers blue charts.', 'rec-pref', kind='preferences')
     _saved(memory, 'Uses blue notebooks.', 'rec-fact')
     _saved(memory, 'Discussed blue charts.', 'rec-summary', kind='summaries/session-1')
@@ -318,10 +317,6 @@ def test_memory_tool_reads_page_records_and_all_four_kinds(
     assert memory.list_memory_records(
         memoryId=FAKE_MEMORY_ID, namespace=f'/actors/{ACTOR}/',
     ) == {'memoryRecordSummaries': []}
-    assert memory_document.memory_lines(store.client, memory_id=FAKE_MEMORY_ID, actor_id=ACTOR) == [
-        {'id': 'rec-pref', 'text': 'Prefers blue charts.'},
-        {'id': 'rec-fact', 'text': 'Uses blue notebooks.'},
-    ]
 
     result = _invoke(action, store=store, actor_id=ACTOR, query='blue')
 
@@ -796,22 +791,17 @@ class TestExtractTextFallbacks:
         assert extract_text(raw) == 'Intent: Recall the runbook.\nReflection: Ask less.'
 
 
-def test_record_uses_one_clock_across_midnight_and_stays_visible_for_its_full_window(
-    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_record_uses_one_clock_across_midnight(memory: FakeAgentCoreMemory) -> None:
     captured = datetime(2026, 7, 2, 23, 59, 59, 999999, tzinfo=UTC)
     sdk_time = captured + timedelta(microseconds=1)
-    with patch('botcube_harness_deepagents.pending_memory.utc_now', return_value=captured), \
+    with patch('botcube_harness_deepagents.memory_tools.utc_now', return_value=captured), \
          patch('langgraph_checkpoint_aws.store.agentcore.store.datetime') as sdk_clock:
         sdk_clock.now.return_value = sdk_time
         result = _invoke('record', store=_store(memory), content='Keep midnight save', actor_id=ACTOR)
     assert result['status'] == 'success'
     [event] = memory.events[(ACTOR, 'pending-memory-20260702')]
     assert event['eventTimestamp'] == captured
-    monkeypatch.setattr(memory_document, 'utc_now', lambda: event['eventTimestamp'] + timedelta(minutes=15))
-    assert memory_document.opening_memory(cast(Any, memory), memory_id=FAKE_MEMORY_ID, actor_id=ACTOR) == (
-        'semantic facts:\n- Keep midnight save'
-    )
+    assert event['payload'] == [{'conversational': {'content': {'text': 'Keep midnight save'}, 'role': 'USER'}}]
 
 
 @pytest.mark.parametrize('action', ['list', 'retrieve'])

@@ -1,8 +1,4 @@
-"""The Memory a Session opens with (ADR 0031): the actor's records and their Pending Memory.
-
-It lists the actor's Memory records and reads back Pending Memory (explicit saves
-from the sessions intersecting the freshness window) while AgentCore's strategy extraction catches up.
-"""
+"""The Memory a Session opens with (ADR 0031): the actor's extracted preferences and facts."""
 
 from __future__ import annotations
 
@@ -18,22 +14,20 @@ from agentcore_fake import (
     EXCEPTIONS,
     MEMORY_ID,
     FakeAgentCoreMemory,
-    TaggedMemoryClient,
 )
-from botcube_harness_deepagents import memory_document
+from botcube_harness_deepagents.memory.agentcore.opening import opening_memory
 
 NOW = datetime(2026, 7, 2, 12, 0, tzinfo=UTC)
 ACTOR = 'jane.doe_ny'
 
 
 @pytest.fixture
-def memory(monkeypatch: pytest.MonkeyPatch) -> FakeAgentCoreMemory:
-    monkeypatch.setattr(memory_document, 'utc_now', lambda: NOW)
+def memory() -> FakeAgentCoreMemory:
     return FakeAgentCoreMemory()
 
 
 def _open(memory: FakeAgentCoreMemory, actor_id: str = ACTOR) -> str:
-    return memory_document.opening_memory(cast(Any, memory), memory_id=MEMORY_ID, actor_id=actor_id)
+    return opening_memory(cast(Any, memory), memory_id=MEMORY_ID, actor_id=actor_id)
 
 
 def _record(
@@ -57,17 +51,6 @@ def _preference(text: str, **kwargs: Any) -> dict[str, Any]:
 
 def _fact(text: str, **kwargs: Any) -> dict[str, Any]:
     return _record(text, 'facts', **kwargs)
-
-
-def _save(memory: FakeAgentCoreMemory, session_id: str, text: str, *, at: datetime, actor_id: str = ACTOR) -> None:
-    """A Pending Memory save, as the memory tool writes it."""
-    memory.create_event(
-        memoryId=MEMORY_ID,
-        actorId=actor_id,
-        sessionId=session_id,
-        eventTimestamp=at,
-        payload=[{'conversational': {'content': {'text': text}, 'role': 'USER'}}],
-    )
 
 
 def test_an_actor_with_no_memory_starts_with_no_memory_block(memory: FakeAgentCoreMemory) -> None:
@@ -144,210 +127,6 @@ def test_sections_exactly_at_their_caps_do_not_point_at_more(memory: FakeAgentCo
     assert 'more ' not in block
 
 
-def test_pending_memory_crossing_midnight_leads_the_facts(
-    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    now = NOW.replace(hour=0, minute=5)
-    monkeypatch.setattr(memory_document, 'utc_now', lambda: now)
-    memory.records += [_preference('User prefers dark mode'), _fact('Copper is an industrial metal')]
-    _save(memory, 'pending-memory-20260702', 'Runbook URL is wiki/runbook-v2', at=now - timedelta(minutes=2))
-    _save(memory, 'pending-memory-20260701', 'Tokyo meeting is next week', at=now - timedelta(minutes=10))
-
-    assert _open(memory) == (
-        'user preferences:\n'
-        '- record-{ User prefers dark mode\n'
-        '\n'
-        'semantic facts:\n'
-        '- Runbook URL is wiki/runbook-v2\n'
-        '- Tokyo meeting is next week\n'
-        '- record-C Copper is an industrial metal'
-    )
-
-
-def test_pending_memory_ages_out_after_fifteen_minutes(memory: FakeAgentCoreMemory) -> None:
-    _save(memory, 'pending-memory-20260702', 'Old save', at=NOW - timedelta(minutes=16))
-    _save(memory, 'pending-memory-20260702', 'Save from a clock running ahead', at=NOW + timedelta(minutes=2))
-
-    assert _open(memory) == 'semantic facts:\n- Save from a clock running ahead'
-
-
-@pytest.mark.parametrize('delete', [False, True])
-def test_fresh_session_respects_correction_after_pending_save_extraction(
-    memory: FakeAgentCoreMemory, delete: bool,
-) -> None:
-    _save(memory, 'pending-memory-20260702', 'QA telescope colour is copper', at=NOW - timedelta(minutes=2))
-    _save(memory, 'pending-memory-20260702', 'QA observatory is Cedar', at=NOW - timedelta(minutes=1))
-    first = _fact('QA telescope colour is copper')
-    second = _fact('QA telescope colour is copper')
-    first['memoryRecordId'] = '1' * 40
-    second['memoryRecordId'] = '2' * 40
-    memory.records += [first, second]
-    record_ids = [record['memoryRecordId'] for record in memory.records]
-    for record_id in record_ids:
-        if delete:
-            memory_document.delete_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR, record_id=record_id)
-        else:
-            memory_document.edit_memory_line(
-                cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
-                record_id=record_id, text='QA telescope colour is amber',
-            )
-
-    expected = 'semantic facts:\n- QA observatory is Cedar\n- QA telescope colour is copper'
-    if not delete:
-        expected += '\n- 11111111 QA telescope colour is amber\n- 22222222 QA telescope colour is amber'
-    block = _open(memory)
-    facts, corrections = block.split('\n\nMemory page corrections (authoritative):\n')
-    assert facts == expected
-    assert 'override conflicting memories above, including paraphrases and parts of compound saves' in corrections
-    assert 'null means forgotten and must not be used' in corrections
-    replacement = None if delete else 'QA telescope colour is amber'
-    assert corrections.splitlines()[1:] == [
-        json.dumps({'previousText': 'QA telescope colour is copper', 'text': replacement}),
-        json.dumps({'previousText': 'QA telescope colour is copper', 'text': replacement}),
-    ]
-
-
-def test_pending_memory_reads_every_page_of_a_session(memory: FakeAgentCoreMemory) -> None:
-    _save(memory, 'pending-memory-20260702', 'First save', at=NOW - timedelta(minutes=10))
-    for minute in range(100):
-        memory.create_event(
-            memoryId=MEMORY_ID,
-            actorId=ACTOR,
-            sessionId='pending-memory-20260702',
-            eventTimestamp=NOW - timedelta(minutes=9, seconds=-minute),
-            payload=[{'blob': 'not a conversational save'}],
-        )
-
-    assert _open(memory) == 'semantic facts:\n- First save'
-
-
-def test_a_failing_pending_memory_lookup_fails_the_load(memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch) -> None:
-    error = EXCEPTIONS.ThrottledException({'Error': {'Code': 'ThrottledException', 'Message': 'slow down'}}, 'ListEvents')
-
-    def list_events(**_params: Any) -> NoReturn:
-        raise error
-
-    monkeypatch.setattr(memory, 'list_events', list_events)
-
-    with pytest.raises(EXCEPTIONS.ThrottledException):
-        _open(memory)
-
-
-
-@pytest.mark.parametrize('minutes', [5, 7, 10, 15, 16])
-def test_corrections_span_pending_window_but_page_overlay_stays_five_minutes(
-    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch, minutes: int,
-) -> None:
-    memory.records.append(_fact('Copper telescope'))
-    memory.records[0]['memoryRecordId'] = '1' * 40
-    memory.lag_listing()
-    monkeypatch.setattr(memory_document, 'utc_now', lambda: NOW - timedelta(minutes=minutes))
-    memory_document.edit_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
-                                     record_id='1' * 40, text='Amber telescope')
-    monkeypatch.setattr(memory_document, 'utc_now', lambda: NOW)
-    assert memory_document.memory_lines(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR) == [
-        {'id': '1' * 40, 'text': 'Amber telescope' if minutes <= 5 else 'Copper telescope'},
-    ]
-    block = _open(memory)
-    if minutes <= 15:
-        assert block.startswith('semantic facts:\n- 11111111 Amber telescope\n\nMemory page corrections (authoritative):')
-        assert json.dumps({'previousText': 'Copper telescope', 'text': 'Amber telescope'}) in block
-    else:
-        assert block == 'semantic facts:\n- 11111111 Copper telescope'
-
-
-@pytest.mark.parametrize('delete', [False, True])
-def test_repeated_corrections_keep_original_and_intermediate_text(
-    memory: FakeAgentCoreMemory, delete: bool,
-) -> None:
-    memory.records.append(_fact('Copper telescope'))
-    memory.records[0]['memoryRecordId'] = '1' * 40
-    memory.lag_listing()
-    _save(memory, 'pending-memory-20260702', 'My telescope is copper and my observatory is Cedar', at=NOW)
-    for text in ['Amber telescope', 'Silver telescope']:
-        memory_document.edit_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
-                                         record_id='1' * 40, text=text)
-    if delete:
-        memory_document.delete_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR, record_id='1' * 40)
-    block = _open(memory)
-    assert 'My telescope is copper and my observatory is Cedar' in block
-    final = None if delete else 'Silver telescope'
-    for previous in ['Copper telescope', 'Amber telescope', *(['Silver telescope'] if delete else [])]:
-        assert json.dumps({'previousText': previous, 'text': final}) in block
-    assert 'Keep unrelated facts from those saves.' in block
-    assert _open(memory, actor_id='other') == ''
-
-
-def test_legacy_journal_overlays_without_inventing_previous_text(memory: FakeAgentCoreMemory) -> None:
-    memory.records.append(_fact('Copper telescope'))
-    memory.create_event(memoryId=MEMORY_ID, actorId=ACTOR, sessionId=memory_document._saves_session_id(NOW),
-                        eventTimestamp=NOW, payload=[{'blob': json.dumps({
-                            'recordId': 'record-Copper telescope', 'text': 'Amber telescope',
-                        })}], extractionMode='SKIP')
-    assert _open(memory) == 'semantic facts:\n- record-C Amber telescope'
-
-
-def test_deleting_a_line_names_its_records_exact_namespace(memory: FakeAgentCoreMemory) -> None:
-    memory.records.append(_preference('Copper telescope'))
-    memory.records[0]['memoryRecordId'] = '1' * 40
-    calls: list[tuple[str, dict[str, Any]]] = []
-    tags = {'actorId': ACTOR, 'filingActorId': ACTOR, 'sessionId': 'thread-1', 'writesPrefix': 'lgw-0'}
-    client = TaggedMemoryClient(memory, lambda: tags, calls)
-    client.scoped_records_by_id = True
-
-    memory_document.delete_memory_line(cast(Any, client), memory_id=MEMORY_ID, actor_id=ACTOR, record_id='1' * 40)
-
-    assert memory.records == []
-    assert [params.get('namespace') for operation, params in calls if operation == 'delete_memory_record'] == [
-        f'/actors/{ACTOR}/preferences/',
-    ]
-
-
-def test_journal_write_failure_is_not_reported_as_a_success(
-    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    memory.records.append(_fact('Copper telescope'))
-    memory.records[0]['memoryRecordId'] = '1' * 40
-    def fail(**_params: Any) -> NoReturn:
-        raise RuntimeError('journal unavailable')
-    monkeypatch.setattr(memory, 'create_event', fail)
-    with pytest.raises(RuntimeError, match='journal unavailable'):
-        memory_document.edit_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
-                                         record_id='1' * 40, text='Amber telescope')
-
-
-@pytest.mark.parametrize('seconds', [299, 300, 301, 419])
-def test_startup_reads_every_bucket_intersecting_pending_window(
-    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch, seconds: int,
-) -> None:
-    monkeypatch.setattr(memory_document, 'MEMORY_SAVE_WINDOW', timedelta(seconds=seconds))
-    later = NOW + timedelta(seconds=37)
-    memory.records.append(_fact('Copper telescope'))
-    memory.records[0]['memoryRecordId'] = '1' * 40
-    memory.lag_listing()
-    monkeypatch.setattr(memory_document, 'utc_now', lambda: later - timedelta(minutes=15))
-    memory_document.edit_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
-                                     record_id='1' * 40, text='Amber telescope')
-    monkeypatch.setattr(memory_document, 'utc_now', lambda: later)
-    block = _open(memory)
-    assert block.startswith('semantic facts:\n- 11111111 Amber telescope\n\nMemory page corrections (authoritative):')
-    assert json.dumps({'previousText': 'Copper telescope', 'text': 'Amber telescope'}) in block
-
-
-def test_correction_authority_is_not_lost_when_fact_section_is_capped(memory: FakeAgentCoreMemory) -> None:
-    memory.records.append(_fact('Copper telescope'))
-    memory.records[0]['memoryRecordId'] = '1' * 40
-    memory_document.edit_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
-                                     record_id='1' * 40, text='Amber telescope')
-    for index in range(101):
-        _save(memory, 'pending-memory-20260702', f'Unrelated fact {index}', at=NOW)
-    block = _open(memory)
-    assert '(2 more facts; use memory list or retrieve)' in block
-    assert 'semantic facts:\n- Unrelated fact 100' in block
-    assert '\n- 11111111 Amber telescope' not in block
-    assert json.dumps({'previousText': 'Copper telescope', 'text': 'Amber telescope'}) in block
-
-
 class _SlowMemory:
     """The fake Memory with a round trip of LATENCY on every read."""
 
@@ -360,10 +139,6 @@ class _SlowMemory:
     def _read(self) -> None:
         self.reads += 1
         time.sleep(self.LATENCY)
-
-    def list_events(self, **params: Any) -> dict[str, Any]:
-        self._read()
-        return self._memory.list_events(**params)
 
     def get_paginator(self, operation: str) -> Any:
         paginate = self._memory.get_paginator(operation).paginate
@@ -380,11 +155,11 @@ def test_the_opening_reads_memory_concurrently(memory: FakeAgentCoreMemory) -> N
     slow = _SlowMemory(memory)
 
     started = time.perf_counter()
-    block = memory_document.opening_memory(cast(Any, slow), memory_id=MEMORY_ID, actor_id=ACTOR)
+    block = opening_memory(cast(Any, slow), memory_id=MEMORY_ID, actor_id=ACTOR)
     elapsed = time.perf_counter() - started
 
     assert block == 'user preferences:\n- record-{ User prefers dark mode\n\nsemantic facts:\n- record-C Copper is an industrial metal'
-    assert slow.reads == 7
+    assert slow.reads == 2
     assert elapsed < 2 * _SlowMemory.LATENCY, f'{slow.reads} reads took {elapsed:.3f}s'
 
 
@@ -402,61 +177,26 @@ def test_a_failing_record_listing_fails_the_load(memory: FakeAgentCoreMemory, mo
         _open(memory)
 
 
-def test_when_several_reads_fail_the_first_in_read_order_fails_the_load(
+def test_when_both_listings_fail_the_preferences_listing_fails_the_load(
     memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The event reads come first; the record listings fail sooner but must not win the race."""
-    first = EXCEPTIONS.ThrottledException({'Error': {'Code': 'ThrottledException', 'Message': 'events'}}, 'ListEvents')
-    later = EXCEPTIONS.ThrottledException(
-        {'Error': {'Code': 'ThrottledException', 'Message': 'records'}}, 'ListMemoryRecords',
-    )
+    """The facts listing fails sooner but must not win the race."""
+    errors = {
+        kind: EXCEPTIONS.ThrottledException({'Error': {'Code': 'ThrottledException', 'Message': kind}}, 'ListMemoryRecords')
+        for kind in ('preferences', 'facts')
+    }
 
-    def slow_list_events(**_params: Any) -> NoReturn:
-        time.sleep(0.1)
-        raise first
+    def paginate(*, namespace: str, **_params: Any) -> NoReturn:
+        if namespace.endswith('/preferences/'):
+            time.sleep(0.1)
+            raise errors['preferences']
+        raise errors['facts']
 
-    def paginate(**_params: Any) -> NoReturn:
-        raise later
-
-    monkeypatch.setattr(memory, 'list_events', slow_list_events)
     monkeypatch.setattr(memory, 'get_paginator', lambda _operation: SimpleNamespace(paginate=paginate))
 
     with pytest.raises(EXCEPTIONS.ThrottledException) as raised:
         _open(memory)
-    assert raised.value is first
-
-
-@pytest.mark.parametrize('now, days', [
-    (NOW, ['20260702']),
-    (NOW.replace(hour=0, minute=5), ['20260702', '20260701']),
-    (NOW.replace(hour=23, minute=50), ['20260702', '20260703']),
-])
-@pytest.mark.parametrize('fail', [False, True])
-def test_opening_queries_only_pending_buckets_in_the_window_and_propagates_failure(
-    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch, now: datetime, days: list[str], fail: bool,
-) -> None:
-    monkeypatch.setattr(memory_document, 'utc_now', lambda: now)
-    seen: list[str] = []
-    list_events = memory.list_events
-    for day in days:
-        at = now if day == '20260702' else now + timedelta(minutes=15 if day == '20260703' else -15)
-        _save(memory, f'pending-memory-{day}', day, at=at)
-
-    def read(**params: Any) -> dict[str, Any]:
-        session_id = params['sessionId']
-        if session_id.startswith('pending-memory-'):
-            seen.append(session_id)
-            if fail and session_id == f'pending-memory-{days[-1]}':
-                raise RuntimeError('Pending Memory unavailable')
-        return list_events(**params)
-
-    monkeypatch.setattr(memory, 'list_events', read)
-    if fail:
-        with pytest.raises(RuntimeError, match='Pending Memory unavailable'):
-            _open(memory)
-    else:
-        assert _open(memory) == 'semantic facts:\n' + '\n'.join(f'- {day}' for day in days)
-    assert sorted(seen) == sorted(f'pending-memory-{day}' for day in days)
+    assert raised.value is errors['preferences']
 
 
 def test_large_memory_opens_as_a_bounded_index_newest_first(memory: FakeAgentCoreMemory) -> None:
@@ -476,66 +216,3 @@ def test_large_memory_opens_as_a_bounded_index_newest_first(memory: FakeAgentCor
         assert lines[0] == '- 00000149 ' + 'x' * 88 + '…'
         assert lines[-1] == '- 00000050 ' + 'x' * 88 + '…'
     assert closing == '(50 more preferences; 50 more facts; use memory list or retrieve)'
-
-
-def test_thirty_pending_saves_and_corrections_keep_the_whole_opening_bounded(memory: FakeAgentCoreMemory) -> None:
-    for index in range(30):
-        record = _fact(f'Old {index:02d} ' + 'x' * 493, created_at=NOW - timedelta(seconds=30 - index))
-        record['memoryRecordId'] = f'mem-{index:08d}' + 'a' * 28
-        memory.records.append(record)
-    for index in range(30):
-        _save(memory, 'pending-memory-20260702', f'Pending {index:02d} ' + 'p' * 489,
-              at=NOW - timedelta(seconds=30 - index))
-        memory_document.edit_memory_line(
-            cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
-            record_id=f'mem-{index:08d}' + 'a' * 28, text=f'New {index:02d} ' + 'y' * 493,
-        )
-
-    block = _open(memory)
-    assert len(block) < 20_000
-    facts, corrections = block.split('\n\nMemory page corrections (authoritative):\n')
-    lines = facts.splitlines()[1:]
-    assert len(lines) == 60
-    assert all(len(line) == 100 and line.endswith('…') for line in lines)
-    assert lines[0] == '- Pending 29 ' + 'p' * 86 + '…'
-    assert lines[29] == '- Pending 00 ' + 'p' * 86 + '…'
-    assert lines[30].startswith('- 00000029 New 29 ')
-    correction_lines = corrections.splitlines()[1:-1]
-    assert len(correction_lines) == 20
-    assert all(len(line) <= 232 for line in correction_lines)
-    rows = [json.loads(line) for line in correction_lines]
-    assert all(len(row['previousText']) == 100 and len(row['text']) == 100 for row in rows)
-    assert rows[0] == {'previousText': 'Old 29 ' + 'x' * 92 + '…', 'text': 'New 29 ' + 'y' * 92 + '…'}
-    assert rows[-1] == {'previousText': 'Old 10 ' + 'x' * 92 + '…', 'text': 'New 10 ' + 'y' * 92 + '…'}
-    assert corrections.splitlines()[-1] == '(10 more corrections on the Memory page)'
-
-
-def test_pending_saves_share_the_fact_cap_with_extracted_records(memory: FakeAgentCoreMemory) -> None:
-    for index in range(70):
-        _save(memory, 'pending-memory-20260702', f'Pending {index:02d} ' + 'p' * 489, at=NOW)
-    for index in range(40):
-        record = _fact(f'Fact {index:02d} ' + 'f' * 492)
-        record['memoryRecordId'] = f'mem-{index:08d}' + 'a' * 28
-        memory.records.append(record)
-    facts, closing = _open(memory).split('\n\n')
-    lines = facts.splitlines()[1:]
-    assert len(lines) == 100
-    assert all(len(line) == 100 for line in lines)
-    assert sum(line.startswith('- Pending ') for line in lines) == 70
-    assert lines[70].startswith('- 00000000 Fact 00 ')
-    assert lines[-1].startswith('- 00000029 Fact 29 ')
-    assert closing == '(10 more facts; use memory list or retrieve)'
-
-
-def test_repeated_corrections_keep_the_latest_replacement_without_duplicate_previous_text(memory: FakeAgentCoreMemory) -> None:
-    record = _fact('First value')
-    record['memoryRecordId'] = 'mem-12345678' + 'a' * 28
-    memory.records.append(record)
-    for text in ('Second value', 'First value', 'Final value'):
-        memory_document.edit_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
-                                         record_id=record['memoryRecordId'], text=text)
-    _, corrections = _open(memory).split('\n\nMemory page corrections (authoritative):\n')
-    assert [json.loads(line) for line in corrections.splitlines()[1:]] == [
-        {'previousText': 'First value', 'text': 'Final value'},
-        {'previousText': 'Second value', 'text': 'Final value'},
-    ]

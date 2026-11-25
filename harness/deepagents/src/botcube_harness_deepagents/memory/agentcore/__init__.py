@@ -6,7 +6,7 @@ turns into credentials of the Memory role, whose policy reads those tags. Under 
 is credentials the Chat Service already assumed, with a session policy naming them. A Turn whose
 identity names what credentials already held cover, more than 5 minutes from expiry, reuses them and calls no STS. The microVM's one
 ``bedrock-agentcore`` client signs with the newest credentials and serves its checkpointer,
-store, ``memory`` tool, Pending Memory and turn feed, so Turns reuse its open connections. The
+store, ``memory`` tool and turn feed, so Turns reuse its open connections. The
 Agent Service's own role holds no Memory permission.
 """
 
@@ -41,10 +41,10 @@ from botocore.exceptions import ClientError
 from langgraph_checkpoint_aws import AgentCoreMemorySaver, AgentCoreMemoryStore
 
 from ... import turn_timing
-from ...memory_document import opening_memory
 from ...memory_tools import memory_tool
 from ...session_memory import SessionMemoryMiddleware
 from ...turn_memory import TurnMemoryMiddleware
+from .opening import opening_memory
 from .serializer import CompressedReadingSerializer
 from .snapshot import FragmentedSnapshotClient
 from .warm_session import WarmSessionSaver

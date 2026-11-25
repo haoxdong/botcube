@@ -7,7 +7,7 @@ Strands names its tool ``agent_core_memory``; ADR 0031 names ours ``memory``.
 Uses ``InjectedStore`` so LangGraph's ``ToolNode`` injects the
 ``AgentCoreMemoryStore`` automatically.  Reads go through ``store.client``
 under the actor's ``/actors/<actor>/`` prefix (ADR 0033), as Strands' do
-under its ``namespace``; ``record`` writes today's Pending Memory session (ADR 0032).
+under its ``namespace``; ``record`` writes an event of today's save session, which AgentCore extracts.
 
 Returns the same ``{"status", "content"}`` envelope as the Strands tool.
 """
@@ -18,6 +18,7 @@ import base64
 import json
 import logging
 import os
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal, NotRequired, TypedDict
 from xml.etree import ElementTree
 
@@ -25,7 +26,6 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedStore
 from langgraph_checkpoint_aws import AgentCoreMemoryStore
 
-from . import pending_memory
 from .actor_identity import actor_namespace
 from .memory_index import MemoryIndexEntry, memory_index_line, memory_reference
 
@@ -43,10 +43,9 @@ AGENTCORE_MEMORY_ID = os.getenv('AGENTCORE_MEMORY_ID', '')
 AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
 
 VALID_ACTIONS = ('record', 'retrieve', 'list', 'get', 'delete')
-# A new Session reads Pending Memory at once; extraction takes 20-90 s and the record listing ~25 s more (ADR 0032 §6).
-RECORD_REPLY = (
-    'Saved to memory. A new conversation sees it right away, and it reaches long-term memory within about two minutes.'
-)
+# Extraction takes 20-90 s and the record listing ~25 s more.
+RECORD_REPLY = 'Saved to memory. It reaches long-term memory within about two minutes.'
+SAVE_SESSION_PREFIX = 'pending-memory-'
 MEMORY_RECORD_PAGE_SIZE = 100
 TEXT_KEYS = ('preference', 'fact', 'summary', 'episode', 'reflection')
 EPISODIC_XML_TAGS = ('situation', 'intent', 'assessment', 'justification', 'reflection')
@@ -62,6 +61,10 @@ class MemoryToolResult(TypedDict):
     status: Literal['success', 'error']
     content: list[MemoryToolText]
     next_token: NotRequired[str]
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 def _ok(text: str) -> MemoryToolResult:
@@ -232,7 +235,11 @@ def memory_tool(actor_id: str) -> BaseTool:
 
 def _handle_record(store: AgentCoreMemoryStore, actor_id: str, content: str) -> MemoryToolResult:
     try:
-        pending_memory.record_pending_memory(store.client, memory_id=store.memory_id, actor_id=actor_id, text=content)
+        now = utc_now()
+        store.client.create_event(
+            memoryId=store.memory_id, actorId=actor_id, sessionId=now.strftime(f'{SAVE_SESSION_PREFIX}%Y%m%d'),
+            eventTimestamp=now, payload=[{'conversational': {'content': {'text': content}, 'role': 'USER'}}],
+        )
     except Exception:
         log.warning('memory record failed', exc_info=True)
         return _err('Failed to save memory.')
