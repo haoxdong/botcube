@@ -11,8 +11,6 @@ import pytest
 from botcube_credential_service.botcube_config import yaml_document
 
 INFRA = Path(__file__).resolve().parents[1]
-# The public example's retired identity.json, as it was before its BotCube Config held it.
-RETIRED_IDENTITY = INFRA.parent / 'tests/fixtures/public-example-deploy-root/identity.json'
 PUBLIC_EXAMPLE = INFRA.parent / 'examples/public/deploy'
 NAME, RETIRED_REPOSITORY = 'BOTCUBE_DEPLOY_ROOT', 'BOTCUBE_DEPLOY_REPOSITORY_ROOT'
 OLD_NAME, OLD_REPOSITORY = 'LEGACY_DEPLOY_ROOT', 'LEGACY_REPOSITORY_ROOT'
@@ -38,34 +36,36 @@ def environment(**names: str) -> dict[str, str]:
     return {**kept, **names}
 
 
-def test_the_identity_loads_from_the_deploy_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.delenv(OLD_NAME, raising=False)
-    monkeypatch.setenv(NAME, str(deploy_root(tmp_path, NAME)))
-    assert deploy_identity.load_deployment()['names']['clusterName'] == f'{NAME.lower()}-cluster'
+def test_ops_read_the_deploys_physical_names(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    artifact = tmp_path / 'resolved.json'
+    artifact.write_text(json.dumps({
+        'formatVersion': 1, 'config': {'name': 'own-deployment', 'names': {'clusterName': 'source-cluster'}},
+        'physicalNames': {'clusterName': 'resolved-cluster'},
+    }))
+    monkeypatch.setenv('BOTCUBE_CONFIG', str(artifact))
+    monkeypatch.delenv(NAME, raising=False)
+
+    assert deploy_identity.load_deployment()['physicalNames']['clusterName'] == 'resolved-cluster'
 
 
-def test_a_deploy_root_still_holding_its_identity_json_fails_naming_each_fields_botcube_yaml_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    root = deploy_root(tmp_path, NAME)
-    (root / 'identity.json').write_text(RETIRED_IDENTITY.read_text())
-    monkeypatch.setenv(NAME, str(root))
-
-    with pytest.raises(RuntimeError, match=f'Deploy root {root}: identity.json: aws.ecs.cluster: botcube.yaml names.clusterName'):
+@pytest.mark.parametrize(('contents', 'message'), [
+    ('{"formatVersion": 2}', 'expected formatVersion 1, got 2'),
+    ('{"name": "source"}', 'expected formatVersion 1, got None'),
+    ('name: invalid', 'Expecting value'),
+])
+def test_ops_reject_an_unsupported_artifact(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, contents: str, message: str) -> None:
+    artifact = tmp_path / 'resolved.json'
+    artifact.write_text(contents)
+    monkeypatch.setenv('BOTCUBE_CONFIG', str(artifact))
+    with pytest.raises(RuntimeError, match=message):
         deploy_identity.load_deployment()
-    (root / 'identity.json').unlink()
-    assert deploy_identity.load_deployment()['names']['clusterName'] == f'{NAME.lower()}-cluster'
 
 
-def test_a_deployed_process_loads_the_identity_from_the_botcube_config_it_is_told_of(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_ops_require_a_resolved_locator_even_with_a_deploy_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('BOTCUBE_CONFIG', raising=False)
     monkeypatch.setenv(NAME, str(PUBLIC_EXAMPLE))
-    held = deploy_identity.load_deployment()
-    config = tmp_path / 'botcube.yaml'
-    config.write_text(json.dumps(held))
-    monkeypatch.delenv(NAME)
-    monkeypatch.setenv('BOTCUBE_CONFIG', str(config))
-
-    loaded = deploy_identity.load_deployment()
-
-    assert loaded == held
+    with pytest.raises(RuntimeError, match='BOTCUBE_CONFIG must point to the resolved BotCube Config'):
+        deploy_identity.load_deployment()
 
 
 @pytest.mark.integration

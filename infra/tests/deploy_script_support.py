@@ -2,10 +2,24 @@
 
 import importlib.util
 import os
+import subprocess
+import tempfile
 from pathlib import Path
 from types import ModuleType
 
-os.environ['BOTCUBE_DEPLOY_ROOT'] = str(Path(__file__).resolve().parents[2] / 'examples/public/deploy')
+BOTCUBE = Path(__file__).resolve().parents[2]
+PUBLIC = BOTCUBE / 'examples/public/botcube.yaml'
+
+
+def resolve_config(source: Path, target: Path) -> Path:
+    with target.open('w') as output:
+        subprocess.run(['node', str(BOTCUBE / 'config/cli.ts'), 'resolve', str(source)], stdout=output, check=True)
+    return target
+
+
+_config_dir = tempfile.TemporaryDirectory()
+os.environ['BOTCUBE_CONFIG'] = str(resolve_config(PUBLIC, Path(_config_dir.name) / 'resolved.json'))
+os.environ['BOTCUBE_DEPLOY_ROOT'] = str(PUBLIC.parent / 'deploy')
 DEPLOY_ECS = Path(__file__).resolve().parents[1] / 'ecs'
 
 

@@ -13,7 +13,7 @@ import deploy_identity
 import pytest
 from botocore.exceptions import ClientError
 
-from deploy_script_support import DEPLOY_ECS
+from deploy_script_support import DEPLOY_ECS, resolve_config
 
 
 def test_unpark_starts_egress_with_previous_template_and_preserves_other_parameters():
@@ -658,8 +658,8 @@ def load_without_owned_egress(monkeypatch, tmp_path):
     """The public example with network.natGateways 0, whose VPC brings its own egress."""
     public = Path(__file__).resolve().parents[2] / 'examples/public/botcube.yaml'
     (tmp_path / 'botcube.yaml').write_text(public.read_text().replace('network: { natGateways: 1, publicIp: 192.0.2.1 }', 'network: { natGateways: 0 }'))
-    (tmp_path / 'deploy').mkdir()
-    monkeypatch.setenv('BOTCUBE_DEPLOY_ROOT', str(tmp_path / 'deploy'))
+    resolved = resolve_config(tmp_path / 'botcube.yaml', tmp_path / 'resolved.json')
+    monkeypatch.setenv('BOTCUBE_CONFIG', str(resolved))
     assert deploy_identity.owned_egress(deploy_identity.load_deployment()) is None
     return load()
 

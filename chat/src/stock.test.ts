@@ -19,7 +19,7 @@ import { StandInOidcIssuer } from '../test/fakes/oidc-issuer.js';
 import { RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
 import { Browser } from '../test/parity/browser.js';
 import { memoryDocuments } from '../test/memory-documents.js';
-import { withRequired } from '../test/stock-bot.js';
+import { resolveConfigFile, testResolvedConfig } from '../test/stock-bot.js';
 import { signCredentialServiceInvocation, verifyCredentialServiceInvocation } from './credential-service-token.js';
 import { directoryOf } from './files-shared.js';
 import { filingUserId } from './filing-user-id.js';
@@ -40,14 +40,12 @@ vi.mock('./local-chromium.js', async (original) => {
 
 const history: AccountHistory = { delete: async () => undefined, transfer: async () => undefined, ownsMainChat: async () => false, owns: async () => true };
 
-const PUBLIC_EXAMPLE = fileURLToPath(new URL('../../examples/public/botcube.yaml', import.meta.url));
+const PUBLIC_EXAMPLE = resolveConfigFile(fileURLToPath(new URL('../../examples/public/botcube.yaml', import.meta.url)));
 
 
 /** A BotCube Config with these sections. */
 function publicExample(sections: Record<string, unknown>) {
-  const path = join(mkdtempSync(join(tmpdir(), 'stock-deployment-')), 'botcube.yaml');
-  writeFileSync(path, JSON.stringify(withRequired(sections)));
-  return path;
+  return testResolvedConfig(sections);
 }
 
 /** The example bot's settings, as its Bot Image carries them. */
@@ -56,10 +54,8 @@ function exampleBot(): { agentComputer?: object } {
 }
 
 function botcubeConfig(bot: unknown) {
-  const dir = mkdtempSync(join(tmpdir(), 'stock-deployment-'));
   stageBotImage(bot);
-  writeFileSync(join(dir, 'botcube.yaml'), JSON.stringify(withRequired({})));
-  return join(dir, 'botcube.yaml');
+  return testResolvedConfig({});
 }
 
 const turn = (forwardedProps: Record<string, unknown>) =>
@@ -75,6 +71,15 @@ describe('the stock Chat Service', () => {
 
     expect(service.agentDocuments).toEqual({ agentIdentity: { name: 'Quill', character: 'A drafting agent', vibe: 'Direct, precise, and calm', avatar: '🪶' }, soul: 'Write plainly.' });
     expect(service.models).toEqual([{ key: 'echo', label: 'Echo', provider: 'echo' }, { key: 'echo-2', label: 'Echo 2', description: 'Also echoes', provider: 'echo' }]);
+  });
+
+  it('refuses a bot model whose provider the artifact marks unreachable', () => {
+    const path = botcubeConfig({ agentIdentity: { name: 'Quill', character: 'A drafting agent' }, accountKey: 'quill', models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] });
+    const artifact = JSON.parse(readFileSync(path, 'utf8'));
+    artifact.modelGateway.echo.unreachableReason = 'the configured gateway cannot reach echo';
+    writeFileSync(path, JSON.stringify(artifact));
+
+    expect(() => stockChatService({ BOTCUBE_CONFIG: path })).toThrow("the bot settings' model echo is on provider echo, but the configured gateway cannot reach echo");
   });
 
   it.each([[undefined, true], [{}, true], [{ enabled: false }, false]])('takes its Extracted Memory gate from the bot settings (extractedMemory %j)', (extractedMemory, kept) => {
@@ -288,9 +293,8 @@ describe("the stock Chat Service's Agent Computer", () => {
     const dir = mkdtempSync(join(tmpdir(), 'stock-deployment-'));
     const bot = exampleBot();
     stageBotImage({ ...bot, agentComputer: { ...bot.agentComputer, liveBrowser: false } });
-    writeFileSync(join(dir, 'botcube.yaml'), JSON.stringify(withRequired({ liveView: { kind: 'none' } })));
     const env = {
-      BOTCUBE_CONFIG: join(dir, 'botcube.yaml'),
+      BOTCUBE_CONFIG: testResolvedConfig({ liveView: { kind: 'none' } }, dir),
       AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: 'http://agentcore.test',
       AGENTCORE_AGENT_COMPUTER_BROWSER_ID: 'agent-computer-browser',
       BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET: 'policy-bucket',
@@ -786,7 +790,6 @@ describe('a signed-in User deleting their own account', () => {
     issuer = await new StandInOidcIssuer().listen();
     const enterprise = JSON.parse(readFileSync(ENTERPRISE, 'utf8')) as { integrations: { signIn: { clients: { clientId: string }[] } } };
     const dir = mkdtempSync(join(tmpdir(), 'stock-oidc-'));
-    config = join(dir, 'botcube.yaml');
     // The client secret as a secret injector mounts it, in place of the example's Secrets Manager secret.
     writeFileSync(join(dir, 'client-secret'), `${CLIENT_SECRET}\n`);
     writeFileSync(join(dir, 'mobile-client-secret'), `${SECOND_CLIENT.secret}\n`);
@@ -794,7 +797,7 @@ describe('a signed-in User deleting their own account', () => {
       ...enterprise.integrations.signIn.clients.map(({ clientId }) => ({ clientId, clientSecret: { kind: 'file', path: join(dir, 'client-secret') } })),
       { clientId: SECOND_CLIENT.clientId, clientSecret: { kind: 'file', path: join(dir, 'mobile-client-secret') } },
     ];
-    writeFileSync(config, JSON.stringify(withRequired({ integrations: { signIn: { ...enterprise.integrations.signIn, issuer: issuer.url, clients } } })));
+    config = testResolvedConfig({ integrations: { signIn: { ...enterprise.integrations.signIn, issuer: issuer.url, clients } } }, dir);
   });
   afterAll(async () => { await issuer.close(); });
   // The Session API, holding each User's Extracted Memory records as Memory lines.

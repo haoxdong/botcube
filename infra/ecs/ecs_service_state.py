@@ -5,15 +5,14 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from botocore.waiter import WaiterModel, create_waiter_with_client
-from deploy_identity import SERVICES, deployment_names, load_deployment, required
+from deploy_identity import SERVICES, load_deployment, required
 
 if TYPE_CHECKING:
     from types_boto3_ecs import ECSClient
     from types_boto3_ecs.type_defs import DeploymentTypeDef
 
 
-IDENTITY = load_deployment()
-NAMES = deployment_names(IDENTITY)
+NAMES = load_deployment()['physicalNames']
 
 
 def service_facts(ecs: ECSClient, timeout: int = 300) -> dict[str, dict[str, object]]:

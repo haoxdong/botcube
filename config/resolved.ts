@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { gatewayServesProvider, modelProvider, unreachedProvider, type ModelProvider, type CredentialSource } from './blocks.js';
 import { deploymentNames, webOrigins } from './read.cjs';
-import type { sectionDefaults } from './schema.js';
+import { botcubeConfig, type sectionDefaults } from './schema.js';
+import { BotCubeConfigError, parsed } from './parse.js';
 
 export const FORMAT_VERSION = 1;
 
@@ -21,13 +23,16 @@ export function resolveConfig(config: Config) {
     route: modelRoute(gateway, provider),
     unreachableReason: unreachedProvider(gateway, provider) ?? null,
   });
+  const modelGateway: Partial<Record<ModelProvider, ReturnType<typeof reach>>> = Object.fromEntries(
+    modelProvider.options.map(provider => [provider, reach(provider)]),
+  );
   return {
     formatVersion: FORMAT_VERSION,
     config,
     physicalNames,
     webOrigins: webOrigins(config) ?? [],
     credentialServiceHttpPath: services?.credentialService?.http?.path ?? '',
-    modelGateway: Object.fromEntries(modelProvider.options.map(provider => [provider, reach(provider)])),
+    modelGateway,
   } as const;
 }
 
@@ -47,4 +52,22 @@ function modelRoute(
 
 export function resolvedJson(config: ResolvedConfig): string {
   return JSON.stringify(config, null, 2) + '\n';
+}
+
+export function loadResolvedConfig(path: string): ResolvedConfig {
+  return parseResolvedConfig(() => readFileSync(path, 'utf8'), path);
+}
+
+export function parseResolvedConfig(read: () => string, locator: string): ResolvedConfig {
+  const source = `Resolved BotCube Config ${locator}`;
+  try {
+    const artifact = JSON.parse(read()) as ResolvedConfig | null;
+    if (artifact?.formatVersion !== FORMAT_VERSION) {
+      throw new Error(`expected formatVersion ${FORMAT_VERSION}, got ${artifact?.formatVersion}`);
+    }
+    return { ...artifact, config: parsed(botcubeConfig, artifact.config, source) };
+  } catch (error) {
+    if (error instanceof BotCubeConfigError) throw error;
+    throw new Error(`${source}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  }
 }

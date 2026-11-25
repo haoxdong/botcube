@@ -6,10 +6,9 @@ from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any, TypedDict
 
-from deploy_identity import deployment_names, load_deployment, required
+from deploy_identity import load_deployment, required
 
-IDENTITY = load_deployment()
-NAMES = deployment_names(IDENTITY)
+NAMES = load_deployment()['physicalNames']
 PARAMETER = NAMES['parkStateParameterName']
 MODES = ('parked', 'egress', 'credential', 'live')
 

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 import boto3
 from botocore.exceptions import ClientError
 from deploy_check import user_agent
-from deploy_identity import deployment_names, load_deployment, owned_egress, required
+from deploy_identity import load_deployment, owned_egress, required
 from ecs_service_state import service_facts
 from egress_probe import EgressProbe, WakeEgressProof
 
@@ -35,8 +35,9 @@ if TYPE_CHECKING:
     from types_boto3_route53 import Route53Client
 
 
-IDENTITY = load_deployment()
-NAMES = deployment_names(IDENTITY)
+RESOLVED = load_deployment()
+NAMES = RESOLVED['physicalNames']
+IDENTITY = RESOLVED['config']
 os.environ.update({
     'ORIGIN_OWNERSHIP': f"{IDENTITY['name']}:preview-origin",
     'PARKED_WORKER_NAME': f"{IDENTITY['name']}-parked",
@@ -45,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).parent / 'origin-provider'))
 handler = importlib.import_module('handler')
 OWNER, Cloudflare = handler.OWNER, handler.Cloudflare
 
-EGRESS = owned_egress(IDENTITY)
+EGRESS = owned_egress(RESOLVED)
 
 # Alarms that would breach at zero tasks. Parked silences the first two and has
 # no ALB, so the ALB alarms do not exist; Live has all of them on.

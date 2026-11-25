@@ -20,6 +20,11 @@ from local_stand_in_support import (
 )
 
 
+@pytest.fixture(autouse=True)
+def credential_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('BOTCUBE_CONFIG', raising=False)
+
+
 @pytest.fixture
 def table() -> Iterator[Any]:
     with vault_table() as created:

@@ -53,8 +53,7 @@ def test_origin_deploy_reads_the_files_root_from_its_runtime(tmp_path: Path, mon
                {'VersionIdsToStages': {'keys-revision': ['AWSCURRENT']}}]
     ranges = io.BytesIO(b'{"success": true, "result": {"ipv4_cidrs": ["192.0.2.0/24"]}}')
     with (
-        patch('deploy_identity.load_deployment', return_value={'name': 'corporate'}),
-        patch('deploy_identity.deployment_names', return_value=names),
+        patch('deploy_identity.load_deployment', return_value={'config': {'name': 'corporate'}, 'physicalNames': names}),
         patch('deploy_identity.owned_egress', return_value=None),
         patch('urllib.request.urlopen', return_value=ranges),
         patch('subprocess.run', return_value=Mock(returncode=0)),

@@ -2,7 +2,9 @@ import io
 import json
 import os
 import runpy
+import subprocess
 import sys
+import tempfile
 import unittest
 from email.message import Message
 from pathlib import Path
@@ -11,8 +13,15 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
 os.environ.update({'ORIGIN_OWNERSHIP': 'bot-cube:preview-origin', 'PARKED_WORKER_NAME': 'bot-cube-parked'})
-os.environ['BOTCUBE_DEPLOY_ROOT'] = str(Path(__file__).resolve().parents[3] / 'examples/public/deploy')
 import handler
+
+BOTCUBE = Path(__file__).resolve().parents[3]
+_config_dir = tempfile.TemporaryDirectory()
+_config = Path(_config_dir.name) / 'resolved.json'
+with _config.open('w') as output:
+    subprocess.run(['node', str(BOTCUBE / 'config/cli.ts'), 'resolve', str(BOTCUBE / 'examples/public/botcube.yaml')],
+                   stdout=output, check=True)
+os.environ['BOTCUBE_CONFIG'] = str(_config)
 
 # The deploy scripts import their shared identity module from their own directory.
 ECS = Path(__file__).resolve().parent.parent

@@ -8,16 +8,17 @@ from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, TypedDict
 
 import boto3
-from deploy_identity import deployment_names, load_deployment, owned_egress, required
+from deploy_identity import load_deployment, owned_egress, required
 
 if TYPE_CHECKING:
     from types_boto3_ec2 import EC2Client
     from types_boto3_ecs import ECSClient
 
-IDENTITY = load_deployment()
-NAMES = deployment_names(IDENTITY)
+RESOLVED = load_deployment()
+NAMES = RESOLVED['physicalNames']
+IDENTITY = RESOLVED['config']
 
-EGRESS = owned_egress(IDENTITY)
+EGRESS = owned_egress(RESOLVED)
 PREFIX = 'parking-egress-'
 
 

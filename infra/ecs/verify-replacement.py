@@ -366,7 +366,7 @@ def exercise(outputs: dict[str, str], ecs: ECSClient, elb: ElasticLoadBalancingv
 
 
 def main():
-    outputs = json.loads(Path(sys.argv[1]).read_text())[load_deployment().get('names', {}).get('previewOriginStackName', f"{load_deployment()['name']}-preview-origin")]
+    outputs = json.loads(Path(sys.argv[1]).read_text())[load_deployment()['physicalNames']['previewOriginStackName']]
     report = {'sourceRevision': os.environ['GITHUB_SHA'], 'workflowRun': os.environ['GITHUB_RUN_ID'],
               'workflowAttempt': os.environ['GITHUB_RUN_ATTEMPT'], 'completed': False}
     path = Path(os.environ['RUNNER_TEMP']) / 'preview-replacement-evidence.json'

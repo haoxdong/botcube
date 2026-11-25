@@ -7,10 +7,11 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-from deploy_identity import deployment_names, load_deployment, owned_egress
+from deploy_identity import load_deployment, owned_egress
 
-identity = load_deployment()
-NAMES = deployment_names(identity)
+RESOLVED = load_deployment()
+NAMES = RESOLVED['physicalNames']
+identity = RESOLVED['config']
 
 token = os.environ['CLOUDFLARE_ORIGIN_API_TOKEN']
 if not token:
@@ -77,7 +78,7 @@ def owned_egress_network(egress):
             'defaultRoute': defaults[0] if defaults else None, 'natGatewayState': nat_state}
 
 
-egress = owned_egress(identity)
+egress = owned_egress(RESOLVED)
 owned_network = owned_egress_network(egress) if egress else None
 Path(os.environ['PREVIEW_ORIGIN_INPUT']).write_text(json.dumps({
     'turnIdentityKeysVersion': next(version for version, stages in aws('secretsmanager', 'describe-secret', '--secret-id', NAMES['turnIdentityKeysSecretName'])['VersionIdsToStages'].items() if 'AWSCURRENT' in stages),

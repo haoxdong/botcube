@@ -1,3 +1,4 @@
+import { loadResolvedConfig } from 'botcube-config/resolved';
 import { chatAlarmEvents } from 'botcube-config/alarm-events';
 import { TurnQuota, TurnQuotaExceeded } from './turn-quota.js';
 import { startChatTracing } from './tracing.js';
@@ -24,7 +25,7 @@ import { DynamoDBSessionMetadata, SessionDispatchPendingError, type SessionMetad
 import type { ScheduledTasks } from './scheduled-tasks.js';
 import { chatScheduling } from './schedules.js';
 import type { TableSchedules } from './table-schedules.js';
-import { localConfig, s3Config } from './config-locator.js';
+import { s3Config } from './config-locator.js';
 import { configAdapters, type ConfigAdapters, type AwsAccessAdapter } from './config-adapters.js';
 import { ssmParkHistory, type ParkHistory } from './park-history.js';
 import { isUserRequest, ProductionActivity } from './production-activity.js';
@@ -285,13 +286,14 @@ function parkHistory(parameter: string, productName: string | undefined): ParkHi
 export async function startChatService(env: NodeJS.ProcessEnv = process.env, options: StockOptions = {}): Promise<ServerType> {
   const locator = env.BOTCUBE_CONFIG;
   if (!locator) throw new Error('BOTCUBE_CONFIG is not set: the stock Chat Service serves the BotCube Config it names');
-  const botcubeConfig = locator.startsWith('s3://') ? await s3Config(locator) : localConfig(locator);
-  return serveChatService(env, { ...options, botcubeConfig });
+  const resolved = locator.startsWith('s3://') ? await s3Config(locator, env.AWS_REGION) : loadResolvedConfig(locator);
+  return serveChatService(env, { ...options, resolved });
 }
 
 /** Serve the Chat Service, configured from the environment and the BotCube Config it names, on $PORT. */
 export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: StockOptions = {}): ServerType {
-  const adapters = configAdapters(env, options.botcubeConfig);
+  const resolved = options.resolved ?? (env.BOTCUBE_CONFIG ? loadResolvedConfig(env.BOTCUBE_CONFIG) : undefined);
+  const adapters = configAdapters(env, resolved);
   const config = configFromEnv(env, adapters);
   if (config.agentCore === null && config.localHarnessUrl === null) {
     console.warn('AGENTCORE_RUNTIME_ARN is not set; agent runs (POST /) return 503 and warmup is skipped until it is configured.');
@@ -304,7 +306,7 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: 
   const parkState = env.BOTCUBE_PARK_STATE_PARAMETER;
   let stopScheduledRuns: (() => void) | undefined;
   const { app, chat } = createChatService(
-    { ...options, env },
+    { ...options, env, resolved },
     config,
     activity.observe(metadata),
     new DynamoDBAgentDocuments(table),

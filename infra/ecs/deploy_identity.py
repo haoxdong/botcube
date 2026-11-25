@@ -1,11 +1,9 @@
-"""Native deployment config and the NAT a parking operation owns."""
+"""Resolved deployment identity and the NAT a parking operation owns."""
 
 import json
 import os
 from pathlib import Path
 from typing import Any, TypeVar
-
-from botcube_credential_service.botcube_config import deployment_names, read_deployment
 
 SERVICES = ('chat-service-preview', 'credential-service')
 
@@ -21,9 +19,18 @@ def deploy_root() -> Path:
 
 
 def load_deployment() -> dict[str, Any]:
-    """The native deployment config, validated by synthesis for a deployed bundle."""
-    config = os.environ.get('BOTCUBE_CONFIG')
-    return json.loads(Path(config).read_text()) if config else read_deployment(deploy_root())
+    """The resolved BotCube Config emitted by the TypeScript loader."""
+    locator = os.environ.get('BOTCUBE_CONFIG')
+    if not locator:
+        raise RuntimeError('BOTCUBE_CONFIG must point to the resolved BotCube Config')
+    try:
+        resolved = json.loads(Path(locator).read_text(encoding='utf8'))
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f'Resolved BotCube Config {locator}: {error}') from error
+    version = resolved.get('formatVersion') if isinstance(resolved, dict) else None
+    if type(version) is not int or version != 1:
+        raise RuntimeError(f'Resolved BotCube Config {locator}: expected formatVersion 1, got {version!r}')
+    return resolved
 
 
 def require(condition: object, message: str) -> None:
@@ -38,11 +45,12 @@ def required(value: T | None, name: str) -> T:
     return value
 
 
-def owned_egress(config: dict[str, Any]) -> dict[str, Any] | None:
+def owned_egress(resolved: dict[str, Any]) -> dict[str, Any] | None:
     """The NAT this deployment owns, absent when the existing VPC supplies egress."""
+    config = resolved['config']
     if not config.get('network', {}).get('natGateways'):
         return None
-    names = deployment_names(config)
+    names = resolved['physicalNames']
     return {
         'stackName': names['privateEgressStackName'],
         'routeTableId': config['existing']['vpc']['privateSubnets'][0]['routeTableId'],

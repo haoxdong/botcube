@@ -196,7 +196,7 @@ export async function startLocalStack(options: {
         ...credentialService,
         ...awsAccessEnv(config, dynamodbEndpoint),
         ...options.chatEnv,
-        BOTCUBE_CONFIG: botcubeConfig, BOTCUBE_TEST_IMAGE_SETTINGS: fileURLToPath(new URL('../../../examples/bot/bot.yaml', import.meta.url)),
+        BOTCUBE_CONFIG: resolvedConfig, BOTCUBE_TEST_IMAGE_SETTINGS: fileURLToPath(new URL('../../../examples/bot/bot.yaml', import.meta.url)),
       },
       '/',
       'Chat Service listening on :',

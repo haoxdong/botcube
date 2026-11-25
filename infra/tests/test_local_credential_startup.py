@@ -64,7 +64,7 @@ def test_compose_local_credentials_boot_link_persist_and_revoke(tmp_path: Path) 
             endpoint = f'http://{host}:{port}'
             key = tmp_path / 'vault' / 'key'
             # PYTHONPATH stays unset: the script finds its sibling stand-ins from its own directory.
-            inherited = {name: value for name, value in os.environ.items() if name != 'PYTHONPATH'}
+            inherited = {name: value for name, value in os.environ.items() if name not in {'PYTHONPATH', 'BOTCUBE_CONFIG'}}
             environment = {
                 **inherited, 'AWS_ACCESS_KEY_ID': 'local', 'AWS_SECRET_ACCESS_KEY': 'local',
                 'AWS_SESSION_TOKEN': '', 'AWS_DEFAULT_REGION': 'us-east-1', 'AWS_REGION': 'us-east-1',

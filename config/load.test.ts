@@ -10,7 +10,8 @@ vi.mock('node:fs', async importOriginal => {
   return { ...fs, existsSync: (path: string) => path === '/bot/bot.yaml' ? Boolean(image.settings) : fs.existsSync(path), readFileSync: (path: string, encoding: BufferEncoding) => path === '/bot/bot.yaml' ? image.settings : fs.readFileSync(path, encoding) };
 });
 import { openEgressProxy } from './deployment.js';
-import { loadBotCube } from './load.js';
+import { loadBotCube, validateBotDeployment } from './load.js';
+import { resolveConfig } from './resolved.js';
 import { BotCubeConfigError } from './parse.js';
 
 const example = (name: string) => fileURLToPath(new URL(`../examples/${name}/botcube.yaml`, import.meta.url));
@@ -184,6 +185,14 @@ describe('a BotCube Config', () => {
     } else {
       expect(() => loadBotCube(path)).toThrow(`BotCube Config ${path}: the bot settings' model test-model is on provider ${provider}, but ${error}`);
     }
+  });
+
+  it('names the source and provider when the resolved gateway entry is missing', () => {
+    const { config, bot } = loadBotCube(configFile({}));
+    const resolved = { ...resolveConfig(config), modelGateway: {} };
+    const source = 'Resolved BotCube Config s3://config-bucket/resolved/config.json';
+    expect(() => validateBotDeployment(resolved, bot, source))
+      .toThrow(new BotCubeConfigError(`${source}: modelGateway has no entry for provider openai`));
   });
 
   it('reaches a listed provider with no URL of its own at the gateway URL', () => {

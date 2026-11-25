@@ -1,3 +1,5 @@
+import { loadConfig } from 'botcube-config/load';
+import { resolveConfig, resolvedJson } from 'botcube-config/resolved';
 import { stageBotImage } from './bot-image.js';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,9 +13,20 @@ import { filingUserId } from '../src/filing-user-id.js';
 const REQUIRED = JSON.parse(readFileSync(new URL('../../tests/required-keys.json', import.meta.url), 'utf8'));
 
 /** These sections over the keys every BotCube Config gives; `existing` keeps their VPC. */
-export function withRequired(sections: Record<string, unknown>): Record<string, unknown> {
+function withRequired(sections: Record<string, unknown>): Record<string, unknown> {
   const { existing, ...rest } = sections;
   return { ...REQUIRED, ...rest, existing: { ...REQUIRED.existing, ...(existing as object | undefined) } };
+}
+
+export function resolveConfigFile(source: string, target = join(mkdtempSync(join(tmpdir(), 'chat-resolved-')), 'botcube.resolved.json')): string {
+  writeFileSync(target, resolvedJson(resolveConfig(loadConfig(source))));
+  return target;
+}
+
+export function testResolvedConfig(sections: Record<string, unknown>, dir = mkdtempSync(join(tmpdir(), 'chat-test-deployment-'))): string {
+  const source = join(dir, 'botcube.yaml');
+  writeFileSync(source, JSON.stringify(withRequired(sections)));
+  return resolveConfigFile(source, join(dir, 'botcube.resolved.json'));
 }
 
 /** The test bot's account key: its cookies are `test_account_id` and `test_session`. */
@@ -35,8 +48,7 @@ export function testBotCubeConfig(bot: Record<string, unknown> = TEST_BOT, secti
   const dir = mkdtempSync(join(tmpdir(), 'chat-test-deployment-'));
   stageBotImage(bot);
   writeFileSync(join(dir, 'bot.yaml'), JSON.stringify(bot));
-  writeFileSync(join(dir, 'botcube.yaml'), JSON.stringify(withRequired(sections)));
-  return join(dir, 'botcube.yaml');
+  return testResolvedConfig(sections, dir);
 }
 
 /** The user ID the test bot files an account's Sessions under. */

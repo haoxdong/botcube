@@ -1,21 +1,14 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { stageBotImage } from '../test/bot-image.js';
-import { withRequired } from '../test/stock-bot.js';
+import { testResolvedConfig as botcubeConfig } from '../test/stock-bot.js';
 import { mtlsCertificates } from '../test/fakes/mtls.js';
 import { configAdapters } from './config-adapters.js';
 import { serveChatService } from './server.js';
 
 const ROLE_ARN = 'arn:aws:iam::123456789012:role/bot-cube-user-memory';
-
-/** A BotCube Config with these sections, beside the example bot. */
-function botcubeConfig(sections: Record<string, unknown>): string {
-  const path = join(mkdtempSync(join(tmpdir(), 'chat-deployment-')), 'botcube.yaml');
-  writeFileSync(path, JSON.stringify(withRequired(sections)));
-  return path;
-}
 
 describe("the Chat Service's adapters", () => {
   it("are the BotCube Config schema's defaults with no BotCube Config, as a deployment without one runs", () => {
@@ -39,6 +32,14 @@ describe("the Chat Service's adapters", () => {
     });
     expect(configAdapters({ BOTCUBE_CONFIG: botcubeConfig({}), ...legacy }))
       .toMatchObject({ corsOrigins: ['http://localhost:3001', 'http://127.0.0.1:3001'], automationUserAgents: [] });
+  });
+
+  it('uses the origins in the resolved artifact', () => {
+    const path = botcubeConfig({});
+    const artifact = JSON.parse(readFileSync(path, 'utf8'));
+    writeFileSync(path, JSON.stringify({ ...artifact, webOrigins: ['https://resolved.example.com'] }));
+
+    expect(configAdapters({ BOTCUBE_CONFIG: path }).corsOrigins).toEqual(['https://resolved.example.com']);
   });
 
   it("take the Harness auth from the BotCube Config's kind, not the environment", () => {
@@ -73,13 +74,14 @@ describe("the Chat Service's adapters", () => {
   it('stop the Chat Service starting, before it listens, when the BotCube Config its locator names is missing', () => {
     const path = join(mkdtempSync(join(tmpdir(), 'chat-deployment-')), 'absent.json');
 
-    expect(() => serveChatService({ PORT: '0', BOTCUBE_CONFIG: path })).toThrow(`BotCube Config ${path}: no file`);
+    expect(() => serveChatService({ PORT: '0', BOTCUBE_CONFIG: path })).toThrow(`Resolved BotCube Config ${path}: ENOENT`);
   });
 
-  it('stop the Chat Service starting, before it listens, when the BotCube Config its locator names fails the schema', () => {
-    const path = botcubeConfig({ integrations: { proxy: { kind: 'forward' } } });
+  it('stop the Chat Service starting, before it listens, when the artifact has an unsupported format version', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'chat-deployment-')), 'unsupported.json');
+    writeFileSync(path, JSON.stringify({ formatVersion: 2 }));
 
-    expect(() => serveChatService({ PORT: '0', BOTCUBE_CONFIG: path })).toThrow(`BotCube Config ${path}: integrations.proxy.url`);
+    expect(() => serveChatService({ PORT: '0', BOTCUBE_CONFIG: path })).toThrow(`Resolved BotCube Config ${path}: expected formatVersion 1, got 2`);
   });
 
   it("stop the Chat Service starting, before it listens, when it parks but the bot settings name no productName for a skipped run to say was paused", () => {

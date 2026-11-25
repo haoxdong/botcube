@@ -11,9 +11,9 @@ const source = new URL('../../examples/public/botcube.yaml', import.meta.url).pa
 afterEach(() => vi.restoreAllMocks());
 
 test('loads the exact resolved config a revision names', async () => {
-  const config = loadConfig(source);
+  const config = resolveConfig(loadConfig(source));
   const send = vi.spyOn(S3Client.prototype, 'send').mockImplementation(async () => ({
-    Body: { transformToString: async () => resolvedJson(resolveConfig(config)) },
+    Body: { transformToString: async () => resolvedJson(config) },
   }));
   expect(await s3Config(locator)).toEqual(config);
   expect(send).toHaveBeenCalledWith(expect.objectContaining({ input: { Bucket: 'config-bucket', Key: 'resolved/previous.json' } }));

@@ -1,7 +1,7 @@
 import { X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { sectionDefaults, type BotCubeConfig } from 'botcube-config';
-import { localConfig } from './config-locator.js';
+import { loadResolvedConfig, resolveConfig, type ResolvedConfig } from 'botcube-config/resolved';
 import { allowedOrigins } from './cors.js';
 import type { ChatHarnessAuth } from './harness-auth.js';
 
@@ -26,12 +26,13 @@ export interface ConfigAdapters {
  * The adapters the Chat Service runs on: each section's `kind` in the BotCube Config at BOTCUBE_CONFIG,
  * or the schema's defaults without one (ADR 0091). Startup stops on a chosen kind whose environment is missing.
  */
-export function configAdapters(env: NodeJS.ProcessEnv, config = env.BOTCUBE_CONFIG ? localConfig(env.BOTCUBE_CONFIG) : sectionDefaults()): ConfigAdapters {
+export function configAdapters(env: NodeJS.ProcessEnv, resolved: ResolvedConfig = env.BOTCUBE_CONFIG ? loadResolvedConfig(env.BOTCUBE_CONFIG) : resolveConfig(sectionDefaults())): ConfigAdapters {
+  const { config, webOrigins } = resolved;
   const { integrations: { harnessAuth, awsAccess, telemetry, proxy }, schedules, parking, caBundle } = config;
   if (caBundle !== undefined) loadCaBundle(caBundle);
   return {
     harnessAuth, awsAccess: awsAccessAdapter(awsAccess.kind, env[USER_MEMORY_ROLE_ARN] || undefined, config.existing?.kmsKeys?.memory), schedules, telemetry, proxy,
-    corsOrigins: allowedOrigins(config), automationUserAgents: parking?.automationUserAgents ?? [],
+    corsOrigins: allowedOrigins(webOrigins), automationUserAgents: parking?.automationUserAgents ?? [],
   };
 }
 

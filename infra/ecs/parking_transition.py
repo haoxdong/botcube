@@ -12,7 +12,7 @@ from urllib.error import HTTPError
 
 from botocore.exceptions import ClientError
 from deploy_guard import SETTLED, require_no_deploy
-from deploy_identity import deployment_names, load_deployment, owned_egress
+from deploy_identity import load_deployment, owned_egress
 from egress_probe import RunningProbe
 from parking_state import (
     mode_parameter,
@@ -44,10 +44,10 @@ class TransitionState(TypedDict, total=False):
     probe: RunningProbe
     monitoringExecutionArn: str
 
-IDENTITY = load_deployment()
-NAMES = deployment_names(IDENTITY)
+RESOLVED = load_deployment()
+NAMES = RESOLVED['physicalNames']
 PARK_STATE = NAMES['parkStateParameterName']
-OWNED_EGRESS = owned_egress(IDENTITY)
+OWNED_EGRESS = owned_egress(RESOLVED)
 STACKS = {**({'egress': OWNED_EGRESS['stackName']} if OWNED_EGRESS else {}),
           'origin': NAMES['previewOriginStackName'],
           'health': NAMES['apiHealthStackName']}

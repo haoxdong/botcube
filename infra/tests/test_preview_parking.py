@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import deploy_identity
 
-from deploy_script_support import DEPLOY_ECS
+from deploy_script_support import DEPLOY_ECS, resolve_config
 
 verifier = runpy.run_path(str(DEPLOY_ECS / 'verify-park.py'))
 transition = runpy.run_path(str(DEPLOY_ECS / 'transition.py'))
@@ -158,8 +158,8 @@ class WithoutOwnedEgressVerificationTests(unittest.TestCase):
         public = Path(__file__).resolve().parents[2] / 'examples/public/botcube.yaml'
         root = Path(tempfile.mkdtemp())
         (root / 'botcube.yaml').write_text(public.read_text().replace('network: { natGateways: 1, publicIp: 192.0.2.1 }', 'network: { natGateways: 0 }'))
-        (root / 'deploy').mkdir()
-        with patch.dict(os.environ, {'BOTCUBE_DEPLOY_ROOT': str(root / 'deploy')}):
+        resolved = resolve_config(root / 'botcube.yaml', root / 'resolved.json')
+        with patch.dict(os.environ, {'BOTCUBE_CONFIG': str(resolved)}):
             assert deploy_identity.owned_egress(deploy_identity.load_deployment()) is None
             self.verifier = runpy.run_path(str(DEPLOY_ECS / 'verify-park.py'))
 

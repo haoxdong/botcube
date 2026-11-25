@@ -22,10 +22,11 @@ from typing import TYPE_CHECKING
 
 import boto3
 from deploy_check import user_agent
-from deploy_identity import deployment_names, load_deployment
+from deploy_identity import load_deployment
 
-IDENTITY = load_deployment()
-NAMES = deployment_names(IDENTITY)
+RESOLVED = load_deployment()
+NAMES = RESOLVED['physicalNames']
+IDENTITY = RESOLVED['config']
 os.environ.update({
     'ORIGIN_OWNERSHIP': f"{IDENTITY['name']}:preview-origin",
     'PARKED_WORKER_NAME': f"{IDENTITY['name']}-parked",

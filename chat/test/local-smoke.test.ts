@@ -1,12 +1,15 @@
+import { CreateBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { readFileSync } from 'node:fs';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { afterAll, expect, it, vi } from 'vitest';
-import { serveChatService } from '../src/server.js';
+import { startChatService } from '../src/server.js';
+import { resolveConfigFile } from './stock-bot.js';
 import { fileURLToPath } from 'node:url';
 import { FakeAgentCore } from './fakes/fake-agentcore.js';
 import { FakeSessionApi } from './fakes/fake-backends.js';
 import { RUNTIME_ARN, createChatTable } from './fakes/stack.js';
-import { motoEndpoint } from './fakes/moto.js';
+import { motoAws, motoEndpoint } from './fakes/moto.js';
 
 const cleanup: (() => Promise<void>)[] = [];
 afterAll(async () => {
@@ -23,6 +26,14 @@ it('serves the stock Chat Service over HTTP with persisted thread metadata and c
   const endpoint = motoEndpoint();
   const table = `template-smoke-${Math.random().toString(36).slice(2)}`;
   await createChatTable(endpoint, table);
+  const bucket = 'chat-startup-config';
+  const key = 'resolved/chat.json';
+  const config = resolveConfigFile(fileURLToPath(new URL('../../infra/local/deployment/botcube.yaml', import.meta.url)));
+  const aws = motoAws();
+  const s3 = new S3Client(aws);
+  cleanup.push(async () => s3.destroy());
+  await s3.send(new CreateBucketCommand({ Bucket: bucket }));
+  await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: readFileSync(config) }));
   const env = {
     PORT: '0', AWS_REGION: 'us-east-1',
     AWS_ENDPOINT_URL_DYNAMODB: endpoint,
@@ -30,14 +41,17 @@ it('serves the stock Chat Service over HTTP with persisted thread metadata and c
     AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
     BOTCUBE_CHAT_TABLE: table,
     BOTCUBE_LOCAL_SESSION_API_URL: sessions.url,
-    BOTCUBE_CONFIG: fileURLToPath(new URL('../../infra/local/deployment/botcube.yaml', import.meta.url)),
+    BOTCUBE_CONFIG: `s3://${bucket}/${key}`,
   };
   vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
+  vi.stubEnv('AWS_ENDPOINT_URL_S3', endpoint);
+  vi.stubEnv('AWS_ACCESS_KEY_ID', aws.credentials.accessKeyId);
+  vi.stubEnv('AWS_SECRET_ACCESS_KEY', aws.credentials.secretAccessKey);
   cleanup.push(async () => {
     vi.unstubAllEnvs();
   });
   const taskStops = process.listenerCount('SIGTERM');
-  const server = serveChatService(env);
+  const server = await startChatService(env);
   cleanup.push(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     expect(process.listenerCount('SIGTERM')).toBe(taskStops);

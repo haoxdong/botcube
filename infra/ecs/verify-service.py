@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 import boto3
 from botocore.exceptions import ClientError
 from deploy_check import user_agent
-from deploy_identity import deploy_root, deployment_names, load_deployment
+from deploy_identity import deploy_root, load_deployment
 from origin_smoke import OriginSmoke, cleanup_conversation
 from test_user import test_user
 
@@ -37,8 +37,9 @@ if TYPE_CHECKING:
     from types_boto3_lambda import LambdaClient
 
 DEPLOY_ROOT = deploy_root().resolve()
-IDENTITY = load_deployment()
-NAMES = deployment_names(IDENTITY)
+RESOLVED = load_deployment()
+NAMES = RESOLVED['physicalNames']
+IDENTITY = RESOLVED['config']
 DOMAIN = 'chatServicePreview'
 
 
