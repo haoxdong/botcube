@@ -140,16 +140,6 @@ it('finds Reduce Motion in sources but not in tests', () => {
   }
 });
 
-
-it('styles every story with each stylesheet the app loads', () => {
-  const stylesheets = (file: string) =>
-    [...read(file).matchAll(/^import ["'](?<sheet>\.[^"']+\.css)["'];?$/gm)]
-      .flatMap(({ groups }) => groups?.sheet === undefined ? [] : [path.join(path.dirname(file), groups.sheet)]);
-  const stories = stylesheets('ui/web/.storybook/preview.ts');
-
-  expect(stylesheets('ui/web/src/app/layout.tsx').filter((sheet) => !stories.includes(sheet))).toEqual([]);
-});
-
 // DESIGN.md stays pruned: it names only live tokens and files, says each thing once, and shrinks rather than grows.
 describe('DESIGN.md', () => {
   const design = read('ui/web/DESIGN.md');

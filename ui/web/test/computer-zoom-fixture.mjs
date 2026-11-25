@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { readFileSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
+import postcss from 'postcss';
+import loadPostcssConfig from 'postcss-load-config';
 /** @typedef {[number, number, number]} TouchPoint */
 /** @typedef {Document & {createTouch:(window:Window,target:Element,id:number,pageX:number,pageY:number,screenX:number,screenY:number)=>Touch,createTouchList:(...touches:Touch[])=>TouchList}} TouchDocument */
 /** @typedef {{onResolve:(options:{filter:RegExp},callback:()=>{path:string,namespace:string})=>void,onLoad:(options:{filter:RegExp,namespace:string},callback:(args:{path:string})=>{contents:string,loader:string,resolveDir:string})=>void}} FixtureBuilder */
@@ -84,6 +86,7 @@ export function BrowserLiveView({onConnectionEstablished,onDisconnect}){
     write: false,
     format: 'esm',
     jsx: 'automatic',
+    loader: { '.png': 'dataurl', '.svg': 'dataurl' },
     external: ['/sdk.js'],
     alias: { '@bot-ui': resolve(root, 'botcube/ui/web/src/plugin/default.tsx') },
     nodePaths: [resolve(root, 'botcube/ui/web/node_modules')],
@@ -123,18 +126,10 @@ export function BrowserLiveView({onConnectionEstablished,onDisconnect}){
   });
   const bundle = bundled.outputFiles[0];
   assert(bundle, 'fixture bundler produced its application');
-  const css = (
-    await Promise.all(
-      [
-        'botcube/ui/web/src/app/globals.css',
-        'botcube/ui/web/src/computer/styles.css',
-      ].map((file) => readFile(resolve(root, file), 'utf8'))
-    )
-  )
-    .join('\n')
-    // globals.css's sheets by surface inlined, as Tailwind bundles them; its package imports dropped.
-    .replace(/^@import "\.\/([\w-]+\.css)";$/gm, (_line, file) => readFileSync(resolve(root, 'botcube/ui/web/src/app', file), 'utf8'))
-    .replace(/^@import.*$/gm, '');
+  const web = resolve(root, 'botcube/ui/web');
+  const stylesheet = resolve(web, 'src/app/globals.css');
+  const { plugins, options } = await loadPostcssConfig({}, web);
+  const { css } = await postcss(plugins).process(await readFile(stylesheet, 'utf8'), { ...options, from: stylesheet });
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://fixture');
     response.setHeader(

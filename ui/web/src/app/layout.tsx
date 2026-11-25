@@ -1,13 +1,4 @@
 import "./globals.css";
-import "./files.css";
-import "./artifacts.css";
-import "./side-chats.css";
-import "./scheduled-tasks.css";
-import "./code-blocks.css";
-import "./motion.css";
-import "./step-sheet.css";
-import "../computer/styles.css";
-import "../computer/live-browser.css";
 import localFont from "next/font/local";
 import { cn } from "@/lib/utils";
 import { webUiPlugin } from "@bot-ui";
