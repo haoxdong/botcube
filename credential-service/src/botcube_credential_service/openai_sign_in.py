@@ -27,6 +27,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
 import jwt
+from botcube_credential_source import CredentialSourceError, credential_source
 
 from .config import OpenAISettings
 from .invocation import sign_credential_service_invocation
@@ -85,13 +86,11 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _invocation_secret(secret_id: str, region: str | None) -> str:
-    import boto3
-    from botocore.exceptions import BotoCoreError, ClientError
-
+    env = {'AWS_REGION': region} if region else os.environ
     try:
-        value = boto3.client('secretsmanager', region_name=region).get_secret_value(SecretId=secret_id)['SecretString']
-    except (BotoCoreError, ClientError, KeyError) as exc:
-        raise SignInFailed(f'Could not read the Credential Service invocation secret: {exc}') from exc
+        value = credential_source('Credential Service invocation', {'kind': 'secret', 'secretId': secret_id}, env=env).get().value
+    except CredentialSourceError as exc:
+        raise SignInFailed(str(exc)) from exc
     if not value.strip():
         raise SignInFailed('Could not read the Credential Service invocation secret: it is empty')
     return value

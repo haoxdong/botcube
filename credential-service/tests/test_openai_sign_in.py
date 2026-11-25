@@ -185,16 +185,18 @@ def test_remove_revokes_without_signing_in() -> None:
     assert _invocation(revoke) == ('acct_owner123', 'credential_revocation')
 
 
-def test_remove_signs_with_the_secret_from_the_requested_region(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('use_arn', [False, True])
+def test_remove_signs_with_the_secret_from_the_requested_region(monkeypatch: pytest.MonkeyPatch, use_arn: bool) -> None:
+    monkeypatch.delenv('AWS_REGION', raising=False)
     monkeypatch.setenv('AWS_DEFAULT_REGION', 'us-east-1')
     requested_secret = 'credential-service-secret-west'
     openai = FakeOpenAI()
     with mock_aws():
         boto3.client('secretsmanager', region_name='us-east-1').create_secret(Name=SECRET_ID, SecretString=SECRET)
-        boto3.client('secretsmanager', region_name='us-west-2').create_secret(Name=SECRET_ID, SecretString=requested_secret)
+        arn = boto3.client('secretsmanager', region_name='us-west-2').create_secret(Name=SECRET_ID, SecretString=requested_secret)['ARN']
+        secret_args = ['--secret-id', arn] if use_arn else ['--secret-id', SECRET_ID, '--region', 'us-west-2']
         assert main(
-            ['--account', 'acct_owner123', '--url', PLAN_USAGE_URL, '--secret-id', SECRET_ID,
-             '--region', 'us-west-2', '--remove'],
+            ['--account', 'acct_owner123', '--url', PLAN_USAGE_URL, '--remove', *secret_args],
             http=httpx.Client(transport=httpx.MockTransport(openai.handle)),
             open_browser=openai.browser,
         ) == 0
@@ -213,7 +215,7 @@ def test_remove_signs_with_the_secret_from_the_requested_region(monkeypatch: pyt
 def test_without_the_signing_secret_the_command_refuses_before_any_sign_in() -> None:
     openai = FakeOpenAI()
 
-    with mock_aws(), pytest.raises(SystemExit, match='Could not read the Credential Service invocation secret'):
+    with mock_aws(), pytest.raises(SystemExit, match='Credential Service invocation credential'):
         _run(openai)
 
     assert openai.authorize == {}
