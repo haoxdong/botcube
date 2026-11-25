@@ -13,7 +13,6 @@ export type WriterLease = (() => Promise<void>) & {
 interface SessionWriterHolder {
   token: string;
   createdAt: string;
-  scheduled: boolean;
 }
 export class SessionBusyError extends Error {
   constructor(message: string, readonly holder?: SessionWriterHolder) { super(message); }
@@ -24,8 +23,7 @@ export const NO_WRITER_WAIT = { timeoutMs: 0 };
 export interface WriterWait {
   timeoutMs: number;
   signal?: AbortSignal;
-  onWait?: (error: SessionBusyError) => void;
-  onTimeout?: (error: SessionBusyError) => void;
+  context?: { session_id: string; run_id: string };
 }
 
 export async function acquire<T>(register: () => Promise<T>, wait: WriterWait): Promise<T> {
@@ -36,12 +34,23 @@ export async function acquire<T>(register: () => Promise<T>, wait: WriterWait): 
       return await register();
     } catch (error) {
       if (!(error instanceof SessionBusyError) || wait.signal?.aborted) throw error;
-      if (Date.now() >= deadline) { wait.onTimeout?.(error); throw error; }
-      if (!waiting) wait.onWait?.(error);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        logWriterTimeout(wait.context, error.holder);
+        throw error;
+      }
+      if (!waiting && wait.context !== undefined) console.warn('Waiting for the Session writer', wait.context, error);
       // eslint-disable-next-line no-await-in-loop -- wait for the current writer
-      await delay(Math.min(1000, deadline - Date.now()), undefined, { signal: wait.signal }).catch(() => { throw error; });
+      await delay(Math.min(1_000, remaining), undefined, { signal: wait.signal }).catch(() => { throw error; });
     }
   }
+}
+
+function logWriterTimeout(context: WriterWait['context'], holder: SessionWriterHolder | undefined): void {
+  if (context === undefined) return;
+  console.error('Session writer wait exceeded its budget', {
+    ...context, holder_token: holder?.token, created_at: holder?.createdAt,
+  });
 }
 
 interface RuntimeWriterTransport {

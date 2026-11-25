@@ -211,7 +211,7 @@ describe('a scheduled run', () => {
         tools: [], context: [], state: {}, forwardedProps: { model: catalogPlan.key },
       } });
       expect(response.status).toBe(409);
-      expect(await response.json()).toEqual({ detail: 'Test Bot is still busy. Send your message again in a minute.', code: 'SESSION_BUSY' });
+      expect(await response.json()).toEqual({ detail: 'This chat is busy. Try again.', code: 'SESSION_BUSY' });
       expect(stack.agentcore.invocationFor(side).payload.messages).toHaveLength(1);
     } finally {
       release();

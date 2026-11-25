@@ -148,11 +148,10 @@ export function assertIdleContinuable(session: Parameters<typeof assertContinuab
   assertContinuable(session);
 }
 
-export function sessionAccessError(error: unknown, agentName = ''): unknown {
+export function sessionAccessError(error: unknown): unknown {
   if (error instanceof SessionConcurrencyError) return new HttpError(409, error.message, 'SESSION_CONCURRENCY_CONFLICT');
   if (error instanceof SessionBusyError) {
-    const activity = error.holder?.scheduled ? 'posting a scheduled task' : 'busy';
-    const busy = new HttpError(409, `${agentName ? `${agentName} is still` : 'Still'} ${activity}. Send your message again in a minute.`, 'SESSION_BUSY');
+    const busy = new HttpError(409, 'This chat is busy. Try again.', 'SESSION_BUSY');
     busy.cause = error;
     return busy;
   }

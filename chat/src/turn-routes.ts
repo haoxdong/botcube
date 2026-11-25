@@ -24,7 +24,7 @@ import { turnActivity } from './turn-summaries.js';
 import { readTurnEvents } from './turn-events.js';
 import { steeringRoutes } from './steering-routes.js';
 import { isRecord, omitOptionalNulls } from './payload.js';
-import { turnWriterWait, preparationFailure, turnAccessError } from './turn-preparation.js';
+import { preparationFailure } from './turn-preparation.js';
 
 
 const WARMUP_SESSION_ID = '__warmup__000000000000000000000000';
@@ -127,7 +127,6 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
       timing.mark('model');
       await turnQuota?.admit(requester.owner, c.req.header('cf-connecting-ip'), requester.rateTier === 'authenticated');
       const documents = Promise.allSettled([agentDocuments.get(requester.owner, bot.agentDocuments)]);
-      const accessError = (error: unknown) => turnAccessError(error, documents, bot.agentDocuments);
       const running = { startedAt: new Date().toISOString(), runId: input.runId };
       const request = validatedInput.messages.slice().reverse().find((message) => message.role === 'user');
       let prepared: PreparedTurn;
@@ -146,7 +145,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
           if (result.status === 'rejected' && result.reason !== error) console.error('Concurrent Turn preparation failed', result.reason);
         });
         if (error instanceof SessionOpeningError) throw new HttpError(409, error.message);
-        throw await accessError(error);
+        throw error;
       }
       timing.mark('admitted');
       const end = (failure: TurnFailure | undefined) => sessionMetadata.turnEnded(requester.owner, input.threadId, running, failure);
@@ -176,7 +175,9 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
         } finally {
           timing.mark('warmupWaitEnd');
         }
-        return await runRuntimeWriter(prepared.dispatch, turnWriterWait(input.threadId, input.runId, c.req.raw.signal), upstream, prepared.session, async (writer) => {
+        return await runRuntimeWriter(prepared.dispatch, {
+          timeoutMs: 60_000, signal: c.req.raw.signal, context: { session_id: input.threadId, run_id: input.runId },
+        }, upstream, prepared.session, async (writer) => {
           forwardSnapshotEpoch(payload.forwardedProps, writer);
           timing.mark('dispatch');
           return relayTurn({ label: upstream.label, invoke: (body, id, init) => writer.invoke(body, id, { ...init, credentialServiceInvocationToken }) }, {
@@ -205,13 +206,12 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
           });
         });
       } catch (error) {
-        const mapped = await accessError(error);
         try {
-          await end(preparationFailure(mapped, credentials));
+          await end(preparationFailure(error, credentials));
         } catch (cleanupError) {
           throw new AggregateError([error, cleanupError], 'Turn preparation failed and its running mark could not be cleared');
         }
-        throw mapped;
+        throw error;
       }
     } catch (error) {
       timing.finish();

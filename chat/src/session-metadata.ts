@@ -75,7 +75,7 @@ function writerBusy({ Item }: CancellationReason): SessionBusyError {
   const token = Item?.external_token?.S;
   const expiry = Number(Item?.lease_expires_at?.N);
   return new SessionBusyError('Session persistence writer is still active', token === undefined ? undefined : {
-    token, scheduled: true, createdAt: Number.isFinite(expiry) ? new Date(expiry - REGISTRATION_EXPIRY_MS).toISOString() : 'unknown',
+    token, createdAt: Number.isFinite(expiry) ? new Date(expiry - REGISTRATION_EXPIRY_MS).toISOString() : 'unknown',
   });
 }
 

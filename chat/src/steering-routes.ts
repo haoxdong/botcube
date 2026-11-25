@@ -33,7 +33,9 @@ export function steeringRoutes(
     if (metadata === null) throw new HttpError(404, 'Session not found');
     if (metadata.turn_preparing === true) return c.json(missed(sessionId, parsed.data.id));
     assertIdleContinuable(metadata);
-    const response = await runRuntimeWriter(() => sessionMetadata.beginDispatch(owner, sessionId), { timeoutMs: 0 }, upstream, metadata, ({ invoke, session }) => invoke(JSON.stringify({
+    const response = await runRuntimeWriter(() => sessionMetadata.beginDispatch(owner, sessionId), {
+      timeoutMs: 60_000, signal: c.req.raw.signal, context: { session_id: sessionId, run_id: parsed.data.id },
+    }, upstream, metadata, ({ invoke, session }) => invoke(JSON.stringify({
       threadId: sessionId, runId: parsed.data.id,
       messages: [{ ...parsed.data, role: 'user' }],
       tools: [], context: [], state: {},

@@ -71,15 +71,25 @@ it('rejects withdrawing steering from another owner before dispatch', async () =
 
 it.each(['POST', 'DELETE'])('maps a busy persistence writer on %s steering', async (method) => {
   const stack = await startInProcess();
+  let observeWait!: () => void;
+  const waiting = new Promise<void>((resolve) => { observeWait = resolve; });
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => observeWait());
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'steer-session', { filingUserId: filed('owner'), title: 'Steering', allocation: true });
     const post = await stack.sessionMetadata.beginDispatch('acct_account-1', 'steer-session', undefined, undefined, 'session-post');
-    const response = await stack.app.request(method === 'POST' ? '/threads/steer-session/steer' : '/threads/steer-session/steer/message-1', {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const result = stack.app.request(method === 'POST' ? '/threads/steer-session/steer' : '/threads/steer-session/steer/message-1', {
       method,
       ...(method === 'POST' && { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'message-1', content: 'Try another date' }) }),
     });
+    if (method === 'POST') {
+      expect(await Promise.race([result, waiting])).toBeUndefined();
+      vi.setSystemTime(Date.now() + 60_000);
+    }
+    const response = await result;
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ code: 'SESSION_BUSY' });
+    expect(await response.json()).toEqual({ code: 'SESSION_BUSY', detail: 'This chat is busy. Try again.' });
+    expect(stack.agentcore.invocations()).toHaveLength(0);
     await post.markSucceeded?.('session-post');
-  } finally { await stack.stop(); }
+  } finally { vi.useRealTimers(); warn.mockRestore(); await stack.stop(); }
 });

@@ -1,5 +1,4 @@
-import type { WriterWait } from './session-writer-runtime.js';
-import { SessionBusyError, type TurnFailure } from './session-metadata.js';
+import type { TurnFailure } from './session-metadata.js';
 import { sessionAccessError } from './sessions.js';
 import { persistedTurnError, turnErrorDetails } from './turn-stream.js';
 import type { AgentDocumentSet } from './agent-documents.js';
@@ -59,24 +58,8 @@ export function botMemory(forwardedProps: Record<string, unknown>, settings: { m
   else delete forwardedProps.botMemory;
 }
 
-export async function turnAccessError(error: unknown, documents: Promise<PromiseSettledResult<AgentDocumentSet>[]>, templates: AgentDocumentSet): Promise<unknown> {
-  if (!(error instanceof SessionBusyError)) return error;
-  const [loaded] = await documents;
-  return sessionAccessError(error, loaded?.status === 'fulfilled' ? loaded.value.agentIdentity.name : templates.agentIdentity.name);
-}
-
 export function preparationFailure(error: unknown, credentials: readonly string[]): TurnFailure {
   const mapped = sessionAccessError(error);
   const message = mapped instanceof Error ? mapped.message : String(mapped);
   return { code: mapped instanceof HttpError && mapped.code === 'SESSION_BUSY' ? mapped.code : 'TURN_PREPARATION_FAILED', message: persistedTurnError(turnErrorDetails(message, credentials)) };
-}
-
-export function turnWriterWait(sessionId: string, runId: string, signal: AbortSignal): WriterWait {
-  return {
-    timeoutMs: 60_000, signal,
-    onWait: (error) => console.warn(`Turn is waiting for Session persistence writer session_id=${sessionId} run_id=${runId}`, error),
-    onTimeout: (error) => console.error('Scheduled task post blocked a Turn past its deadline', {
-      session_id: sessionId, run_id: runId, holder_token: error.holder?.token, created_at: error.holder?.createdAt,
-    }),
-  };
 }

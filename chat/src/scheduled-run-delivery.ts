@@ -12,7 +12,10 @@ export interface ScheduledDeliveryDeps {
 
 export async function postScheduledResult(deps: ScheduledDeliveryDeps, store: ScheduledRunStore, delivery: ScheduledDelivery, scheduledRun: ScheduledRunCard, options: { failed?: boolean } = {}): Promise<ScheduledDelivery> {
   const { sessionMetadata, invokeSessionApi } = deps;
-  const posting = await sessionMetadata.runPost(() => beginScheduledPost(deps, store, delivery), { timeoutMs: Infinity }, store, delivery, {
+  const posting = await sessionMetadata.runPost(() => beginScheduledPost(deps, store, delivery), {
+    // The writer lease expiry bounds the wait for each holder.
+    timeoutMs: Infinity, context: { session_id: delivery.mainChat, run_id: delivery.runId },
+  }, store, delivery, {
     failed: options.failed === true, status: scheduledRun.status === 'skipped' ? undefined : scheduledRun.status,
   }, (session, expiresAt) => invokeSessionApi('post', {
     sessionId: delivery.mainChat, userId: session.filing_user_id,
