@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FilesApp } from './files-app';
 import { FilesWindow } from './files-explorer';
 import { WindowsDesktop } from './windows-desktop';
+import { groupsOf, itemsIn } from './files-items';
 import { deleteFile, fileDownloadUrl, listFiles, moveIntoFolder, renameFile, uploadFile, uploadInto, withUploadsSettled, type UploadOptions } from './files-service';
 
 const entry = (name: string, size = 1, lastModified = '2026-10-01T09:00:00.000Z') => ({ name, size, lastModified });
@@ -465,10 +466,22 @@ async function windowWith(given: Partial<WindowProps>) {
 
 /** Whether an element shows: mounted, and not hidden by its class. */
 const shows = (element: Element | null) => element !== null && getComputedStyle(element).display !== 'none';
-const rows = (host: HTMLElement) => [...host.querySelectorAll<HTMLElement>('.agent-computer-file')];
+/** Whether an element shows, nothing around it hidden either; `seen` keeps what one look found of each ancestor. */
+const onScreen = (element: Element, seen = new Map<Element, boolean>()): boolean => {
+  const known = seen.get(element);
+  if (known !== undefined) return known;
+  const answer = shows(element) && (element.parentElement === null || onScreen(element.parentElement, seen));
+  seen.set(element, answer);
+  return answer;
+};
+/** The items of the view on screen: a grid's rows in Details, else the cards. */
+const rows = (host: HTMLElement) => {
+  const seen = new Map<Element, boolean>();
+  return [...host.querySelectorAll<HTMLElement>('.agent-computer-file')].filter((row) => onScreen(row, seen));
+};
 const nameOf = (row: Element) => row.querySelector('.agent-computer-file-name')?.textContent ?? '';
 /** The list's names, while it shows. */
-const names = (host: HTMLElement) => (shows(host.querySelector('[role="grid"]')) ? rows(host).map(nameOf) : []);
+const names = (host: HTMLElement) => rows(host).map(nameOf);
 const rowOf = (host: HTMLElement, name: string) => {
   const row = rows(host).find((candidate) => nameOf(candidate) === name);
   if (row === undefined) throw new Error(`no ${name} row`);
@@ -485,6 +498,15 @@ const press = async (host: HTMLElement, name: string, count = 1) => {
     for (let detail = 1; detail <= count; detail++) row.dispatchEvent(new MouseEvent('click', { bubbles: true, detail }));
     if (count === 2) row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, detail: 2 }));
   });
+};
+/**
+ * Holds the clock still to the test's end. Type-to-find starts afresh after a pause in the keys' event time, and the
+ * keyboard here types at the machine's pace: with the clock still, letters typed in a row are one name, however slowly
+ * a loaded machine types them.
+ */
+const stillClock = () => {
+  const now = performance.now();
+  vi.spyOn(performance, 'now').mockReturnValue(now);
 };
 const key = async (target: Element | null, keys: string) => {
   if (!(target instanceof HTMLElement)) throw new Error('Keyboard target is missing');
@@ -674,7 +696,7 @@ describe('FilesApp', () => {
     );
     const host = await app();
 
-    expect([...host.querySelectorAll('[role="columnheader"]')].map((header) => header.textContent)).toEqual(['Name', 'Date modified', 'Type', 'Size']);
+    expect([...host.querySelectorAll('[role="columnheader"]')].filter((header) => onScreen(header)).map((header) => header.textContent)).toEqual(['Name', 'Date modified', 'Type', 'Size']);
     expect(cells(host)).toEqual([
       ['charts', '10/1/26, 9:00 AM', 'File folder', ''],
       ['reports', '10/3/26, 8:05 AM', 'File folder', ''],
@@ -692,17 +714,14 @@ describe('FilesApp', () => {
   it('sorts by the column whose header is clicked, and the other way on a second click', async () => {
     stored.push(entry('b.txt', 5000), entry('a.md', 9000), entry('c.png', 10), entry('docs/x.txt'));
     const host = await app();
-    const header = (name: string) => {
-      const cell = [...host.querySelectorAll<HTMLElement>('[role="columnheader"]')].find((candidate) => candidate.textContent === name);
-      return cell?.querySelector('button') ?? cell;
-    };
+    await vi.waitFor(() => expect(names(host)).toEqual(['docs', 'a.md', 'b.txt', 'c.png']));
 
-    await act(async () => header('Size')?.click());
-    expect(names(host)).toEqual(['docs', 'c.png', 'b.txt', 'a.md']);
-    await act(async () => header('Size')?.click());
-    expect(names(host)).toEqual(['a.md', 'b.txt', 'c.png', 'docs']);
-    await act(async () => header('Type')?.click());
-    expect(names(host)).toEqual(['docs', 'a.md', 'c.png', 'b.txt']);
+    await sortOn(host, 'Size');
+    await vi.waitFor(() => expect(names(host)).toEqual(['docs', 'c.png', 'b.txt', 'a.md']));
+    await sortOn(host, 'Size');
+    await vi.waitFor(() => expect(names(host)).toEqual(['a.md', 'b.txt', 'c.png', 'docs']));
+    await sortOn(host, 'Type');
+    await vi.waitFor(() => expect(names(host)).toEqual(['docs', 'a.md', 'c.png', 'b.txt']));
   });
 
   it('draws a plain document for an extension named after an inherited object property', async () => {
@@ -957,16 +976,20 @@ describe('FilesApp', () => {
       await clickOn(command('Rename'));
       expect(document.activeElement?.getAttribute('aria-label')).toBe('Rename report.csv');
     });
-    it('labels only New; the other commands are icons, each named by its tooltip, with See more only for what does not fit', async () => {
+    it('labels only New, View and Sort; the other commands are icons, each named by its tooltip, with See more at the end', async () => {
       await windowWith({ files: [entry('report.csv')] });
       const bar = document.querySelector('[role="toolbar"][aria-label="Commands"]');
       expect(command('New').textContent).toBe('New');
       expect(['Cut', 'Paste', 'Download', 'Rename', 'Delete'].map((label) => [command(label).getAttribute('aria-label'), command(label).textContent])).toEqual(
         ['Cut', 'Paste', 'Download', 'Rename', 'Delete'].map((label) => [label, '']),
       );
-      // A page with no layout has nothing overflowing, so See more stays hidden.
-      expect(bar?.lastElementChild?.getAttribute('aria-label')).toBe('See more');
-      expect(shows(command('See more'))).toBe(false);
+      expect(['View', 'Sort'].map((label) => command(label).textContent)).toEqual(['View', 'Sort']);
+      // See more always shows, for its own commands; a page with no layout has nothing overflowing into it.
+      // Tabster may add its focus guards around the bar's own children.
+      expect([...(bar?.children ?? [])].filter((child) => !child.hasAttribute('data-tabster-dummy')).at(-1)?.getAttribute('aria-label')).toBe('See more');
+      expect(shows(command('See more'))).toBe(true);
+      await clickOn(command('See more'));
+      expect(menuItems().slice(-4)).toEqual(['Select all', 'Select none', 'Invert selection', 'Properties']);
 
       await act(async () => userEvent.hover(command('Download')));
       await settledUntil(() => document.querySelector('[role="tooltip"]') !== null, 50);
@@ -975,19 +998,19 @@ describe('FilesApp', () => {
   });
 
   describe("a row's menu", () => {
-    it('opens on a right-click with Open, Cut, Download, Rename and Delete, selecting the row; a folder has Open alone', async () => {
+    it('opens on a right-click with Open, Cut, Download, Rename, Delete, Copy path and Properties, selecting the row; a folder has Open, Copy path and Properties', async () => {
       stored.push(entry('report.csv'), entry('reports/q3.pdf'));
       const host = await app();
 
       expect((await contextMenu(host, 'report.csv')).defaultPrevented).toBe(true);
-      expect(menuItems()).toEqual(['Open', 'Cut', 'Download', 'Rename', 'Delete']);
+      expect(menuItems()).toEqual(['Open', 'Cut', 'Download', 'Rename', 'Delete', 'Copy path', 'Properties']);
       expect(selected(host)).toEqual(['report.csv']);
       expect(assign).not.toHaveBeenCalled();
       await act(async () => userEvent.keyboard('{Escape}'));
       expect(menu()).toBeNull();
 
       await contextMenu(host, 'reports');
-      expect(menuItems()).toEqual(['Open']);
+      expect(menuItems()).toEqual(['Open', 'Copy path', 'Properties']);
       await menuItem('Open');
       expect(names(host)).toEqual(['q3.pdf']);
     });
@@ -1378,8 +1401,8 @@ describe('FilesApp', () => {
       const { started, onUpload } = pending();
       const { host } = await windowWith({ files: [entry('notes.txt')], onUpload });
       await tree.open(host, 'Home');
-      const area = host.querySelector('[role="grid"]')?.parentElement;
-      if (area === null || area === undefined) throw new Error('no list area');
+      const area = host.querySelector('.agent-computer-files-list');
+      if (area === null) throw new Error('no list area');
       const drag = (type: string) => {
         const event = new Event(type, { bubbles: true, cancelable: true });
         Object.defineProperty(event, 'dataTransfer', { value: { types: ['Files'], files: [file] } });
@@ -1409,3 +1432,648 @@ describe('FilesApp', () => {
 });
 
 const renamesOf = (requests: readonly string[]) => requests.filter((call) => call.startsWith('renamed'));
+
+/** A menu's radios or checkboxes, each with whether it is checked. */
+const checks = (role: 'menuitemradio' | 'menuitemcheckbox') =>
+  [...document.querySelectorAll(`[role="${role}"]`)].map((item) => `${item.getAttribute('aria-checked') === 'true' ? '●' : '○'} ${item.textContent}`);
+/** An item of the menu opened last: a submenu, if one is open. */
+const choose = async (role: 'menuitemradio' | 'menuitemcheckbox', label: string) => {
+  const last = [...document.querySelectorAll('[role="menu"]')].at(-1) ?? document;
+  const item = [...last.querySelectorAll<HTMLElement>(`[role="${role}"]`)].find((candidate) => candidate.textContent === label);
+  if (item === undefined) throw new Error(`no ${label} ${role}`);
+  await clickOn(item);
+};
+/** View, or Sort, from the command bar, then one of its items. */
+const pick = async (menuName: 'View' | 'Sort', label: string) => {
+  await clickOn(command(menuName));
+  await choose('menuitemradio', label);
+  await act(async () => userEvent.keyboard('{Escape}'));
+};
+/** The cards of the view on screen, each as a picture's URL once it has loaded, or its icon. */
+const cards = (host: HTMLElement) => rows(host).filter((row) => row.classList.contains('fui-ListItem'));
+const pictureOf = (card: Element) => {
+  const picture = card.querySelector('img');
+  return picture !== null && onScreen(picture) && picture.dataset.loading === undefined ? picture.getAttribute('src') : 'icon';
+};
+const shownDialog = () => document.querySelector('[role="dialog"]');
+const groupNames = (host: HTMLElement) => [...host.querySelectorAll('.fui-AccordionHeader')].filter((header) => onScreen(header)).map((header) => header.textContent);
+/** Clicks the shown header of a column once it is drawn, so a click never falls on a header not yet there. */
+async function sortOn(host: HTMLElement, column: string) {
+  const header = await vi.waitFor(() => {
+    const cell = [...host.querySelectorAll<HTMLElement>('[role="columnheader"]')].find((candidate) => candidate.textContent === column && onScreen(candidate));
+    if (cell === undefined) throw new Error(`No ${column} header on screen`);
+    return cell.querySelector('button') ?? cell;
+  });
+  await act(async () => header.click());
+}
+const visibleHeaders = (host: HTMLElement) => [...host.querySelectorAll('[role="columnheader"]')].filter((header) => onScreen(header)).map((header) => header.textContent);
+const ctrlClick = async (host: HTMLElement, name: string, keys: MouseEventInit = { ctrlKey: true }) =>
+  act(async () => rowOf(host, name).dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1, ...keys })));
+
+describe('File Explorer’s views, selection, panes, tabs and keys', () => {
+  beforeEach(() => {
+    vi.spyOn(document.body, 'getBoundingClientRect').mockReturnValue(DOMRect.fromRect({ width: 1280, height: 720 }));
+  });
+
+  describe('View', () => {
+    it('opens a folder of mostly pictures in Large icons, each picture its own once loaded, the rest in Details', async () => {
+      stored.push(entry('photos/a.png'), entry('photos/b.jpg'), entry('photos/notes.txt'), entry('notes.txt'));
+      const host = await app();
+      expect(rows(host).every((row) => row.getAttribute('role') === 'row' && row.classList.contains('fui-DataGridRow'))).toBe(true);
+      expect(calls.filter((call) => call.includes('download-url'))).toEqual([]);
+
+      await press(host, 'photos', 2);
+
+      expect(cards(host).map(nameOf)).toEqual(['a.png', 'b.jpg', 'notes.txt']);
+      expect(host.querySelector('[role="listbox"]')?.getAttribute('aria-multiselectable')).toBe('true');
+      await settledUntil(() => calls.filter((call) => call.includes('download-url')).length === 2, 20);
+      expect(calls.filter((call) => call.includes('download-url'))).toEqual([
+        'GET https://chat.test/files/download-url?name=photos%2Fa.png', 'GET https://chat.test/files/download-url?name=photos%2Fb.jpg',
+      ]);
+      // Each picture keeps its type icon until it loads; one the browser can't show keeps it for good.
+      expect(cards(host).map(pictureOf)).toEqual(['icon', 'icon', 'icon']);
+      const [first, second] = cards(host).map((card) => card.querySelector('img'));
+      await act(async () => {
+        first?.dispatchEvent(new Event('load'));
+        second?.dispatchEvent(new Event('error'));
+      });
+      expect(cards(host).map(pictureOf)).toEqual(['https://links.test/photos/a.png', 'icon', 'icon']);
+    });
+
+    it('lists the eight views, the current one checked, and keeps a folder’s chosen view for the session', async () => {
+      stored.push(entry('reports/q3.pdf'), entry('notes.txt'));
+      const host = await app();
+      await clickOn(command('View'));
+      expect(checks('menuitemradio')).toEqual([
+        '○ Extra large icons', '○ Large icons', '○ Medium icons', '○ Small icons', '○ List', '● Details', '○ Tiles', '○ Content',
+      ]);
+      await choose('menuitemradio', 'Tiles');
+      await act(async () => userEvent.keyboard('{Escape}'));
+      expect(cards(host).map(nameOf)).toEqual(['reports', 'notes.txt']);
+      expect(cards(host).map((card) => [...card.querySelectorAll('.fui-CardHeader__description .fui-Text')].map((line) => line.textContent))).toEqual([
+        ['File folder'], ['TXT File', '1 KB'],
+      ]);
+
+      await press(host, 'reports', 2);
+      expect(names(host)).toEqual(['q3.pdf']);
+      expect(cards(host)).toEqual([]);
+      await clickOn(address('Back'));
+      expect(cards(host).map(nameOf)).toEqual(['reports', 'notes.txt']);
+    });
+
+    it('opens a card on a double-click or Enter, and gives it the row’s menu', async () => {
+      stored.push(entry('reports/q3.pdf'), entry('notes.txt'));
+      const host = await app();
+      await pick('View', 'Medium icons');
+
+      await press(host, 'notes.txt', 2);
+      expect(assign).toHaveBeenCalledWith('https://links.test/notes.txt');
+      await contextMenu(host, 'notes.txt');
+      expect(menuItems()).toEqual(['Open', 'Cut', 'Download', 'Rename', 'Delete', 'Copy path', 'Properties']);
+      await menuItem('Rename');
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Rename notes.txt');
+      await key(document.activeElement, '{Escape}');
+      await key(rowOf(host, 'reports'), '{Enter}');
+      expect(names(host)).toEqual(['q3.pdf']);
+    });
+  });
+
+  describe('Sort and Group by', () => {
+    it('sorts from the Sort menu, sharing its sort with the column headers', async () => {
+      stored.push(entry('b.txt', 5000), entry('a.md', 9000), entry('c.png', 10));
+      const host = await app();
+      await clickOn(command('Sort'));
+      expect(checks('menuitemradio')).toEqual(['● Name', '○ Date modified', '○ Type', '○ Size', '● Ascending', '○ Descending']);
+      await choose('menuitemradio', 'Size');
+      await act(async () => userEvent.keyboard('{Escape}'));
+      expect(names(host)).toEqual(['c.png', 'b.txt', 'a.md']);
+      await pick('Sort', 'Descending');
+      expect(names(host)).toEqual(['a.md', 'b.txt', 'c.png']);
+
+      await sortOn(host, 'Type');
+      await vi.waitFor(() => expect(names(host)).toEqual(['a.md', 'c.png', 'b.txt']));
+      await clickOn(command('Sort'));
+      expect(checks('menuitemradio').slice(0, 6)).toEqual(['○ Name', '○ Date modified', '● Type', '○ Size', '● Ascending', '○ Descending']);
+    });
+
+    it('groups by type into open sections under one row of headers, in Details and in icon views', async () => {
+      stored.push(entry('b.txt'), entry('a.md'), entry('c.txt'), entry('docs/x.txt'));
+      const host = await app();
+      await clickOn(command('Sort'));
+      await clickOn([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent === 'Group by') ?? host);
+      expect(checks('menuitemradio').slice(-5)).toEqual(['● None', '○ Name', '○ Date modified', '○ Type', '○ Size']);
+      await choose('menuitemradio', 'Type');
+      await act(async () => userEvent.keyboard('{Escape}'));
+
+      expect(groupNames(host)).toEqual(['File folder (1)', 'MD File (1)', 'TXT File (2)']);
+      expect(names(host)).toEqual(['docs', 'a.md', 'b.txt', 'c.txt']);
+      expect(visibleHeaders(host)).toEqual(['Name', 'Date modified', 'Type', 'Size']);
+      // A section's header folds it away.
+      await clickOn(host.querySelector<HTMLElement>('.fui-AccordionHeader button') ?? host);
+      await settledUntil(() => names(host).length === 3, 100);
+      expect(names(host)).toEqual(['a.md', 'b.txt', 'c.txt']);
+
+      await pick('View', 'Large icons');
+      expect(groupNames(host)).toEqual(['File folder (1)', 'MD File (1)', 'TXT File (2)']);
+      expect(visibleHeaders(host)).toEqual([]);
+      expect(cards(host).map(nameOf)).toEqual(['a.md', 'b.txt', 'c.txt']);
+    });
+
+    it('groups dates as Explorer does, names by letter ranges and sizes by bucket', () => {
+      const now = new Date(2026, 9, 15, 12);
+      const at = (day: number) => new Date(2026, 9, day, 9).toISOString();
+      const files = [
+        entry('today.txt', 1, at(15)), entry('monday.txt', 20_000, at(12)), entry('last-week.txt', 2_000_000, at(6)),
+        entry('month.txt', 200_000_000, at(2)), entry('old.txt', 1, new Date(2026, 8, 30).toISOString()), entry('9lives.txt'),
+      ];
+      const items = itemsIn(files, '');
+      expect(groupsOf(items, 'modified', now).map(({ label, items: inside }) => [label, inside.map(({ name }) => name)])).toEqual([
+        ['Today (1)', ['today.txt']],
+        ['Earlier this week (1)', ['monday.txt']],
+        ['Last week (1)', ['last-week.txt']],
+        ['Earlier this month (2)', ['month.txt', '9lives.txt']],
+        ['Older (1)', ['old.txt']],
+      ]);
+      expect(groupsOf(items, 'name', now).map(({ label }) => label)).toEqual(['0–9 (1)', 'I–P (4)', 'Q–Z (1)']);
+      expect(groupsOf(items, 'size', now).map(({ label }) => label)).toEqual(['Tiny (3)', 'Small (1)', 'Medium (1)', 'Large (1)']);
+    });
+  });
+
+  describe('selecting several items', () => {
+    beforeEach(() => {
+      stored.push(entry('a.txt', 1024), entry('b.txt', 2048), entry('c.txt', 4096), entry('d.txt', 1024), entry('docs/x.txt'));
+    });
+
+    it('adds with Ctrl, takes a range with Shift, and selects all with Ctrl+A', async () => {
+      const host = await app();
+      await press(host, 'a.txt');
+      await ctrlClick(host, 'c.txt');
+      expect(selected(host)).toEqual(['a.txt', 'c.txt']);
+      expect(status(host)).toEqual(['5 items', '2 items selected', '5 KB']);
+      // Shift takes the range from the item clicked last, even one a Ctrl+click left out.
+      await ctrlClick(host, 'a.txt');
+      expect(selected(host)).toEqual(['c.txt']);
+      await ctrlClick(host, 'c.txt', { shiftKey: true });
+      expect(selected(host)).toEqual(['a.txt', 'b.txt', 'c.txt']);
+      await ctrlClick(host, 'docs', { shiftKey: true, ctrlKey: true });
+      expect(selected(host)).toEqual(['docs', 'a.txt', 'b.txt', 'c.txt']);
+
+      await key(rowOf(host, 'a.txt'), '{Control>}a{/Control}');
+      expect(selected(host)).toEqual(['docs', 'a.txt', 'b.txt', 'c.txt', 'd.txt']);
+      expect(command('Rename').disabled).toBe(true);
+      expect([command('Cut').disabled, command('Download').disabled, command('Delete').disabled]).toEqual([false, false, false]);
+    });
+
+    it('selects none, or the others, from See more', async () => {
+      const host = await app();
+      await press(host, 'a.txt');
+      await ctrlClick(host, 'b.txt');
+      await clickOn(command('See more'));
+      await menuItem('Invert selection');
+      expect(selected(host)).toEqual(['docs', 'c.txt', 'd.txt']);
+      await clickOn(command('See more'));
+      await menuItem('Select none');
+      expect(selected(host)).toEqual([]);
+      await clickOn(command('See more'));
+      await menuItem('Select all');
+      expect(selected(host)).toHaveLength(5);
+    });
+
+    it('deletes every selected file once one dialog confirms, and downloads each', async () => {
+      const host = await app();
+      await press(host, 'a.txt');
+      await ctrlClick(host, 'b.txt');
+      await ctrlClick(host, 'd.txt');
+
+      await clickOn(command('Download'));
+      expect(assign.mock.calls.map(([url]) => url)).toEqual(['https://links.test/a.txt', 'https://links.test/b.txt', 'https://links.test/d.txt']);
+      await contextMenu(host, 'b.txt');
+      expect(selected(host)).toEqual(['a.txt', 'b.txt', 'd.txt']);
+      expect([...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent === 'Rename')?.getAttribute('aria-disabled')).toBe('true');
+      await menuItem('Delete');
+      expect(dialog()?.textContent).toContain("Delete 3 items? This can't be undone.");
+      await clickOn(dialogButton('Delete'));
+      await gone();
+
+      expect(calls.filter((call) => call.startsWith('DELETE'))).toEqual([
+        'DELETE https://chat.test/files?name=a.txt', 'DELETE https://chat.test/files?name=b.txt', 'DELETE https://chat.test/files?name=d.txt',
+      ]);
+      expect(names(host)).toEqual(['docs', 'c.txt']);
+    });
+
+    it('cuts every selected file, and pastes them all into another folder', async () => {
+      const host = await app();
+      await press(host, 'a.txt');
+      await ctrlClick(host, 'b.txt');
+      await clickOn(command('Cut'));
+      await tree.open(host, 'docs');
+      await clickOn(command('Paste'));
+      expect(renamesOf(calls)).toEqual(['renamed a.txt to docs/a.txt', 'renamed b.txt to docs/b.txt']);
+    });
+
+    it('shows Properties of one item, of several, and of the open folder', async () => {
+      const host = await app();
+      await contextMenu(host, 'b.txt');
+      await menuItem('Properties');
+      expect(shownDialog()?.textContent).toBe('b.txt PropertiesTypeTXT FileLocationworkspaceSize2 KBModified10/1/26, 9:00 AMOK');
+      await clickOn(buttonIn(shownDialog() ?? document, 'OK'));
+      await settledUntil(() => shownDialog() === null, 100);
+
+      await press(host, 'a.txt');
+      await ctrlClick(host, 'c.txt');
+      await clickOn(command('See more'));
+      await menuItem('Properties');
+      expect(shownDialog()?.textContent).toBe('2 items PropertiesTypeAll of type TXT FileLocationAll in workspaceSize5 KBOK');
+    });
+  });
+
+  describe('the Details and Preview panes', () => {
+    const show = async (pane: string) => {
+      await clickOn(command('View'));
+      await clickOn([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent === 'Show') ?? document.body);
+      await choose('menuitemcheckbox', pane);
+      await act(async () => userEvent.keyboard('{Escape}'));
+    };
+    const pane = (label: string) => document.querySelector(`[aria-label="${label}"].fui-InlineDrawer`);
+
+    it('shows the selected item’s details beside the list, else the open folder’s', async () => {
+      const { host } = await windowWith({ files: [entry('reports/q3.pdf', 3000), entry('notes.txt', 2048)] });
+      await show('Details pane');
+      expect(pane('Details pane')?.textContent).toContain('workspaceTypeFile folderLocation—Size5 KBContains2 items');
+
+      await press(host, 'notes.txt');
+      expect(pane('Details pane')?.textContent).toContain('notes.txtTypeTXT FileLocationworkspaceSize2 KBModified10/1/26, 9:00 AM');
+      await clickOn(command('View'));
+      await clickOn([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent === 'Show') ?? document.body);
+      expect(checks('menuitemcheckbox')).toEqual(['● Details pane', '○ Preview pane']);
+    });
+
+    it('previews a picture as itself, and any other file as No preview available with its Download', async () => {
+      const { host, props } = await windowWith({ files: [entry('curve.png'), entry('notes.txt')] });
+      await show('Preview pane');
+      expect(pane('Preview pane')?.textContent).toContain('Select a file to preview.');
+      expect(pane('Details pane')).toBeNull();
+
+      await press(host, 'curve.png');
+      await settledUntil(() => pane('Preview pane')?.querySelector('img[src]') != null, 20);
+      expect(pane('Preview pane')?.querySelector('img')?.getAttribute('src')).toBe('https://links.test/chart');
+      await press(host, 'notes.txt');
+      await settled();
+      expect(pane('Preview pane')?.textContent).toContain('No preview available.');
+      await clickOn(buttonIn(pane('Preview pane') ?? document, 'Download'));
+      expect(props.onDownload).toHaveBeenCalledExactlyOnceWith('notes.txt');
+    });
+
+    it('shows the Preview pane on Alt+P and the Details pane on Alt+Shift+P, each again hiding it', async () => {
+      const { host } = await windowWith({ files: [entry('notes.txt')] });
+      await key(rowOf(host, 'notes.txt'), '{Alt>}p{/Alt}');
+      const showing = () => ['Details pane', 'Preview pane'].filter((label) => { const shown = pane(label); return shown !== null && onScreen(shown); });
+      expect(showing()).toEqual(['Preview pane']);
+      // A pane that closes stays a moment as it slides away.
+      await key(rowOf(host, 'notes.txt'), '{Alt>}{Shift>}p{/Shift}{/Alt}');
+      await settledUntil(() => showing().length === 1, 50);
+      expect(showing()).toEqual(['Details pane']);
+      await key(rowOf(host, 'notes.txt'), '{Alt>}{Shift>}p{/Shift}{/Alt}');
+      await settledUntil(() => showing().length === 0, 50);
+      expect(showing()).toEqual([]);
+    });
+
+    it('resizes the navigation and Details panes by a drag of their dividers or the arrow keys, within their bounds', async () => {
+      // The DOM here lays nothing out: a pane measures as wide as its size variable says, else its starting width.
+      vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+        const style = this instanceof HTMLElement ? this.style : null;
+        const width = parseFloat(style?.getPropertyValue('--explorer-nav-size') || style?.getPropertyValue('--fui-Drawer--size') || '')
+          || (this.tagName === 'NAV' ? 200 : 320);
+        return DOMRect.fromRect({ width, height: 600 });
+      });
+      const { host } = await windowWith({ files: [entry('notes.txt')] });
+      const nav = host.querySelector<HTMLElement>('nav[aria-label="Folders"]');
+      const divider = host.querySelector<HTMLElement>('[aria-label="Resize navigation pane"]');
+      if (nav === null || divider === null) throw new Error('no navigation pane divider');
+      const size = (element: HTMLElement, variable: string) => element.style.getPropertyValue(variable);
+      const drag = async (handle: HTMLElement, from: number, to: number) => act(async () => {
+        handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: from, button: 0 }));
+        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: to, button: 0 }));
+      });
+
+      await drag(divider, 200, 260);
+      expect(size(nav, '--explorer-nav-size')).toBe('260px');
+      await drag(divider, 260, 900);
+      expect(size(nav, '--explorer-nav-size')).toBe('400px');
+      await key(divider, '{ArrowLeft}');
+      expect(size(nav, '--explorer-nav-size')).toBe('380px');
+      await key(divider, '{ArrowLeft>20/}');
+      expect(size(nav, '--explorer-nav-size')).toBe('120px');
+
+      await key(rowOf(host, 'notes.txt'), '{Alt>}{Shift>}p{/Shift}{/Alt}');
+      const details = pane('Details pane');
+      const edge = host.querySelector<HTMLElement>('[aria-label="Resize details pane"]');
+      if (!(details instanceof HTMLElement) || edge === null) throw new Error('no Details pane divider');
+      // The pane is at the window's end: its divider grows it to the left.
+      await drag(edge, 900, 800);
+      expect(size(details, '--fui-Drawer--size')).toBe('420px');
+      await key(edge, '{ArrowRight>20/}');
+      expect(size(details, '--fui-Drawer--size')).toBe('200px');
+      await drag(edge, 900, 100);
+      expect(size(details, '--fui-Drawer--size')).toBe('560px');
+    });
+  });
+
+  describe('tabs', () => {
+    const tabs = (host: HTMLElement) => [...host.querySelectorAll('[role="tab"]')]
+      .map((tab) => `${tab.getAttribute('aria-selected') === 'true' ? '●' : '○'} ${tab.querySelector('.fui-Tab__content')?.textContent}`);
+
+    it('opens workspace in a new tab, each tab its own place and history, and closes them', async () => {
+      stored.push(entry('reports/q3.pdf'), entry('notes.txt'));
+      const host = await app();
+      expect(tabs(host)).toEqual(['● workspace']);
+      await press(host, 'reports', 2);
+      expect(tabs(host)).toEqual(['● reports']);
+
+      await clickOn(address('New tab'));
+      expect(tabs(host)).toEqual(['○ reports', '● workspace']);
+      expect(names(host)).toEqual(['reports', 'notes.txt']);
+      expect(path.names(host).filter(Boolean)).toContain('workspace');
+      await clickOn(host.querySelectorAll<HTMLElement>('[role="tab"]')[0] ?? host);
+      expect(names(host)).toEqual(['q3.pdf']);
+      await clickOn(address('Close tab reports'));
+      expect(tabs(host)).toEqual(['● workspace']);
+      expect(names(host)).toEqual(['reports', 'notes.txt']);
+    });
+
+    it('opens a tab on Ctrl+T and closes one on Ctrl+W, leaving workspace when the last closes', async () => {
+      stored.push(entry('reports/q3.pdf'));
+      const host = await app();
+      await press(host, 'reports', 2);
+      await key(rowOf(host, 'q3.pdf'), '{Control>}t{/Control}');
+      expect(tabs(host)).toEqual(['○ reports', '● workspace']);
+      await key(rowOf(host, 'reports'), '{Control>}w{/Control}');
+      expect(tabs(host)).toEqual(['● reports']);
+      await key(rowOf(host, 'q3.pdf'), '{Control>}w{/Control}');
+      expect(tabs(host)).toEqual(['● workspace']);
+      expect(names(host)).toEqual(['reports']);
+    });
+
+    it('moves to the next tab on Ctrl+Tab and back on Ctrl+Shift+Tab, round from the last', async () => {
+      stored.push(entry('reports/q3.pdf'));
+      const host = await app();
+      await press(host, 'reports', 2);
+      await key(rowOf(host, 'q3.pdf'), '{Control>}t{/Control}');
+      expect(tabs(host)).toEqual(['○ reports', '● workspace']);
+      await key(rowOf(host, 'reports'), '{Control>}{Tab}{/Control}');
+      expect(tabs(host)).toEqual(['● reports', '○ workspace']);
+      await key(rowOf(host, 'q3.pdf'), '{Control>}{Shift>}{Tab}{/Shift}{/Control}');
+      expect(tabs(host)).toEqual(['○ reports', '● workspace']);
+      await key(rowOf(host, 'reports'), '{Control>}{Tab}{/Control}');
+      expect(tabs(host)).toEqual(['● reports', '○ workspace']);
+    });
+  });
+
+  describe('the open folder’s menu', () => {
+    it('opens on a right-click of the list’s empty space with View, Sort by, Group by, Refresh, Paste, Upload and Properties', async () => {
+      stored.push(entry('reports/q3.pdf', 2048), entry('notes.txt', 1024));
+      const host = await app();
+      const space = host.querySelector('.agent-computer-files-list');
+      if (space === null) throw new Error('no list area');
+      await act(async () => space.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 400 })));
+      expect(menuItems()).toEqual(['View', 'Sort by', 'Group by', 'Refresh', 'Paste', 'Upload', 'Properties']);
+      await menuItem('Refresh');
+      expect(calls).toEqual(['GET https://chat.test/files', 'GET https://chat.test/files']);
+
+      await act(async () => space.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 400 })));
+      await menuItem('Properties');
+      expect(shownDialog()?.textContent).toContain('workspace PropertiesTypeFile folder');
+      expect(shownDialog()?.textContent).toContain('Size3 KBContains2 items');
+    });
+
+    it('copies an item’s path from its menu', async () => {
+      stored.push(entry('reports/q3.pdf'));
+      const writeText = vi.fn(async () => undefined);
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+      try {
+        const host = await app();
+        await press(host, 'reports', 2);
+        await contextMenu(host, 'q3.pdf');
+        await menuItem('Copy path');
+        expect(writeText).toHaveBeenCalledExactlyOnceWith('reports/q3.pdf');
+      } finally {
+        Reflect.deleteProperty(navigator, 'clipboard');
+      }
+    });
+  });
+
+  describe('keys', () => {
+    beforeEach(() => {
+      stored.push(entry('reports/2026/q3.pdf'), entry('notes.txt'), entry('nine.txt'), entry('plan.md'));
+    });
+
+    it('renames on F2 and asks to delete on Delete', async () => {
+      const host = await app();
+      await press(host, 'plan.md');
+      await key(rowOf(host, 'plan.md'), '{F2}');
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Rename plan.md');
+      await key(document.activeElement, '{Escape}');
+      await key(rowOf(host, 'plan.md'), '{Delete}');
+      expect(dialog()?.textContent).toContain('Delete “plan.md”?');
+    });
+
+    it('goes Back on Alt+Left, Forward on Alt+Right, up on Backspace and Alt+Up, and reloads on F5', async () => {
+      const host = await app();
+      await press(host, 'reports', 2);
+      await press(host, '2026', 2);
+      await key(rowOf(host, 'q3.pdf'), '{Alt>}{ArrowLeft}{/Alt}');
+      expect(path.current(host)).toBe('reports');
+      await key(rowOf(host, '2026'), '{Alt>}{ArrowRight}{/Alt}');
+      expect(path.current(host)).toBe('2026');
+      await key(rowOf(host, 'q3.pdf'), '{Backspace}');
+      expect(path.current(host)).toBe('reports');
+      await key(rowOf(host, '2026'), '{Alt>}{ArrowUp}{/Alt}');
+      expect(path.current(host)).toBe('workspace');
+      const before = calls.length;
+      await key(rowOf(host, 'reports'), '{F5}');
+      expect(calls.slice(before)).toEqual(['GET https://chat.test/files']);
+    });
+
+    it('focuses the search on Ctrl+F and the address on Ctrl+L', async () => {
+      const host = await app();
+      await key(rowOf(host, 'notes.txt'), '{Control>}f{/Control}');
+      expect(document.activeElement).toBe(host.querySelector('input[aria-label="Search"]'));
+      await key(rowOf(host, 'notes.txt'), '{Control>}l{/Control}');
+      expect(document.activeElement?.textContent).toBe('workspace');
+    });
+
+    it('opens on Enter and shows Properties on Alt+Enter', async () => {
+      const host = await app();
+      await press(host, 'notes.txt');
+      await key(rowOf(host, 'notes.txt'), '{Alt>}{Enter}{/Alt}');
+      expect(shownDialog()?.textContent).toContain('notes.txt PropertiesTypeTXT File');
+      expect(assign).not.toHaveBeenCalled();
+      await clickOn(buttonIn(shownDialog() ?? document, 'OK'));
+      await settledUntil(() => shownDialog() === null, 100);
+      await key(rowOf(host, 'reports'), '{Enter}');
+      expect(names(host)).toEqual(['2026']);
+    });
+
+    it('focuses the address on Alt+D and F4, and the search on Ctrl+E', async () => {
+      const host = await app();
+      await key(rowOf(host, 'notes.txt'), '{Alt>}d{/Alt}');
+      expect(document.activeElement?.textContent).toBe('workspace');
+      await key(rowOf(host, 'notes.txt'), '{Control>}e{/Control}');
+      expect(document.activeElement).toBe(host.querySelector('input[aria-label="Search"]'));
+      await key(rowOf(host, 'notes.txt'), '{F4}');
+      expect(document.activeElement?.textContent).toBe('workspace');
+    });
+
+    it('switches to the eight views on Ctrl+Shift+1 to 8, in Windows’ order', async () => {
+      const host = await app();
+      const views = ['Extra large icons', 'Large icons', 'Medium icons', 'Small icons', 'List', 'Details', 'Tiles', 'Content'];
+      // Each view in turn, one after the other.
+      const viewed = async (index: number) => {
+        await key(rows(host)[0] ?? null, `{Control>}{Shift>}${index + 1}{/Shift}{/Control}`);
+        await clickOn(command('View'));
+        const checked = checks('menuitemradio').filter((item) => item.startsWith('●'));
+        await act(async () => userEvent.keyboard('{Escape}'));
+        return checked;
+      };
+      const seen = await views.reduce<Promise<string[][]>>(async (before, _, index) => [...(await before), await viewed(index)], Promise.resolve([]));
+      expect(seen).toEqual(views.map((view) => [`● ${view}`]));
+    });
+
+    it('steps the icons larger as Ctrl and the wheel roll up, and smaller as they roll down', async () => {
+      const host = await app();
+      const space = host.querySelector('.agent-computer-files-list');
+      if (space === null) throw new Error('no list area');
+      const roll = async (deltaY: number, ctrlKey = true) => {
+        const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY });
+        // The test DOM's wheel event keeps no modifier keys: the roll holds Ctrl as a browser's would.
+        Object.defineProperty(event, 'ctrlKey', { value: ctrlKey });
+        await act(async () => space.dispatchEvent(event));
+        return event.defaultPrevented;
+      };
+      const current = async () => {
+        await clickOn(command('View'));
+        const checked = checks('menuitemradio').find((item) => item.startsWith('●'));
+        await act(async () => userEvent.keyboard('{Escape}'));
+        return checked;
+      };
+      expect(await roll(-100)).toBe(true);
+      expect(await current()).toBe('● List');
+      await roll(-100);
+      await roll(-100);
+      expect(await current()).toBe('● Medium icons');
+      await roll(100);
+      expect(await current()).toBe('● Small icons');
+      expect(await roll(-100, false)).toBe(false);
+      expect(await current()).toBe('● Small icons');
+    });
+
+    it('opens the selection’s menu on Shift+F10 and the menu key, and the folder’s with nothing selected', async () => {
+      const host = await app();
+      await press(host, 'plan.md');
+      await key(rowOf(host, 'plan.md'), '{Shift>}{F10}{/Shift}');
+      expect(menuItems()).toEqual(['Open', 'Cut', 'Download', 'Rename', 'Delete', 'Copy path', 'Properties']);
+      await act(async () => userEvent.keyboard('{Escape}'));
+      expect(menu()).toBeNull();
+      await key(rowOf(host, 'plan.md'), '{ContextMenu}');
+      expect(menuItems()).toEqual(['Open', 'Cut', 'Download', 'Rename', 'Delete', 'Copy path', 'Properties']);
+      await act(async () => userEvent.keyboard('{Escape}'));
+
+      const fresh = await app();
+      await key(rowOf(fresh, 'plan.md'), '{ContextMenu}');
+      expect(menuItems()).toEqual(['View', 'Sort by', 'Group by', 'Refresh', 'Paste', 'Upload', 'Properties']);
+    });
+
+    it('shows each command’s letter on Alt, and runs the command on its letter', async () => {
+      const host = await app();
+      await press(host, 'notes.txt');
+      expect(command('Paste').disabled).toBe(true);
+      await key(rowOf(host, 'notes.txt'), '{Alt}');
+      const letters = () => [...document.querySelectorAll('[role="tooltip"]')].map((tip) => tip.textContent).filter(Boolean);
+      // Paste has nothing to paste yet, so its letter waits.
+      expect(letters().sort()).toEqual(['D', 'E', 'I', 'M', 'N', 'O', 'S', 'X']);
+      await act(async () => userEvent.keyboard('x'));
+      expect(letters()).toEqual([]);
+      expect(command('Paste').disabled).toBe(false);
+      // A letter typed with the letters gone finds an item again.
+      await key(rowOf(host, 'notes.txt'), 'p');
+      expect(selected(host)).toEqual(['plan.md']);
+
+      await contextMenu(host, 'plan.md');
+      await act(async () => userEvent.keyboard('{Alt}'));
+      expect(letters()).toEqual(['O', 'T', 'W', 'M', 'D', 'A', 'R']);
+      await act(async () => userEvent.keyboard('r'));
+      expect(shownDialog()?.textContent).toContain('plan.md Properties');
+    });
+
+    it('finds an item by the letters typed, and moves the selection with the arrows', async () => {
+      stillClock();
+      const host = await app();
+      await press(host, 'reports');
+      await key(rowOf(host, 'reports'), 'n');
+      expect(selected(host)).toEqual(['nine.txt']);
+      expect(document.activeElement).toBe(rowOf(host, 'nine.txt'));
+      // The same letter again steps to the next item it starts; more letters find the item they start.
+      await key(document.activeElement, 'n');
+      expect(selected(host)).toEqual(['notes.txt']);
+      await key(document.activeElement, 'pl');
+      expect(selected(host)).toEqual(['notes.txt']);
+      const again = await app();
+      await key(rowOf(again, 'reports'), 'no');
+      expect(selected(again)).toEqual(['notes.txt']);
+
+      // Fluent's arrow navigation moves focus by the rows' layout, which jsdom has none of: the test moves it as an arrow
+      // would, and the selection follows.
+      const arrow = async (from: string, to: string, keys: KeyboardEventInit = {}) => act(async () => {
+        rowOf(host, from).dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowDown', ...keys }));
+        rowOf(host, to).focus();
+      });
+      await arrow('nine.txt', 'notes.txt');
+      expect(selected(host)).toEqual(['notes.txt']);
+      await arrow('notes.txt', 'plan.md', { shiftKey: true });
+      expect(selected(host)).toEqual(['notes.txt', 'plan.md']);
+      // Ctrl+arrow moves focus alone.
+      await arrow('plan.md', 'reports', { ctrlKey: true });
+      expect(selected(host)).toEqual(['notes.txt', 'plan.md']);
+      // A click's focus is the click's, not an arrow's.
+      await press(host, 'nine.txt');
+      expect(selected(host)).toEqual(['nine.txt']);
+    });
+  });
+  describe('a folder of thousands', () => {
+    beforeEach(() => {
+      for (let index = 0; index < 5000; index++) stored.push(entry(`item-${String(index).padStart(4, '0')}.txt`));
+    });
+
+    it('draws only the rows in view of 5,000 in Details, and scrolls a far one in for a typed name', async () => {
+      const started = Date.now();
+      stillClock();
+      const host = await app();
+      expect(rows(host).length).toBeGreaterThan(10);
+      expect(rows(host).length).toBeLessThan(80);
+      expect(names(host)[0]).toBe('item-0000.txt');
+
+      // The test DOM has no layout for the grid to scroll by: a typed name scrolls it, to a row far out of view.
+      await key(rows(host)[0] ?? null, 'item-4321');
+      expect(selected(host)).toEqual(['item-4321.txt']);
+      expect(document.activeElement).toBe(rowOf(host, 'item-4321.txt'));
+      expect(rows(host).length).toBeLessThan(80);
+      expect(Date.now() - started).toBeLessThan(5000);
+    });
+
+    it('draws only the cards in view of 5,000 in an icon view, and brings a far one in for a typed name', async () => {
+      const started = Date.now();
+      stillClock();
+      const host = await app();
+      await pick('View', 'Medium icons');
+      expect(cards(host).length).toBeGreaterThan(10);
+      expect(cards(host).length).toBeLessThan(500);
+
+      await key(cards(host)[0] ?? null, 'item-4321');
+      expect(selected(host)).toEqual(['item-4321.txt']);
+      expect(document.activeElement).toBe(rowOf(host, 'item-4321.txt'));
+      expect(cards(host).length).toBeLessThan(500);
+      // Unmeasured, the view draws a large window's worth of cards, each a full Fluent card: slower here than a browser.
+      expect(Date.now() - started).toBeLessThan(10000);
+    }, 20000);
+  });
+});

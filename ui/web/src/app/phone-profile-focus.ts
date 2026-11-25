@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, type RefObject } from "react";
 
 /**
  * The phone's Agent Profile covers the chat, which goes inert under it: the profile takes the keyboard's focus at its
- * Close as it opens, closes on Escape, and once shut gives focus back to its opener, unless the user moved it elsewhere
- * or the opener is gone.
+ * Close as it opens, closes on an Escape nothing inside it took (a menu's Escape shuts only that menu), and once shut
+ * gives focus back to its opener, unless the user moved it elsewhere or the opener is gone.
  */
 export function usePhoneProfileFocus({ open, expanded, profileRef, openerRef, close }: {
   /** The profile stands open over the chat on a phone. */
@@ -40,7 +40,7 @@ export function usePhoneProfileFocus({ open, expanded, profileRef, openerRef, cl
   useEffect(() => {
     if (!open) return undefined;
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
+      if (e.key === "Escape" && !e.defaultPrevented) close();
     };
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);

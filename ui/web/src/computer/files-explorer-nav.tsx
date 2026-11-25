@@ -8,6 +8,7 @@ import {
 } from '@fluentui/react-icons';
 import { Fragment, useEffect, useRef, useState, type ReactElement } from 'react';
 import type { FolderTree, Place } from './files-items';
+import { PaneDivider, usePaneSize } from './files-explorer-resize';
 import { FOLDER } from './windows-window';
 
 /** Below this window width Explorer keeps to the list's name and size, and the address row to Back, Up and the path. */
@@ -30,10 +31,9 @@ export const useExplorerStyles = makeStyles({
   oneLine: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   nav: {
     flexShrink: 0,
-    width: '200px',
+    width: 'var(--explorer-nav-size, 200px)',
     overflow: 'auto',
     padding: tokens.spacingVerticalXS,
-    borderRight: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
   },
 });
@@ -136,9 +136,10 @@ export function AddressRow({ crumbs, canBack, canForward, canUp, query, places, 
 const valueOf = (place: Place): TreeItemValue => place ?? 'home';
 const WORKSPACE = '/';
 
-/** Home, then workspace and its folders to any depth; the open place is marked current. */
+/** Home, then workspace and its folders to any depth; the open place is marked current. Its divider resizes it. */
 export function NavPane({ folders, place, onOpen }: { folders: FolderTree; place: Place; onOpen: (place: Place) => void }) {
   const styles = useExplorerStyles();
+  const { elementRef, handleRef } = usePaneSize({ variable: '--explorer-nav-size', grow: 'end', min: 120, max: 400 });
   const [open, setOpen] = useState<Iterable<TreeItemValue>>([WORKSPACE]);
   const current = place === '' ? WORKSPACE : valueOf(place);
   const item = (name: string, path: string, below: FolderTree) => {
@@ -154,19 +155,22 @@ export function NavPane({ folders, place, onOpen }: { folders: FolderTree; place
     );
   };
   return (
-    <nav className={mergeClasses(styles.nav, styles.wideOnly)} aria-label="Folders">
-      <Tree
-        aria-label="Navigation"
-        size="small"
-        openItems={open}
-        // A click opens the folder; its chevron and the arrow keys show or hide the folders inside it.
-        onOpenChange={(_, data) => { if (data.type !== 'Click' && data.type !== 'Enter') setOpen(data.openItems); }}
-      >
-        <TreeItem value="home" itemType="leaf" aria-current={current === 'home' ? 'true' : undefined} onClick={() => onOpen(null)}>
-          <TreeItemLayout iconBefore={<Home20Regular />} main={{ className: styles.oneLine }}>Home</TreeItemLayout>
-        </TreeItem>
-        {item('workspace', '', folders)}
-      </Tree>
-    </nav>
+    <>
+      <nav ref={elementRef} className={mergeClasses(styles.nav, styles.wideOnly)} aria-label="Folders">
+        <Tree
+          aria-label="Navigation"
+          size="small"
+          openItems={open}
+          // A click opens the folder; its chevron and the arrow keys show or hide the folders inside it.
+          onOpenChange={(_, data) => { if (data.type !== 'Click' && data.type !== 'Enter') setOpen(data.openItems); }}
+        >
+          <TreeItem value="home" itemType="leaf" aria-current={current === 'home' ? 'true' : undefined} onClick={() => onOpen(null)}>
+            <TreeItemLayout iconBefore={<Home20Regular />} main={{ className: styles.oneLine }}>Home</TreeItemLayout>
+          </TreeItem>
+          {item('workspace', '', folders)}
+        </Tree>
+      </nav>
+      <PaneDivider label="Resize navigation pane" handleRef={handleRef} className={styles.wideOnly} />
+    </>
   );
 }

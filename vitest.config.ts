@@ -1,3 +1,4 @@
+import { readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 const botSettingsModule = createRequire(import.meta.url)('./ui/web/src/config/bot-settings.cjs');
 import { fileURLToPath } from 'node:url';
@@ -18,12 +19,15 @@ const uiWeb = (name: string, include: string[], exclude: string[], groupOrder: n
     include,
     exclude: [...configDefaults.exclude, ...exclude],
     environment: 'happy-dom',
-    server: { deps: { inline: ['@copilotkit/react-core', 'bedrock-agentcore'] } },
+    // fluentui-contrib's packages pick CommonJS under Node, which would load a second copy of Fluent beside the ES one
+    // the UI imports, so their contexts would not reach each other: the tests take their ES builds, as the app does.
+    server: { deps: { inline: [/@fluentui-contrib\//, '@copilotkit/react-core', 'bedrock-agentcore'] } },
     setupFiles: ['ui/web/tests/setup.ts'],
   },
   resolve: {
     alias: {
       vitest: at('node_modules/vitest'),
+      ...Object.fromEntries(readdirSync(at('ui/web/node_modules/@fluentui-contrib')).map((name) => [`@fluentui-contrib/${name}`, at(`ui/web/node_modules/@fluentui-contrib/${name}/lib/index.js`)])),
       '@/': at('ui/web/src/'),
       dcv: at(`${liveView}/dcvjs-esm/dcv.js`),
       'dcv-ui': at(`${liveView}/dcv-ui/dcv-ui.js`),

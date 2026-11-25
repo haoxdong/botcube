@@ -1,5 +1,6 @@
 import { fileExtension, isImageName } from '../components/file-type-icon';
 import type { FileEntry } from './files-service';
+import { baseOf, filesPath, underOf } from '../app/files-path';
 
 /** An item of the open place: a file, with its size, or a folder holding files further down. */
 export type FilesItem = {
@@ -18,8 +19,9 @@ export function itemsIn(files: readonly FileEntry[], folder: string): FilesItem[
   // Keyed by path, so a file and a folder of the same name, which storage allows, both stay listed.
   const items = new Map<string, FilesItem>();
   for (const file of files) {
-    if (!file.name.startsWith(folder)) continue;
-    const [name = '', ...below] = file.name.slice(folder.length).split('/');
+    const inside = underOf(filesPath(folder), filesPath(file.name));
+    if (inside === null) continue;
+    const [name = '', ...below] = inside.split('/');
     if (below.length === 0) {
       items.set(file.name, { name, path: file.name, lastModified: file.lastModified, folder: false, size: file.size });
       continue;
@@ -40,7 +42,7 @@ export function recentsIn(files: readonly FileEntry[]): FilesItem[] {
   return [...files]
     .sort((a, b) => Date.parse(b.lastModified) - Date.parse(a.lastModified))
     .slice(0, RECENTS)
-    .map(({ name, size, lastModified }) => ({ name: name.slice(name.lastIndexOf('/') + 1), path: name, lastModified, folder: false, size }));
+    .map(({ name, size, lastModified }) => ({ name: baseOf(filesPath(name)), path: name, lastModified, folder: false, size }));
 }
 
 /** A folder, with the folders inside it. */
@@ -99,3 +101,117 @@ export const compare = {
   type: (a: FilesItem, b: FilesItem) => byKind(a, b) || typeText(a).localeCompare(typeText(b)) || byName(a, b),
   size: (a: FilesItem, b: FilesItem) => byKind(a, b) || sizeOf(a) - sizeOf(b) || byName(a, b),
 };
+
+/** A sort of the open place's items: by a column, either way, as the details view's headers sort. */
+export type Sort = { sortColumn: string | number | undefined; sortDirection: 'ascending' | 'descending' };
+type SortColumn = keyof typeof compare;
+export const SORT_COLUMNS: readonly { column: SortColumn; label: string }[] = [
+  { column: 'name', label: 'Name' },
+  { column: 'modified', label: 'Date modified' },
+  { column: 'type', label: 'Type' },
+  { column: 'size', label: 'Size' },
+];
+const isColumn = (column: Sort['sortColumn']): column is SortColumn => typeof column === 'string' && Object.hasOwn(compare, column);
+
+/** The items in a sort's order; descending turns the whole order round, folders last, as the details view does. */
+export function sortItems(items: readonly FilesItem[], { sortColumn, sortDirection }: Sort): FilesItem[] {
+  if (!isColumn(sortColumn)) return [...items];
+  const order = compare[sortColumn];
+  const way = sortDirection === 'ascending' ? 1 : -1;
+  return [...items].sort((a, b) => way * order(a, b));
+}
+
+/** Explorer's views, as its View menu names them. */
+export const VIEWS = [
+  { view: 'xl', label: 'Extra large icons' },
+  { view: 'large', label: 'Large icons' },
+  { view: 'medium', label: 'Medium icons' },
+  { view: 'small', label: 'Small icons' },
+  { view: 'list', label: 'List' },
+  { view: 'details', label: 'Details' },
+  { view: 'tiles', label: 'Tiles' },
+  { view: 'content', label: 'Content' },
+] as const;
+export type View = (typeof VIEWS)[number]['view'];
+
+/** A place's first view: Large icons where more than half of its files are pictures, else Details. */
+export function defaultView(items: readonly FilesItem[]): View {
+  const files = items.filter(({ folder }) => !folder);
+  const pictures = files.filter((item) => kindOf(item) === 'image');
+  return pictures.length * 2 > files.length ? 'large' : 'details';
+}
+
+/** What Group by groups on: nothing, or a column. */
+export type GroupBy = 'none' | SortColumn;
+export const GROUP_BYS: readonly { by: GroupBy; label: string }[] = [{ by: 'none', label: 'None' }, ...SORT_COLUMNS.map(({ column, label }) => ({ by: column, label }))];
+
+/** A group of the open place's items: its key, its header with its count, and its items in order. */
+export type Group = { key: string; label: string; items: FilesItem[] };
+
+const DAY = 86_400_000;
+const KB = 1024;
+
+/** An item's size bucket, as Explorer's Group by Size has them, folders first. */
+function sizeGroup(item: FilesItem): [number, string] {
+  if (item.folder) return [0, 'Folders'];
+  const buckets: [number, string][] = [[16 * KB, 'Tiny'], [KB * KB, 'Small'], [128 * KB * KB, 'Medium']];
+  const index = buckets.findIndex(([below]) => item.size < below);
+  return index === -1 ? [4, 'Large'] : [index + 1, buckets[index]?.[1] ?? ''];
+}
+
+/** An item's name range: digits, three ranges of letters, then any other. */
+function nameGroup(item: FilesItem): [number, string] {
+  const first = item.name.normalize('NFD').charAt(0).toUpperCase();
+  if (/[0-9]/.test(first)) return [0, '0–9'];
+  const ranges: [string, string][] = [['A', 'H'], ['I', 'P'], ['Q', 'Z']];
+  const index = ranges.findIndex(([from, to]) => first >= from && first <= to && /[A-Z]/.test(first));
+  return index === -1 ? [4, 'Other'] : [index + 1, ranges.map(([from, to]) => `${from}–${to}`)[index] ?? ''];
+}
+
+/** An item's date group, as Explorer's Group by Date modified has them, from today back. */
+function dateGroup(item: FilesItem, now: Date): [number, string] {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const week = today - ((now.getDay() + 6) % 7) * DAY;
+  const month = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const at = Date.parse(item.lastModified);
+  if (at >= today) return [0, 'Today'];
+  if (at >= week) return [1, 'Earlier this week'];
+  if (at >= week - 7 * DAY) return [2, 'Last week'];
+  return at >= month ? [3, 'Earlier this month'] : [4, 'Older'];
+}
+
+/** The group an item falls in, and that group's place among the others. */
+function groupOf(item: FilesItem, by: SortColumn, now: Date): [number, string] {
+  if (by === 'type') return [item.folder ? 0 : 1, typeText(item)];
+  if (by === 'size') return sizeGroup(item);
+  return by === 'name' ? nameGroup(item) : dateGroup(item, now);
+}
+
+/** The items in groups, each group in the items' order; one group, with no header, for none. */
+export function groupsOf(items: readonly FilesItem[], by: GroupBy, now = new Date()): Group[] {
+  if (by === 'none') return [{ key: '', label: '', items: [...items] }];
+  const groups = new Map<string, { rank: number; items: FilesItem[] }>();
+  for (const item of items) {
+    const [rank, name] = groupOf(item, by, now);
+    const group = groups.get(name) ?? { rank, items: [] };
+    group.items.push(item);
+    groups.set(name, group);
+  }
+  return [...groups]
+    .sort(([a, one], [b, other]) => one.rank - other.rank || a.localeCompare(b))
+    .map(([name, group]) => ({ key: name, label: `${name} (${group.items.length})`, items: group.items }));
+}
+
+/** Where an item is, as Properties says: `workspace`, or `workspace/reports`. */
+export function locationText(path: string): string {
+  const folder = path.endsWith('/') ? path.slice(0, -1) : path;
+  return ['workspace', ...folder.split('/').slice(0, -1)].join('/');
+}
+
+/** A folder's size: every file inside it, to any depth. */
+function folderSize(files: readonly FileEntry[], folder: string): number {
+  return files.filter(({ name }) => name.startsWith(folder)).reduce((total, { size }) => total + size, 0);
+}
+
+/** An item's size: a file's own, a folder's files. */
+export const sizeIn = (files: readonly FileEntry[], item: FilesItem) => (item.folder ? folderSize(files, item.path) : item.size);
