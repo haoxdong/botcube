@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import type { RunAgentInput } from '@ag-ui/client';
 import { RunAgentInputSchema, RunErrorEventSchema } from '@ag-ui/core/schemas';
 import { agentDocumentEdit, type AgentDocumentSet, type AgentDocuments } from './agent-documents.js';
-import { botMemory, type TurnRouteSource } from './turn-preparation.js';
+import { memoryGates, type TurnRouteSource } from './turn-preparation.js';
 import type { AgentModel } from './models.js';
 import { HttpError } from './http-error.js';
 import { DEPLOY_CHECK_USER_AGENT } from './production-activity.js';
@@ -99,7 +99,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
     payload.forwardedProps.model = model.key;
     payload.forwardedProps.agentIdentity = loadedDocuments.agentIdentity;
     payload.forwardedProps.soul = loadedDocuments.soul;
-    botMemory(payload.forwardedProps, bot);
+    memoryGates(payload.forwardedProps, bot, requester);
     return payload;
   };
 

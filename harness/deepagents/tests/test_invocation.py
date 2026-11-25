@@ -26,7 +26,7 @@ def test_omitted_props_have_defaults(props: object) -> None:
     assert invocation.options.model_dump() == {
         'session_user_id': None, 'warmup': False, 'preparation_scope': None, 'steering': False,
         'withdraw_steering': None, 'stop': False, 'agent_system_prompt': None, 'bot_system_prompt': None,
-        'bot_memory': True, 'opening': False, 'opening_first_name': None, 'model': None, 'effort': None,
+        'bot_memory': True, 'written_memory': True, 'opening': False, 'opening_first_name': None, 'model': None, 'effort': None,
         'scheduled_run': False, 'session_snapshot_epoch': None, 'timezone': None, 'started_at': None,
         'worklog_clock': 0, 'env': None, 'credential_service_url': None, 'legacy_credential_token': None,
         'user_token': None, 'traffic': None,
@@ -41,7 +41,7 @@ def test_omitted_props_have_defaults(props: object) -> None:
 @pytest.mark.parametrize(('key', 'value'), [
     ('sessionUserId', 42), ('warmup', 'false'), ('preparationScope', 'unknown'), ('steering', 1),
     ('withdrawSteering', []), ('stop', 'true'), ('agentSystemPrompt', {}), ('botSystemPrompt', False),
-    ('botMemory', 'false'), ('opening', 1), ('openingFirstName', 42), ('opening_first_name', []),
+    ('botMemory', 'false'), ('writtenMemory', 'false'), ('opening', 1), ('openingFirstName', 42), ('opening_first_name', []),
     ('model', []), ('effort', 42), ('effort', 'unknown'), ('scheduledRun', 'false'),
     ('timezone', 'Unknown/Zone'), ('turnStartedAt', 'yesterday'), ('turn_started_at', 42),
     ('worklogClock', 2), ('worklog_clock', True), ('env', {'NAME': 123}), ('credentialServiceUrl', {}),

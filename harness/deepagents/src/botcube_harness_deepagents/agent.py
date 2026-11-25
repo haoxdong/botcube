@@ -57,11 +57,12 @@ from typing_extensions import TypedDict
 
 from . import turn_timing
 from .files import ARTIFACTS_DIRECTORY, HARNESS_DIRECTORY
-from .lazy_files import LazyFilesMiddleware, SummaryFilesBackend
+from .lazy_files import LazyFilesMiddleware, MountedFilesFolder, SummaryFilesBackend
 from .llm import build_model
 from .model_request import ModelRequestBounds, count_request_tokens
 
 DEFAULT_SYSTEM_PROMPT = ''
+MEMORY_FOLDER = '/memories/'
 
 # deepagents 0.7's stdlib SkillMetadata cannot generate JSON schema on Python 3.11.
 # Keep its shape (https://errors.pydantic.dev/2.13/u/typed-dict-version).
@@ -80,9 +81,9 @@ class PlainState(DeepAgentState):
     so no read walks ancestor checkpoints (ADR 0067 decision 9)."""
 
     messages: Annotated[list[AnyMessage], add_messages]  # type: ignore[assignment]
-    # The Session's Memory block (`session_memory.SessionMemoryMiddleware`): every graph on the
-    # Session carries it, so a session API post keeps it in the next checkpoint.
+    # Memory blocks (`session_memory`, deepagents' MemoryState) every Session graph keeps in its checkpoint.
     session_memory: NotRequired[Annotated[str, PrivateStateAttr]]
+    memory_contents: NotRequired[Annotated[dict[str, str], PrivateStateAttr]]
     last_model_call_at: NotRequired[Annotated[float, PrivateStateAttr]]
 
 
@@ -342,17 +343,21 @@ def tool_skills(tools: Iterable[Any]) -> dict[str, BackendProtocol]:
 
 
 def _route_tool_skills(
-    backend: Any, skills: Sequence[str], tools: Sequence[Any], subagents: Sequence[dict[str, Any]],
+    backend: Any, skills: Sequence[str], tools: Sequence[Any], subagents: Sequence[dict[str, Any]], written_memory: bool,
 ) -> tuple[Any, list[str], list[dict[str, Any]]]:
-    """Route Skills beside the workspace for the agent and subagents that share its tools."""
+    """Route Skills and Written Memory beside the workspace."""
     skill_routes = tool_skills(tools)
     if skill_routes and backend is None:
         raise ValueError('A tool that brings skills needs a workspace backend to route them beside')
     root = Path('/')
-    local_routes = {}
+    local_routes: dict[str, Any] = {}
     if isinstance(backend, FilesystemBackend) and not backend.virtual_mode:
         root = backend.cwd
         local_routes = {source: _static_skill_folder(str(backend.cwd / source.strip('/'))) for source in skills}
+        if written_memory:
+            local_routes[MEMORY_FOLDER] = MountedFilesFolder(root_dir=root / 'memories', virtual_mode=True)
+    elif written_memory:
+        raise ValueError('Written Memory needs a workspace backend')
     files_backend = (
         CompositeBackend(default=backend, routes={**local_routes, **skill_routes}, artifacts_root=str(root / HARNESS_DIRECTORY))
         if backend is not None else None
@@ -377,6 +382,7 @@ def build_agent(
     middleware: Sequence[Any] | None = None,
     checkpointer: Any | None = None,
     permissions: list[FilesystemPermission] | None = None,
+    written_memory: bool = False,
 ) -> Any:
     turn_timing.graph_step('restore_hooks')
     _restore_middleware_hook_dispatch()
@@ -386,7 +392,7 @@ def build_agent(
     for spec in subagents or []:
         _reject_dropped_settings(spec.get('model', resolved_model), spec.get('permissions'))
     turn_timing.graph_step('route_skills')
-    files_backend, resolved_skills, specs = _route_tool_skills(backend, skills, tools or [], subagents or [])
+    files_backend, resolved_skills, specs = _route_tool_skills(backend, skills, tools or [], subagents or [], written_memory)
     turn_timing.graph_step('subagent_specs')
     if not any(spec['name'] == GENERAL_PURPOSE_SUBAGENT['name'] for spec in specs):
         specs.append({**GENERAL_PURPOSE_SUBAGENT, 'skills': resolved_skills})
@@ -419,6 +425,8 @@ def build_agent(
         *(list(middleware) if middleware is not None else []),
         _ToolErrorsMiddleware(),
     ]
+    if written_memory:
+        kwargs['memory'] = [f'{MEMORY_FOLDER}AGENTS.md']
     if store is not None:
         kwargs['store'] = store
     if checkpointer is not None:

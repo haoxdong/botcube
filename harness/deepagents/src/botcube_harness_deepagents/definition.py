@@ -107,3 +107,4 @@ class HarnessDefinition:
     system_prompt: str = ''
     models: Mapping[str, BotModel] = field(default_factory=dict)
     shell_environment: Mapping[str, str] = field(default_factory=dict)
+    written_memory: bool = False

@@ -43,7 +43,7 @@ def test_the_session_memory_block_reaches_the_prompt_without_file_memory_guidanc
 
     assert _ask_async(agent, 'hello') == 'hi'
     [[system, *_]] = RecordingFakeMessagesModel.seen_batches
-    assert '<agent_memory>\n- User prefers copper futures\n</agent_memory>' in system.text
+    assert '<extracted_memory>\n- User prefers copper futures\n</extracted_memory>' in system.text
     assert '<memory_guidelines>' not in system.text
 
 
@@ -59,7 +59,7 @@ def test_an_empty_session_memory_adds_no_block(tmp_path: Path) -> None:
 
     assert _ask_async(agent, 'hello') == 'hi'
     [[system, *_]] = RecordingFakeMessagesModel.seen_batches
-    assert '<agent_memory>' not in system.text
+    assert '<extracted_memory>' not in system.text
 
 
 def test_a_fork_receives_read_only_memory_after_its_skills(tmp_path: Path) -> None:

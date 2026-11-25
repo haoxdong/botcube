@@ -181,7 +181,7 @@ def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_n
                 imported.append(f'lstat {path}')
             return lstat(path, *args, **kwargs)
         with patch.object(os, 'lstat', record_artifact_skill_lookup):
-            agent = serving._get_agent(actor_id='turn', session_user_id='turn', persistent_memory=True,
+            agent = serving._get_agent(actor_id='turn', session_user_id='turn', persistent_memory=True, written_memory=True,
                                        model=serving._SNAPSHOT_MODEL, thread_id='turn', model_relay=relay,
                                        syncs_files=True)
         # The OpenTelemetry LangGraph instrumentation walks every Turn's graph for its span, importing this lazily.
@@ -297,7 +297,7 @@ def test_new_actor_discovers_and_reads_primed_artifact_skills_without_filesystem
         with patch.multiple(os, stat=observe('stat'), lstat=observe('lstat'), readlink=observe('readlink')):
             relay = ModelRelay(base_url='https://turn.invalid/v1', token='turn', headers={}, session_id='turn')
             agent = serving._get_agent(
-                actor_id='turn', session_user_id='turn', thread_id='turn', persistent_memory=False,
+                actor_id='turn', session_user_id='turn', thread_id='turn', persistent_memory=False, written_memory=True,
                 model=serving._SNAPSHOT_MODEL, model_relay=relay, syncs_files=True,
             )
             config: RunnableConfig = {'configurable': {'thread_id': 'turn', 'actor_id': 'turn'}}

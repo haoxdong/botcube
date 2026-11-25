@@ -189,6 +189,7 @@ class HarnessBot:
     environment_cache_key: Callable[[Mapping[str, str] | None], tuple[tuple[str, str], ...]]
     default_model: str | None = None
     models: Mapping[str, BotModel] = field(default_factory=dict)
+    written_memory: bool = False
 
 
 _bot: HarnessBot | None = None
@@ -233,6 +234,7 @@ def configure_harness_definition(definition: HarnessDefinition, default_model: s
             environment_cache_key=definition.environment_cache_key,
             default_model=default_model,
             models=definition.models,
+            written_memory=definition.written_memory,
         )
     )
 
@@ -263,6 +265,7 @@ class _AgentKey(NamedTuple):
     actor_id: str
     session_user_id: str
     persistent_memory: bool
+    written_memory: bool
     model: str
     effort: str | None
     environment: tuple[tuple[str, str], ...]
@@ -302,6 +305,7 @@ def _get_agent(
     actor_id: str,
     session_user_id: str,
     persistent_memory: bool,
+    written_memory: bool,
     model: str | None = None,
     effort: str | None = None,
     thread_id: str | None = None,
@@ -328,6 +332,7 @@ def _get_agent(
             actor_id,
             session_user_id,
             persistent_memory,
+            written_memory,
             resolved_model,
             effort,
             environment_key,
@@ -407,6 +412,7 @@ def _get_agent(
                 subagents=[general_purpose_subagent(prompts.bot, bot.skills)] if prompts.bot else None,
                 checkpointer=_CHECKPOINTER,
                 store=store if persistent_memory else None,
+                written_memory=written_memory,
             )
         config = {
             'recursion_limit': graph.config['recursion_limit'],
@@ -585,12 +591,14 @@ async def _invoke_agent(input_data: Invocation, context: _RequestContext, auth: 
     candidate = options.agent_system_prompt
     files = input_data.files
     persistent_memory = auth.persistent_memory and actor_id != ANONYMOUS_ACTOR_ID and candidate is None and options.bot_memory
+    written_memory = _require_bot().written_memory and options.written_memory and candidate is None and files is not None
     opening = _opening_turn(input_data)
     build = partial(
         _agent_and_backend,
         actor_id=actor_id,
         session_user_id=session_user_id,
         persistent_memory=persistent_memory,
+        written_memory=written_memory,
         model=options.model or _require_bot().default_model,
         effort=options.effort,
         thread_id=input_data.thread_id,
@@ -925,7 +933,7 @@ def _prime_snapshot() -> None:
     try:
         with tempfile.TemporaryDirectory() as root, workspace_at(root):
             walk_graph(_get_agent(
-                actor_id=_SNAPSHOT_ID, session_user_id=_SNAPSHOT_ID, persistent_memory=True,
+                actor_id=_SNAPSHOT_ID, session_user_id=_SNAPSHOT_ID, persistent_memory=True, written_memory=True,
                 model=_SNAPSHOT_MODEL, thread_id=_SNAPSHOT_ID, model_relay=relay, syncs_files=True,
             ))
             model = build_model(model=_SNAPSHOT_MODEL, relay=lambda: relay)

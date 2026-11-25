@@ -552,3 +552,23 @@ it('refuses Memory and tells each Turn when the bot settings turn Extracted Memo
     await forgetful.stop();
   }
 });
+
+it.each([
+  ['a Guest', { requester: async () => ({ owner: 'acct_written-memory', anonymous: true }) }, false],
+  ['a bot with Written Memory off', { writtenMemory: false }, false],
+  ['a signed-in User', {}, undefined],
+] as const)('tells the Turn of %s whether it keeps Written Memory, whatever the client sends', async (_who, overrides, kept) => {
+  const stack = await startInProcess({ overrides });
+  try {
+    await stack.allocate('acct_written-memory', 'written-memory-turn');
+    const forced = kept === false;
+    await (await stack.app.request('/', {
+      method: 'POST',
+      headers: { 'x-test-owner': 'acct_written-memory', 'content-type': 'application/json' },
+      body: JSON.stringify({ threadId: 'written-memory-turn', runId: 'run-1', state: {}, messages: [], tools: [], context: [], forwardedProps: { writtenMemory: forced } }),
+    })).text();
+    expect(stack.agentcore.invocationFor('written-memory-turn').payload.forwardedProps.writtenMemory).toBe(kept);
+  } finally {
+    await stack.stop();
+  }
+});

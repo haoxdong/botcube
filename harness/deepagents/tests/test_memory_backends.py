@@ -70,7 +70,7 @@ def _opening_memory(store: InMemoryStore, actor_id: str, root: Path) -> str:
     )
     asyncio.run(graph.ainvoke({'messages': [('user', 'hello')]}))
     [prompt] = _PromptRecordingModel.prompts
-    return ''.join(re.findall(r'<agent_memory>\n(.*)\n</agent_memory>', prompt, re.DOTALL))
+    return ''.join(re.findall(r'<extracted_memory>\n(.*)\n</extracted_memory>', prompt, re.DOTALL))
 
 
 def test_inmem_memory_tool_round_trips_into_the_next_session(tmp_path: Path) -> None:

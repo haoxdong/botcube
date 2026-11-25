@@ -7,7 +7,7 @@ import type { RunAgentInput } from '@ag-ui/client';
 import type { AgentModel, ModelSource } from './models.js';
 import type { Requester, RequesterSource } from './requester.js';
 
-/** What a Turn, chat or scheduled, needs from the bot: its documents, models, Extracted Memory gate and upstream payload. */
+/** What a Turn, chat or scheduled, needs from the bot: its documents, models, Memory gates and upstream payload. */
 export interface TurnSource<R extends Requester = Requester> extends ModelSource<R> {
   /** The Agent Identity and Soul templates every account's agent starts from. */
   readonly agentDocuments: AgentDocumentSet;
@@ -16,6 +16,7 @@ export interface TurnSource<R extends Requester = Requester> extends ModelSource
    * Its routes refuse, and each Turn tells the Harness (`forwardedProps.botMemory`), which then gives no `memory` tool. On unless false.
    */
   readonly extractedMemory?: boolean;
+  readonly writtenMemory?: boolean;
   /** The user ID an account's Sessions are filed under in the Session record. */
   filingUserId(owner: string): string;
   /**
@@ -52,10 +53,16 @@ export type InvocationPayload = Record<string, unknown> & {
   forwardedProps: Record<string, unknown>;
 };
 
-/** Tells a Turn's Harness the bot settings' Extracted Memory gate; only the Chat Service sets it, never a client. */
-export function botMemory(forwardedProps: Record<string, unknown>, settings: { extractedMemory?: boolean | undefined }): void {
+/** Tells a Turn's Harness its Memory gates: the bot settings', and no Written Memory for a Guest. Only the Chat Service sets them, never a client. */
+export function memoryGates(
+  forwardedProps: Record<string, unknown>,
+  settings: { extractedMemory?: boolean | undefined; writtenMemory?: boolean | undefined },
+  requester: Requester,
+): void {
   if (settings.extractedMemory === false) forwardedProps.botMemory = false;
   else delete forwardedProps.botMemory;
+  if (settings.writtenMemory === false || requester.anonymous === true) forwardedProps.writtenMemory = false;
+  else delete forwardedProps.writtenMemory;
 }
 
 export function preparationFailure(error: unknown, credentials: readonly string[]): TurnFailure {

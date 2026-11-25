@@ -37,7 +37,7 @@ def test_empty_startup_memory_retries_on_the_next_session_turn(
 ) -> None:
     member: _Member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
     assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
-    assert '<agent_memory>' not in service.recorder.prompts[-1]
+    assert '<extracted_memory>' not in service.recorder.prompts[-1]
 
     agentcore_memory.records += [
         _memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'),

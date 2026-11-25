@@ -171,7 +171,7 @@ class SessionMemoryMiddleware(AgentMiddleware):
         block = request.state.get('session_memory')
         if block:
             blocks = list(request.system_message.content_blocks) if request.system_message else []
-            text = f'<agent_memory>\n{block}\n</agent_memory>'
+            text = f'<extracted_memory>\n{block}\n</extracted_memory>'
             blocks.append({'type': 'text', 'text': f'\n\n{text}' if blocks else text})
             request = request.override(system_message=SystemMessage(content_blocks=blocks))
         response = await handler(request)

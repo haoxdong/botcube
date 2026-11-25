@@ -152,6 +152,11 @@ def turn_files(files: FilesMount | None, root: Path, excluded: Iterable[str]) ->
         _turn_files.reset(token)
 
 
+def _ensure_turn_files() -> None:
+    if (files := current_turn_files()) is not None:
+        files.ensure()
+
+
 class SummaryFilesBackend(CompositeBackend):
     def __init__(self, workspace: BackendProtocol) -> None:
         root = str(workspace.cwd) if isinstance(workspace, FilesystemBackend) and not workspace.virtual_mode else '/'
@@ -159,8 +164,7 @@ class SummaryFilesBackend(CompositeBackend):
         self._workspace = workspace
 
     def _mounted(self) -> BackendProtocol:
-        if (files := current_turn_files()) is not None:
-            files.ensure()
+        _ensure_turn_files()
         return self._workspace
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
@@ -189,6 +193,12 @@ class SummaryFilesBackend(CompositeBackend):
 
     async def aedit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
         return await finish_in_thread(self.edit, file_path, old_string, new_string, replace_all)
+
+
+class MountedFilesFolder(FilesystemBackend):
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        _ensure_turn_files()
+        return super().download_files(paths)
 
 
 class LazyFilesMiddleware(AgentMiddleware):

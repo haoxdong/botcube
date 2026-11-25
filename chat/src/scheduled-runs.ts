@@ -8,7 +8,7 @@ import { DescribeTasksCommand, ECSClient } from '@aws-sdk/client-ecs';
 import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import type { AgentDocuments } from './agent-documents.js';
 import type { ParkHistory } from './park-history.js';
-import { botMemory, type TurnSource } from './turn-preparation.js';
+import { memoryGates, type TurnSource } from './turn-preparation.js';
 import { HttpError } from './http-error.js';
 import { namedModel } from './models.js';
 import { fired, type ScheduledRunMessage, type ScheduledTask, type ScheduledTaskRun, type ScheduledTasks } from './scheduled-tasks.js';
@@ -229,7 +229,7 @@ async function runInSideChat(
     const documents = await deps.agentDocuments.get(owner, bot.agentDocuments);
     payload.forwardedProps.agentIdentity = documents.agentIdentity;
     payload.forwardedProps.soul = documents.soul;
-    botMemory(payload.forwardedProps, bot);
+    memoryGates(payload.forwardedProps, bot, requester);
     payload.forwardedProps.sessionUserId = sessionUserId;
     payload.forwardedProps.turnStartedAt = new Date().toISOString();
     payload.forwardedProps.scheduledRun = true;

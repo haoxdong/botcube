@@ -84,7 +84,7 @@ def test_empty_warmup_is_consumed_once_and_later_empty_turn_refreshes(
     assert service.turn('', warmup=True, **member)[-1]['value']['outcome'] == 'prepared'
     agentcore_memory.sts.memory_calls.clear()
     assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
-    assert '<agent_memory>' not in service.recorder.prompts[-1]
+    assert '<extracted_memory>' not in service.recorder.prompts[-1]
     assert not [operation for operation, _ in agentcore_memory.sts.memory_calls if operation == 'list_memory_records']
     agentcore_memory.records.append(_memory_record('Prefers tea', 'UserPreferences-1', 'actor-1'))
     assert service.turn('again', **member)[-1]['type'] == 'RUN_FINISHED'
@@ -136,7 +136,7 @@ def test_turn_arriving_during_warmup_reads_fresh_and_invalidates_handoff(
             release.set()
         assert warmup.result(timeout=5)[-1]['value']['outcome'] == 'prepared'
         assert turn.result(timeout=5)[-1]['type'] == 'RUN_FINISHED'
-        assert '<agent_memory>' not in service.recorder.prompts[-1]
+        assert '<extracted_memory>' not in service.recorder.prompts[-1]
     assert session_memory._warmups == {}
     agentcore_memory.records.append(_memory_record('New memory', 'SemanticFacts-1', 'actor-1'))
     assert service.turn('again', **member)[-1]['type'] == 'RUN_FINISHED'

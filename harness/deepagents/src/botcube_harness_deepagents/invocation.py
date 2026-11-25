@@ -49,6 +49,7 @@ class InvocationOptions(BaseModel):
     agent_system_prompt: str | None = Field(None, alias='agentSystemPrompt')
     bot_system_prompt: str | None = Field(None, alias='botSystemPrompt')
     bot_memory: bool = Field(True, alias='botMemory')
+    written_memory: bool = Field(True, alias='writtenMemory')
     opening: bool = False
     opening_first_name: str | None = Field(None, validation_alias=AliasChoices('opening_first_name', 'openingFirstName'))
     model: str | None = None

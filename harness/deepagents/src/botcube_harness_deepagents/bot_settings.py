@@ -152,6 +152,7 @@ def bot_definition(bot: BotSettings) -> HarnessDefinition:
         system_prompt=bot.instructions,
         models=bot.calls,
         shell_environment=bot.environment,
+        written_memory=bot.written_memory,
     )
 
 

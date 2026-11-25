@@ -204,6 +204,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
       agentDocuments: agentDocumentTemplates({ ...bot.agentIdentity, soul: bot.soul }),
       models: [withoutOutputCeiling(bot.models[0]), ...bot.models.slice(1).map(withoutOutputCeiling)],
       extractedMemory: bot.extractedMemory.enabled,
+      writtenMemory: bot.writtenMemory.enabled,
       async recoverAccountDeletions() {
         if (filesConfigured(env)) {
           filesRecovery ??= Promise.resolve().then(() => files().recoverCleanup()).catch((error: unknown) => {

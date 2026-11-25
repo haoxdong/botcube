@@ -340,9 +340,14 @@ def _tool_output(events: list[dict[str, Any]]) -> str:
 
 
 def _memory_block(prompt: str) -> str:
-    """The Memory block in a system prompt."""
-    [block] = re.findall(r'<agent_memory>\n(.*)\n</agent_memory>', prompt, re.DOTALL)
+    """The Extracted Memory block in a system prompt."""
+    [block] = re.findall(r'<extracted_memory>\n(.*)\n</extracted_memory>', prompt, re.DOTALL)
     return block
+
+
+def _written_memory(prompt: str) -> str:
+    [block] = re.findall(r'<agent_memory>\n(.*)\n</agent_memory>', prompt, re.DOTALL)
+    return block.strip()
 
 
 def _cache_usage(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
@@ -2176,6 +2181,136 @@ def test_a_workspace_tool_whose_files_cannot_sync_fails_loudly(service: _Service
     assert service.recorder.heard == [[f'ls: {serving._workspace()}']]
 
 
+# -- Written Memory --------------------------------------------------------------
+
+
+def _bot_writes_memory(monkeypatch: pytest.MonkeyPatch, enabled: bool = True) -> None:
+    monkeypatch.setattr(serving, '_bot', replace(serving._require_bot(), written_memory=enabled))
+
+
+def test_a_line_the_agent_writes_to_written_memory_opens_the_users_next_session(
+    service: _Service, files_bucket: MountedFiles, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bot_writes_memory(monkeypatch)
+
+    written = service.turn('write: /memories/AGENTS.md: - Prefers copper', thread='chat-a', files=_files())
+    service.turn('hello', thread='chat-b', files=_files())
+
+    assert written[-1]['type'] == 'RUN_FINISHED'
+    assert '- Prefers copper' in _written_memory(service.recorder.prompts[-1])
+    assert files_bucket.read('memories/AGENTS.md') == b'- Prefers copper'
+    assert 'memories/AGENTS.md' in _keys(files_bucket)
+
+
+def test_a_user_with_no_written_memory_starts_empty(service: _Service, files_bucket: MountedFiles, monkeypatch: pytest.MonkeyPatch) -> None:
+    _bot_writes_memory(monkeypatch)
+
+    events = service.turn('hello', files=_files())
+
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert _said(events) == 'Echo: hello'
+    assert _written_memory(service.recorder.prompts[-1]) == '(No memory loaded)'
+
+
+@pytest.mark.parametrize(('bot_keeps_it', 'props'), [(True, {'writtenMemory': False}), (False, {})], ids=['guest', 'bot-setting-off'])
+def test_a_guest_and_a_bot_with_written_memory_off_get_no_written_memory(
+    service: _Service, files_bucket: MountedFiles, monkeypatch: pytest.MonkeyPatch, bot_keeps_it: bool, props: dict[str, Any],
+) -> None:
+    _bot_writes_memory(monkeypatch, bot_keeps_it)
+    files_bucket.write('memories/AGENTS.md', b'- Prefers copper')
+
+    events = service.turn('write: /memories/AGENTS.md: - Trades gold', files=_files(), **props)
+
+    assert '<agent_memory>' not in service.recorder.prompts[-1]
+    assert 'Prefers copper' not in service.recorder.prompts[-1]
+    assert 'outside the working directory' in _tool_output(events)
+    assert files_bucket.read('memories/AGENTS.md') == b'- Prefers copper'
+
+
+def test_a_signed_in_users_session_holds_written_and_extracted_memory_in_their_own_blocks(
+    service: _Service, files_bucket: MountedFiles, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bot_writes_memory(monkeypatch)
+    files_bucket.write('memories/AGENTS.md', b'- Prefers copper')
+    service.turn('remember: trades gold', thread='chat-a', memory=True, files=_files())
+
+    service.turn('hello', thread='chat-b', memory=True, files=_files())
+
+    assert _written_memory(service.recorder.prompts[-1]) == '/memories/AGENTS.md\n\n- Prefers copper'
+    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- trades gold'
+
+
+def test_a_candidate_prompt_turn_gets_no_written_memory(
+    service: _Service, files_bucket: MountedFiles, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bot_writes_memory(monkeypatch)
+    files_bucket.write('memories/AGENTS.md', b'- Prefers copper')
+
+    service.turn('hello', files=_files(), agentSystemPrompt='Candidate prompt.')
+
+    assert '<agent_memory>' not in service.recorder.prompts[-1]
+    assert 'Prefers copper' not in service.recorder.prompts[-1]
+
+
+def test_a_turn_without_files_gets_no_written_memory(service: _Service, monkeypatch: pytest.MonkeyPatch) -> None:
+    _bot_writes_memory(monkeypatch)
+
+    events = service.turn('write: /memories/AGENTS.md: - Prefers copper')
+    service.turn('hello', thread='chat-b')
+
+    assert '<agent_memory>' not in service.recorder.prompts[-1]
+    assert 'outside the working directory' in _tool_output(events)
+
+
+def test_one_users_session_cannot_read_another_users_written_memory(
+    service: _Service, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bot_writes_memory(monkeypatch)
+    accounts = {user: MountedFiles(tmp_path / f'{user}-files') for user in ('user-1', 'user-2')}
+
+    def chat_as(user: str, text: str) -> list[dict[str, Any]]:
+        files = accounts[user]
+        monkeypatch.setenv('BOTCUBE_WORKSPACE', str(files.root))
+        monkeypatch.setattr(FilesMount, 'pull', lambda mount, root, excluded=(): files.mount(mount, root, excluded))
+        return service.turn(text, thread=f'{user}-chat', actor=user, user=user, files=_files())
+
+    chat_as('user-1', 'write: /memories/AGENTS.md: - Prefers copper')
+    chat_as('user-2', 'hello')
+
+    assert _written_memory(service.recorder.prompts[-1]) == '(No memory loaded)'
+    assert accounts['user-1'].read('memories/AGENTS.md') == b'- Prefers copper'
+
+
+def test_written_memory_loads_when_the_files_mount_is_still_pending_as_the_turn_starts(
+    service: _Service, files_bucket: MountedFiles, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bot_writes_memory(monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+
+    def mount(self: FilesMount, root: Path, excluded: object = ()) -> None:
+        entered.set()
+        assert release.wait(5)
+        (root / 'memories').mkdir()
+        (root / 'memories' / 'AGENTS.md').write_text('- Prefers copper')
+
+    def mount_later() -> None:
+        assert entered.wait(5)
+        time.sleep(0.2)
+        release.set()
+
+    monkeypatch.setattr(FilesMount, 'pull', mount)
+    mounting = threading.Thread(target=mount_later)
+    mounting.start()
+    try:
+        events = service.turn('hello', files=_files())
+    finally:
+        release.set()
+        mounting.join(5)
+
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert _written_memory(service.recorder.prompts[-1]) == '/memories/AGENTS.md\n\n- Prefers copper'
+
+
 # -- Conversation state ----------------------------------------------------------
 
 
@@ -2957,7 +3092,7 @@ def test_on_agentcore_an_anonymous_actor_gets_no_memory_block_tool_or_memory_rea
     service.turn('hello', thread='thread-a', actor='anonymous', user='anonymous', memory=True)
 
     assert 'memory' not in service.recorder.tools[-1]
-    assert '<agent_memory>' not in service.recorder.prompts[-1]
+    assert '<extracted_memory>' not in service.recorder.prompts[-1]
     # Its credentials serve only the Session's checkpoints.
     writes = 'lgw-8b983fb92d2eb12751695722fdb4e498-'
     assert {operation for operation, _ in agentcore_memory.sts.memory_calls} <= {'create_event', 'list_events'}
@@ -3706,7 +3841,7 @@ def test_opening_uses_the_page_name_and_skips_a_pitch_without_memory(service: _S
     })
     assert events[-1]['type'] == 'RUN_FINISHED'
     [[instruction]] = service.recorder.heard
-    assert '<agent_memory>' not in service.recorder.prompts[0]
+    assert '<extracted_memory>' not in service.recorder.prompts[0]
     assert 'If Memory is empty, skip the Memory pitch; never invent one.' in instruction
     if first_name is not None:
         assert 'The user\'s first name is "Ada".' in instruction
