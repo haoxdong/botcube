@@ -1,19 +1,7 @@
 import { format } from 'prettier';
 // `node emit.ts`: writes the BotCube Config's JSON Schemas.
 import { writeFileSync } from 'node:fs';
-import { registerHooks } from 'node:module';
-
-// Node strips the schema's types but keeps its `.js` import specifiers, which name the `.ts` file beside them.
-registerHooks({
-  resolve(specifier, context, nextResolve) {
-    try {
-      return nextResolve(specifier, context);
-    } catch (error) {
-      if (!/^\.\.?\/.*\.js$/.test(specifier)) throw error;
-      return nextResolve(specifier.replace(/\.js$/, '.ts'), context);
-    }
-  },
-});
+import './register-node-types.mjs';
 
 const { jsonSchemaCopies, jsonSchemas } = await import('./schema.ts');
 
