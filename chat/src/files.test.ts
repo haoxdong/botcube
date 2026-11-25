@@ -11,7 +11,7 @@ it('serves persisted EFS files without a store selector or S3 configuration', as
   const root = await mkdtemp(path.join(tmpdir(), 'files-default-'));
   try {
     const account = 'acct_efs_cutover';
-    const directory = path.join(root, path.basename(directoryOf(account)));
+    const directory = path.join(root, directoryOf(account));
     await mkdir(directory);
     await writeFile(path.join(directory, 'reopened.txt'), 'persisted');
     const env = {

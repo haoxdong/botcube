@@ -11,7 +11,6 @@ import { AccountResources } from './account-resources.js';
 import { accountFilesEfs, type AccessPoints } from './files-efs.js';
 import { computerFilesRoutes } from './computer-files-routes.js';
 import { HttpError } from './http-error.js';
-import { signFilesLink } from './files-link.js';
 
 const ACCOUNT = 'acct_0123456789';
 /** `printf acct_0123456789 | shasum -a 256`, first 32 hex digits. */
@@ -92,11 +91,10 @@ describe('EFS account Files', () => {
     const { files } = setup();
     const upload = await files.uploadUrl(ACCOUNT, 'new/notes.md');
     expect(upload.startsWith('/files/link?t=')).toBe(true);
-    expect(claims(upload)).toEqual({ op: 'PUT', accountDirectory: HASH, name: 'new/notes.md', expiresAtSeconds: NOW / 1000 + 300 });
+    expect(claims(upload)).toEqual({ op: 'PUT', userId: ACCOUNT, name: 'new/notes.md', expiresAtSeconds: NOW / 1000 + 300 });
     await expect(files.downloadUrl(ACCOUNT, 'new/notes.md')).rejects.toMatchObject({ status: 404 });
     await put(HASH, 'new/notes.md');
-    expect(claims(await files.downloadUrl(ACCOUNT, 'new/notes.md'))).toMatchObject({ op: 'GET', accountDirectory: HASH, name: 'new/notes.md' });
-    expect(signFilesLink('k', { op: 'GET', accountDirectory: 'a', name: 'n', expiresAtSeconds: 1 })).toBe(`/files/link?t=${Buffer.from('{"op":"GET","accountDirectory":"a","name":"n","expiresAtSeconds":1}').toString('base64url')}.${createHmac('sha256', 'k').update(Buffer.from('{"op":"GET","accountDirectory":"a","name":"n","expiresAtSeconds":1}').toString('base64url')).digest('base64url')}`);
+    expect(claims(await files.downloadUrl(ACCOUNT, 'new/notes.md'))).toMatchObject({ op: 'GET', userId: ACCOUNT, name: 'new/notes.md' });
   });
 
   it('refuses an upload over a taken name, into a hidden folder, or out of the account', async () => {

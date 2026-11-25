@@ -64,9 +64,11 @@ it('quarantines retirement, wipes late writes, and reuses an empty slot', async 
     await writeFile(path.join(slot, 'agent.txt'), 'agent output');
     expect(await files.list('acct_a')).toEqual([expect.objectContaining({ name: 'agent.txt', size: 12 })]);
     const link = new URL(await files.downloadUrl('acct_a', 'agent.txt'), 'https://chat.test');
-    const payload = link.searchParams.get('t')?.split('.')[0] ?? '';
-    expect(JSON.parse(Buffer.from(payload, 'base64url').toString()).accountDirectory).toBe(path.basename(directory));
+    const download = () => files.link({ method: 'GET', query: Object.fromEntries(link.searchParams), range: undefined });
+    const response = await download();
+    expect([response.status, await response.text()]).toEqual([200, 'agent output']);
     await files.delete('acct_a');
+    expect((await download()).status).toBe(403);
     await expect(files.mount('acct_b')).rejects.toThrow('pool is full');
     await mkdir(slot);
     await writeFile(path.join(slot, 'late.txt'), 'late writer');

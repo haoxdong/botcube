@@ -97,9 +97,6 @@ export function stsMountCredentials(roleArn: string, fileSystemArn: string): Mou
   };
 }
 
-/** The hash part of an account's directory, as a link names it. */
-const accountOf = (accountId: string) => directoryOf(accountId).slice('accounts/'.length);
-
 /**
  * Every account's Files on one EFS file system: the Chat Service mounts the `/accounts` access point
  * at `root`, each Browser and Runtime session mounts only its account's own access point, and the
@@ -121,10 +118,11 @@ export function accountFilesEfs({
   // arn:aws:elasticfilesystem:<region>:<account>:file-system/<id>
   const [, , , region = '', , resource = ''] = fileSystemArn.split(':');
   const fileSystemId = resource.split('/')[1] ?? '';
-  const directory = async (userId: string) => {
-    if (!accessPoints.directory) return path.join(root, accountOf(userId));
+  const directory = async (userId: string, allocate = true) => {
+    if (!accessPoints.directory) return path.join(root, directoryOf(userId));
     const saved = await records().filesAccessPoint(userId);
-    if (saved === null && await records().filesRetirement(userId) !== null) return path.join(root, accountOf(userId));
+    if (saved === null && !allocate) throw new HttpError(404, 'User Files lease not found');
+    if (saved === null && await records().filesRetirement(userId) !== null) return path.join(root, directoryOf(userId));
     return path.join(root, (await accessPoints.directory(saved ?? await accessPoint(userId))).slice('/accounts/'.length));
   };
   const fileOf = async (userId: string, name: string) => path.join(await directory(userId), filePath(name));
@@ -222,7 +220,7 @@ export function accountFilesEfs({
       return saved;
     }
     const token = createHash('sha256').update(`files:${userId}`).digest('hex').slice(0, 64);
-    const created = await accessPoints.create(`/${directoryOf(userId)}`, token, userId);
+    const created = await accessPoints.create(`/accounts/${directoryOf(userId)}`, token, userId);
     if (!accessPoints.retainUntilCleanup) await records().saveFilesAccessPoint(userId, created);
     return created;
   }
@@ -291,8 +289,8 @@ export function accountFilesEfs({
     await records().scheduleFilesCleanup(userId, Date.now() + MOUNT_SECONDS * 1000, retirement.lastCredentialExpiresAt);
   }
 
-  const signedLink = async (op: 'GET' | 'PUT', userId: string, name: string) =>
-    signFilesLink(linkKey, { op, accountDirectory: path.basename(await directory(userId)), name, expiresAtSeconds: Math.floor(Date.now() / 1000) + URL_SECONDS });
+  const signedLink = (op: 'GET' | 'PUT', userId: string, name: string) =>
+    signFilesLink(linkKey, { op, userId, name, expiresAtSeconds: Math.floor(Date.now() / 1000) + URL_SECONDS });
 
   return {
     async recoverCleanup() {
@@ -339,7 +337,13 @@ export function accountFilesEfs({
       if (!await exists(await fileOf(userId, name))) throw new HttpError(404, `No file ${name} in Files`);
       return signedLink('GET', userId, name);
     },
-    link: (request) => answerFilesLink({ key: linkKey, root }, request),
+    link: (request) => answerFilesLink({
+      key: linkKey,
+      directoryForUser: async (userId) => {
+        await requireActive(userId);
+        return directory(userId, false);
+      },
+    }, request),
     async remove(userId, name) {
       const file = filePath(name);
       await inFiles(userId, name, (tree) => tree.unlink(file));
@@ -383,7 +387,7 @@ export function accountFilesEfs({
       await requireActive(userId);
       const accessPointArn = await accessPoint(userId);
       await requireActive(userId, accessPointArn);
-      const credentials = await mountCredentials(accessPointArn, `files-${accountOf(userId)}`);
+      const credentials = await mountCredentials(accessPointArn, `files-${directoryOf(userId)}`);
       await requireActive(userId, accessPointArn);
       return { fileSystemId, mountTargetIp, accessPointId: accessPointArn.split('/').pop() ?? '', region, ...credentials };
     },

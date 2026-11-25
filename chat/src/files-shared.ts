@@ -94,7 +94,7 @@ export interface AccountFiles {
 
 /** The account's directory: a hash, so no account ID can name another's or escape the file system's layout. */
 export const directoryOf = (accountId: string) =>
-  `accounts/${createHash('sha256').update(accountId).digest('hex').slice(0, 32)}`;
+  createHash('sha256').update(accountId).digest('hex').slice(0, 32);
 
 /** `name`, or the first of `report (1).csv`, `report (2).csv`, ... that is not taken. */
 export function freeName(name: string, taken: ReadonlySet<string>): string {

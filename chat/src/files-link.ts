@@ -13,7 +13,7 @@ export const LINK_PATH = '/files/link';
 
 const LinkClaims = z.object({
   op: z.enum(['GET', 'PUT']),
-  accountDirectory: z.string().regex(/^[0-9a-f]{8,128}$/),
+  userId: z.string().min(1),
   name: z.string(),
   expiresAtSeconds: z.number(),
 });
@@ -30,11 +30,14 @@ export function signFilesLink(key: string, claims: LinkClaims): string {
 }
 
 /** A link reaches only its account's Files, along a path with no symbolic link, so a link the agent planted there leads nowhere. */
-export async function answerFilesLink({ key, root }: { key: string; root: string }, request: LinkRequest): Promise<Response> {
+export async function answerFilesLink({ key, directoryForUser }: {
+  key: string;
+  directoryForUser(userId: string): Promise<string>;
+}, request: LinkRequest): Promise<Response> {
   const claims = verify(key, request.query.t);
   if (claims?.op !== request.method) return refused();
   try {
-    const tree = await treeOf(root, claims.accountDirectory, request.method === 'PUT');
+    const tree = await treeOf(await directoryForUser(claims.userId), request.method === 'PUT');
     if (tree === null) return text(404, 'No such file');
     const part = `.uploads/${createHash('sha256').update(claims.name).digest('hex')}`;
     return request.method === 'PUT' ? await upload(tree, { name: claims.name, part }, request.query, request.body) : await download(tree, claims.name, request.range);
@@ -55,15 +58,14 @@ function verify(key: string, token: string | undefined): LinkClaims | null {
 }
 
 /** The account's Files; an upload makes the folder, a download finds none (null) before the first file. */
-async function treeOf(root: string, accountDirectory: string, create: boolean): Promise<AccountTree | null> {
-  const directory = path.join(root, accountDirectory);
+async function treeOf(directory: string, create: boolean): Promise<AccountTree | null> {
   if (create) await mkdir(directory, { recursive: true });
   const status = await lstat(directory).catch((error: unknown) => {
     if (missing(error)) return null;
     throw error;
   });
   if (status === null) return null;
-  if (!status.isDirectory()) throw new HttpError(400, `${accountDirectory} is not a folder`);
+  if (!status.isDirectory()) throw new HttpError(400, 'Files directory is not a folder');
   return AccountTree.at(directory);
 }
 

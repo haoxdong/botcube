@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RunAgentInput } from '@ag-ui/client';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -562,7 +562,7 @@ describe("the stock Chat Service's account deletion", () => {
       await documents.send(new PutCommand({ TableName: table, Item: { pk: `TOKEN#${token}`, sk: 'META',
         record: { accountId, kind: 'test-user', createdAt: 1, expiresAt: Math.floor(Date.now() / 1000) + 600 } } }));
       vault.add(accountId);
-      const directory = join(filesRoot, basename(directoryOf(accountId)));
+      const directory = join(filesRoot, directoryOf(accountId));
       mkdirSync(directory);
       writeFileSync(join(directory, 'kept.txt'), 'kept');
       return token;
@@ -580,13 +580,13 @@ describe("the stock Chat Service's account deletion", () => {
       expect((await deleteTestUser(deleted)).status).toBe(204);
       expect(vault.has('acct_stock_delete_revoked')).toBe(false);
       expect(await store.loadAccount('acct_stock_delete_revoked')).toBeNull();
-      expect(existsSync(join(filesRoot, basename(directoryOf('acct_stock_delete_revoked'))))).toBe(false);
+      expect(existsSync(join(filesRoot, directoryOf('acct_stock_delete_revoked')))).toBe(false);
 
       const failed = await deleteTestUser(refused);
       expect([failed.status, await failed.json()]).toEqual([503, { detail: 'Credential Service account revoke failed with HTTP 500' }]);
       expect(vault.has('acct_stock_delete_refused')).toBe(true);
       expect(await store.operatorTestUser(refused)).toMatchObject({ accountId: 'acct_stock_delete_refused', status: 'test' });
-      expect(existsSync(join(filesRoot, basename(directoryOf('acct_stock_delete_refused')), 'kept.txt'))).toBe(true);
+      expect(existsSync(join(filesRoot, directoryOf('acct_stock_delete_refused'), 'kept.txt'))).toBe(true);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       vi.unstubAllEnvs();
@@ -692,7 +692,7 @@ describe("the stock Chat Service's account deletion", () => {
     vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
     const env = { PORT: '0', AWS_REGION: 'us-east-1', BOTCUBE_CHAT_TABLE: table, BOTCUBE_CONFIG: PUBLIC_EXAMPLE, ...efsFiles() };
     const filesRoot = mkdtempSync(join(tmpdir(), 'stock-files-'));
-    const retired = join(filesRoot, basename(directoryOf('acct_stock_files_retired')));
+    const retired = join(filesRoot, directoryOf('acct_stock_files_retired'));
     mkdirSync(retired);
     writeFileSync(join(retired, 'left.txt'), 'left');
     const store = stockAccountStore(env);
