@@ -12,3 +12,9 @@ export const viewports = {
     hasTouch: false,
   },
 };
+
+/** The screenshot gate's viewports (visual/internal). */
+export const visualViewports = {
+  phone: { width: 390, height: 844 },
+  desktop: { width: 1440, height: 900 },
+};

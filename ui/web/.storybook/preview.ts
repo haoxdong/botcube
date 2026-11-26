@@ -1,13 +1,16 @@
 import type { Preview } from '@storybook/nextjs-vite';
 import { mswLoader } from 'msw-storybook-addon/csf3';
 import { setupWorker } from 'msw/browser';
-import { viewports } from './viewports';
+import { viewports, visualViewports } from './viewports';
 import { expect } from 'storybook/test';
 import { CHAT_SERVICE_ORIGIN } from './chat-origin';
 import '../src/app/globals.css';
 import './font.css';
 
 document.documentElement.classList.add('font-sans');
+
+const { phone: visualPhone } = visualViewports;
+const phone = process.env.STORYBOOK_VISUAL_COMPARE === '1' ? visualPhone : viewports.phone.viewport;
 
 const unhandledChatRequests: string[] = [];
 
@@ -40,8 +43,8 @@ const preview: Preview = {
         phone: {
           name: 'Phone',
           styles: {
-            width: `${process.env.STORYBOOK_VISUAL_COMPARE === '1' ? 390 : viewports.phone.viewport.width}px`,
-            height: `${process.env.STORYBOOK_VISUAL_COMPARE === '1' ? 900 : viewports.phone.viewport.height}px`,
+            width: `${phone.width}px`,
+            height: `${phone.height}px`,
           },
         },
         desktop: {

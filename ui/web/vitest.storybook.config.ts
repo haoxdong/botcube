@@ -10,7 +10,7 @@ import { playwright } from '@vitest/browser-playwright';
 import type { BrowserCommandContext } from 'vitest/node';
 import type { FramePath, ShownElement } from './.storybook/frames';
 import type { ScriptSource } from './.storybook/script-hosts';
-import { viewports } from './.storybook/viewports.js';
+import { viewports, visualViewports } from './.storybook/viewports.js';
 import { renderingProfile, prepareRendering, recordRendering } from '../../../scripts/web-checks/rendering-profile.mjs';
 import { startNativeTrace } from '../../../scripts/web-checks/native-trace.mjs';
 
@@ -113,17 +113,17 @@ export default defineConfig({
       enabled: true,
       api: { allowWrite: true },
       headless: true,
-      viewport: visual ? { width: screen === 'phone' ? 390 : 1440, height: 900 } : viewports[screen].viewport,
+      viewport: visual ? visualViewports[screen] : viewports[screen].viewport,
       provider: playwright({
         contextOptions: viewports[screen],
         launchOptions: profile ? { args: renderingProfile(profile).args } : {},
       }),
       instances: visual ? (['phone', 'desktop'] as const).map(name => ({
         browser: 'chromium', name: `${name}-light`,
-        viewport: { width: name === 'phone' ? 390 : 1440, height: 900 },
+        viewport: visualViewports[name],
         provide: { screen: name, [STORYBOOK_TEST_INITIAL_GLOBALS_PROVIDE_KEY]: { viewport: { value: name, isRotated: false } } },
         provider: playwright({
-          contextOptions: { ...viewports[name], viewport: { width: name === 'phone' ? 390 : 1440, height: 900 }, isMobile: false, deviceScaleFactor: 1, colorScheme: 'light', locale: 'en-US', timezoneId: 'UTC' },
+          contextOptions: { ...viewports[name], viewport: visualViewports[name], isMobile: false, deviceScaleFactor: 1, colorScheme: 'light', locale: 'en-US', timezoneId: 'UTC' },
           launchOptions: { args: [...renderingProfile('software').args, '--disable-skia-runtime-opts', '--disable-partial-raster'] },
         }),
       })) : [{ browser: 'chromium' }],

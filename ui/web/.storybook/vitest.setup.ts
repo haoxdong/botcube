@@ -75,7 +75,15 @@ afterEach(async (context) => {
   await document.fonts.ready;
   await animationsSettled(document, inject('visualCompare') ? [...document.querySelectorAll('[role=region], [data-slot=popover-content], [data-slot=popover-content] *, .chat-model-picker, .chat-model-picker *')] : []);
   if (inject('visualCompare')) {
-    await expect(document.documentElement).toMatchScreenshot(context.task.name.replace(/[^a-zA-Z0-9-]+/g, '-'));
+    // The viewport as shown: a taller <html> would grow the capture and move fixed elements.
+    const shown = document.createElement('div');
+    shown.style.cssText = 'position: fixed; inset: 0; pointer-events: none';
+    document.body.append(shown);
+    try {
+      await expect(shown).toMatchScreenshot(context.task.name.replace(/[^a-zA-Z0-9-]+/g, '-'));
+    } finally {
+      shown.remove();
+    }
   }
   if (!output) return;
   const file = `${output}/${context.task.name}-${inject('screen')}.png`;
