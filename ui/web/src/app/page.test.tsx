@@ -2862,6 +2862,26 @@ const userComesBack = async (event: keyof typeof comeBack = 'focus') => {
 const mainChatLoads = () => requestsTo('/main-chat').length;
 const sideChatLoads = () => requestsTo('/threads').length;
 
+it('replays a Side Chat Turn already read in another view without remounting the draft', async () => {
+  window.history.replaceState(null, '', '/?chat=shared');
+  service.sideChats = [sideChat('shared', 'Shared chat')];
+  service.replies.set('shared', [{ id: 'initial', role: 'assistant', content: 'Earlier reply' }]);
+  await renderPage();
+  const composer = screen.getByLabelText<HTMLTextAreaElement>('Message');
+  fireEvent.change(composer, { target: { value: 'Unsent draft' } });
+
+  const completedAt = '2026-01-02T03:04:06.000Z';
+  const reply: Message = { id: 'remote-reply', role: 'assistant', content: 'Reply from the other view' };
+  service.replies.set('shared', [...agent().messages, reply]);
+  service.sideChats = [{ ...sideChat('shared', 'Shared chat'), turn_completed_at: completedAt, read_at: completedAt }];
+  await userComesBack();
+
+  expect(agent().messages.at(-1)).toEqual(reply);
+  expect(screen.getByLabelText('Message')).toBe(composer);
+  expect(composer.value).toBe('Unsent draft');
+  expect(requestsTo('/threads/shared/read')).toEqual([]);
+});
+
 describe('a scheduled post to the open Main Chat', () => {
   const post: Message = { id: 'post', role: 'user', content: 'Scheduled task "Rates": the 10y rose 4bp.' };
 
