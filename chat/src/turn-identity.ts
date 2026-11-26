@@ -31,6 +31,7 @@ export interface TurnIdentityClaims {
   /** The Session's immutable filing user ID. */
   filingActorId: string;
   sessionId: string;
+  readonly enabledConnectors?: readonly string[];
   /** The Turn's start (ISO 8601): the token expires an hour later. */
   startedAt: string;
 }
@@ -122,7 +123,10 @@ export class TurnIdentity implements TurnIdentitySource {
 
   async sign(turn: TurnIdentityClaims): Promise<string> {
     const principalTags = Object.fromEntries(Object.entries(turnScope(turn)).map(([key, value]) => [key, [value]]));
-    return await new SignJWT({ [TAGS_CLAIM]: { principal_tags: principalTags } })
+    return await new SignJWT({
+      [TAGS_CLAIM]: { principal_tags: principalTags },
+      enabledConnectors: turn.enabledConnectors ?? [],
+    })
       .setProtectedHeader({ alg: 'ES256', kid: this.signing.kid, typ: 'JWT' })
       .setIssuer(this.issuer)
       .setAudience(TOKEN_AUDIENCES.turnIdentity)
@@ -174,7 +178,7 @@ export class TurnIdentity implements TurnIdentitySource {
       response_types_supported: ['id_token'],
       subject_types_supported: ['public'],
       id_token_signing_alg_values_supported: ['ES256'],
-      claims_supported: ['iss', 'sub', 'aud', 'iat', 'exp', 'jti', TAGS_CLAIM],
+      claims_supported: ['iss', 'sub', 'aud', 'iat', 'exp', 'jti', TAGS_CLAIM, 'enabledConnectors'],
     };
   }
 

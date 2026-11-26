@@ -19,6 +19,8 @@ export interface Account {
   /** The profile: seeded from the first login-capable Sign-in, then the user's; its photo is an item of its own. */
   displayName?: string;
   lastActiveAt?: number;
+  /** Explicit Connector choices override the Admin defaults. */
+  connectorChoices?: Record<string, boolean>;
   /** A scheduled run needed the user to sign in again; cleared when they do. */
   signInNeeded?: boolean;
   /** The OpenAI Sign-in's ChatGPT identity (its ID token's `sub`): the Account has Plan Usage (ADR 0078). */

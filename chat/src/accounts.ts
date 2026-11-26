@@ -6,6 +6,7 @@ import type { Account } from './account-record.js';
 import type { AccountStore } from './account-store.js';
 import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
+import { jsonPayload } from './payload.js';
 import type { AccountFiles } from './files.js';
 
 /** A site the agent is signed in to, as `GET /account/sign-ins` lists it. */
@@ -23,6 +24,7 @@ export interface AccountRoutesOptions<A extends Account> {
   session?: (account: A) => Record<string, unknown> | Promise<Record<string, unknown>>;
   /** The Agent Profile's Sign-ins tab: the sites the account's agent is signed in to. */
   signIns: (account: A) => Promise<SignIn[]>;
+  connectors?: readonly { name: string; defaultOn?: boolean }[] | undefined;
   /** What else signing out clears, once the session is gone. */
   signedOut?: () => void;
   /** Where a signed-out browser goes next, so the OIDC provider ends its own session too. */
@@ -35,7 +37,7 @@ export interface AccountRoutesOptions<A extends Account> {
  * registered account its session signed in. Serves `/account/session`,
  * `/account/sign-ins`, `/auth/logout` and the account profile.
  */
-export function accountRoutes<A extends Account>({ store, cookies, session, signIns, signedOut, logoutUrl, deleteTestUser }: AccountRoutesOptions<A>) {
+export function accountRoutes<A extends Account>({ store, cookies, session, signIns, connectors = [], signedOut, logoutUrl, deleteTestUser }: AccountRoutesOptions<A>) {
   const naming = () => store().naming;
   const trustedAccountId = (c: Context) => store().sessionAccountId(cookies.sessionToken(c));
   async function operatorAccount(c: Context): Promise<A | null> {
@@ -134,6 +136,24 @@ export function accountRoutes<A extends Account>({ store, cookies, session, sign
       throw new HttpError(401, `${naming().product} authentication is required to list Sign-ins`);
     }
     return c.json({ signIns: await signIns(account) });
+  });
+
+  routes.get('/account/connectors', async (c) => {
+    const { account } = await owner(c);
+    const choices = account?.connectorChoices ?? {};
+    return c.json({ connectors: connectors.map(({ name, defaultOn }) => ({
+      name, enabled: Object.hasOwn(choices, name) ? choices[name] : defaultOn === true,
+    })) });
+  });
+
+  routes.put('/account/connectors/:name', async (c) => {
+    const account = await owner(c);
+    const name = c.req.param('name');
+    if (!connectors.some((connector) => connector.name === name)) throw new HttpError(404, 'Connector is not configured');
+    const payload = await jsonPayload(c);
+    if (typeof payload?.enabled !== 'boolean') throw new HttpError(400, 'enabled must be a boolean');
+    await store().setConnectorChoice(account.owner, name, payload.enabled);
+    return c.body(null, 204);
   });
 
   routes.route('/', accountProfileRoutes({ signedInAccount, store }));

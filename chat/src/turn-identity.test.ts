@@ -42,7 +42,7 @@ describe('OIDC discovery', () => {
       response_types_supported: ['id_token'],
       subject_types_supported: ['public'],
       id_token_signing_alg_values_supported: ['ES256'],
-      claims_supported: ['iss', 'sub', 'aud', 'iat', 'exp', 'jti', 'https://aws.amazon.com/tags'],
+      claims_supported: ['iss', 'sub', 'aud', 'iat', 'exp', 'jti', 'https://aws.amazon.com/tags', 'enabledConnectors'],
     });
   });
 
@@ -87,6 +87,7 @@ describe('Turn identity JWT', () => {
       iat: startedAtSeconds,
       exp: startedAtSeconds + 3600,
       jti: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      enabledConnectors: [],
       'https://aws.amazon.com/tags': {
         principal_tags: {
           actorId: [filed('acct_account-1')],
@@ -97,6 +98,14 @@ describe('Turn identity JWT', () => {
         },
       },
     });
+  });
+
+  it.each([{ enabledConnectors: ['bigdata', 'gmail'] }, { enabledConnectors: [] }])('signs enabled Connectors $enabledConnectors as a string array', async ({ enabledConnectors }) => {
+    const token = await identity.sign({ ...turn, enabledConnectors });
+    const { payload } = await jwtVerify(token, createLocalJWKSet(await publishedKeys()), {
+      issuer: ISSUER, audience: 'sts.amazonaws.com', currentDate: new Date(turn.startedAt),
+    });
+    expect(payload.enabledConnectors).toEqual(enabledConnectors);
   });
 
   it('expires one hour after Turn start', async () => {

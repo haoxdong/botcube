@@ -246,6 +246,12 @@ export class AccountStore<A extends Account = Account> extends GuestExpiry<A> {
     });
   }
 
+  setConnectorChoice(accountId: string, name: string, enabled: boolean): Promise<A> {
+    return this.change(accountId, (account) => {
+      account.connectorChoices = { ...account.connectorChoices, [name]: enabled };
+    });
+  }
+
   /** Set the account's display name. */
   updateProfile(accountId: string, profile: { displayName: string }): Promise<A> {
     return this.change(accountId, (account) => {

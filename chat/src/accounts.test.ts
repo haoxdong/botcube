@@ -16,10 +16,11 @@ class RegisteringStore extends AccountStore {
   }
 }
 
-function app(preferred?: (trusted: string | null) => Promise<string | null>, logoutUrl?: string) {
+function app(preferred?: (trusted: string | null) => Promise<string | null>, logoutUrl?: string, connectors?: readonly { name: string; defaultOn?: boolean }[]) {
   const store = new RegisteringStore('chat', { key: 'bot', product: 'Bot' }, memoryDocuments());
   const accounts = accountRoutes({
     logoutUrl,
+    connectors,
     store: () => store,
     cookies: accountCookies('bot'),
     session: (account) => ({ named: account.displayName ?? null }),
@@ -34,6 +35,27 @@ function app(preferred?: (trusted: string | null) => Promise<string | null>, log
 
 const cookie = (response: Response, name: string) =>
   response.headers.getSetCookie().find((header) => header.startsWith(`${name}=`))?.split(';')[0] ?? '';
+
+it('starts with the Admin defaults and saves each User’s Connector choices', async () => {
+  const { routes } = app(undefined, undefined, [{ name: 'bigdata', defaultOn: true }, { name: 'gmail' }]);
+  const createUser = async () => {
+    const response = await routes.request('/account/session');
+    return { Cookie: cookie(response, 'bot_account_id'), 'Content-Type': 'application/json' };
+  };
+  const [first, second] = await Promise.all([createUser(), createUser()]);
+  const list = async (headers: HeadersInit) => (await routes.request('/account/connectors', { headers })).json();
+  const set = (headers: HeadersInit, name: string, enabled: boolean) =>
+    routes.request(`/account/connectors/${name}`, { method: 'PUT', headers, body: JSON.stringify({ enabled }) });
+
+  const defaults = { connectors: [{ name: 'bigdata', enabled: true }, { name: 'gmail', enabled: false }] };
+  expect(await list(first)).toEqual(defaults);
+  expect((await set(first, 'bigdata', false)).status).toBe(204);
+  expect((await set(first, 'gmail', true)).status).toBe(204);
+  expect((await set(first, 'unknown', true)).status).toBe(404);
+  expect((await set({}, 'bigdata', false)).status).toBe(401);
+  expect(await list(first)).toEqual({ connectors: [{ name: 'bigdata', enabled: false }, { name: 'gmail', enabled: true }] });
+  expect(await list(second)).toEqual(defaults);
+});
 
 it.each(['anonymous', 'registered'] as const)('reads the %s owner account once per request', async (status) => {
   const { store, routes } = app();
