@@ -53,8 +53,15 @@ function afterChartDrag(element: HTMLElement, purge: () => void): () => void {
   const start = () => { state = 'dragging'; };
   const end = () => {
     // Plotly's document release handler must finish before purge deletes its layout.
-    if (state === 'retiring') setTimeout(retire, 0);
-    else if (state !== 'retired') state = 'idle';
+    if (state === 'retiring') {
+      const { port1, port2 } = new MessageChannel();
+      port1.onmessage = () => {
+        port1.close();
+        retire();
+      };
+      port2.postMessage(null);
+      port2.close();
+    } else if (state !== 'retired') state = 'idle';
   };
   const options = { capture: true, signal: listeners.signal };
   element.addEventListener('mousedown', start, options);

@@ -42,7 +42,7 @@ export function layOut(sections: string[]): Frame {
   element.setAttribute("sandbox", "allow-same-origin");
   element.setAttribute("aria-hidden", "true");
   element.tabIndex = -1;
-  element.style.cssText = "position: fixed; left: -100000px; top: 0; width: 1920px; height: 1080px; border: 0;";
+  element.className = "artifact-export-layout";
   document.body.append(element);
   const frameDocument = element.contentDocument;
   const frameWindow = element.contentWindow;
