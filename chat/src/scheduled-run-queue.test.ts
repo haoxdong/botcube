@@ -338,6 +338,7 @@ describe('pollScheduledRuns', () => {
 
 describe('ecsTaskDraining', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -386,6 +387,28 @@ describe('ecsTaskDraining', () => {
     expect(await ecsTaskDraining(undefined, client)()).toBe(false);
     expect(fetch).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it('uses the desired status when DescribeTasks takes six seconds during startup', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), ms);
+      return controller.signal;
+    });
+    metadata({ Cluster: cluster, TaskARN: taskArn });
+    const { client, send } = ecs([]);
+    send.mockImplementation((_command, options) => {
+      const abortSignal = options.abortSignal;
+      if (!(abortSignal instanceof AbortSignal)) throw new Error('DescribeTasks requires an abort signal');
+      return new Promise<DescribeTasksCommandOutput>((resolve, reject) => {
+        setTimeout(() => resolve({ tasks: [{ taskArn, desiredStatus: 'RUNNING' }], $metadata: {} }), 6_000);
+        abortSignal.addEventListener('abort', () => reject(abortSignal.reason), { once: true });
+      });
+    });
+
+    const result = expect(ecsTaskDraining(metadataUri, client)()).resolves.toBe(false);
+    await Promise.all([result, vi.advanceTimersByTimeAsync(6_000)]);
   });
 
   it('follows the desired status ECS describes for its own task, named by its task metadata', async () => {

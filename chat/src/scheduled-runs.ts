@@ -330,11 +330,11 @@ export function ecsTaskDraining(
     const { Cluster, TaskARN } = (await response.json()) as { Cluster?: unknown; TaskARN?: unknown };
     if (typeof Cluster !== 'string' || typeof TaskARN !== 'string') throw new Error('ECS task metadata has no Cluster or TaskARN');
     const { tasks } = await ecs.send(new DescribeTasksCommand({ cluster: Cluster, tasks: [TaskARN] }), {
-      abortSignal: AbortSignal.timeout(5000),
+      abortSignal: AbortSignal.timeout(10_000),
     });
-    const desiredStatus = tasks?.[0]?.desiredStatus;
-    if (desiredStatus === undefined) throw new Error(`ECS describes no desired status for task ${TaskARN}`);
-    return desiredStatus === 'STOPPED';
+    const status = tasks?.[0]?.desiredStatus;
+    if (status === undefined) throw new Error(`ECS describes no desired status for task ${TaskARN}`);
+    return status === 'STOPPED';
   };
 }
 
