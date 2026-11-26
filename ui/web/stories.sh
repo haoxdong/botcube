@@ -17,8 +17,14 @@ if [ "${1:-}" = '--screenshots' ]; then
   if [ "$#" -gt 0 ]; then shift; fi
 fi
 if [ "${1:-}" = '--' ]; then shift; fi
+mode=run
+if [ "${1:-}" = '--related' ]; then
+  shift
+  mode=related
+  set -- --run "$@"
+fi
 pnpm exec msw init .storybook/public --save
 status=0
-STORYBOOK_SCREEN=phone pnpm exec vitest run --config vitest.storybook.config.ts "$@" || status=1
-STORYBOOK_SCREEN=desktop pnpm exec vitest run --config vitest.storybook.config.ts "$@" || status=1
+STORYBOOK_SCREEN=phone pnpm exec vitest "$mode" --config vitest.storybook.config.ts "$@" || status=1
+STORYBOOK_SCREEN=desktop pnpm exec vitest "$mode" --config vitest.storybook.config.ts "$@" || status=1
 exit "$status"

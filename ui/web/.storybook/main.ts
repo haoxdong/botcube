@@ -19,14 +19,15 @@ const virtualStore = path.resolve(
 const bot = loadBotConfig({ appRoot: app, repoRoot: repo });
 
 const visual = process.env.STORYBOOK_VISUAL_COMPARE === '1';
+const resolvePresets = visual || process.env.VITEST === 'true';
 
 const config: StorybookConfig = {
-  framework: visual ? path.dirname(fileURLToPath(import.meta.resolve('@storybook/nextjs-vite/package.json'))) : '@storybook/nextjs-vite',
+  framework: resolvePresets ? path.dirname(fileURLToPath(import.meta.resolve('@storybook/nextjs-vite/package.json'))) : '@storybook/nextjs-vite',
   stories: visual
     ? (process.env.STORYBOOK_VISUAL_FILES?.split(',') ?? Object.keys(JSON.parse(readFileSync(path.join(repo, 'botcube/ui/web/visual/internal/coverage.json'), 'utf8')))).map(file => path.relative(path.join(app, '.storybook'), path.join(repo, file)))
     : bot.stories,
   previewAnnotations: bot.previewAnnotations,
-  addons: ['@storybook/addon-a11y', '@storybook/addon-vitest'].map(name => visual ? path.dirname(fileURLToPath(import.meta.resolve(`${name}/package.json`))) : name),
+  addons: ['@storybook/addon-a11y', '@storybook/addon-vitest'].map(name => resolvePresets ? path.dirname(fileURLToPath(import.meta.resolve(`${name}/package.json`))) : name),
   staticDirs: ['public', ...(bot.staticDirs ?? [])],
   // The app's viewport (src/app/layout.tsx): viewport-fit=cover, so an iPhone draws the phone chat under its status bar.
   previewHead: (head) =>

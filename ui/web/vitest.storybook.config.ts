@@ -93,10 +93,21 @@ export default defineConfig({
       configDir: path.resolve(appRoot, '.storybook'),
       tags: visual ? { include: ['visual'] } : { exclude: ['visual'] },
       initialGlobals: { viewport: { value: visual ? null : screen, isRotated: false } },
+    }).then(plugins => {
+      const storyTests = plugins.find(plugin => plugin.name === 'vite-plugin-storybook-test');
+      const transform = storyTests?.transform;
+      if (storyTests && typeof transform === 'function') {
+        // Vitest's related-test scan needs source imports. Storybook's browser-only transform emits import.meta access that Vite cannot transform for SSR.
+        storyTests.transform = function (code, id, options) {
+          if (!options?.ssr) return transform.call(this, code, id, options);
+        };
+      }
+      return plugins;
     }),
   ],
   test: {
     setupFiles: ['./.storybook/vitest.setup.ts'],
+    forceRerunTriggers: [],
     fileParallelism: visual,
     ...(visual ? { maxWorkers: 4, sequence: { sequencer: VisualSequencer }, api: { allowWrite: true } } : {}),
     ...(visual ? { update } : {}),
