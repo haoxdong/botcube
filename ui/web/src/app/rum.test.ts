@@ -52,7 +52,21 @@ it("collects uncaught errors and failed requests under the build's release", asy
   const { started, idle } = startWhenIdle();
   idle();
   await started;
-  expect(sdk.constructed).toEqual([["test", "0123abcd", "us-east-1", expect.objectContaining({ telemetries: ["errors", ["http", { urlsToExclude: [/\/production\/wake(?:\?|$)/] }]] })]]);
+  expect(sdk.constructed).toEqual([["test", "0123abcd", "us-east-1", expect.objectContaining({ telemetries: ["errors", ["http", { urlsToExclude: expect.any(Array) }]] })]]);
+});
+
+it("excludes RUM credential requests while collecting application failures", async () => {
+  const { started, idle } = startWhenIdle();
+  idle();
+  await started;
+  const config = sdk.constructed[0]?.[3] as { telemetries: [string, [string, { urlsToExclude: RegExp[] }]] };
+  const exclusions = config.telemetries[1][1].urlsToExclude;
+  const excluded = (url: string) => exclusions.some((pattern) => pattern.test(url));
+  expect(excluded("https://cognito-identity.us-east-1.amazonaws.com/")).toBe(true);
+  expect(excluded("https://sts.us-east-1.amazonaws.com/")).toBe(true);
+  expect(excluded("https://api.example.test/production/wake")).toBe(true);
+  expect(excluded("https://api.example.test/agent-computer")).toBe(false);
+  expect(excluded("https://cognito-identity.us-east-1.amazonaws.com.example.test/")).toBe(false);
 });
 
 it.each([false, true])("marks the session automated when an automation drives the browser (%s), so the error grouper counts its errors as test traffic", async (webdriver) => {

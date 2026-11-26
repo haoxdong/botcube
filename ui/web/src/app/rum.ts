@@ -14,11 +14,7 @@ export function rumConfig(): RumConfig | null {
   return { appMonitorId, identityPoolId, region, release: process.env.NEXT_PUBLIC_RELEASE ?? "unreleased" };
 }
 
-/**
- * Reports the page's moments, uncaught errors and failed requests to CloudWatch RUM once the page has loaded and the browser is idle: the RUM client is
- * fetched then, never before the first paint it would slow. Moments measured before it arrives wait in the page's
- * performance timeline.
- */
+/** Start RUM after the first paint. Earlier moments wait in the performance timeline. */
 export function startRum({ appMonitorId, identityPoolId, region, release }: RumConfig): Promise<void> {
   return new Promise<void>((resolve, reject) => {
   const start = () =>
@@ -28,7 +24,12 @@ export function startRum({ appMonitorId, identityPoolId, region, release }: RumC
           identityPoolId,
           endpoint: `https://dataplane.rum.${region}.amazonaws.com`,
           sessionSampleRate: 1,
-          telemetries: ["errors", ["http", { urlsToExclude: [/\/production\/wake(?:\?|$)/] }]],
+          telemetries: ["errors", ["http", {
+            urlsToExclude: [
+              /^https:\/\/(?:cognito-identity|sts)(?:\.[a-z0-9-]+)?\.amazonaws\.com(?:\/|$)/,
+              /\/production\/wake(?:\?|$)/,
+            ],
+          }]],
         });
         // Every event's metadata carries it, so the error grouper counts an automated browser's errors as test traffic.
         rum.addSessionAttributes({ automated: navigator.webdriver === true });
