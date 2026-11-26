@@ -539,8 +539,11 @@ def _memory_tools(
 
 
 def _files_ready(files: FilesMount | None, run_id: str) -> bool:
+    timing = turn_timing.current()
+    started = timing.receipt if timing is not None else perf_counter()
+    readiness = TurnFiles(files, _workspace(), excluded_paths(_require_bot().skills))
     try:
-        TurnFiles(files, _workspace(), excluded_paths(_require_bot().skills)).ensure()
+        readiness.ensure(timeout=max(0.0, started + 1.5 - perf_counter()))
     except FilesMountError as error:
         log.warning('Harness Turn answers without Written Memory run_id=%s: %s', run_id, error)
         return False

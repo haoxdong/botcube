@@ -2366,17 +2366,34 @@ def test_one_users_session_cannot_read_another_users_written_memory(
     assert accounts[access_points['user-1']].read('memories/AGENTS.md') == b'- Prefers copper\n'
 
 
+@pytest.mark.parametrize('mount_times_out', [False, True], ids=['outage', 'timeout'])
 def test_a_turn_without_files_answers_and_the_sessions_next_turn_loads_written_memory(
-    service: _Service, files_bucket: MountedFiles, monkeypatch: pytest.MonkeyPatch,
+    service: _Service, files_bucket: MountedFiles, monkeypatch: pytest.MonkeyPatch, mount_times_out: bool,
 ) -> None:
     _bot_writes_memory(monkeypatch)
     files_bucket.write('memories/AGENTS.md', b'- Prefers copper')
-    def unavailable(*args: Any) -> None:
-        raise FilesMountError('EFS unavailable')
-    monkeypatch.setattr(FilesMount, 'pull', unavailable)
+    release, mounted = threading.Event(), threading.Event()
+    mount_lock = threading.Lock()
 
-    outage = service.turn('hello', files=_files())
-    monkeypatch.setattr(FilesMount, 'pull', lambda mount, root, excluded=(): files_bucket.mount(mount, root, excluded))
+    def mount(files: FilesMount, root: Path, excluded: object = ()) -> None:
+        with mount_lock:
+            if mounted.is_set():
+                return
+            if mount_times_out:
+                release.wait(5)
+            elif not release.is_set():
+                raise FilesMountError('EFS unavailable')
+            files_bucket.mount(files, root, excluded)
+            mounted.set()
+
+    monkeypatch.setattr(FilesMount, 'pull', mount)
+    try:
+        outage = service.turn('hello', files=_files())
+    finally:
+        release.set()
+        if mount_times_out:
+            assert mounted.wait(5)
+
     recovered = service.turn('hello again', files=_files())
 
     assert outage[-1]['type'] == 'RUN_FINISHED'

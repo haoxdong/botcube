@@ -75,17 +75,14 @@ class TurnFiles:
         if self.used and pull is not None and pull.done():
             pull.result()
 
-    def ensure(self) -> None:
+    def ensure(self, *, timeout: float | None = None) -> None:
         self.used = True
         self.raise_if_failed()
-        self._ensure()
-
-    def _ensure(self) -> None:
         if self._files is None:
             return
         pull = self._start_pull()
         try:
-            pull.result(timeout=EFS_READY_TIMEOUT)
+            pull.result(timeout=EFS_READY_TIMEOUT if timeout is None else timeout)
         except TimeoutError as error:
             self._failure = FilesMountError('Files mount readiness deadline exceeded')
             raise self._failure from error
