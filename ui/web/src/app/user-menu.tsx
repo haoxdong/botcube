@@ -2,7 +2,7 @@
 
 import { Arrives, Fades } from "./motion";
 import { useRef, useState, type KeyboardEvent } from "react";
-import { Pencil } from "lucide-react";
+import { LogIn, LogOut, Pencil, RefreshCw } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { webUiPlugin } from "@bot-ui";
 import type { AuthUiState } from "../plugin/index.js";
@@ -102,10 +102,14 @@ function AccountItems({ auth, name, onEdit, onLogout }: {
   onEdit: () => void;
   onLogout: () => void;
 }) {
-  const { status: authStatus, loadFailure, user: userInfo, userLoading, editProfile: onEditProfile, login: onLogin, relink: onRelink } = auth;
+  const { status: authStatus, guest, loadFailure, user: userInfo, userLoading, editProfile: onEditProfile, login: onLogin, relink: onRelink } = auth;
+  const siteLinked = authStatus === "authed";
+  const hasAccountSession = guest === false || (guest === undefined && siteLinked);
+  const LinkIcon = siteLinked ? RefreshCw : LogIn;
+  const linkLabel = siteLinked ? UI_CONFIG.relinkLabel : UI_CONFIG.loginLabel;
   return (
     <>
-      <Fades>{(authStatus === "authed" || userInfo) && (
+      <Fades>{(hasAccountSession || siteLinked || userInfo) && (
         <>
           <div key="0" className="user-menu-header">
             <Avatar picture={userInfo?.photo} name={name} blank={userLoading} size={32} />
@@ -124,41 +128,23 @@ function AccountItems({ auth, name, onEdit, onLogout }: {
       )}</Fades>
       <Arrives state={loadFailure ? "failed" : authStatus}>{loadFailure ? (
         <LoadFailed error={loadFailure.error} onRetry={loadFailure.retry} />
-      ) : authStatus === "authed" ? (
-        <>
-          <DropdownMenuItem onClick={() => onRelink()}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
-              <path d="M21 3v5h-5" />
-              <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
-              <path d="M3 21v-5h5" />
-            </svg>
-            <span>{UI_CONFIG.relinkLabel}</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onLogout()}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-              <polyline points="16 17 21 12 16 7" />
-              <line x1="21" y1="12" x2="9" y2="12" />
-            </svg>
-            <span>{UI_CONFIG.logoutLabel ?? "Log out"}</span>
-          </DropdownMenuItem>
-        </>
       ) : (
         <>
-        {auth.guest === true && (
-          <p className="user-menu-note" role="note">{GUEST_NOTE} Sign in to save it.</p>
-        )}
-        <DropdownMenuItem onClick={() => onLogin()} disabled={authStatus === "loading"}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
-            <polyline points="10 17 15 12 10 7" />
-            <line x1="15" y1="12" x2="3" y2="12" />
-          </svg>
-          <span>{authStatus === "loading" ? "Connecting..." : UI_CONFIG.loginLabel}</span>
-        </DropdownMenuItem>
+          {guest === true && !siteLinked && (
+            <p className="user-menu-note" role="note">{GUEST_NOTE} Sign in to save it.</p>
+          )}
+          <DropdownMenuItem onClick={siteLinked || guest === false ? onRelink : onLogin} disabled={authStatus === "loading"}>
+            <LinkIcon size={16} aria-hidden />
+            <span>{authStatus === "loading" ? "Connecting..." : linkLabel}</span>
+          </DropdownMenuItem>
         </>
       )}</Arrives>
+      {hasAccountSession && (
+        <DropdownMenuItem onClick={onLogout}>
+          <LogOut size={16} aria-hidden />
+          <span>{UI_CONFIG.logoutLabel ?? "Log out"}</span>
+        </DropdownMenuItem>
+      )}
     </>
   );
 }

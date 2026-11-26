@@ -5610,6 +5610,21 @@ describe('account menu', () => {
     expect(state.login).toHaveBeenCalledOnce();
   });
 
+  it('lets a registered User sign out before linking a site', async () => {
+    const state = auth({ status: 'unauthed', guest: false, user: { name: 'Ada Lovelace' } });
+    await renderPage(state);
+    await userEvent.click(trigger());
+
+    const options = within(openMenu());
+    await userEvent.click(options.getByRole('menuitem', { name: 'Sign in' }));
+    expect(state.relink).toHaveBeenCalledOnce();
+    expect(state.login).not.toHaveBeenCalled();
+
+    await userEvent.click(trigger());
+    await userEvent.click(within(openMenu()).getByRole('menuitem', { name: 'Sign out' }));
+    expect(state.logout).toHaveBeenCalledOnce();
+  });
+
   it('shows the photo of a user without a name, as the bot account', async () => {
     await renderPage(auth({ user: { photo: PICTURE } }));
     expect(pictureIn(trigger())).toBe(PICTURE);
