@@ -281,6 +281,7 @@ class _Service:
         env: Mapping[str, str] | None = None,
         session: str | None = None,
         message: str | None = None,
+        run_id: str | None = None,
         **props: Any,
     ) -> list[dict[str, Any]]:
         forwarded: dict[str, Any] = {'actorId': actor, 'memory': memory, 'env': env, **props}
@@ -291,7 +292,7 @@ class _Service:
         return self.post(
             {
                 'threadId': thread,
-                'runId': f'run-{len(self.recorder.prompts)}',
+                'runId': run_id if run_id is not None else f'run-{len(self.recorder.prompts)}',
                 'messages': [{'id': message or f'message-{len(self.recorder.prompts)}', 'role': 'user',
                               'content': text}],
                 'tools': [],

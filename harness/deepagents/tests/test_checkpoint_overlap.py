@@ -132,6 +132,12 @@ def test_superseded_graph_failure_cannot_revoke_replacement_snapshot(
 ) -> None:
     from concurrent.futures import ThreadPoolExecutor
 
+    stream_kwargs = serving.SessionAgent.get_stream_kwargs
+
+    def checkpoint_at_exit(self: serving.SessionAgent, **kwargs: Any) -> dict[str, Any]:
+        return {**stream_kwargs(self, **kwargs), 'durability': 'exit'}
+
+    monkeypatch.setattr(serving.SessionAgent, 'get_stream_kwargs', checkpoint_at_exit)
     built, read, release = threading.Event(), threading.Event(), threading.Event()
     build, initial = serving._agent_and_backend, serving._SESSION_TURNS.read_checkpoint
     calls = 0
@@ -155,10 +161,10 @@ def test_superseded_graph_failure_cannot_revoke_replacement_snapshot(
     monkeypatch.setattr(serving, '_agent_and_backend', held_build)
     monkeypatch.setattr(serving._SESSION_TURNS, 'read_checkpoint', observed_read)
     with ThreadPoolExecutor(max_workers=1) as pool:
-        older = pool.submit(_turn, service, 'obsolete')
+        older = pool.submit(_turn, service, 'obsolete', run_id='obsolete-run')
         try:
             assert built.wait(5) and read.wait(5)
-            assert _turn(service, 'replacement')[-1]['type'] == 'RUN_FINISHED'
+            assert _turn(service, 'replacement', run_id='replacement-run')[-1]['type'] == 'RUN_FINISHED'
             service.fed()
         finally:
             release.set()
