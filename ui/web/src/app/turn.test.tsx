@@ -1,8 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { AbstractAgent } from '@ag-ui/client';
 
-import { buildDirectAgent } from './conversations';
+import { buildDirectAgent, type SavedMessagesHttpAgent } from './conversations';
 import { useTurn, type Turn } from './turn';
 
 /** A Chat Service whose Turn streams the events a test sends, until it closes the stream. */
@@ -36,10 +35,21 @@ function chatService(threadId: string) {
   return { agent, start, send, close };
 }
 
-const session = (agent: AbstractAgent, server: { runsOnServer?: boolean; stopOnServer?: (() => void) | null } = {}) =>
+const session = (agent: SavedMessagesHttpAgent, server: { runsOnServer?: boolean; stopOnServer?: (() => void) | null } = {}) =>
   ({ agent, runsOnServer: server.runsOnServer ?? false, stopOnServer: server.stopOnServer ?? null });
 
 describe('useTurn', () => {
+  it('keeps the Turn idle while CopilotKit connects the Session', async () => {
+    const { agent } = chatService('t1');
+    const phases: string[] = [];
+    const unsubscribe = agent.subscribeTurn(() => phases.push(agent.getTurnPhase()));
+
+    await agent.connectAgent();
+    unsubscribe();
+
+    expect(phases).toEqual(['idle']);
+  });
+
   it('opens, starts, ends at the end event and goes idle at the stream close', async () => {
     const service = chatService('t1');
     const stopHere = vi.fn();
@@ -55,6 +65,21 @@ describe('useTurn', () => {
     expect(result.current).toMatchObject({ phase: 'ended', stop: stopHere });
     await service.close();
     expect(result.current).toMatchObject({ phase: 'idle', stop: null });
+  });
+
+  it('shows a finished reply as ended in a view mounted before the stream closes', async () => {
+    const service = chatService('t1');
+    const first = renderHook(() => useTurn(session(service.agent)));
+    await service.start();
+    await service.send({ type: 'RUN_STARTED' });
+    await service.send({ type: 'RUN_FINISHED' });
+    expect(first.result.current.phase).toBe('ended');
+    first.unmount();
+
+    const second = renderHook(() => useTurn(session(service.agent)));
+    expect(second.result.current.phase).toBe('ended');
+    await service.close();
+    expect(second.result.current.phase).toBe('idle');
   });
 
   it('ends at a run error too', async () => {
@@ -122,6 +147,27 @@ describe('useTurn', () => {
     await service.send({ type: 'RUN_FINISHED' });
     await service.close();
     await act(async () => { await asked; });
+    expect(result.current.phase).toBe('idle');
+  });
+
+  it("keeps the next Session's Opening Turn pending when the previous request settles", async () => {
+    const first = chatService('a');
+    const second = chatService('b');
+    const { result, rerender } = renderHook(({ agent }) => useTurn(session(agent)), { initialProps: { agent: first.agent } });
+    const previous = Promise.withResolvers<void>();
+    const current = Promise.withResolvers<void>();
+    let firstRequest!: Promise<void>;
+    let secondRequest!: Promise<void>;
+
+    act(() => { firstRequest = result.current.ask(() => previous.promise); });
+    rerender({ agent: second.agent });
+    expect(result.current.phase).toBe('idle');
+
+    act(() => { secondRequest = result.current.ask(() => current.promise); });
+    await act(async () => { previous.resolve(); await firstRequest; });
+    expect(result.current.phase).toBe('opening');
+
+    await act(async () => { current.resolve(); await secondRequest; });
     expect(result.current.phase).toBe('idle');
   });
 

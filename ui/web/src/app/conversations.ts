@@ -4,7 +4,7 @@ import { UNANSWERED_CALL } from "botcube-ui-web/interrupted-call";
 
 import { takeOpeningResponse } from "botcube-ui-web/opening-requests";
 
-import { tap } from "rxjs";
+import { BehaviorSubject, tap } from "rxjs";
 import { clockSubscriber, validateClockEvent } from "botcube-ui-web/worklog-clock";
 import {
   EventType,
@@ -13,7 +13,6 @@ import {
   type AgentSubscriber,
   type Message,
   type RunAgentInput,
-  type RunAgentParameters,
   type RunAgentResult,
 } from "@ag-ui/client";
 
@@ -256,7 +255,16 @@ const emptyCancellationStore: ToolCancellationStore = {
   getSnapshot: () => emptyStoppedCallIds,
 };
 
-class SavedMessagesHttpAgent extends HttpAgent {
+export type StreamPhase = "idle" | "opening" | "started" | "ended";
+
+export class SavedMessagesHttpAgent extends HttpAgent {
+  private readonly phase = new BehaviorSubject<StreamPhase>("idle");
+  readonly getTurnPhase = (): StreamPhase => this.phase.value;
+  readonly subscribeTurn = (notify: () => void): (() => void) => {
+    const subscription = this.phase.subscribe(notify);
+    return () => subscription.unsubscribe();
+  };
+
   private stoppedCallIds: ReadonlySet<string> = emptyStoppedCallIds;
   private readonly cancellationListeners = new Set<() => void>();
   readonly cancellations: ToolCancellationStore = {
@@ -288,6 +296,13 @@ class SavedMessagesHttpAgent extends HttpAgent {
     super({ url, threadId, fetch: fetchImpl, initialMessages: [...messages] });
     this.savedMessages = [...messages];
     this.onStopFailed = onStopFailed;
+    const end = () => this.phase.next("ended");
+    this.subscribe({
+      onRunInitialized: () => this.phase.next("opening"),
+      onRunFinishedEvent: end,
+      onRunErrorEvent: end,
+      onRunFinalized: () => this.phase.next("idle"),
+    });
     this.subscribe(clockSubscriber());
   }
 
@@ -332,20 +347,12 @@ class SavedMessagesHttpAgent extends HttpAgent {
     return this.isRunning && this.turn !== undefined && this.turn.stop !== "idle";
   }
 
-  /** Whether the Turn streaming here has started: its RUN_STARTED has arrived. */
-  runStarted(): boolean {
-    return this.turn?.active === true && this.turn.admitted;
-  }
-
-  override async connectAgent(
-    parameters?: RunAgentParameters,
-    subscriber?: AgentSubscriber,
-  ): Promise<RunAgentResult> {
-    const result = await super.connectAgent(parameters, subscriber);
+  /** CopilotKit clears its transcript before connecting. HttpAgent has no connect stream. */
+  override connectAgent(..._args: Parameters<HttpAgent["connectAgent"]>): Promise<RunAgentResult> {
     if (this.savedMessages.length > 0 && this.messages.length === 0) {
       this.setMessages([...this.savedMessages]);
     }
-    return result;
+    return Promise.resolve({ result: undefined, newMessages: [] });
   }
 
   /**
@@ -398,6 +405,7 @@ class SavedMessagesHttpAgent extends HttpAgent {
       onRunStartedEvent: ({ event }) => {
         if (this.turn !== turn || !turn.active || event.runId !== turn.runId || event.threadId !== input.threadId) return;
         turn.admitted = true;
+        this.phase.next("started");
         this.sendStop(turn);
       },
       onToolCallStartEvent: ({ event }) => {
@@ -413,7 +421,7 @@ class SavedMessagesHttpAgent extends HttpAgent {
 
   // AG-UI's verifier ends the run as each event leaves here, before the subscribers hear it; a subscriber still
   // awaiting can hold that back past the Stop's acknowledgement, so the stream's end is marked here.
-  override run(input: RunAgentInput) {
+  override run(input: RunAgentInput): ReturnType<HttpAgent["run"]> {
     const turn = this.turn;
     return super.run(input).pipe(tap((event) => {
       validateClockEvent(event);
@@ -429,11 +437,6 @@ export function toolCancellationStore(agent: AbstractAgent): ToolCancellationSto
 /** Whether the user stopped `agent`'s streaming Turn here, rather than a newer Turn replacing it. */
 export function stoppedHere(agent: AbstractAgent): boolean {
   return agent instanceof SavedMessagesHttpAgent && agent.stoppedHere();
-}
-
-/** Whether `agent`'s Turn streaming here has started: its RUN_STARTED has arrived. */
-export function runStarted(agent: AbstractAgent): boolean {
-  return agent instanceof SavedMessagesHttpAgent && agent.runStarted();
 }
 
 /** Why a Stop could not stop the Turn on the server. */
@@ -463,7 +466,7 @@ export function buildDirectAgent({
   fetchImpl?: (url: string, requestInit: RequestInit) => Promise<Response>;
   /** Why a Stop could not stop the Turn on the server. */
   onStopFailed: (error: Error) => void;
-}): HttpAgent {
+}): SavedMessagesHttpAgent {
   return new SavedMessagesHttpAgent({
     url: chatServiceUrl,
     threadId,

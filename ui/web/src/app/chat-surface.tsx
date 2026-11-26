@@ -19,7 +19,7 @@ import { useDefaultRenderTool } from "@copilotkit/react-core/v2";
 import { z } from "zod";
 import type { AbstractAgent } from "@ag-ui/client";
 import { stopOnEscapeNoMenuTook } from "./composer-keys";
-import { stoppedHere, toolCancellationStore, type SavedTurnFailure } from "./conversations";
+import { stoppedHere, toolCancellationStore, type SavedMessagesHttpAgent, type SavedTurnFailure } from "./conversations";
 import { endMoment, startMoment, type Moment } from "./latency";
 import type { ModelList } from "./model-selection";
 import { agentFiles } from "./agent-files";
@@ -424,7 +424,7 @@ function ChatThread({
   onOpenRun,
   children,
 }: {
-  agent: AbstractAgent;
+  agent: SavedMessagesHttpAgent;
   threadId: string;
     accountId: string | undefined;
   replayLoaded: boolean;

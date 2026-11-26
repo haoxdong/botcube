@@ -31,11 +31,13 @@ const copilot = vi.hoisted(() => ({
   get running() { return this.shownRunning; },
   set running(running: boolean) {
     this.shownRunning = running;
-    for (const kit of this.kits) for (const agent of Object.values(kit.selfManagedAgents)) {
-      agent.isRunning = running;
-      const params = { messages: agent.messages, state: {}, agent, input: {} } as never;
-      for (const subscriber of [...agent.subscribers]) void (running ? subscriber.onRunInitialized : subscriber.onRunFinalized)?.(params);
-    }
+    const agents = new Set(this.kits.flatMap((kit) => Object.values(kit.selfManagedAgents)));
+    for (const agent of agents) this.setAgentRunning(agent, running);
+  },
+  setAgentRunning(agent: HttpAgent, running: boolean) {
+    agent.isRunning = running;
+    const params = { messages: agent.messages, state: {}, agent, input: {} } as never;
+    for (const subscriber of [...agent.subscribers]) void (running ? subscriber.onRunInitialized : subscriber.onRunFinalized)?.(params);
   },
   reply: '',
   messages: [] as Message[],
@@ -176,7 +178,12 @@ vi.mock('@copilotkit/react-core/v2', async () => {
   return {
     CopilotKit: ({ children, ...props }: { children: ReactNode } & (typeof copilot.kits)[number]) => {
       copilot.kits.push(props);
-      if (copilot.running) for (const agent of Object.values(props.selfManagedAgents)) agent.isRunning = true;
+      useLayoutEffect(() => {
+        if (!copilot.running) return;
+        for (const agent of Object.values(props.selfManagedAgents)) {
+          if (!agent.isRunning) copilot.setAgentRunning(agent, true);
+        }
+      }, [props.selfManagedAgents]);
       useEffect(() => {
         copilot.mounts += 1;
       }, []);
@@ -1377,10 +1384,16 @@ describe('an assistant reply', () => {
     expect(within(list).queryByRole('img')).toBeNull();
   });
 
-  it('recovers a live chart image when the Turn finishes', async () => {
-    copilot.running = true;
-    copilot.reply = '![Japan versus Germany headline inflation](/japan-germany-headline-inflation.svg)';
+  async function renderStreamingReply(markdown: string) {
     const view = await renderPage();
+    act(() => { copilot.running = true; });
+    copilot.reply = markdown;
+    view.rerender(<Page />);
+    return view;
+  }
+
+  it('recovers a live chart image when the Turn finishes', async () => {
+    const view = await renderStreamingReply('![Japan versus Germany headline inflation](/japan-germany-headline-inflation.svg)');
     const list = screen.getByTestId('copilot-message-list');
     fireEvent.error(await within(list).findByRole('img', { name: 'Japan versus Germany headline inflation' }));
     expect(await within(list).findByRole('alert')).toHaveTextContent('Japan versus Germany headline inflation could not load: the browser could not show it');
@@ -1393,9 +1406,7 @@ describe('an assistant reply', () => {
   });
 
   it('recovers a browser failure arriving just after the Turn finishes', async () => {
-    copilot.running = true;
-    copilot.reply = '![Chart](/chart.svg)';
-    const view = await renderPage();
+    const view = await renderStreamingReply('![Chart](/chart.svg)');
     const list = screen.getByTestId('copilot-message-list');
     const initialImage = await within(list).findByRole('img', { name: 'Chart' });
     copilot.running = false;
@@ -1408,9 +1419,7 @@ describe('an assistant reply', () => {
   });
 
   it('keeps the final browser failure visible and does not retry another Turn', async () => {
-    copilot.running = true;
-    copilot.reply = '![Chart](/chart.svg)';
-    const view = await renderPage();
+    const view = await renderStreamingReply('![Chart](/chart.svg)');
     const list = screen.getByTestId('copilot-message-list');
     fireEvent.error(await within(list).findByRole('img', { name: 'Chart' }));
     copilot.running = false;
@@ -1431,9 +1440,7 @@ describe('an assistant reply', () => {
 
   it('keeps a failed refreshed file lookup visible', async () => {
     vi.spyOn(agentFiles, 'url').mockResolvedValueOnce('https://files.test/chart.svg?signed').mockRejectedValueOnce(new Error('Files download failed: 403'));
-    copilot.running = true;
-    copilot.reply = '![Chart](/chart.svg)';
-    const view = await renderPage();
+    const view = await renderStreamingReply('![Chart](/chart.svg)');
     const list = screen.getByTestId('copilot-message-list');
     fireEvent.error(await within(list).findByRole('img', { name: 'Chart' }));
     copilot.running = false;
@@ -1444,9 +1451,7 @@ describe('an assistant reply', () => {
 
   it('keeps a healthy live image when the Turn finishes without another lookup', async () => {
     const lookup = vi.spyOn(agentFiles, 'url');
-    copilot.running = true;
-    copilot.reply = '![Chart](/chart.svg)';
-    const view = await renderPage();
+    const view = await renderStreamingReply('![Chart](/chart.svg)');
     const list = screen.getByTestId('copilot-message-list');
     const image = await within(list).findByRole('img', { name: 'Chart' });
     fireEvent.load(image);
