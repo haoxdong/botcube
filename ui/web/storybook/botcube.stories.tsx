@@ -78,16 +78,13 @@ export const ProfilePersonalization: Story = {
     await visible(canvasElement.ownerDocument.body, '.agent-file-cards');
   }),
 };
-const computerPanel = (root: HTMLElement) => {
-  const panel = root.ownerDocument.querySelector<HTMLElement>('[role="tabpanel"][aria-label="Computer"]');
-  if (!panel) throw new Error('Missing Computer panel');
-  return panel;
-};
+const computerPanel = (root: HTMLElement) =>
+  within(root.ownerDocument.body).findByRole('tabpanel', { name: /^Computer$/ });
 export const ProfileComputer: Story = {
   name: 'profile-computer',
   play: resting(async ({ canvasElement }) => {
     await profile(canvasElement, 'Computer');
-    const panel = computerPanel(canvasElement);
+    const panel = await computerPanel(canvasElement);
     await visible(panel, '.agent-computer-desktop');
     await computerGeometry(panel);
     await noPageScroll(canvasElement);
@@ -98,7 +95,7 @@ export const ProfileComputerAwake: Story = {
   parameters: { msw: { handlers: awakeComputer } },
   play: resting(async ({ canvasElement }) => {
     await profile(canvasElement, 'Computer');
-    const panel = computerPanel(canvasElement);
+    const panel = await computerPanel(canvasElement);
     const covered = box(panel, '.agent-computer-screen');
     await visible(panel, '.computer-screen-image');
     // The screen keeps its place and size from its cover to its first frame.
@@ -114,7 +111,7 @@ export const ProfileComputerNoLiveView: Story = {
   parameters: { msw: { handlers: noLiveViewComputer } },
   play: resting(async ({ canvasElement }) => {
     await profile(canvasElement, 'Computer');
-    const panel = computerPanel(canvasElement);
+    const panel = await computerPanel(canvasElement);
     await visible(panel, '.agent-computer-notice');
     await expect(panel.querySelector('.agent-computer-notice')).toHaveTextContent('Live view is off in this deployment.');
     await expect(panel.querySelector('.agent-computer-live')).toBeNull();
