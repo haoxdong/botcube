@@ -89,18 +89,19 @@ def _from_config(url: str, token: Path, **proxy: object) -> str:
     return relay()
 
 
-def test_relay_opens_each_tunnel_with_the_file_credential_and_headers(upstream: tuple[str, list[str]], tmp_path: Path) -> None:
+def test_relay_opens_each_tunnel_with_the_current_file_credential_and_headers(upstream: tuple[str, list[str]], tmp_path: Path) -> None:
     url, heads = upstream
     token = tmp_path / 'proxy-token'
     token.write_text('first\n')
     relay = _from_config(url, token, headers={'x-tenant': 'botcube-example'})
 
     answer = _exchange(relay, 'CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\nProxy-Authorization: Basic stale\r\n\r\n', b'hello')
+    token.write_text('rotated\n')
     _exchange(relay, 'CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n', b'again')
 
     assert answer == b'HTTP/1.1 200 Connection Established\r\n\r\nhello'
     assert [head.split('\r\n')[0] for head in heads] == ['CONNECT api.example.com:443 HTTP/1.1'] * 2
-    assert [_header(head, 'proxy-authorization') for head in heads] == [['Bearer first'], ['Bearer first']]
+    assert [_header(head, 'proxy-authorization') for head in heads] == [['Bearer first'], ['Bearer rotated']]
     assert [_header(head, 'x-tenant') for head in heads] == [['botcube-example']] * 2
 
 

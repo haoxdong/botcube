@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { credentialSource } from './credential-source.js';
+import { credentialSource, refreshingAhead } from './credential-source.js';
 
 const START = Date.parse('2026-11-20T12:00:00Z');
 const minutes = (count: number) => count * 60_000;
@@ -131,25 +131,15 @@ describe('a credential source refreshing ahead of expiry', () => {
   });
 
   it('sets no timer, so an idle service mints nothing', async () => {
-    const path = join(mkdtempSync(join(tmpdir(), 'credential-refresh-')), 'key');
-    dirs.push(join(path, '..'));
-    writeFileSync(path, 'key-1');
     vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
     try {
       const clock = { now: START };
-      const source = credentialSource('models', { kind: 'file', path }, { now: () => clock.now });
+      const read = vi.fn(async () => ({ value: 'key', expiresAt: new Date(START + minutes(5)) }));
+      const source = refreshingAhead('models credential', read, () => clock.now);
       await source.get();
-      writeFileSync(path, 'key-2');
-      clock.now = START + minutes(3);
-      const refreshed = async (): Promise<string> => {
-        const { value } = await source.get();
-        if (value === 'key-2') return value;
-        await new Promise<void>((resolve) => { setImmediate(resolve); });
-        return refreshed();
-      };
-      await refreshed();
 
       expect(vi.getTimerCount()).toBe(0);
+      expect(read).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

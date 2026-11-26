@@ -9,30 +9,15 @@ from botcube_credential_source import (
     credential_source,
 )
 
-START = 1_795_000_000.0
 
-
-def test_gives_the_mounted_files_contents_without_its_trailing_newline_until_five_minutes_on(tmp_path: Path) -> None:
+def test_reads_the_current_file_on_each_get_and_removes_its_trailing_newline(tmp_path: Path) -> None:
     path = tmp_path / 'models-api-key'
     path.write_text('sk-mounted\n')
+    source = credential_source('models', {'kind': 'file', 'path': str(path)})
 
-    source = credential_source('models', {'kind': 'file', 'path': str(path)}, now=lambda: START)
-
-    assert source.get() == Credential(value='sk-mounted', expires_at=START + 300)
-
-
-def test_reads_the_file_again_a_minute_before_its_value_expires(tmp_path: Path) -> None:
-    path = tmp_path / 'models-api-key'
-    path.write_text('sk-first')
-    clock = [START]
-    source = credential_source('models', {'kind': 'file', 'path': str(path)}, now=lambda: clock[0])
-    source.get()
-    path.write_text('sk-rotated')
-
-    clock[0] = START + 120
-    assert source.get().value == 'sk-first'
-    clock[0] = START + 241
-    assert source.get().value == 'sk-rotated'
+    assert source.get().value == 'sk-mounted'
+    path.write_text('sk-rotated\n')
+    assert source.get() == Credential(value='sk-rotated', expires_at=None)
 
 
 def test_fails_naming_its_seam_and_its_file(tmp_path: Path) -> None:

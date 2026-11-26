@@ -10,7 +10,7 @@ import { signedAwsHeaders } from './aws.js';
 
 export interface Credential {
   readonly value: string;
-  /** Undefined for a token its source gave no expiry: it is kept for the life of the process, as kubectl keeps one. */
+  /** Undefined when the source gives no expiry. */
   readonly expiresAt: Date | undefined;
 }
 
@@ -43,7 +43,16 @@ export function credentialSource(
   const adapted = adapter(source, now, options.env ?? process.env, options.botcube, options.fetch);
   const named = `${seam} credential (${adapted.about})`;
   if ('refused' in adapted) throw new CredentialSourceError(`${named}: ${adapted.refused}`);
+  if (source.kind === 'file') return { get: () => readCredential(named, adapted.read) };
   return refreshingAhead(named, adapted.read, now);
+}
+
+async function readCredential<T>(named: string, read: () => Promise<T>): Promise<T> {
+  try {
+    return await read();
+  } catch (error) {
+    throw new CredentialSourceError(`${named}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  }
 }
 
 export function refreshingAhead<T extends Pick<Credential, 'expiresAt'>>(named: string, read: () => Promise<T>, now: () => number): { get(): Promise<T> } {
@@ -51,12 +60,10 @@ export function refreshingAhead<T extends Pick<Credential, 'expiresAt'>>(named: 
   let refreshing: Promise<T> | undefined;
   const refresh = () => {
     if (refreshing) return refreshing;
-    refreshing = read()
+    refreshing = readCredential(named, read)
       .then((credential) => {
         cached = { credential, ...refreshWindows(credential, now()) };
         return credential;
-      }, (error: unknown) => {
-        throw new CredentialSourceError(`${named}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
       })
       .finally(() => { refreshing = undefined; });
     void refreshing.catch((error: unknown) => { console.warn(`Credential refresh failed: ${error instanceof Error ? error.message : String(error)}`); });
@@ -95,7 +102,7 @@ function adapter(source: CredentialSourceConfig, now: () => number, env: NodeJS.
       read: async () => {
         const value = (await readFile(source.path, 'utf8')).replace(/\r?\n$/, '');
         if (!value) throw new Error('the file is empty');
-        return { value, expiresAt: new Date(now() + REREAD_AFTER_MS) };
+        return { value, expiresAt: undefined };
       },
     };
     case 'command': {

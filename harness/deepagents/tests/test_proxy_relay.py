@@ -86,13 +86,11 @@ def test_relay_opens_each_tunnel_with_the_credentials_current_value_and_the_head
     url, heads = upstream
     token = tmp_path / 'proxy-token'
     token.write_text('first\n')
-    clock = [0.0]
-    source = credential_source('proxy', {'kind': 'file', 'path': str(token)}, now=lambda: clock[0])
+    source = credential_source('proxy', {'kind': 'file', 'path': str(token)})
     relay = start_proxy_relay(upstream=url, listen=('127.0.0.1', 0), credential=source, headers={'x-tenant': 'botcube-example'})
 
     answer = _exchange(relay, 'CONNECT models.example.com:443 HTTP/1.1\r\nHost: models.example.com:443\r\nProxy-Authorization: Basic stale\r\n\r\n', b'hello')
     token.write_text('rotated\n')
-    clock[0] = 300.0
     _exchange(relay, 'CONNECT models.example.com:443 HTTP/1.1\r\nHost: models.example.com:443\r\n\r\n', b'again')
 
     assert answer == b'HTTP/1.1 200 Connection Established\r\n\r\nhello'

@@ -15,28 +15,14 @@ function keyFile(contents: string): string {
   return path;
 }
 
-const START = Date.parse('2026-11-19T12:00:00Z');
-const minutes = (count: number) => count * 60_000;
-
 describe('a file credential source', () => {
-  it("gives the mounted file's contents, without its trailing newline, until five minutes on", async () => {
+  it('reads the current file on each get and removes its trailing newline', async () => {
     const path = keyFile('sk-mounted\n');
-    const source = credentialSource('models', { kind: 'file', path }, { now: () => START });
+    const source = credentialSource('models', { kind: 'file', path });
 
-    expect(await source.get()).toEqual({ value: 'sk-mounted', expiresAt: new Date(START + minutes(5)) });
-  });
-
-  it('reads the file again a minute before its value expires, picking up a rotated key', async () => {
-    const path = keyFile('sk-first');
-    let now = START;
-    const source = credentialSource('models', { kind: 'file', path }, { now: () => now });
-    await source.get();
-    writeFileSync(path, 'sk-rotated');
-
-    now = START + minutes(2);
-    expect((await source.get()).value).toBe('sk-first');
-    now = START + minutes(4) + 1;
-    expect(await source.get()).toEqual({ value: 'sk-rotated', expiresAt: new Date(now + minutes(5)) });
+    expect((await source.get()).value).toBe('sk-mounted');
+    writeFileSync(path, 'sk-rotated\n');
+    expect(await source.get()).toEqual({ value: 'sk-rotated', expiresAt: undefined });
   });
 
   it('fails naming its seam and its file when the file is missing', async () => {

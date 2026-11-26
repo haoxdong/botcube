@@ -287,13 +287,11 @@ def test_a_call_without_the_turns_invocation_never_reaches_the_gateway(
     assert gateway.requests == []
 
 
-def test_a_rotated_file_reaches_the_gateway_once_its_value_is_due_a_reread(gateway: FakeGateway, key: Path) -> None:
-    clock = Clock()
-    client = _client(gateway, _endpoint({'kind': 'file', 'path': str(key)}), clock=clock)
-    key.write_text('sk-rotated\n')
+def test_a_rotated_file_reaches_the_gateway_on_the_next_request(gateway: FakeGateway, key: Path) -> None:
+    client = _client(gateway, _endpoint({'kind': 'file', 'path': str(key)}))
 
     _completion(client)
-    clock.now = START + 241
+    key.write_text('sk-rotated\n')
     _completion(client)
 
     assert [call.headers['authorization'] for call in gateway.requests] == ['Bearer sk-mounted', 'Bearer sk-rotated']
@@ -302,17 +300,16 @@ def test_a_rotated_file_reaches_the_gateway_once_its_value_is_due_a_reread(gatew
 def test_a_turn_fails_naming_the_models_seam_and_its_file_when_the_file_cannot_be_read_again(
     gateway: FakeGateway, key: Path,
 ) -> None:
-    clock = Clock()
-    client = _client(gateway, _endpoint({'kind': 'file', 'path': str(key)}), clock=clock)
+    client = _client(gateway, _endpoint({'kind': 'file', 'path': str(key)}))
+    assert _completion(client).status_code == 200
     key.unlink()
-    clock.now = START + 241
 
     response = _completion(client)
 
     assert response.status_code == 500
     assert response.json()['error']['type'] == 'models_credential'
     assert response.json()['error']['message'].startswith(f'models credential (file {key}): ')
-    assert gateway.requests == []
+    assert [call.headers['authorization'] for call in gateway.requests] == ['Bearer sk-mounted']
 
 
 def test_the_credential_command_runs_here_and_again_a_minute_before_its_token_expires(

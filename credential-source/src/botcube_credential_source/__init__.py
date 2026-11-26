@@ -92,7 +92,7 @@ class _Refused(Exception):
 @dataclass(frozen=True)
 class Credential:
     value: str = field(repr=False)
-    # None for a token its source gave no expiry: it is kept for the life of the process, as kubectl keeps one.
+    # None when the source gives no expiry.
     expires_at: float | None
 
 
@@ -105,16 +105,19 @@ class _CachedCredential:
 
 class CredentialSource:
     def __init__(
-        self, named: str, read: Callable[[], Credential], now: Callable[[], float],
+        self, named: str, read: Callable[[], Credential], now: Callable[[], float], *, cache: bool = True,
     ) -> None:
         self._named = named
         self._read = read
         self._now = now
+        self._cache = cache
         self._cached: _CachedCredential | None = None
         self._refreshing: Future[Credential] | None = None
         self._lock = threading.Lock()
 
     def get(self) -> Credential:
+        if not self._cache:
+            return self._read_credential()
         with self._lock:
             now = self._now()
             cached = self._cached
@@ -132,12 +135,16 @@ class CredentialSource:
             threading.Thread(target=self._mint, args=(self._refreshing,), name=REFRESH_THREAD_NAME, daemon=True).start()
         return self._refreshing
 
+    def _read_credential(self) -> Credential:
+        try:
+            return self._read()
+        except Exception as error:
+            raise CredentialSourceError(f'{self._named}: {error}') from error
+
     def _mint(self, refreshing: Future[Credential]) -> None:
         try:
-            credential = self._read()
-        except Exception as error:
-            failure = CredentialSourceError(f'{self._named}: {error}')
-            failure.__cause__ = error
+            credential = self._read_credential()
+        except CredentialSourceError as failure:
             with self._lock:
                 self._refreshing = None
             refreshing.set_exception(failure)
@@ -179,7 +186,7 @@ def credential_source(
         about, read = _adapter(parsed, env, now, aws_session, proxy)
     except _Refused as refused:
         raise CredentialSourceError(f'{seam} credential ({refused.about}): {refused.reason}') from None
-    return CredentialSource(f'{seam} credential ({about})', read, now)
+    return CredentialSource(f'{seam} credential ({about})', read, now, cache=not isinstance(parsed, FileSource))
 
 
 def _adapter(source: Source, env: Mapping[str, str], now: Callable[[], float],
@@ -190,7 +197,7 @@ def _adapter(source: Source, env: Mapping[str, str], now: Callable[[], float],
         case SecretSource(secret_id=secret_id):
             return f'secret {secret_id}', lambda: Credential(_secret_string(secret_id, env, aws_session()), now() + REREAD_AFTER_SECONDS)
         case FileSource(path=path):
-            return f'file {path}', lambda: Credential(_file_text(path), now() + REREAD_AFTER_SECONDS)
+            return f'file {path}', lambda: Credential(_file_text(path), None)
         case CommandSource(command=command, timeout_seconds=timeout):
             if env.get(ALLOW_COMMAND_CREDENTIALS_ENV) != '1':
                 raise _Refused(f'command {command[0]}', f'a command credential runs only when {ALLOW_COMMAND_CREDENTIALS_ENV}=1')
