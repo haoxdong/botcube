@@ -25,11 +25,7 @@ const runningTurn = ({ turn_running_since, turn_run_id, turn_preparing }: Sessio
     ? { running: true, runningSince: turn_running_since, ...(turn_preparing === true ? {} : { runId: turn_run_id }) }
     : { running: false };
 
-/**
- * The account's Sessions as the UI sees them: Metadata owns access and filing
- * identity; the session API owns their content. Both deletion paths share one
- * purge queue, after the Metadata fence makes the Sessions inaccessible.
- */
+/** Session Metadata owns access and filing identity. The Session API owns content. */
 export function sessionOperations(
   sessionMetadata: SessionMetadata,
   invokeSessionApi: SessionApi,
@@ -42,6 +38,7 @@ export function sessionOperations(
     const [live, purges] = await Promise.all([sessionMetadata.list(owner), sessionMetadata.ownerPurges(owner, filingUserId)]);
     const userIds = new Set([
       filingUserId(owner),
+      owner, // Historical raw actor ID.
       ...live.map((session) => session.filing_user_id),
       ...purges.flatMap((session) => sessionUserIds(session, filingUserId)),
     ]);

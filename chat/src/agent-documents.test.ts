@@ -329,6 +329,23 @@ describe("The agent's picture", () => {
   });
 });
 
+it('forgets raw actor memory even when the account has no Session metadata', async () => {
+  const owner = 'acct_legacy-memory-without-sessions';
+  const other = 'acct_other-legacy-memory';
+  const otherMemory = [{ id: 'other-extracted', text: 'Prefers water' }];
+  stack.sessionApi.memories.set(owner, [{ id: 'legacy-extracted', text: 'Prefers tea' }]);
+  stack.sessionApi.memories.set(filed(owner), [{ id: 'current-extracted', text: 'Prefers coffee' }]);
+  stack.sessionApi.memories.set(other, otherMemory);
+  stack.sessionApi.memories.set(filed(other), otherMemory);
+
+  await stack.history.delete(owner);
+
+  expect(stack.sessionApi.memories.has(filed(owner))).toBe(false);
+  expect(stack.sessionApi.memories.has(owner)).toBe(false);
+  expect(stack.sessionApi.memories.get(other)).toEqual(otherMemory);
+  expect(stack.sessionApi.memories.get(filed(other))).toEqual(otherMemory);
+});
+
 // The Memory panel shows Written Memory (ADR 0095): no route serves Extracted Memory records.
 it.each([
   ['GET', '/agent/memory'],
