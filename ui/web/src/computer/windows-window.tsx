@@ -1,11 +1,12 @@
 // One Agent Computer window: react-rnd moves and resizes it, stock Fluent draws its frame (ADR 0093).
-import { Button, FluentProvider, makeStyles, mergeClasses, Tab, TabList, Text, Tooltip, tokens, webDarkTheme, webLightTheme } from '@fluentui/react-components';
+import { Button, FluentProvider, makeStyles, Menu, MenuDivider, MenuItem, MenuList, MenuPopover, MenuTrigger, mergeClasses, Tab, TabList, Text, Tooltip, tokens, webDarkTheme, webLightTheme } from '@fluentui/react-components';
 import { Add16Regular, ChevronDown16Regular, Dismiss16Regular, Maximize16Regular, SquareMultiple16Regular, Subtract16Regular } from '@fluentui/react-icons';
 import { useId, type CSSProperties, type ReactNode, type TransitionEvent } from 'react';
 import { Rnd } from 'react-rnd';
 import chromium from './app-icons/chromium.svg';
 import folder from './app-icons/file-folder-3d.png';
 import terminal from './app-icons/windows-terminal.svg';
+import type { Zone } from './windows-snap';
 
 /** The computer's apps, each in its own window and on the taskbar. */
 export type DockApp = 'Chromium' | 'Terminal' | 'Files';
@@ -99,38 +100,68 @@ export function AppIcon({ app, size }: { app: DockApp; size: 16 | 24 }) {
   return <span className={styles.appIcon} style={{ width: size, height: size, backgroundImage: `url("${typeof image === 'string' ? image : image.src}")` }} aria-hidden="true" />;
 }
 
-function TitleBar({ window: { app, title, tabs }, panel, active, full, onMinimise, onMaximise, onClose }: { window: DesktopWindow; panel: string; active: boolean; full: boolean; onMinimise: () => void; onMaximise: () => void; onClose: () => void }) {
+interface TitleBarProps {
+  window: DesktopWindow;
+  /** The id of the window's contents, which Terminal's session tab controls. */
+  panel: string;
+  active: boolean;
+  full: boolean;
+  /** Snapped to a zone or maximised: Restore puts it back where it was. */
+  snapped: boolean;
+  phone: boolean;
+  onMinimise: () => void;
+  onMaximise: () => void;
+  onRestore: () => void;
+  onSnap: (zone: Zone) => void;
+  onClose: () => void;
+}
+
+/** The app's icon and title (Terminal's session tab), the caption buttons, and Windows' window menu on a right click. */
+function TitleBar({ window: { app, title, tabs }, panel, active, full, snapped, phone, onMinimise, onMaximise, onRestore, onSnap, onClose }: TitleBarProps) {
   const styles = useStyles();
   return (
-    <div className={mergeClasses('window-titlebar', styles.titleBar, active && styles.titleBarActive)} onDoubleClick={onMaximise}>
-      {tabs === undefined ? (
-        <>
-          {/* One document: the app's icon and title, as a Windows 11 title bar draws them. */}
-          <AppIcon app={app} size={16} />
-          <Text size={200} truncate wrap={false} className={styles.title}>{title}</Text>
-        </>
-      ) : (
-        // Windows Terminal: its session as a tab with its close, then New tab and the profiles menu. The Tooltip is
-        // inaccessible as a description Tooltip would portal on the server; aria-description says the same.
-        <span className={styles.tabs}>
-          <TabList className={styles.tabList} size="small" selectedValue="session" aria-label={`${app} tabs`}>
-            <Tab id={`${panel}-tab`} aria-controls={panel} className={styles.sessionTab} value="session" icon={<AppIcon app={app} size={16} />}>{title}</Tab>
-          </TabList>
-          <Button appearance="subtle" size="small" aria-label={`Close ${title}`} icon={<Dismiss16Regular />} onClick={onClose} />
-          <Tooltip content={tabs.disabledNote} relationship="inaccessible">
-            <Button appearance="subtle" size="small" disabledFocusable aria-label="New tab" aria-description={tabs.disabledNote} icon={<Add16Regular />} />
-          </Tooltip>
-          <Tooltip content={tabs.disabledNote} relationship="inaccessible">
-            <Button appearance="subtle" size="small" disabledFocusable aria-label="Open a profile" aria-description={tabs.disabledNote} icon={<ChevronDown16Regular />} />
-          </Tooltip>
-        </span>
-      )}
-      <span className={styles.captions}>
-        <Button appearance="subtle" aria-label={`Minimise ${app}`} icon={<Subtract16Regular />} onClick={onMinimise} />
-        <Button appearance="subtle" aria-label={full ? `Restore ${app}` : `Maximise ${app}`} icon={full ? <SquareMultiple16Regular /> : <Maximize16Regular />} onClick={onMaximise} />
-        <Button appearance="subtle" aria-label={`Close ${app}`} icon={<Dismiss16Regular />} onClick={onClose} />
-      </span>
-    </div>
+    <Menu openOnContext>
+      <MenuTrigger disableButtonEnhancement>
+        <div className={mergeClasses('window-titlebar', styles.titleBar, active && styles.titleBarActive)} onDoubleClick={onMaximise}>
+          {tabs === undefined ? (
+            <>
+              {/* One document: the app's icon and title, as a Windows 11 title bar draws them. */}
+              <AppIcon app={app} size={16} />
+              <Text size={200} truncate wrap={false} className={styles.title}>{title}</Text>
+            </>
+          ) : (
+            // Windows Terminal: its session as a tab with its close, then New tab and the profiles menu. The Tooltip is
+            // inaccessible as a description Tooltip would portal on the server; aria-description says the same.
+            <span className={styles.tabs}>
+              <TabList className={styles.tabList} size="small" selectedValue="session" aria-label={`${app} tabs`}>
+                <Tab id={`${panel}-tab`} aria-controls={panel} className={styles.sessionTab} value="session" icon={<AppIcon app={app} size={16} />}>{title}</Tab>
+              </TabList>
+              <Button appearance="subtle" size="small" aria-label={`Close ${title}`} icon={<Dismiss16Regular />} onClick={onClose} />
+              <Tooltip content={tabs.disabledNote} relationship="inaccessible">
+                <Button appearance="subtle" size="small" disabledFocusable aria-label="New tab" aria-description={tabs.disabledNote} icon={<Add16Regular />} />
+              </Tooltip>
+              <Tooltip content={tabs.disabledNote} relationship="inaccessible">
+                <Button appearance="subtle" size="small" disabledFocusable aria-label="Open a profile" aria-description={tabs.disabledNote} icon={<ChevronDown16Regular />} />
+              </Tooltip>
+            </span>
+          )}
+          <span className={styles.captions}>
+            <Button appearance="subtle" aria-label={`Minimise ${app}`} icon={<Subtract16Regular />} onClick={onMinimise} />
+            <Button appearance="subtle" aria-label={full ? `Restore ${app}` : `Maximise ${app}`} icon={full ? <SquareMultiple16Regular /> : <Maximize16Regular />} onClick={onMaximise} />
+            <Button appearance="subtle" aria-label={`Close ${app}`} icon={<Dismiss16Regular />} onClick={onClose} />
+          </span>
+        </div>
+      </MenuTrigger>
+      <MenuPopover>
+        <MenuList>
+          <MenuItem icon={<SquareMultiple16Regular />} disabled={phone || !snapped} onClick={onRestore}>Restore</MenuItem>
+          <MenuItem icon={<Subtract16Regular />} onClick={onMinimise}>Minimise</MenuItem>
+          <MenuItem icon={<Maximize16Regular />} disabled={full} onClick={() => onSnap('max')}>Maximise</MenuItem>
+          <MenuDivider />
+          <MenuItem icon={<Dismiss16Regular />} onClick={onClose}>Close</MenuItem>
+        </MenuList>
+      </MenuPopover>
+    </Menu>
   );
 }
 
@@ -143,15 +174,25 @@ export interface WindowFrameProps {
   away: boolean;
   place: Rect;
   full: boolean;
+  snapped: boolean;
   /** The taskbar button a minimised window shrinks into, in the screen's pixels. */
   toward: { x: number; y: number } | undefined;
   scale: number;
   interactive: boolean;
   layer: number;
   snapping: boolean;
+  /** The phone layout: windows fill the screen, so they neither snap nor restore. */
+  phone: boolean;
   onRaise: () => void;
   onPlace: (place: Partial<Rect>) => void;
-  onSnap: () => void;
+  /** Let go after a drag by its title bar, at `at`: the desktop snaps it if the pointer held an edge. */
+  onDrop: (at: { x: number; y: number }) => void;
+  /** A snapped window is being dragged: it leaves its zone. */
+  onUnsnap: (at: { x: number; y: number }) => void;
+  /** The pointer dragging the title bar is at this client point. */
+  onDragAt: (pointer: { clientX: number; clientY: number }) => void;
+  onSnap: (zone: Zone) => void;
+  onRestore: () => void;
   /** The snap's motion is over, or the user took the window: it moves without easing again. */
   onSnapped: () => void;
   onMinimise: () => void;
@@ -174,7 +215,7 @@ function shrinkStyle(away: boolean, life: Life, toward: WindowFrameProps['toward
 }
 
 /** One window: react-rnd moves and resizes it, Fluent draws its frame in the window's own theme. */
-export function WindowFrame({ window: win, life, opening, active, away, place, full, toward, scale, interactive, layer, snapping, onRaise, onPlace, onSnap, onSnapped, onMinimise, onMaximise, onClose, onClosed }: WindowFrameProps) {
+export function WindowFrame({ window: win, life, opening, active, away, place, full, snapped, toward, scale, interactive, layer, snapping, phone, onRaise, onPlace, onDrop, onUnsnap, onDragAt, onSnap, onRestore, onSnapped, onMinimise, onMaximise, onClose, onClosed }: WindowFrameProps) {
   const styles = useStyles();
   const panel = useId();
   return (
@@ -186,11 +227,8 @@ export function WindowFrame({ window: win, life, opening, active, away, place, f
       position={{ x: place.x, y: place.y }}
       onDragStart={onSnapped}
       onResizeStart={onSnapped}
-      onDragStop={(_, drag) => {
-        // Snap: a window dragged to the top edge fills the screen.
-        if (drag.y <= 0) onSnap();
-        else onPlace({ x: drag.x, y: drag.y });
-      }}
+      onDrag={(event, drag) => { if (snapped && !full) onUnsnap({ x: drag.x, y: drag.y }); onDragAt(pointerAt(event)); }}
+      onDragStop={(_, drag) => onDrop({ x: drag.x, y: drag.y })}
       onResizeStop={(_, __, ___, delta, position) => onPlace({ x: position.x, y: position.y, width: place.width + delta.width, height: place.height + delta.height })}
       onTransitionEnd={(event: TransitionEvent<HTMLElement>) => { if (event.target === event.currentTarget) onSnapped(); }}
       disableDragging={full || !interactive}
@@ -213,7 +251,7 @@ export function WindowFrame({ window: win, life, opening, active, away, place, f
             carries the theme and styles.css's shield alone, and the window is the div inside it; an inline style is not copied. */}
         <FluentProvider theme={win.dark === true ? webDarkTheme : webLightTheme} className="agent-computer-fluent" style={{ display: 'contents' }}>
           <div className={mergeClasses('agent-computer-windows-window', styles.window, opening && styles.opening, active && styles.windowActive, full && styles.windowFull)}>
-            <TitleBar window={win} panel={panel} active={active} full={full} onMinimise={onMinimise} onMaximise={onMaximise} onClose={onClose} />
+            <TitleBar window={win} panel={panel} active={active} full={full} snapped={snapped} phone={phone} onMinimise={onMinimise} onMaximise={onMaximise} onRestore={onRestore} onSnap={onSnap} onClose={onClose} />
             {/* A session's tab controls the window's contents, its tab panel. */}
             <div className={styles.content} {...(win.tabs === undefined ? {} : { id: panel, role: 'tabpanel', 'aria-labelledby': `${panel}-tab` })}>{win.children}</div>
           </div>
@@ -221,4 +259,10 @@ export function WindowFrame({ window: win, life, opening, active, away, place, f
       </div>
     </Rnd>
   );
+}
+
+/** Where a drag's pointer is, in client pixels, from a mouse or a touch. */
+function pointerAt(event: { clientX?: number; clientY?: number; changedTouches?: ArrayLike<{ clientX: number; clientY: number }> }) {
+  const at = event.changedTouches?.[0] ?? event;
+  return { clientX: at.clientX ?? Number.NaN, clientY: at.clientY ?? Number.NaN };
 }

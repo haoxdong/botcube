@@ -1,7 +1,8 @@
 // The Agent Computer as Windows 11 (ADR 0093): Fluent UI parts on a virtual 1280x720 screen, windows from react-rnd.
 // Fluent and react-rnd load only with this lazy chunk (the dependency-cruiser rule `computer-only-packages`).
-import { FluentProvider, makeStyles, mergeClasses, webLightTheme } from '@fluentui/react-components';
+import { FluentProvider, makeStyles, mergeClasses, tokens, webLightTheme } from '@fluentui/react-components';
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type RefObject } from 'react';
+import { dropZone, zoneRect, type Zone } from './windows-snap';
 import { Taskbar, TASKBAR, TASKBAR_APPS } from './windows-taskbar';
 import { TITLE_BAR, WindowFrame, type DesktopWindow, type DockApp, type Life, type Rect } from './windows-window';
 
@@ -36,6 +37,25 @@ const useStyles = makeStyles({
   },
   phoneScreen: { width: '100%', height: '100%' },
   area: { position: 'absolute', top: 0, left: 0, right: 0 },
+  // Where a dragged window will snap, as Windows 11 outlines it under the window while the pointer holds an edge.
+  snapHint: {
+    position: 'absolute',
+    boxSizing: 'border-box',
+    padding: tokens.spacingHorizontalXS,
+    pointerEvents: 'none',
+    animationName: { from: { opacity: 0 }, to: { opacity: 1 } },
+    animationDuration: tokens.durationNormal,
+    animationTimingFunction: tokens.curveDecelerateMax,
+  },
+  snapHintFill: {
+    height: '100%',
+    boxSizing: 'border-box',
+    borderRadius: tokens.borderRadiusXLarge,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha}`,
+    backgroundColor: tokens.colorNeutralBackgroundAlpha,
+    backdropFilter: 'blur(30px)',
+    boxShadow: tokens.shadow28,
+  },
 });
 
 /** The set without one app, or the same set when it lacks it. */
@@ -98,6 +118,8 @@ function useBoxSize(box: RefObject<HTMLElement | null>, fills: boolean) {
   return size;
 }
 
+
+
 export interface WindowsDesktopProps {
   windows: readonly DesktopWindow[];
   front: DockApp;
@@ -131,8 +153,11 @@ export function WindowsDesktop({ windows, front, interactive, onFront, agentName
   // The windows already open when the desktop appears arrive with it: only a window opened later plays its open motion.
   const [arrived, setArrived] = useState<ReadonlySet<DockApp>>(() => new Set(TASKBAR_APPS.filter((app) => life[app] === 'open')));
   const [order, setOrder] = useState<DockApp[]>(() => [...TASKBAR_APPS.filter((app) => app !== front), front]);
-  const [maxed, setMaxed] = useState<ReadonlySet<DockApp>>(new Set());
+  // Each snapped window's zone; 'max' is maximised. Unsnapped, a window keeps its own place in `rects`.
+  const [zones, setZones] = useState<Record<DockApp, Zone | null>>({ Files: null, Chromium: null, Terminal: null });
   const [snapping, setSnapping] = useState<DockApp | null>(null);
+  // The zone a window being dragged would snap to, outlined until it drops.
+  const [hint, setHint] = useState<Zone | null>(null);
   const [rects, setRects] = useState(PLACES);
   // Windows playing their close motion, still mounted until it ends.
   const [closing, setClosing] = useState<ReadonlySet<DockApp>>(new Set());
@@ -150,6 +175,10 @@ export function WindowsDesktop({ windows, front, interactive, onFront, agentName
   const active = open.at(-1) ?? null;
   const width = phoneLayout ? boxSize.width : SCREEN.width;
   const height = (phoneLayout ? boxSize.height : SCREEN.height) - TASKBAR;
+  const placeOf = (app: DockApp): Rect => {
+    const zone = phoneLayout ? 'max' : zones[app];
+    return zone === null ? rects[app] : zoneRect(zone, { width, height });
+  };
   const raise = (app: DockApp) => {
     setDesktopShown(null);
     setLife((all) => (all[app] === 'open' ? all : { ...all, [app]: 'open' }));
@@ -175,9 +204,26 @@ export function WindowsDesktop({ windows, front, interactive, onFront, agentName
     const below = open.filter((item) => item !== app).at(-1);
     if (below !== undefined) onFront(below);
   };
-  const toggleMax = (app: DockApp) => {
+  const snap = (app: DockApp, zone: Zone | null) => {
+    if (phoneLayout) return;
     setSnapping(app);
-    setMaxed((set) => { const next = new Set(set); if (next.has(app)) next.delete(app); else next.add(app); return next; });
+    setZones((all) => ({ ...all, [app]: zone }));
+  };
+  const toggleMax = (app: DockApp) => snap(app, zones[app] === 'max' ? null : 'max');
+  // Moved or resized, a window leaves its snap; dragged off one, it takes back its own size, as Windows does.
+  const reshape = (app: DockApp, next: Partial<Rect>) => {
+    setRects((all) => ({ ...all, [app]: { ...all[app], ...next } }));
+    setZones((all) => (all[app] === null ? all : { ...all, [app]: null }));
+  };
+  const zoneUnder = ({ clientX, clientY }: { clientX: number; clientY: number }) => {
+    const area = screen.current?.getBoundingClientRect();
+    return area === undefined ? null : dropZone({ x: (clientX - area.left) / scale, y: (clientY - area.top) / scale }, { width, height });
+  };
+  // Let go: a window snaps to the zone outlined under it; otherwise it stays where it was dragged, if it moved.
+  const drop = (app: DockApp, at: { x: number; y: number }) => {
+    setHint(null);
+    if (hint !== null) snap(app, hint);
+    else if (at.x !== placeOf(app).x || at.y !== placeOf(app).y) reshape(app, at);
   };
   // Show desktop minimises every open window; pressed again, it brings back those it put away.
   const showDesktop = () => {
@@ -205,10 +251,15 @@ export function WindowsDesktop({ windows, front, interactive, onFront, agentName
       <FluentProvider theme={webLightTheme} className="agent-computer-fluent" style={{ position: 'absolute', inset: 0 }}>
         <div ref={screen} className={mergeClasses(styles.screen, phoneLayout && styles.phoneScreen)} style={screenStyle}>
           <div className={styles.area} style={{ height }}>
+            {hint !== null && (
+              <div key={hint} data-snap-hint={hint} className={styles.snapHint} style={{ ...rectStyle(zoneRect(hint, { width, height })), zIndex: order.length }}>
+                <div className={styles.snapHintFill} />
+              </div>
+            )}
             {windows.map((win) => {
               const { app } = win;
               if (life[app] === 'closed' && win.keepMounted !== true && !closing.has(app)) return null;
-              const full = phoneLayout || maxed.has(app);
+              const full = phoneLayout || zones[app] === 'max';
               return (
                 <WindowFrame
                   key={app}
@@ -218,19 +269,25 @@ export function WindowsDesktop({ windows, front, interactive, onFront, agentName
                   active={app === active}
                   // On a phone only the window in front shows.
                   away={life[app] !== 'open' || (phoneLayout && app !== active)}
-                  place={full ? { x: 0, y: 0, width, height } : rects[app]}
+                  place={placeOf(app)}
                   full={full}
+                  snapped={zones[app] !== null}
                   toward={phoneLayout ? undefined : toward[app]}
                   scale={phoneLayout ? 1 : scale}
                   interactive={interactive}
                   layer={closing.has(app) ? order.length + 1 : order.indexOf(app) + 1}
                   snapping={snapping === app}
+                  phone={phoneLayout}
                   onRaise={() => { if (app !== active) raise(app); }}
-                  onPlace={(next) => setRects((all) => ({ ...all, [app]: { ...all[app], ...next } }))}
-                  onSnap={() => toggleMax(app)}
+                  onPlace={(next) => reshape(app, next)}
+                  onDrop={(at) => drop(app, at)}
+                  onUnsnap={(at) => reshape(app, at)}
+                  onDragAt={(pointer) => { const zone = zoneUnder(pointer); setHint((now) => (now === zone ? now : zone)); }}
+                  onSnap={(zone) => snap(app, zone)}
+                  onRestore={() => snap(app, null)}
                   onSnapped={() => setSnapping((now) => (now === app ? null : now))}
                   onMinimise={() => putAway(app, 'minimised')}
-                  onMaximise={() => { if (!phoneLayout) toggleMax(app); }}
+                  onMaximise={() => toggleMax(app)}
                   onClose={() => putAway(app, 'closed')}
                   onClosed={() => setClosing((set) => without(set, app))}
                 />
@@ -256,3 +313,5 @@ export function WindowsDesktop({ windows, front, interactive, onFront, agentName
     </div>
   );
 }
+
+const rectStyle = ({ x, y, width, height }: Rect): CSSProperties => ({ left: x, top: y, width, height });

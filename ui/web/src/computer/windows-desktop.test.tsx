@@ -22,6 +22,16 @@ const frame = (app: string) => {
   return element;
 };
 const state = (app: string) => frame(app).getAttribute('data-state');
+// happy-dom lays nothing out, so react-rnd measures each window's offset from its parent as minus the place it opened
+// at, and draws its translate that far off.
+const OPENED = { Files: [40, 24], Chromium: [440, 44], Terminal: [200, 330] } as const;
+/** Where a window sits on the 1280x672 screen above the taskbar, and its size. */
+const place = (app: keyof typeof OPENED) => {
+  const { transform, width, height } = frame(app).style;
+  const [x = 0, y = 0] = [...transform.matchAll(/-?\d+/g)].map(Number);
+  const [openX, openY] = OPENED[app];
+  return `${x - openX},${y - openY} ${width}x${height}`;
+};
 const taskbarApp = (app: string) => {
   const button = document.querySelector<HTMLElement>(`.agent-computer-taskbar-app[aria-label="${app}"]`);
   if (button === null) throw new Error(`no ${app} on the taskbar`);
@@ -154,5 +164,23 @@ describe('a taskbar app', () => {
     fireEvent.pointerEnter(taskbarApp('Terminal'));
     act(() => { vi.advanceTimersByTime(1000); });
     expect(screen.getByRole('tooltip').textContent).toBe('workspace — zsh');
+  });
+});
+
+describe('snapping', () => {
+  it("offers Windows' window menu on the title bar, enabling only what applies", () => {
+    desktop({ front: 'Terminal' });
+    const titleBar = () => frame('Terminal').querySelector('.window-titlebar') ?? document.body;
+    const menu = () => Object.fromEntries(screen.getAllByRole('menuitem').map((item) => [item.textContent, item.getAttribute('aria-disabled') !== 'true']));
+    fireEvent.contextMenu(titleBar());
+    expect(menu()).toEqual({ Restore: false, Minimise: true, Maximise: true, Close: true });
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Maximise' }));
+    expect(place('Terminal')).toBe('0,0 1280pxx672px');
+    fireEvent.contextMenu(titleBar());
+    expect(menu()).toEqual({ Restore: true, Minimise: true, Maximise: false, Close: true });
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Restore' }));
+    expect(place('Terminal')).toBe('200,330 700pxx320px');
   });
 });
