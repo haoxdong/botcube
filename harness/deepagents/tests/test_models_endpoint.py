@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from ag_ui.core import EventType, RunAgentInput, RunErrorEvent, UserMessage
 from deepagents.backends import LocalShellBackend
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
@@ -20,6 +21,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from botcube_harness_deepagents import llm, turn_timing
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.definition import ModelRelay, openai_model_relay
+from botcube_harness_deepagents.session_agent import SessionAgent
 from botcube_harness_deepagents.turn_memory import collecting_turn_feeds
 from deployment_fixture import ENDPOINT_MODELS, deploy
 
@@ -157,6 +159,14 @@ def _messages_stream(body: dict[str, Any], tool_call: str | None, thinking: bool
     ])
 
 
+def _cut_after_output(stream: bytes, path: str) -> bytes:
+    if path == CHAT_COMPLETIONS:
+        end = stream.index(b'"finish_reason": "stop"')
+        return stream[:stream.rindex(b'data: ', 0, end)]
+    end_event = b'content_block_stop' if path == PATHS['anthropic'] else b'response.output_text.done'
+    return stream[:stream.index(b'event: ' + end_event)]
+
+
 class StandIn:
     """The Credential Service's models relay, answering each provider's own API with `Echo: <text>`, after any gateway failures and dropped connections.
 
@@ -196,6 +206,12 @@ class StandIn:
                     return
                 answer = {PATHS['anthropic']: _messages_stream, CHAT_COMPLETIONS: _chat_completions_stream}.get(self.path, _responses_stream)
                 stream = answer(body, stand_in.tool_call, stand_in.thinking)
+                self._stream_reply(stream, drop)
+
+            def _stream_reply(self, stream: bytes, drop: str | None) -> None:
+                if drop == 'clean-eof-after-output':
+                    self._send(200, 'text/event-stream', _cut_after_output(stream, self.path))
+                    return
                 if drop in ('before-output', 'after-output', 'stalled'):
                     self.send_response(200)
                     self.send_header('content-type', 'text/event-stream')
@@ -540,6 +556,41 @@ def test_a_turn_fails_once_on_a_reply_that_fails_after_its_first_output(stand_in
     # Each provider's SDK raises its own httpx package's error.
     with pytest.raises((httpx.TransportError, httpx2.TransportError)):
         asyncio.run(_streamed(_model(stand_in, provider)))
+    assert len(stand_in.requests) == 1
+
+
+@pytest.mark.parametrize('wire', ['anthropic', 'responses', 'chat-completions', 'plan'])
+def test_a_turn_with_clean_eof_before_model_completion_fails_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stand_in: StandIn, wire: str,
+) -> None:
+    gateway = ENDPOINT_MODELS if wire == 'chat-completions' else GATEWAY
+    deploy(monkeypatch, tmp_path, integrations={'modelGateway': gateway})
+    stand_in.drops.append('clean-eof-after-output')
+
+    model = (
+        llm.build_model(model='openai-plan:gpt-5', relay=lambda: _turn(stand_in))
+        if wire == 'plan'
+        else _model(stand_in, 'anthropic' if wire == 'anthropic' else 'openai')
+    )
+    graph = build_agent(
+        model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
+        skills=[], checkpointer=InMemorySaver(),
+    )
+    agent = SessionAgent(name='test', graph=graph)
+    request = RunAgentInput(
+        thread_id='session', run_id='turn', state={},
+        messages=[UserMessage(id='question', content='Reply OK.')], tools=[], context=[], forwarded_props={},
+    )
+
+    async def run() -> list[Any]:
+        with collecting_turn_feeds():
+            return [event async for event in agent.run(request)]
+
+    events = asyncio.run(run())
+    assert ''.join(event.delta for event in events if event.type == EventType.TEXT_MESSAGE_CONTENT) == 'Echo: Reply OK.'
+    [terminal] = [event for event in events if event.type in {EventType.RUN_ERROR, EventType.RUN_FINISHED}]
+    assert isinstance(terminal, RunErrorEvent)
+    assert terminal.message == 'Model stream ended before the provider completed the reply'
     assert len(stand_in.requests) == 1
 
 

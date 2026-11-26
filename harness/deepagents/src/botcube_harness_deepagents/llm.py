@@ -222,112 +222,80 @@ def _retried(error: BaseException, answered: Sequence[int]) -> bool:
     return _dropped_before_response(error)
 
 
-async def _answered_reply(stream: Callable[[], AsyncIterator[ChatGenerationChunk]]) -> AsyncIterator[ChatGenerationChunk]:
-    """Retry a reply that fails before its first output, and end one that sends no output for MODEL_IDLE_SECONDS.
+async def _next_chunk(
+    chunks: AsyncIterator[ChatGenerationChunk], deadline: float | None, statuses: list[int] | None,
+) -> ChatGenerationChunk | None:
+    idle = asyncio.timeout_at(deadline)
+    token = _answered.set(statuses)
+    try:
+        async with idle:
+            return await anext(chunks, None)
+    except TimeoutError as error:
+        if idle.expired():
+            raise ModelIdleError(f'The model sent no output for {MODEL_IDLE_SECONDS:g} seconds') from error
+        raise
+    finally:
+        _answered.reset(token)
 
-    A reply is retried when the gateway answered 502, 503 or 504, dropped the connection before answering, or failed after its 200.
-    The idle time counts model output, not bytes, since a gateway's keepalives would hold a stalled stream open.
-    """
-    attempt = 1
-    while True:
-        reply = _ReplyAttempt(stream, last=attempt == ENDPOINT_ATTEMPTS)
-        async with aclosing(reply.chunks()) as chunks:
-            async for chunk in chunks:
+
+async def _completed_reply(
+    chunks: AsyncIterator[ChatGenerationChunk], *, statuses: list[int] | None = None,
+) -> AsyncGenerator[ChatGenerationChunk, None]:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + MODEL_IDLE_SECONDS if statuses is not None else None
+    completed = False
+    try:
+        while (chunk := await _next_chunk(chunks, deadline, statuses)) is not None:
+            message = chunk.message
+            completed |= (
+                isinstance(message, AIMessageChunk) and message.chunk_position == 'last'
+                or bool((chunk.generation_info or {}).get('finish_reason'))
+            )
+            if deadline is not None and _output(chunk):
+                deadline = loop.time() + MODEL_IDLE_SECONDS
+            yield chunk
+    finally:
+        if isinstance(chunks, AsyncGenerator):
+            await chunks.aclose()
+    if not completed:
+        raise ConnectionError('Model stream ended before the provider completed the reply')
+
+
+async def _gateway_attempt(
+    stream: AsyncIterator[ChatGenerationChunk], statuses: list[int],
+) -> AsyncGenerator[ChatGenerationChunk, None]:
+    held: list[ChatGenerationChunk] = []
+    async with aclosing(_completed_reply(stream, statuses=statuses)) as chunks:
+        async for chunk in chunks:
+            if _output(chunk):
+                for earlier in held:
+                    yield earlier
+                held.clear()
                 yield chunk
-        if not reply.retry:
-            return
-        await asyncio.sleep(RETRY_DELAY_SECONDS * attempt)
-        attempt += 1
+                break
+            held.append(chunk)
+        async for chunk in chunks:
+            yield chunk
+    for earlier in held:
+        yield earlier
 
 
-class _IdleDeadline:
-    """When a reply that has sent no model output for MODEL_IDLE_SECONDS ends."""
-
-    def __init__(self) -> None:
-        self._loop = asyncio.get_running_loop()
-        self._renew()
-
-    def _renew(self) -> None:
-        self._at = self._loop.time() + MODEL_IDLE_SECONDS
-
-    async def next_chunk(self, chunks: AsyncIterator[ChatGenerationChunk]) -> ChatGenerationChunk:
-        """The next chunk of `chunks`, renewing the deadline when it is model output."""
-        idle = asyncio.timeout_at(self._at)
+async def _answered_reply(stream: Callable[[], AsyncIterator[ChatGenerationChunk]]) -> AsyncGenerator[ChatGenerationChunk, None]:
+    for attempt in range(1, ENDPOINT_ATTEMPTS + 1):
+        statuses: list[int] = []
+        released = False
         try:
-            async with idle:
-                chunk = await anext(chunks)
-        except StopAsyncIteration:
+            async with aclosing(_gateway_attempt(stream(), statuses)) as chunks:
+                async for chunk in chunks:
+                    released = True
+                    yield chunk
+            return
+        except ModelIdleError:
             raise
         except Exception as error:
-            if idle.expired():
-                raise ModelIdleError(f'The model sent no output for {MODEL_IDLE_SECONDS:g} seconds') from error
-            raise
-        if _output(chunk):
-            self._renew()
-        return chunk
-
-
-class _HeldChunks:
-    """A reply's chunks before its first output, held back while the reply can still be retried."""
-
-    def __init__(self) -> None:
-        self._held: list[ChatGenerationChunk] | None = []
-
-    @property
-    def released(self) -> bool:
-        return self._held is None
-
-    def passed(self, chunk: ChatGenerationChunk) -> tuple[ChatGenerationChunk, ...]:
-        """The chunks to send on now that `chunk` arrived: none while held back, then those held and `chunk`."""
-        if self._held is None:
-            return (chunk,)
-        if not _output(chunk):
-            self._held.append(chunk)
-            return ()
-        passed, self._held = (*self._held, chunk), None
-        return passed
-
-    def rest(self) -> tuple[ChatGenerationChunk, ...]:
-        return tuple(self._held or ())
-
-
-class _ReplyAttempt:
-    """One stream of a reply; `retry` when it failed before its first output in a way worth another attempt."""
-
-    def __init__(self, stream: Callable[[], AsyncIterator[ChatGenerationChunk]], *, last: bool) -> None:
-        self._stream = stream
-        self._last = last
-        self._answered: list[int] = []
-        self._held = _HeldChunks()
-        self.retry = False
-
-    async def chunks(self) -> AsyncGenerator[ChatGenerationChunk]:
-        _answered.set(self._answered)
-        deadline = _IdleDeadline()
-        chunks = aiter(self._stream())
-        try:
-            while True:
-                try:
-                    chunk = await deadline.next_chunk(chunks)
-                except StopAsyncIteration:
-                    break
-                except ModelIdleError:
-                    raise
-                except Exception as error:
-                    if not self._worth_retrying(error):
-                        raise
-                    self.retry = True
-                    return
-                for each in self._held.passed(chunk):
-                    yield each
-            for each in self._held.rest():
-                yield each
-        finally:
-            if isinstance(chunks, AsyncGenerator):
-                await chunks.aclose()
-
-    def _worth_retrying(self, error: Exception) -> bool:
-        return not self._held.released and not self._last and _retried(error, self._answered)
+            if released or attempt == ENDPOINT_ATTEMPTS or not _retried(error, statuses):
+                raise
+        await asyncio.sleep(RETRY_DELAY_SECONDS * attempt)
 
 
 def _dropped_before_response(error: BaseException | None) -> bool:
@@ -349,8 +317,9 @@ class _AnsweredReplies(BaseChatModel):
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
         stream = super()._astream
-        async for chunk in _answered_reply(lambda: stream(messages, stop, run_manager, **kwargs)):
-            yield chunk
+        async with aclosing(_answered_reply(lambda: stream(messages, stop, run_manager, **kwargs))) as chunks:
+            async for chunk in chunks:
+                yield chunk
 
 
 class _GatewayAnthropic(_AnsweredReplies, ChatAnthropic):
@@ -448,8 +417,9 @@ def _plan_model(slug: str, relay: Callable[[], ModelRelay], effort: str | None =
             headers = _plan_request_headers(kwargs)
             kwargs['extra_headers'] = headers
             try:
-                async for chunk in super()._astream(*args, **kwargs):
-                    yield chunk
+                async with aclosing(_completed_reply(super()._astream(*args, **kwargs))) as chunks:
+                    async for chunk in chunks:
+                        yield chunk
             except openai.APIError as error:
                 body = error.body
                 if not isinstance(body, Mapping) or body.get('type') != PLAN_USAGE_ERROR_TYPE:
