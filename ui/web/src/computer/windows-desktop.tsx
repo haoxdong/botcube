@@ -1,9 +1,9 @@
 // The Agent Computer as Windows 11 (ADR 0093): Fluent UI parts on a virtual 1280x720 screen, windows from react-rnd.
 // Fluent and react-rnd load only with this lazy chunk (the dependency-cruiser rule `computer-only-packages`).
-import { FluentProvider, makeStyles, mergeClasses, Text, Toolbar, ToolbarToggleButton, tokens, webLightTheme } from '@fluentui/react-components';
-import { Battery1020Regular, Grid24Filled, Search24Regular, Speaker220Regular, Wifi120Regular } from '@fluentui/react-icons';
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type RefObject } from 'react';
-import { AppIcon, TITLE_BAR, WindowFrame, type DesktopWindow, type DockApp, type Life, type Rect } from './windows-window';
+import { FluentProvider, makeStyles, mergeClasses, webLightTheme } from '@fluentui/react-components';
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type RefObject } from 'react';
+import { Taskbar, TASKBAR, TASKBAR_APPS } from './windows-taskbar';
+import { TITLE_BAR, WindowFrame, type DesktopWindow, type DockApp, type Life, type Rect } from './windows-window';
 
 export type { DesktopWindow, DockApp } from './windows-window';
 
@@ -11,7 +11,6 @@ export type { DesktopWindow, DockApp } from './windows-window';
 const RESTS = 150;
 /** The virtual screen: Windows draws at its own sizes on 1280x720, scaled to fit the pane. */
 const SCREEN = { width: 1280, height: 720 };
-const TASKBAR = 48;
 const PHONE = '(max-width: 640px)';
 
 /** Where each window opens. The browser's content box is 16:9, as the live view's screen is. */
@@ -20,7 +19,6 @@ const PLACES: Record<DockApp, Rect> = {
   Chromium: { x: 440, y: 44, width: 800, height: 450 + TITLE_BAR },
   Terminal: { x: 200, y: 330, width: 700, height: 320 },
 };
-const TASKBAR_APPS: readonly DockApp[] = ['Files', 'Chromium', 'Terminal'];
 
 // Stock Fluent (ADR 0093): its parts keep their own look and theme; these rules only place them and draw the desktop's
 // own surfaces, from Fluent's tokens.
@@ -38,59 +36,7 @@ const useStyles = makeStyles({
   },
   phoneScreen: { width: '100%', height: '100%' },
   area: { position: 'absolute', top: 0, left: 0, right: 0 },
-  taskbar: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 100,
-    display: 'flex',
-    alignItems: 'center',
-    height: `${TASKBAR}px`,
-    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    backgroundColor: tokens.colorNeutralBackgroundAlpha,
-    backdropFilter: 'blur(40px)',
-  },
-  taskbarApps: { margin: '0 auto' },
-  // Each app's button with its running pill beneath: wide and in the brand colour for the one in front.
-  taskbarApp: { position: 'relative', display: 'flex' },
-  running: {
-    position: 'absolute',
-    bottom: 0,
-    left: '50%',
-    width: '6px',
-    height: '3px',
-    borderRadius: tokens.borderRadiusCircular,
-    backgroundColor: tokens.colorNeutralForeground3,
-    transform: 'translateX(-50%)',
-    pointerEvents: 'none',
-    transitionProperty: 'width, opacity, background-color',
-    transitionDuration: tokens.durationNormal,
-  },
-  runningActive: { width: '16px', backgroundColor: tokens.colorBrandForeground1 },
-  notRunning: { width: 0, opacity: 0 },
-  // Phones keep the taskbar to Start, the apps and the clock.
-  desktopOnly: { display: 'none' },
-  tray: { position: 'absolute', right: tokens.spacingHorizontalS, display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalXS, color: tokens.colorNeutralForeground1 },
-  trayIcons: { display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, padding: `0 ${tokens.spacingHorizontalS}`, fontSize: '20px' },
-  clock: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', padding: `0 ${tokens.spacingHorizontalS}` },
 });
-
-
-function Clock() {
-  const styles = useStyles();
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const tick = window.setInterval(() => setNow(new Date()), 15_000);
-    return () => window.clearInterval(tick);
-  }, []);
-  return (
-    <Text size={200} className={styles.clock}>
-      <span>{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-      <span>{now.toLocaleDateString()}</span>
-    </Text>
-  );
-}
 
 /** The set without one app, or the same set when it lacks it. */
 function without(set: ReadonlySet<DockApp>, app: DockApp): ReadonlySet<DockApp> {
@@ -98,6 +44,13 @@ function without(set: ReadonlySet<DockApp>, app: DockApp): ReadonlySet<DockApp> 
   const next = new Set(set);
   next.delete(app);
   return next;
+}
+
+/** The apps' lives, with these apps' set to one. */
+function withLife(all: Record<DockApp, Life>, apps: readonly DockApp[], next: Life) {
+  const changed = { ...all };
+  for (const app of apps) changed[app] = next;
+  return changed;
 }
 
 const subscribePhone = (change: () => void) => {
@@ -145,13 +98,26 @@ function useBoxSize(box: RefObject<HTMLElement | null>, fills: boolean) {
   return size;
 }
 
+export interface WindowsDesktopProps {
+  windows: readonly DesktopWindow[];
+  front: DockApp;
+  interactive: boolean;
+  onFront: (app: DockApp) => void;
+  /** Named on Start, by the agent's avatar. */
+  agentName?: string | undefined;
+  /** The chat's Stop, on Start's Power menu; null while there is no run to stop. */
+  onStop?: (() => void) | null;
+  /** The computer is awake, so its network is up. */
+  online?: boolean;
+}
+
 /**
  * Windows 11: each app in its own window, over the wallpaper, above the taskbar. `front` is the app the computer shows
  * in front; picking another calls `onFront`. Windows move, resize, minimise and snap only while `interactive` (the
  * sheet); otherwise the desktop is a preview. Every window stays mounted, minimised or closed, so the live view stays
  * connected under the others.
  */
-export function WindowsDesktop({ windows, front, interactive, onFront }: { windows: readonly DesktopWindow[]; front: DockApp; interactive: boolean; onFront: (app: DockApp) => void }) {
+export function WindowsDesktop({ windows, front, interactive, onFront, agentName, onStop = null, online = false }: WindowsDesktopProps) {
   const styles = useStyles();
   const box = useRef<HTMLDivElement>(null);
   const phoneLayout = usePhone() && interactive;
@@ -171,6 +137,8 @@ export function WindowsDesktop({ windows, front, interactive, onFront }: { windo
   // Windows playing their close motion, still mounted until it ends.
   const [closing, setClosing] = useState<ReadonlySet<DockApp>>(new Set());
   const [toward, setToward] = useState<Partial<Record<DockApp, { x: number; y: number }>>>({});
+  // The windows Show desktop put away, for a second press to bring back.
+  const [desktopShown, setDesktopShown] = useState<readonly DockApp[] | null>(null);
   const buttons = useRef<Partial<Record<DockApp, HTMLButtonElement | null>>>({});
   const screen = useRef<HTMLDivElement>(null);
   // The computer's own pick comes to the front, open.
@@ -180,22 +148,29 @@ export function WindowsDesktop({ windows, front, interactive, onFront }: { windo
   }, [front]);
   const open = order.filter((app) => life[app] === 'open');
   const active = open.at(-1) ?? null;
+  const width = phoneLayout ? boxSize.width : SCREEN.width;
+  const height = (phoneLayout ? boxSize.height : SCREEN.height) - TASKBAR;
   const raise = (app: DockApp) => {
+    setDesktopShown(null);
     setLife((all) => (all[app] === 'open' ? all : { ...all, [app]: 'open' }));
     setClosing((set) => without(set, app));
     setOrder((list) => (list.at(-1) === app ? list : [...list.filter((item) => item !== app), app]));
     onFront(app);
   };
+  // A minimised window shrinks into its taskbar button, as Windows 11 does.
+  const shrinkInto = (app: DockApp) => {
+    const button = buttons.current[app]?.getBoundingClientRect();
+    const area = screen.current?.getBoundingClientRect();
+    const ratio = phoneLayout ? 1 : scale;
+    if (button !== undefined && area !== undefined) setToward((all) => ({ ...all, [app]: { x: (button.left + button.width / 2 - area.left) / ratio, y: (button.top + button.height / 2 - area.top) / ratio } }));
+  };
   const putAway = (app: DockApp, next: Life) => {
-    // A minimised window shrinks into its taskbar button, as Windows 11 does; a closed one plays its close motion first.
+    // A closed window plays its close motion first, and opens again with its open motion.
     if (next === 'closed') {
       setClosing((set) => new Set(set).add(app));
       setArrived((set) => without(set, app));
     }
-    const button = next === 'minimised' ? buttons.current[app]?.getBoundingClientRect() : undefined;
-    const area = screen.current?.getBoundingClientRect();
-    const ratio = phoneLayout ? 1 : scale;
-    if (button !== undefined && area !== undefined) setToward((all) => ({ ...all, [app]: { x: (button.left + button.width / 2 - area.left) / ratio, y: (button.top + button.height / 2 - area.top) / ratio } }));
+    if (next === 'minimised') shrinkInto(app);
     setLife((all) => ({ ...all, [app]: next }));
     const below = open.filter((item) => item !== app).at(-1);
     if (below !== undefined) onFront(below);
@@ -204,12 +179,24 @@ export function WindowsDesktop({ windows, front, interactive, onFront }: { windo
     setSnapping(app);
     setMaxed((set) => { const next = new Set(set); if (next.has(app)) next.delete(app); else next.add(app); return next; });
   };
+  // Show desktop minimises every open window; pressed again, it brings back those it put away.
+  const showDesktop = () => {
+    if (desktopShown === null) {
+      open.forEach(shrinkInto);
+      setLife((all) => withLife(all, open, 'minimised'));
+      setDesktopShown(open);
+      return;
+    }
+    const back = desktopShown.filter((app) => life[app] === 'minimised');
+    setLife((all) => withLife(all, back, 'open'));
+    setDesktopShown(null);
+    const top = order.filter((app) => back.includes(app)).at(-1);
+    if (top !== undefined) onFront(top);
+  };
   const pick = (app: DockApp) => {
     if (!phoneLayout && life[app] === 'open' && app === active) putAway(app, 'minimised');
     else raise(app);
   };
-  const width = phoneLayout ? boxSize.width : SCREEN.width;
-  const height = (phoneLayout ? boxSize.height : SCREEN.height) - TASKBAR;
   const screenStyle: CSSProperties = phoneLayout ? {} : { width: SCREEN.width, height: SCREEN.height, transform: 'scale(var(--screen-scale, 1))' };
   return (
     // A preview takes no focus or presses: the sheet is where the desktop is used.
@@ -222,7 +209,6 @@ export function WindowsDesktop({ windows, front, interactive, onFront }: { windo
               const { app } = win;
               if (life[app] === 'closed' && win.keepMounted !== true && !closing.has(app)) return null;
               const full = phoneLayout || maxed.has(app);
-              const rect = rects[app];
               return (
                 <WindowFrame
                   key={app}
@@ -232,7 +218,7 @@ export function WindowsDesktop({ windows, front, interactive, onFront }: { windo
                   active={app === active}
                   // On a phone only the window in front shows.
                   away={life[app] !== 'open' || (phoneLayout && app !== active)}
-                  place={full ? { x: 0, y: 0, width, height } : rect}
+                  place={full ? { x: 0, y: 0, width, height } : rects[app]}
                   full={full}
                   toward={phoneLayout ? undefined : toward[app]}
                   scale={phoneLayout ? 1 : scale}
@@ -251,32 +237,20 @@ export function WindowsDesktop({ windows, front, interactive, onFront }: { windo
               );
             })}
           </div>
-          <div className={styles.taskbar}>
-            <Toolbar className={styles.taskbarApps} size="large" aria-label="Taskbar" checkedValues={{ app: active === null ? [] : [active] }}>
-              <ToolbarToggleButton name="start" value="start" appearance="subtle" aria-label="Start" icon={<Grid24Filled color={tokens.colorBrandForeground1} />} />
-              <ToolbarToggleButton name="search" value="search" appearance="subtle" aria-label="Search" icon={<Search24Regular />} className={mergeClasses(phoneLayout && styles.desktopOnly)} />
-              {TASKBAR_APPS.map((app) => (
-                <span key={app} className={styles.taskbarApp}>
-                  <ToolbarToggleButton
-                    ref={(node: HTMLButtonElement | null) => { buttons.current[app] = node; }}
-                    name="app"
-                    value={app}
-                    appearance="subtle"
-                    className="agent-computer-taskbar-app"
-                    aria-label={app}
-                    title={app}
-                    icon={<AppIcon app={app} size={24} />}
-                    onClick={() => pick(app)}
-                  />
-                  <span className={mergeClasses(styles.running, app === active && styles.runningActive, life[app] === 'closed' && styles.notRunning)} />
-                </span>
-              ))}
-            </Toolbar>
-            <span className={styles.tray}>
-              <span className={mergeClasses(styles.trayIcons, phoneLayout && styles.desktopOnly)}><Wifi120Regular /><Speaker220Regular /><Battery1020Regular /></span>
-              <Clock />
-            </span>
-          </div>
+          <Taskbar
+            windows={windows}
+            life={life}
+            active={active}
+            phone={phoneLayout}
+            agentName={agentName}
+            onStop={onStop}
+            online={online}
+            button={(app) => (node) => { buttons.current[app] = node; }}
+            onPick={pick}
+            onOpen={raise}
+            onClose={(app) => putAway(app, 'closed')}
+            onShowDesktop={showDesktop}
+          />
         </div>
       </FluentProvider>
     </div>

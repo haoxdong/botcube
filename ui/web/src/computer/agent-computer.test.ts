@@ -107,8 +107,8 @@ const buttons = (html: string) =>
   );
 /** The way into the computer sheet: the whole preview. */
 const OPEN = 'View computer';
-/** The buttons Windows draws: the taskbar's, each window's caption buttons, and Terminal's tab strip. */
-const WINDOWS = /^(Start|Search|Files|Chromium|Terminal|New tab|Open a profile|(Close )?[\w-]+@computer: ~|(Minimise|Maximise|Restore|Close) \w+)$/;
+/** The buttons Windows draws: the taskbar's and its tray's, the clock (its time), each window's caption buttons, and Terminal's tab strip. */
+const WINDOWS = /^(Start|Search|Files|Chromium|Terminal|Quick settings|Show desktop|\d.*|New tab|Open a profile|(Close )?[\w-]+@computer: ~|(Minimise|Maximise|Restore|Close) \w+)$/;
 /** The computer's own controls, outside Windows. */
 const controls = (html: string) => buttons(html).filter((name) => name === undefined || !WINDOWS.test(name));
 /** The taskbar's apps from the left, the front one pressed. */

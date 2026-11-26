@@ -104,24 +104,24 @@ export function AgentComputer({
   BrowserFrame?: ComponentType<BrowserLiveFrameProps> | undefined;
   active?: boolean;
   app: DockApp;
-    files: ReactNode;
+  files: ReactNode;
   computer: AgentComputerState;
   commands: readonly ShellCommand[];
-    terminalError?: string | null;
+  terminalError?: string | null;
   liveViewExhausted?: boolean;
   control: 'agent' | 'user';
-    running: boolean;
+  running: boolean;
   busy: boolean;
   error: string | null;
-    notice: string | null;
+  notice: string | null;
   onTakeOver: (browserSessionId: string) => void;
   onHandBack: (browserSessionId: string) => void;
   /** A wake is starting the browser. */
   starting: boolean;
   onStop: (() => void) | null;
   onOpenApp: (app: DockApp) => void;
-    onLive?: (painted: boolean) => void;
-    onLiveEnded?: () => void;
+  onLive?: (painted: boolean) => void;
+  onLiveEnded?: () => void;
   onConnectionChange?: ((connected: boolean) => void) | undefined;
 }) {
   const [live, setLive] = useState<{ sessionId: string; connection: LiveViewConnection | null } | null>(null);
@@ -211,6 +211,9 @@ export function AgentComputer({
           front={app}
           interactive={active && sheet}
           onFront={onOpenApp}
+          agentName={agentName}
+          onStop={running ? onStop : null}
+          online={computer.state === 'awake'}
           windows={[
             { app: 'Files', title: 'Files', startsClosed: true, children: <section className="agent-computer-app" aria-label="Files">{files}</section> },
             {
@@ -310,19 +313,7 @@ function typeText(connection: LiveViewConnection, text: string) {
 
 const KEY_FOR_INPUT: Partial<Record<string, string>> = { deleteContentBackward: 'Backspace', insertLineBreak: 'Enter' };
 
-function TouchTool({
-  label,
-  Icon,
-  disabled,
-  pressed,
-  onClick,
-}: {
-  label: string;
-  Icon: LucideIcon;
-  disabled: boolean;
-  pressed?: boolean;
-  onClick: () => void;
-}) {
+function TouchTool({ label, Icon, disabled, pressed, onClick }: { label: string; Icon: LucideIcon; disabled: boolean; pressed?: boolean; onClick: () => void }) {
   return (
     <Button variant={pressed ? "secondary" : "default"} size="icon-lg" aria-label={label} title={label} disabled={disabled} aria-pressed={pressed} onClick={onClick}>
       <Icon aria-hidden="true" />
@@ -389,7 +380,6 @@ function TouchToolbar({ connection, busy }: { connection: LiveViewConnection | n
   const connecting = connection === null || busy;
   return (
     <div className="agent-computer-touch" role="toolbar" aria-label="Take-over">
-      {/* Who drives and Stop stay in the bar under the screen. Round icon buttons, as dots' phone toolbar (Fig 8); each is named by its label and tooltip. */}
       <span className="agent-computer-touch-tools">
         <TouchTool label="Keyboard" Icon={Keyboard} disabled={connecting} onClick={() => keys.current?.focus()} />
         <TouchTool label="Pointer" Icon={MousePointer2} disabled={connecting} pressed={pointer} onClick={togglePointer} />
