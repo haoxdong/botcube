@@ -321,10 +321,10 @@ const visibility = async (hidden: boolean) => {
   await act(async () => document.dispatchEvent(new Event('visibilitychange')));
 };
 const computerProps = {
-  agentName: 'Astra', app: 'Chromium' as const, files: null,
+  agentName: 'Astra', files: () => null,
   computer: { state: 'awake' as const, browserSessionId: 'browser-1', control: 'user' as const, screenshot: 'data:image/jpeg;base64,c2hvdA==' },
   commands: [], control: 'user' as const, running: false, busy: false, error: null, notice: null,
-  onTakeOver: vi.fn(), onHandBack: vi.fn(), starting: false, onStop: vi.fn(), onOpenApp: vi.fn(),
+  onTakeOver: vi.fn(), onHandBack: vi.fn(), starting: false, onStop: vi.fn(),
 };
 
 describe('a backgrounded Agent Computer', () => {

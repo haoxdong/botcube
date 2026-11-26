@@ -10,8 +10,7 @@ const meta = {
   decorators: [(Story) => <div style={{ height: '100dvh' }}><Story /></div>],
   args: {
     agentName: 'BotCube',
-    app: 'Chromium',
-    files: <FilesWindow files={[]} error={null} onReload={() => {}} onDownload={() => {}} onDelete={() => {}} onRename={() => null} onMove={() => {}} onCopy={() => {}} onNewFolder={(folder) => `${folder}New folder/`} onUpload={() => Promise.reject(new Error('The fixture has no uploads'))} thumbnailUrl={() => Promise.reject(new Error('The fixture has no pictures'))} />,
+    files: () => <FilesWindow files={[]} error={null} onReload={() => {}} onDownload={() => {}} onDelete={() => {}} onRename={() => null} onMove={() => {}} onCopy={() => {}} onNewFolder={(folder) => `${folder}New folder/`} onUpload={() => Promise.reject(new Error('The fixture has no uploads'))} thumbnailUrl={() => Promise.reject(new Error('The fixture has no pictures'))} />,
     computer: { state: 'asleep', screenshot: null },
     commands: [{ command: 'fake-cli data', output: 'Sample item: 42' }],
     control: 'agent',
@@ -23,15 +22,14 @@ const meta = {
     onStop: null,
     onTakeOver: () => {},
     onHandBack: () => {},
-    onOpenApp: () => {},
-  },
+    },
 } satisfies Meta<typeof AgentComputer>;
 export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Sleeping: Story = {};
 export const Terminal: Story = {
-  args: { app: 'Terminal' },
+  args: { firstApp: 'Terminal' },
   play: async ({ canvasElement }) => {
     const terminal = within(canvasElement).getByRole('log', { name: 'Terminal' });
     await expect(terminal).toHaveTextContent('Sample item: 42');
@@ -42,5 +40,5 @@ export const Terminal: Story = {
     await expect(Math.min(width, height)).toBeGreaterThan(0);
   },
 };
-export const Files: Story = { args: { app: 'Files' } };
+export const Files: Story = { args: { firstApp: 'Files' } };
 export const FailedControl: Story = { args: { error: 'Browser control unavailable' } };

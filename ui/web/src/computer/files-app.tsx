@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { besideOf, filesPath, nameOf } from '../app/files-path';
+import { attachmentAccountEpoch } from '../plugin/file-account';
 import { FilesWindow } from './files-explorer';
 import { itemsIn } from './files-items';
 import {
@@ -19,11 +20,24 @@ function newFolderName(taken: ReadonlySet<string>): string {
 /** A path moved from one folder to another, or itself when it is not in `from`. */
 const moved = (path: string, from: string, to: string) => (path === from ? to : path.startsWith(`${from}/`) ? `${to}${path.slice(from.length)}` : path);
 
-export function FilesApp({ chatServiceUrl, onLoad }: { chatServiceUrl: string; onLoad?: (outcome: 'ready' | 'failed') => void }) {
-  const [files, setFiles] = useState<FileEntry[] | null>(null);
-  const [folders, setFolders] = useState<FolderEntry[]>([]);
+/** Each account's last listing this session: Files reopens on it while it lists again. */
+const lastListings = new Map<string, { files: FileEntry[]; folders: FolderEntry[] }>();
+const listingKey = (chatServiceUrl: string) => `${chatServiceUrl} ${attachmentAccountEpoch()}`;
+/** A download Chrome is still writing, which Files doesn't show until it lands under its own name. */
+const downloading = ({ name }: FileEntry) => name.endsWith('.crdownload');
+
+/**
+ * The account's Files. `changes` counts the agent's finished operations: each one lists the folder again, quietly, so
+ * what the agent saves, renames or deletes shows without a Refresh.
+ */
+export function FilesApp({ chatServiceUrl, changes = 0, onLoad }: { chatServiceUrl: string; changes?: number; onLoad?: (outcome: 'ready' | 'failed') => void }) {
+  const last = lastListings.get(listingKey(chatServiceUrl));
+  const [files, setFiles] = useState<FileEntry[] | null>(last?.files ?? null);
+  const [folders, setFolders] = useState<FolderEntry[]>(last?.folders ?? []);
   // The last folder made, which a rename of it waits for.
   const making = useRef<Promise<unknown>>(Promise.resolve());
+  // The user's last change, which a listing the agent prompts waits for, so it never shows a rename or delete undone.
+  const changing = useRef<Promise<unknown>>(Promise.resolve());
   const [error, setError] = useState<string | null>(null);
 
   useLayoutEffect(() => {
@@ -36,17 +50,22 @@ export function FilesApp({ chatServiceUrl, onLoad }: { chatServiceUrl: string; o
     (request: Promise<void>) => {
       request.then(async () => {
         const listing = ++latestListing.current;
-        const { files, folders } = await listFolders({ chatServiceUrl });
+        const key = listingKey(chatServiceUrl);
+        const all = await listFolders({ chatServiceUrl });
         if (listing !== latestListing.current) return;
-        setFiles(files);
-        setFolders(folders);
+        const listed = { ...all, files: all.files.filter((file) => !downloading(file)) };
+        lastListings.set(key, listed);
+        setFiles(listed.files);
+        setFolders(listed.folders);
       }).catch((cause: Error) => setError(cause.message));
     },
     [chatServiceUrl],
   );
   const run = (request: () => Promise<void>) => {
     setError(null);
-    settle(request());
+    const answered = request();
+    changing.current = answered.catch(() => undefined);
+    settle(answered);
   };
   /** Runs a move or copy, answering the path it took. */
   const taking = (put: Promise<string>) => {
@@ -109,7 +128,8 @@ export function FilesApp({ chatServiceUrl, onLoad }: { chatServiceUrl: string; o
     return answered;
   };
 
-  useEffect(() => settle(Promise.resolve()), [settle]);
+  // Opening lists the folder, as does each of the agent's `changes`.
+  useEffect(() => settle(changing.current.then(() => undefined)), [settle, changes]);
   const thumbnailUrl = useCallback((path: string) => fileDownloadUrl(path, { chatServiceUrl }), [chatServiceUrl]);
 
   return (

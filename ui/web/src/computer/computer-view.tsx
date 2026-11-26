@@ -15,7 +15,6 @@ import {
   takeOverBrowser,
   wakeAgentComputer,
   type AgentComputerState,
-  type DockApp,
 } from './agent-computer';
 import { FilesApp } from './files-app';
 import { ScreenshotBrowserFrame } from './screenshot-browser-frame';
@@ -74,6 +73,11 @@ export function ComputerView({ agentName, conversation, shown, activity, onConne
   }
   const active = useRef(shown);
   active.current = shown;
+  // The agent's finished operations, which Files lists again after: each tool result, and each Turn's end, when a
+  // download a click started may have landed since.
+  const [turnsEnded, setTurnsEnded] = useState({ running, count: 0 });
+  if (turnsEnded.running !== running) setTurnsEnded({ running, count: turnsEnded.count + (running ? 0 : 1) });
+  const agentChanges = activity.messages.filter((message) => message.role === 'tool').length + turnsEnded.count;
   useEffect(() => () => { active.current = false; }, []);
   // Each showing after the first: the tab looks at the computer again, as opening it did, while the live view of
   // the same browser stays connected.
@@ -129,11 +133,10 @@ export function ComputerView({ agentName, conversation, shown, activity, onConne
     setOpenedAt(performance.now());
     retry();
   }
-  const [app, setApp] = useState<DockApp>('Chromium');
   const filesOpening = useRef<{ start: number; showing: string } | null>(null);
-  const opening = filesOpening.current;
   const filesLoaded = (outcome: 'ready' | 'failed') => {
-    if (opening === null || filesOpening.current !== opening) return;
+    const opening = filesOpening.current;
+    if (opening === null) return;
     filesOpening.current = null;
     if (outcome === 'ready' && active.current && opening.showing === currentShowing.current) {
       measureMoment('files-menu', opening.start);
@@ -276,8 +279,7 @@ export function ComputerView({ agentName, conversation, shown, activity, onConne
           BrowserFrame={BrowserFrame ?? (computer.state === "awake" && computer.liveView === "screenshots" ? ScreenshotBrowserFrame : undefined)}
           agentName={agentName}
           active={shown && !checking}
-          app={app}
-          files={<FilesApp chatServiceUrl={chatServiceUrl} onLoad={filesLoaded} />}
+          files={() => <FilesApp chatServiceUrl={chatServiceUrl} changes={agentChanges} onLoad={(outcome) => filesLoaded(outcome)} />}
           computer={computer}
           commands={commands}
           terminalError={terminalError?.message ?? null}
@@ -293,10 +295,8 @@ export function ComputerView({ agentName, conversation, shown, activity, onConne
           onTakeOver={takeOver}
           onHandBack={handBack}
           onStop={activity.stop}
-          onOpenApp={(next) => {
-            if (next === app) return;
+          onFrontChange={(next) => {
             filesOpening.current = next === 'Files' ? { start: performance.now(), showing } : null;
-            setApp(next);
           }}
           onLive={live}
           onConnectionChange={onConnectionChange}

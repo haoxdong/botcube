@@ -12,11 +12,8 @@ import { SnapLayouts, type Zone } from './windows-snap';
 export type DockApp = 'Chromium' | 'Terminal' | 'Files';
 
 export const TITLE_BAR = 40;
-// Fluent 2 motion: decelerate in, accelerate out (its curveDecelerateMax and curveAccelerateMax).
-const DECELERATE = 'cubic-bezier(0.1, 0.9, 0.2, 1)';
-const ACCELERATE = 'cubic-bezier(0.9, 0.1, 1, 0.2)';
-// Its curveEasyEase for close: an accelerate curve leaves the change to the last frames, so it reads as a cut.
-const EASY_EASE = 'cubic-bezier(0.33, 0, 0.67, 1)';
+/** A maximised window, and every window on a phone: the whole area above the taskbar, in CSS rather than numbers. */
+const FILL = { size: { width: '100%', height: '100%' }, position: { x: 0, y: 0 } };
 // Windows 11's folder yellow: Fluent's icons ship no coloured folder.
 export const FOLDER = '#f8c246';
 
@@ -30,8 +27,6 @@ export interface DesktopWindow {
   dark?: boolean;
   /** Windows Terminal's tab strip: the one session as a tab, then + and ⌄, which stay disabled and say why. */
   tabs?: { disabledNote: string };
-  /** Not running until it is opened: closed, its contents unmount. */
-  startsClosed?: boolean;
   /** Mounted even while closed, as the live view stays connected. */
   keepMounted?: boolean;
   children: ReactNode;
@@ -177,8 +172,6 @@ export interface WindowFrameProps {
   place: Rect;
   full: boolean;
   snapped: boolean;
-  /** The taskbar button a minimised window shrinks into, in the screen's pixels. */
-  toward: { x: number; y: number } | undefined;
   scale: number;
   interactive: boolean;
   layer: number;
@@ -206,29 +199,55 @@ export interface WindowFrameProps {
   onClosed: () => void;
 }
 
-/** How a window goes away into its taskbar button, or comes back. */
-function shrinkStyle(away: boolean, life: Life, toward: WindowFrameProps['toward'], { x, y, width, height }: Rect): CSSProperties {
-  if (!away) return { transform: 'none', opacity: 1, transition: `transform 280ms ${DECELERATE}, opacity 200ms ${DECELERATE}` };
+/**
+ * How a window goes away, or comes back, in Fluent 2 motion: decelerate in, accelerate out. Closing is opening in reverse,
+ * on curveEasyEase (an accelerate curve leaves the change to the last frames, so it reads as a cut); minimised, or behind
+ * on a phone, a window scales back and fades.
+ */
+function awayStyle(away: boolean, life: Life): CSSProperties {
+  if (!away) return { transform: 'none', opacity: 1, transition: `transform ${tokens.durationSlow} ${tokens.curveDecelerateMax}, opacity ${tokens.durationNormal} ${tokens.curveDecelerateMax}` };
+  const curve = life === 'closed' ? tokens.curveEasyEase : tokens.curveAccelerateMax;
+  const { durationNormal: time } = tokens;
   return {
-    // Closing is opening in reverse; minimising shrinks into the taskbar button; a phone's other windows step back.
-    transform: life === 'closed' ? 'scale(0.92)' : toward === undefined ? 'scale(0.96)' : `translate(${toward.x - (x + width / 2)}px, ${toward.y - (y + height / 2)}px) scale(0.18)`,
+    transform: life === 'closed' ? 'scale(0.92)' : 'scale(0.96)',
     opacity: 0,
     visibility: 'hidden',
-    transition: life === 'closed' ? `transform 200ms ${EASY_EASE}, opacity 200ms ${EASY_EASE}, visibility 0s 200ms` : `transform 220ms ${ACCELERATE}, opacity 220ms ${ACCELERATE}, visibility 0s 220ms`,
+    transition: `transform ${time} ${curve}, opacity ${time} ${curve}, visibility 0s ${time}`,
   };
 }
 
-/** One window: react-rnd moves and resizes it, Fluent draws its frame in the window's own theme. */
-export function WindowFrame({ window: win, life, opening, active, away, place, full, snapped, toward, scale, interactive, layer, snapping, phone, system, onRaise, onPlace, onDrop, onUnsnap, onDragAt, onSnap, onRestore, onSnapped, onMinimise, onMaximise, onClose, onClosed }: WindowFrameProps) {
+/** One window: react-rnd moves and resizes it (a full one fills the area), Fluent draws its frame in the window's own theme. */
+export function WindowFrame({ window: win, life, opening, active, away, place, full, snapped, scale, interactive, layer, snapping, phone, system, onRaise, onPlace, onDrop, onUnsnap, onDragAt, onSnap, onRestore, onSnapped, onMinimise, onMaximise, onClose, onClosed }: WindowFrameProps) {
   const styles = useStyles();
   const panel = useId();
+  const state = away ? (life === 'open' ? 'behind' : life) : 'open';
+  const contents = (
+    <div
+      className={styles.frame}
+      style={awayStyle(away, life)}
+      onTransitionEnd={(event: TransitionEvent<HTMLElement>) => { if (event.target === event.currentTarget && event.propertyName === 'opacity' && life === 'closed') onClosed(); }}
+    >
+      {/* Each window in its own theme: Fluent draws its surface, in dark for Terminal. */}
+      {/* Fluent copies a provider's className onto every Portal under it (Dialog, Menu, Tooltip), so the provider
+          carries the theme and styles.css's shield alone, and the window is the div inside it; an inline style is not copied. */}
+      <FluentProvider theme={win.dark === true ? webDarkTheme : webLightTheme} className="agent-computer-fluent" style={{ display: 'contents' }}>
+        <div className={mergeClasses('agent-computer-windows-window', styles.window, opening && styles.opening, active && styles.windowActive, full && styles.windowFull)}>
+          <TitleBar window={win} system={system} panel={panel} active={active} full={full} snapped={snapped} phone={phone} onMinimise={onMinimise} onMaximise={onMaximise} onRestore={onRestore} onSnap={onSnap} onClose={onClose} />
+          {/* A session's tab controls the window's contents, its tab panel. */}
+          <div className={styles.content} {...(win.tabs === undefined ? {} : { id: panel, role: 'tabpanel', 'aria-labelledby': `${panel}-tab` })}>{win.children}</div>
+        </div>
+      </FluentProvider>
+    </div>
+  );
   return (
     <Rnd
       data-window={win.app}
-      data-state={away ? (life === 'open' ? 'behind' : life) : 'open'}
-      scale={scale}
-      size={{ width: place.width, height: place.height }}
-      position={{ x: place.x, y: place.y }}
+      data-state={state}
+      scale={phone ? 1 : scale}
+      // A full window fills the area in CSS, whatever react-rnd last placed or the desktop's scale. It stays in react-rnd,
+      // fixed, so maximising, or the sheet opening from the preview, keeps the window and its live view mounted.
+      size={full ? FILL.size : { width: place.width, height: place.height }}
+      position={full ? FILL.position : { x: place.x, y: place.y }}
       onDragStart={onSnapped}
       onResizeStart={onSnapped}
       onDrag={(event, drag) => { if (snapped && !full) onUnsnap({ x: drag.x, y: drag.y }); onDragAt(pointerAt(event)); }}
@@ -242,25 +261,10 @@ export function WindowFrame({ window: win, life, opening, active, away, place, f
       minHeight={240}
       dragHandleClassName="window-titlebar"
       cancel=".fui-Button"
-      style={{ zIndex: layer, pointerEvents: away ? 'none' : 'auto', transition: snapping ? `transform 250ms ${DECELERATE}, width 250ms ${DECELERATE}, height 250ms ${DECELERATE}` : undefined }}
+      style={{ zIndex: layer, pointerEvents: away ? 'none' : 'auto', transition: snapping ? `transform ${tokens.durationGentle} ${tokens.curveDecelerateMax}, width ${tokens.durationGentle} ${tokens.curveDecelerateMax}, height ${tokens.durationGentle} ${tokens.curveDecelerateMax}` : undefined }}
       onMouseDown={onRaise}
     >
-      <div
-        className={styles.frame}
-        style={shrinkStyle(away, life, toward, place)}
-        onTransitionEnd={(event: TransitionEvent<HTMLElement>) => { if (event.target === event.currentTarget && event.propertyName === 'opacity' && life === 'closed') onClosed(); }}
-      >
-        {/* Each window in its own theme: Fluent draws its surface, in dark for Terminal. */}
-        {/* Fluent copies a provider's className onto every Portal under it (Dialog, Menu, Tooltip), so the provider
-            carries the theme and styles.css's shield alone, and the window is the div inside it; an inline style is not copied. */}
-        <FluentProvider theme={win.dark === true ? webDarkTheme : webLightTheme} className="agent-computer-fluent" style={{ display: 'contents' }}>
-          <div className={mergeClasses('agent-computer-windows-window', styles.window, opening && styles.opening, active && styles.windowActive, full && styles.windowFull)}>
-            <TitleBar window={win} system={system} panel={panel} active={active} full={full} snapped={snapped} phone={phone} onMinimise={onMinimise} onMaximise={onMaximise} onRestore={onRestore} onSnap={onSnap} onClose={onClose} />
-            {/* A session's tab controls the window's contents, its tab panel. */}
-            <div className={styles.content} {...(win.tabs === undefined ? {} : { id: panel, role: 'tabpanel', 'aria-labelledby': `${panel}-tab` })}>{win.children}</div>
-          </div>
-        </FluentProvider>
-      </div>
+      {contents}
     </Rnd>
   );
 }

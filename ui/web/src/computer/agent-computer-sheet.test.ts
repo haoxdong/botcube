@@ -41,8 +41,7 @@ const renderComputer = (control: 'agent' | 'user' = 'agent', props: Partial<Para
     root.render(
       React.createElement(AgentComputer, {
         agentName: 'Pebble',
-        app: 'Chromium',
-        files: React.createElement('div'),
+        files: () => React.createElement('div'),
         computer: { state: 'awake', browserSessionId: 'browser-1', control, screenshot: null },
         commands: [],
         control,
@@ -54,7 +53,6 @@ const renderComputer = (control: 'agent' | 'user' = 'agent', props: Partial<Para
         onTakeOver: () => {},
         onHandBack: () => {},
         onStop: () => {},
-        onOpenApp: () => {},
         ...props,
       }),
     ),
@@ -235,8 +233,7 @@ describe("the Agent Computer's app frame", () => {
   const front = () => container.querySelector('.agent-computer-taskbar-app[aria-pressed="true"]')?.getAttribute('aria-label');
 
   it('switches from Files and Terminal back to Chromium on the taskbar, keeping the same browser view', () => {
-    const onOpenApp = (next: DockApp) => renderComputer('agent', { app: next, onOpenApp });
-    renderComputer('agent', { app: 'Chromium', onOpenApp });
+    renderComputer('agent');
     act(() => button('View computer')?.click());
     act(() => liveFailures.get('browser-1')?.());
     const liveView = container.querySelector('[data-live-view="browser-1"]');
@@ -257,13 +254,13 @@ describe("the Agent Computer's app frame", () => {
   });
 
   it('minimises the front window from its taskbar button, bringing the next one forward, and restores it', () => {
-    const onOpenApp = vi.fn((next: DockApp) => renderComputer('agent', { app: next, onOpenApp }));
-    renderComputer('agent', { app: 'Chromium', onOpenApp });
+    const onFrontChange = vi.fn();
+    renderComputer('agent', { onFrontChange });
     act(() => button('View computer')?.click());
 
     act(() => app('Chromium')?.click());
     expect(container.querySelector('[data-window="Chromium"]')?.getAttribute('data-state')).toBe('minimised');
-    expect(onOpenApp).toHaveBeenLastCalledWith('Terminal');
+    expect(onFrontChange).toHaveBeenLastCalledWith('Terminal');
     expect(front()).toBe('Terminal');
     expect(container.querySelector('[data-live-view="browser-1"]')).not.toBeNull();
 
@@ -272,9 +269,22 @@ describe("the Agent Computer's app frame", () => {
     expect(front()).toBe('Chromium');
   });
 
+  it('opens Chromium for Take over even after every window is closed', () => {
+    const onTakeOver = vi.fn();
+    renderComputer('agent', { onTakeOver });
+    act(() => button('View computer')?.click());
+    act(() => button('Close Terminal')?.click());
+    act(() => button('Close Chromium')?.click());
+    expect(front()).toBeUndefined();
+
+    takeOver();
+
+    expect(onTakeOver).toHaveBeenCalledWith('browser-1');
+    expect(front()).toBe('Chromium');
+  });
+
   it('closes a window from its title bar, leaving its app on the taskbar to open again', () => {
-    const onOpenApp = (next: DockApp) => renderComputer('agent', { app: next, onOpenApp });
-    renderComputer('agent', { app: 'Chromium', onOpenApp });
+    renderComputer('agent');
     act(() => button('View computer')?.click());
 
     act(() => button('Close Terminal')?.click());
@@ -359,8 +369,8 @@ describe("the Agent Computer's Files on a phone", () => {
       { name: 'reports/q3.pdf', size: 1, lastModified: '2026-10-01T09:00:00.000Z' },
     ];
     renderComputer('agent', {
-      app: 'Files',
-      files: React.createElement(FilesWindow, {
+      firstApp: 'Files',
+      files: () => React.createElement(FilesWindow, {
         files, error: null, onDownload: () => {}, onDelete: () => {}, onRename: () => null, onMove: () => {}, onReload: () => {},
         onCopy: () => {}, onNewFolder: (folder: string) => `${folder}New folder/`, onUpload: () => Promise.reject(new Error('The test has no uploads')), thumbnailUrl: async () => 'https://s3.test/chart.json',
       }),
@@ -453,14 +463,14 @@ describe("the Agent Computer's Terminal", () => {
   };
 
   it('shows its failure in place of the log', () => {
-    renderComputer('agent', { app: 'Terminal', commands: commands(10), terminalError: 'The commands could not load' });
+    renderComputer('agent', { firstApp: 'Terminal', commands: commands(10), terminalError: 'The commands could not load' });
 
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('The commands could not load');
     expect(log()).toBeNull();
   });
 
   it("draws each command after the agent's prompt on the computer, then its output", () => {
-    renderComputer('agent', { app: 'Terminal', commands: [{ command: 'ls', output: 'a.txt\nb.txt' }, { command: 'cat a.txt', output: 'hello' }] });
+    renderComputer('agent', { firstApp: 'Terminal', commands: [{ command: 'ls', output: 'a.txt\nb.txt' }, { command: 'cat a.txt', output: 'hello' }] });
 
     expect(lines()).toEqual(['pebble@computer:~$ ls', 'a.txt\nb.txt', 'pebble@computer:~$ cat a.txt', 'hello']);
     // Windows Terminal's tab strip: the session's tab, then New tab and the profiles menu, disabled and saying why.
@@ -474,30 +484,30 @@ describe("the Agent Computer's Terminal", () => {
   });
 
   it("shows the agent's output as text, never as markup", () => {
-    renderComputer('agent', { app: 'Terminal', commands: [{ command: 'cat page.html', output: '<b>bold</b><img src=x onerror="alert(1)">' }] });
+    renderComputer('agent', { firstApp: 'Terminal', commands: [{ command: 'cat page.html', output: '<b>bold</b><img src=x onerror="alert(1)">' }] });
 
     expect(lines()[1]).toBe('<b>bold</b><img src=x onerror="alert(1)">');
     expect(log()?.querySelector('b, img')).toBeNull();
   });
 
   it('waits at a fresh prompt and cursor after the last command while the agent is idle, and not while it runs', () => {
-    renderComputer('agent', { app: 'Terminal', commands: commands(2) });
+    renderComputer('agent', { firstApp: 'Terminal', commands: commands(2) });
     expect(prompt()?.textContent).toBe('pebble@computer:~$ ');
     expect([...(log()?.querySelectorAll('.agent-computer-terminal-output, .agent-computer-terminal-prompt') ?? [])].at(-1)).toBe(prompt());
 
-    renderComputer('agent', { app: 'Terminal', commands: commands(2), running: true });
+    renderComputer('agent', { firstApp: 'Terminal', commands: commands(2), running: true });
     expect(prompt()).toBeNull();
   });
 
   it('says so while the agent has run no commands, with no prompt', () => {
-    renderComputer('agent', { app: 'Terminal' });
+    renderComputer('agent', { firstApp: 'Terminal' });
 
     expect(log()?.textContent).toBe('No commands yet');
     expect(prompt()).toBeNull();
   });
 
   it('copies the selected text from its context menu, and selects the whole log', async () => {
-    renderComputer('agent', { app: 'Terminal', commands: [{ command: 'ls', output: 'a.txt' }] });
+    renderComputer('agent', { firstApp: 'Terminal', commands: [{ command: 'ls', output: 'a.txt' }] });
 
     await openMenu();
     expect(menuItem('Copy')?.getAttribute('aria-disabled')).toBe('true');
@@ -546,7 +556,7 @@ describe("the Agent Computer cover's Starting…", () => {
   it('keeps waiting out one --motion-move while another window comes forward: Chromium stays covered under it', () => {
     renderComputer('agent', { computer: asleep, starting: true });
     wait(200);
-    renderComputer('agent', { computer: asleep, starting: true, app: 'Terminal' });
+    renderComputer('agent', { computer: asleep, starting: true, firstApp: 'Terminal' });
     renderComputer('agent', { computer: asleep, starting: true });
     expect(label()).toBeNull();
     wait(100);

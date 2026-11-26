@@ -177,8 +177,8 @@ export function DetailsList({ reveal, ...props }: GridProps & { reveal: { curren
         itemSize={ROW}
         height={DRAWN}
         className={styles.body}
-        // The list fills the space under the headers; its drawn stretch stays DRAWN tall.
-        listProps={{ ref: onList, className: styles.gutter, style: { height: '100%' } }}
+        // The list fills the space under the headers; its drawn stretch stays DRAWN tall, each row keyed by its path.
+        listProps={{ ref: onList, className: styles.gutter, style: { height: '100%' }, itemKey: (index: number, rows: TableRowData<FilesItem>[]) => rows[index]?.rowId ?? index }}
       >
         {row}
       </VirtualBody>

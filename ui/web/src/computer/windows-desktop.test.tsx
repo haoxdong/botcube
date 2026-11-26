@@ -2,18 +2,22 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WindowsDesktop, type WindowsDesktopProps } from './windows-desktop';
+import { useDesktopWindows, WindowsDesktop, type DockApp, type WindowsDesktopProps } from './windows-desktop';
 import { SNAP_LAYOUTS_DELAY } from './windows-snap';
 
 const WINDOWS: WindowsDesktopProps['windows'] = [
-  { app: 'Files', title: 'Files', startsClosed: true, children: React.createElement('p', null, 'Files here') },
+  { app: 'Files', title: 'Files', children: React.createElement('p', null, 'Files here') },
   { app: 'Chromium', title: 'Chromium', keepMounted: true, children: React.createElement('p', null, 'The browser') },
   { app: 'Terminal', title: 'workspace — zsh', dark: true, children: React.createElement('p', null, 'The shell') },
 ];
 
-const desktop = (props: Partial<WindowsDesktopProps> = {}) => {
+type Props = Partial<Omit<WindowsDesktopProps, 'desktop'>> & { front?: DockApp };
+function Desktop({ front = 'Chromium', onFront, ...props }: Props & { onFront: (app: DockApp | null) => void }) {
+  return React.createElement(WindowsDesktop, { windows: WINDOWS, interactive: true, desktop: useDesktopWindows(front, onFront), ...props });
+}
+const desktop = (props: Props = {}) => {
   const onFront = vi.fn();
-  render(React.createElement(WindowsDesktop, { windows: WINDOWS, front: 'Chromium', interactive: true, onFront, ...props }));
+  render(React.createElement(Desktop, { onFront, ...props }));
   return onFront;
 };
 
@@ -182,6 +186,9 @@ describe('snapping', () => {
 
     fireEvent.click(within(within(layouts).getByRole('group', { name: 'Quarters' })).getByRole('button', { name: 'Top right quarter' }));
     expect(place('Terminal')).toBe('640,0 640pxx336px');
+
+    press('Maximise Terminal');
+    expect(place('Terminal')).toBe('0,0 100%x100%');
   });
 
   it('offers no layouts for a hover that leaves before the wait', () => {
@@ -203,7 +210,8 @@ describe('snapping', () => {
     expect(menu()).toEqual({ Restore: false, Minimise: true, Maximise: true, Close: true });
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Maximise' }));
-    expect(place('Terminal')).toBe('0,0 1280pxx672px');
+    // Maximised, a window fills the area above the taskbar in CSS, not at a size react-rnd last placed.
+    expect(place('Terminal')).toBe('0,0 100%x100%');
     fireEvent.contextMenu(titleBar());
     expect(menu()).toEqual({ Restore: true, Minimise: true, Maximise: false, Close: true });
 

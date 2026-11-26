@@ -80,14 +80,12 @@ const handlers = {
   onTakeOver: () => {},
   onHandBack: () => {},
   onStop: () => {},
-  onOpenApp: () => {},
 };
 const render = (props: Partial<Parameters<typeof AgentComputer>[0]>) =>
   renderToStaticMarkup(
     React.createElement(AgentComputer, {
       agentName: 'Template Bot',
-      app: 'Chromium',
-      files: React.createElement('div', { 'data-files': '' }),
+      files: () => React.createElement('div', { 'data-files': '' }),
       computer: { state: 'awake', browserSessionId: 'browser-1', control: 'agent', screenshot: null },
       commands: [],
       control: 'agent',
@@ -156,7 +154,7 @@ describe('AgentComputer', () => {
     // Files lists the account's files only once it opens.
     expect(html).not.toContain('data-files');
     expect(html).toContain('agent-computer-terminal');
-    expect([...render({ app: 'Files' }).matchAll(/data-window="(\w+)" data-state="open"/g)].map(([, app]) => app)).toEqual(['Files', 'Chromium', 'Terminal']);
+    expect([...render({ firstApp: 'Files' }).matchAll(/data-window="(\w+)" data-state="open"/g)].map(([, app]) => app)).toEqual(['Files', 'Chromium', 'Terminal']);
   });
 
   it('keeps the preview out of reach: a press anywhere opens the sheet', () => {
@@ -165,7 +163,7 @@ describe('AgentComputer', () => {
 
   it('brings the Files window in front of the browser while Files is open', () => {
     for (const computer of [{ state: 'awake', browserSessionId: 'browser-1', control: 'agent', screenshot: null }, { state: 'asleep', screenshot: 'data:,' }] as const) {
-      const html = render({ app: 'Files', computer });
+      const html = render({ firstApp: 'Files', computer });
 
       expect(html).toContain('<section class="agent-computer-app" aria-label="Files"><div data-files=""></div></section>');
       expect(controls(html)).toEqual(computer.state === 'awake' ? [OPEN, 'Take over'] : [OPEN]);
@@ -175,7 +173,7 @@ describe('AgentComputer', () => {
 
   it("keeps the live view connected in Chromium's window under Terminal and Files, so Chromium shows it at once", () => {
     for (const app of ['Terminal', 'Files'] as const) {
-      expect(render({ app })).toMatch(/<div class="agent-computer-screen[^"]*"><div class="agent-computer-live"><div data-live-view="browser-1"><\/div><\/div>/);
+      expect(render({ firstApp: app })).toMatch(/<div class="agent-computer-screen[^"]*"><div class="agent-computer-live"><div data-live-view="browser-1"><\/div><\/div>/);
     }
   });
 

@@ -55,7 +55,7 @@ function View({shown,onConnectionChange}){
  const [control,setControl]=useState('agent'),[busy,setBusy]=useState(false),[error,setError]=useState(null);
  window.computerFixture??={clear:()=>window.computerTrace.packets.length=0,failReturn:false,failTakeover:false};
  const change=(next)=>{setBusy(true);setError(null); if(next==='user')window.computerTrace.takeovers++;else window.computerTrace.returns++;setTimeout(()=>{setBusy(false);if((next==='agent'&&window.computerFixture.failReturn)||(next==='user'&&window.computerFixture.failTakeover))setError('Control request failed');else setControl(next)},150)};
- return <AgentComputer active={shown} onConnectionChange={onConnectionChange} agentName="Marq" chatId="fixture" app="Chromium" files={null} computer={{state:'awake',browserSessionId:'fixture',control,screenshot:null}} commands={[]} control={control} running={false} busy={busy} error={error} notice={null} onTakeOver={()=>change('user')} onHandBack={()=>change('agent')} starting={false} onStop={()=>{}} onOpenApp={()=>{}} />;
+ return <AgentComputer active={shown} onConnectionChange={onConnectionChange} agentName="Marq" chatId="fixture" files={()=>null} computer={{state:'awake',browserSessionId:'fixture',control,screenshot:null}} commands={[]} control={control} running={false} busy={busy} error={error} notice={null} onTakeOver={()=>change('user')} onHandBack={()=>change('agent')} starting={false} onStop={()=>{}} />;
 }
 const agent={messages:[],isRunning:false,subscribe:()=>({unsubscribe(){}})};
 const current={conversation:{id:'fixture'},agent};

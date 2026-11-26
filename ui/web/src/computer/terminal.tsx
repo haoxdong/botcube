@@ -71,7 +71,7 @@ function TerminalLog({ commands, user, idle }: { commands: readonly ShellCommand
           <Conversation className={styles.scroll} initial="instant" resize="instant" aria-label="Terminal" tabIndex={0}>
             <ConversationContent className="block gap-0 p-0">
               <div ref={contentRef} className={styles.log}>
-            <Fades>{commands.length === 0 ? (
+            {commands.length === 0 ? (
               <div key="empty" className={mergeClasses('agent-computer-terminal-empty', styles.empty)}>No commands yet</div>
             ) : (
               commands.map(({ command, output }, index) => (
@@ -80,12 +80,12 @@ function TerminalLog({ commands, user, idle }: { commands: readonly ShellCommand
                   <div className="agent-computer-terminal-output">{output}</div>
                 </Fragment>
               ))
-            )}</Fades>
-            <Fades>{idle && commands.length > 0 && (
+            )}
+            {idle && commands.length > 0 && (
               <div key="prompt" className="agent-computer-terminal-prompt">
                 <Prompt user={user} /><span className={styles.cursor} aria-hidden="true" />
               </div>
-            )}</Fades>
+            )}
               </div>
             </ConversationContent>
           </Conversation>

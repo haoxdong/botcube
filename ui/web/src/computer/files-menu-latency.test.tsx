@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ComputerView } from './computer-view';
 import { reportMoments, type LatencyRecorder } from '../app/latency';
+import { invalidateAttachmentAccount } from '../plugin/file-account';
 
 let host: HTMLDivElement;
 let root: Root;
@@ -15,6 +16,7 @@ const shows = (element: Element | null) => element !== null && getComputedStyle(
 const measures = () => performance.getEntriesByName('latency:files-menu', 'measure');
 
 beforeEach(() => {
+  invalidateAttachmentAccount();
   performance.clearMarks();
   performance.clearMeasures();
   listings = [];
@@ -72,10 +74,9 @@ it.each([{ empty: false, automated: false }, { empty: true, automated: true }])(
   await click('Chromium');
   await click('Files');
   expect(measures()).toHaveLength(2);
-  // Closed and opened again, Files lists anew: a third.
+  // Closed and opened again, Files shows its last listing at once: a third.
   await click('Close Files');
   await click('Files');
-  await answer();
   expect(measures()).toHaveLength(3);
 });
 

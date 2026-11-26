@@ -36,7 +36,6 @@
 }
 .agent-computer-error { margin: 0; font-size: var(--font-small); color: var(--color-red); }
 
-
 /*
  * The desktop is Windows' 16:9 screen (1280x720), drawn at its own size and scaled down to fit: as wide as the pane
  * allows, and short enough to leave the pane's height room for the rest of the computer (--agent-computer-chrome).
@@ -200,16 +199,11 @@
 
   .agent-computer-sheet-head { justify-content: center; min-height: 44px; padding: max(var(--space-12), var(--shell-top)) var(--space-16) var(--space-12); }
 
-  .agent-computer-sheet-close {
-    position: absolute;
-    left: 16px;
-  }
+  .agent-computer-sheet-close { position: absolute; left: var(--space-16); }
 
   .agent-computer-sheet-title svg { width: 22px; height: 22px; }
 
   .agent-computer-sheet .agent-computer-touch { padding-bottom: max(var(--space-12), var(--shell-bottom)); }
-
-
   .agent-computer:not(.agent-computer-sheet) { --agent-computer-chrome: 136px; }
 }
 
@@ -251,7 +245,6 @@
 .remote-viewport-content { position: absolute; top: 0; left: 0; }
 .remote-viewport-shield { position: absolute; inset: 0; }
 
-
 .agent-computer-live,
 .browser-view-content {
   width: 100%;
@@ -262,14 +255,6 @@
 .agent-computer-screen:has(> .agent-computer-app) > .agent-computer-live {
   visibility: hidden;
   opacity: 0;
-}
-
-/* Neither side's CSS reaches the other (ADR 0093): Fluent's own rules style its parts, and the app's base layer
-   (Tailwind's preflight) stops at them, so they draw as in a page of their own. The computer's content stays the app's. */
-@layer base {
-  .agent-computer-fluent :is([class*='fui-']:not(.fui-FluentProvider), [class*='fui-']:not(.fui-FluentProvider) *) {
-    all: revert-layer;
-  }
 }
 
 /* Neither side's CSS reaches the other (ADR 0093): Fluent's own rules style its parts, and the app's base layer

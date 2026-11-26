@@ -111,14 +111,13 @@ interface TaskbarAppProps {
   window: DesktopWindow;
   life: Life;
   active: boolean;
-  button: (node: HTMLButtonElement | null) => void;
   onPick: () => void;
   onOpen: () => void;
   onClose: () => void;
 }
 
 /** One app on the taskbar: a press switches to it, a hover previews its window, a right click offers its menu. */
-function TaskbarApp({ window: win, life, active, button, onPick, onOpen, onClose }: TaskbarAppProps) {
+function TaskbarApp({ window: win, life, active, onPick, onOpen, onClose }: TaskbarAppProps) {
   const styles = useStyles();
   const { app } = win;
   const running = life !== 'closed';
@@ -128,7 +127,7 @@ function TaskbarApp({ window: win, life, active, button, onPick, onOpen, onClose
         <MenuTrigger disableButtonEnhancement>
           {/* Inaccessible: a description Tooltip would portal on the server, and the button's label already names the app. */}
           <Tooltip relationship="inaccessible" positioning="above" content={running ? <Preview window={win} /> : app}>
-            <ToolbarToggleButton ref={button} name="app" value={app} appearance="subtle" className="agent-computer-taskbar-app" aria-label={app} icon={<AppIcon app={app} size={24} />} onClick={onPick} />
+            <ToolbarToggleButton name="app" value={app} appearance="subtle" className="agent-computer-taskbar-app" aria-label={app} icon={<AppIcon app={app} size={24} />} onClick={onPick} />
           </Tooltip>
         </MenuTrigger>
         <MenuPopover>
@@ -151,8 +150,6 @@ export interface TaskbarProps {
   agentName: string | undefined;
   onStop: (() => void) | null;
   online: boolean;
-  /** Each app's taskbar button, which its window minimises into. */
-  button: (app: DockApp) => (node: HTMLButtonElement | null) => void;
   /** A taskbar press: brings the app forward, or minimises it if it is already in front. */
   onPick: (app: DockApp) => void;
   /** Opens the app, or brings it forward. */
@@ -163,7 +160,7 @@ export interface TaskbarProps {
 
 type Flyout = 'start' | 'search';
 
-export function Taskbar({ windows, life, active, phone, agentName, onStop, online, button, onPick, onOpen, onClose, onShowDesktop }: TaskbarProps) {
+export function Taskbar({ windows, life, active, phone, agentName, onStop, online, onPick, onOpen, onClose, onShowDesktop }: TaskbarProps) {
   const styles = useStyles();
   const [flyout, setFlyout] = useState<Flyout | null>(null);
   const toggle = (name: Flyout) => (_: unknown, data: { open: boolean }) => setFlyout(data.open ? name : null);
@@ -195,7 +192,7 @@ export function Taskbar({ windows, life, active, phone, agentName, onStop, onlin
         </Popover>
         {TASKBAR_APPS.map((app) => {
           const win = windows.find((each) => each.app === app) ?? { app, title: app, children: null };
-          return <TaskbarApp key={app} window={win} life={life[app]} active={app === active} button={button(app)} onPick={() => onPick(app)} onOpen={() => open(app)} onClose={() => onClose(app)} />;
+          return <TaskbarApp key={app} window={win} life={life[app]} active={app === active} onPick={() => onPick(app)} onOpen={() => open(app)} onClose={() => onClose(app)} />;
         })}
       </Toolbar>
       <span className={styles.tray}>

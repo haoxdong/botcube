@@ -1,7 +1,6 @@
 // One tab of the Files window: a place in File Explorer, from stock Fluent parts (ADR 0093).
-import { makeStyles, mergeClasses, MessageBar, MessageBarBody, Spinner, Text, tokens } from '@fluentui/react-components';
+import { makeStyles, mergeClasses, MessageBar, MessageBarBody, motionTokens, Spinner, Text, tokens } from '@fluentui/react-components';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { Fades } from '../app/motion';
 import { FilesChart, opensAsChart } from './files-chart';
 import { ListArea } from './files-explorer-area';
 import { CommandBar } from './files-explorer-commands';
@@ -304,11 +303,7 @@ export function ExplorerTab({ active, onPlace, className, ...props }: TabProps &
         onRename={keyActions.rename}
         onDelete={keyActions.remove}
       />
-      <Fades>{error !== null && (
-        <div key="error">
-          <MessageBar intent="error" role="alert"><MessageBarBody>{error}</MessageBarBody></MessageBar>
-        </div>
-      )}</Fades>
+      {error !== null && <MessageBar intent="error" role="alert"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       <div className={styles.body}>
         <NavPane folders={folders} place={place} onOpen={go} />
         <div className={styles.main}>
@@ -329,9 +324,9 @@ export function ExplorerTab({ active, onPlace, className, ...props }: TabProps &
                 onArrowed={(path, moved) => setSelection(clicked(selection, path, moved, paths))}
                 onStep={(by) => setView(VIEWS.findIndex((each) => each.view === view) + by)}
               >
-                <Spinner size="tiny" label="Loading" className={mergeClasses(styles.centered, !loading && explorer.hidden)} />
+                {loading && <Spinner size="tiny" delay={motionTokens.durationUltraSlow} label="Working on it…" className={styles.centered} />}
                 <Text className={mergeClasses('agent-computer-files-empty', styles.centered, !empty && explorer.hidden)}>
-                  No files yet. Files the agent downloads appear here within a minute or two.
+                  No files yet. Files the agent saves appear here.
                 </Text>
                 <FilesChart file={viewing} fileUrl={thumbnailUrl} onDownload={onDownload} onClose={() => setViewing(null)} />
                 <ItemsView

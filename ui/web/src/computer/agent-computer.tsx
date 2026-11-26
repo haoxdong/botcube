@@ -9,7 +9,7 @@ import { BrowserLiveFrame, type LiveViewConnection, type BrowserLiveFrameProps }
 import { failureDetail } from './failure-detail';
 import { Fades, Glides, useAfterMove } from '../app/motion';
 import { Terminal, type ShellCommand } from './terminal';
-import { WindowsDesktop, type DockApp } from './windows-desktop';
+import { WindowsDesktop, useDesktopWindows, type DockApp } from './windows-desktop';
 
 
 /**
@@ -80,7 +80,7 @@ export function AgentComputer({
   agentName,
   BrowserFrame = BrowserLiveFrame,
   active = true,
-  app,
+  firstApp = 'Chromium',
   files,
   computer,
   commands,
@@ -95,7 +95,7 @@ export function AgentComputer({
   onHandBack,
   starting,
   onStop,
-  onOpenApp,
+  onFrontChange,
   onLive,
   onLiveEnded,
   onConnectionChange,
@@ -103,8 +103,10 @@ export function AgentComputer({
   agentName: string;
   BrowserFrame?: ComponentType<BrowserLiveFrameProps> | undefined;
   active?: boolean;
-  app: DockApp;
-  files: ReactNode;
+  /** The window in front when the computer first shows. */
+  firstApp?: DockApp;
+  /** Draws Files' window afresh on each change of the desktop, so an open Files hears it came to the front. */
+  files: () => ReactNode;
   computer: AgentComputerState;
   commands: readonly ShellCommand[];
   terminalError?: string | null;
@@ -119,7 +121,8 @@ export function AgentComputer({
   /** A wake is starting the browser. */
   starting: boolean;
   onStop: (() => void) | null;
-  onOpenApp: (app: DockApp) => void;
+  /** The app in front changed, or null when no window is open. */
+  onFrontChange?: (app: DockApp | null) => void;
   onLive?: (painted: boolean) => void;
   onLiveEnded?: () => void;
   onConnectionChange?: ((connected: boolean) => void) | undefined;
@@ -128,6 +131,7 @@ export function AgentComputer({
   const [generation, setGeneration] = useState(0);
   const [ended, setEnded] = useState<AgentComputerState | null>(null);
   const [sheet, setSheet] = useState(false);
+  const desktop = useDesktopWindows(firstApp, onFrontChange);
   const [layer, setLayer] = useState<HTMLElement | null>(null);
   const returning = useRef(false);
   const zoom = (open: boolean) => { returning.current = false; setSheet(open); };
@@ -208,14 +212,13 @@ export function AgentComputer({
       {/* Only a zoom springs the desktop between its place and the full-screen sheet. */}
       <Glides on dependency={sheet} scales className="agent-computer-desktop">
         <WindowsDesktop
-          front={app}
+          desktop={desktop}
           interactive={active && sheet}
-          onFront={onOpenApp}
           agentName={agentName}
           onStop={running ? onStop : null}
           online={computer.state === 'awake'}
           windows={[
-            { app: 'Files', title: 'Files', startsClosed: true, children: <section className="agent-computer-app" aria-label="Files">{files}</section> },
+            { app: 'Files', title: 'Files', children: <section className="agent-computer-app" aria-label="Files">{files()}</section> },
             {
               app: 'Chromium',
               title: 'Chromium',
@@ -228,7 +231,7 @@ export function AgentComputer({
                     <div key={`${browserSessionId}:${generation}`} className="agent-computer-live"><BrowserFrame
                       sessionId={browserSessionId}
                       expanded={sheet}
-                      interactive={active && sheet && control === 'user' && !busy && app === 'Chromium'}
+                      interactive={active && sheet && control === 'user' && !busy && desktop.front === 'Chromium'}
                       lastScreen={computer.screenshot}
                       recoverOnStall
                       onConnectionChange={onBrowserConnectionChange}
@@ -282,7 +285,7 @@ export function AgentComputer({
             <Button size="sm" disabled={busy || !active} onClick={() => {
                 if (control === 'agent') {
                   zoom(true);
-                  onOpenApp('Chromium');
+                  desktop.raise('Chromium');
                   onTakeOver(browserSessionId);
                 } else handBack(browserSessionId);
               }}>

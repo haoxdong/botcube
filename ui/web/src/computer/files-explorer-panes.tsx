@@ -5,7 +5,6 @@ import {
 } from '@fluentui/react-components';
 import { ArrowDownload20Regular, Dismiss20Regular } from '@fluentui/react-icons';
 import { Fragment, type ReactNode } from 'react';
-import { Fades } from '../app/motion';
 import { FilesChart, opensAsChart } from './files-chart';
 import { ItemGlyph, Thumbnail } from './files-explorer-icons';
 import { useExplorerStyles } from './files-explorer-nav';
@@ -17,8 +16,6 @@ const useStyles = makeStyles({
   facts: { display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', columnGap: tokens.spacingHorizontalM, rowGap: tokens.spacingVerticalXS },
   pane: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: tokens.spacingVerticalM, paddingTop: tokens.spacingVerticalM },
   // Old and new content share one cell, so the one fades out over the other fading in.
-  stack: { display: 'grid' },
-  layer: { gridArea: '1 / 1' },
   preview: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: tokens.spacingVerticalM, minHeight: '200px' },
 });
 
@@ -96,16 +93,6 @@ function Facts({ facts }: { facts: readonly [string, string][] }) {
  * A pane beside the list: an inline drawer at the end, with its title and Close, and the divider before it that resizes
  * it. The size is the drawer's own, Fluent's size variable.
  */
-/** Its children, a new box whenever `state` changes: the old box fades out while the new one fades in, in place. */
-function CrossFade({ state, className, children }: { state: string; className?: string; children: ReactNode }) {
-  const styles = useStyles();
-  return (
-    <div className={styles.stack}>
-      <Fades><div key={state} className={mergeClasses(styles.layer, className)}>{children}</div></Fades>
-    </div>
-  );
-}
-
 function SidePane({ title, open, onClose, children }: { title: string; open: boolean; onClose: () => void; children: ReactNode }) {
   const explorer = useExplorerStyles();
   const { elementRef, handleRef } = usePaneSize({ variable: '--fui-Drawer--size', grow: 'start', min: 200, max: 560 });
@@ -141,9 +128,10 @@ export function DetailsPane({ open, subject, files, thumbnailUrl, onClose }: {
   return (
     <SidePane title="Details pane" open={open} onClose={onClose}>
       <div className={styles.pane}>
-        <CrossFade state={one?.path ?? `icon ${icon.path}`}>
+        {/* Windows swaps the pane's picture straight away. */}
+        <div key={one?.path ?? `icon ${icon.path}`}>
           {one === undefined ? <ItemGlyph item={icon} size={96} /> : <Thumbnail item={one} size={96} shown={open} thumbnailUrl={thumbnailUrl} />}
-        </CrossFade>
+        </div>
         <Text weight="semibold" size={400} wrap>{name}</Text>
         <Facts facts={facts} />
       </div>
@@ -167,7 +155,7 @@ export function PreviewPane({ open, file, thumbnailUrl, onDownload, onClose }: {
   const shows = file === null ? 'nothing' : kindOf(file) === 'image' ? 'picture' : opensAsChart(file.name) ? 'chart' : 'other';
   return (
     <SidePane title="Preview pane" open={open} onClose={onClose}>
-      <CrossFade state={`${shows} ${file?.path ?? ''}`} className={styles.preview}>
+      <div key={`${shows} ${file?.path ?? ''}`} className={styles.preview}>
         {file === null ? <Text>Select a file to preview.</Text>
           : shows === 'picture' ? <Thumbnail item={file} size={256} shown={open} thumbnailUrl={thumbnailUrl} />
           : shows === 'chart' ? <FilesChart file={file} fileUrl={thumbnailUrl} onDownload={onDownload} onClose={onClose} />
@@ -178,7 +166,7 @@ export function PreviewPane({ open, file, thumbnailUrl, onDownload, onClose }: {
               <Button icon={<ArrowDownload20Regular />} onClick={() => onDownload(file.path)}>Download</Button>
             </>
           )}
-      </CrossFade>
+      </div>
     </SidePane>
   );
 }
