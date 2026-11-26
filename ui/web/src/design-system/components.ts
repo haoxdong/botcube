@@ -29,7 +29,7 @@ const WHOLE_APP = ['chat-iphone-15', 'chat-1440'];
 const SHADCN = [
   'alert', 'alert-dialog', 'avatar', 'badge', 'button', 'button-group', 'collapsible', 'context-menu', 'dialog', 'dropdown-menu', 'empty',
   'field', 'hover-card', 'input', 'input-group', 'item', 'label', 'popover', 'resizable', 'select', 'separator',
-  'skeleton', 'slider', 'textarea', 'tooltip', 'trace',
+  'skeleton', 'slider', 'tabs', 'textarea', 'tooltip', 'trace',
 ];
 const AI_ELEMENTS = ['attachments', 'conversation', 'message'];
 /** A stock part's one file. */

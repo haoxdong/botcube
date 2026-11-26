@@ -20,6 +20,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Button as StockButton } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Item } from "@/components/ui/item";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -567,13 +568,13 @@ function AgentProfile({
   const identityFile = useLoad(() => loadAgentFile(chatServiceUrl, "Identity"), `${chatServiceUrl} ${revision}`);
   const character = identityFile.state.status === "loaded" ? identityFile.state.value.character.trim() : "";
   const editor = editing && profile !== null;
-  const keptComputer = computer !== undefined && tab === "Computer" && !editor;
-  const builtIn: Partial<Record<AgentProfileTab, ReactNode>> = {
+  const empty = <Empty><EmptyDescription>Nothing here yet.</EmptyDescription></Empty>;
+  const panels: Record<AgentProfileTab, ReactNode> = {
+    Computer: computer ? computer(open && tab === "Computer" && !editor) : empty,
     Scheduled: <Suspense fallback={<LoadingSkeleton label="Scheduled tasks" />}><ScheduledPanel chatServiceUrl={chatServiceUrl} onOpenChat={onOpenChat} /></Suspense>,
     Personalization: <PersonalizationPanel chatServiceUrl={chatServiceUrl} revision={revision} onSaved={onSaved} memory={memory} />,
-    ...(signIns ? { "Sign-ins": <SignInsTab chatServiceUrl={chatServiceUrl} control={signIns} /> } : {}),
+    "Sign-ins": signIns ? <SignInsTab chatServiceUrl={chatServiceUrl} control={signIns} /> : empty,
   };
-  const panel = (name: AgentProfileTab) => builtIn[name] ?? <Empty><EmptyDescription>Nothing here yet.</EmptyDescription></Empty>;
 
   return (
     <Arriving value={open && !settled}>
@@ -596,50 +597,45 @@ function AgentProfile({
           </div>
           <Fades>{error && <AlertLine className="agent-profile-error">{error}</AlertLine>}</Fades>
         </div>
-        <div className="agent-profile-tabs" role="tablist">
-          {TABS.map(([name, Icon]) => (
-            <Tooltip key={name}>
-              <TooltipTrigger
-                render={
-                  <button
-                    role="tab"
-                    aria-selected={name === tab && !editor}
-                    aria-label={name}
-                    className="agent-profile-tab"
-                    onClick={() => {
-                      setTab(name);
-                      setEditing(false);
-                    }}
-                  />
-                }
-              >
-                <Icon size={20} aria-hidden />
-              </TooltipTrigger>
-              <TooltipContent>{name}</TooltipContent>
-            </Tooltip>
-          ))}
-        </div>
-        <div className="agent-profile-panel" role="tabpanel" aria-label="Computer" hidden={!keptComputer}>
-          {computer?.(open && keptComputer)}
-        </div>
-        {open && editor && (
-          <div className="agent-profile-panel">
-            <IdentityEditor
-              chatServiceUrl={chatServiceUrl}
-              identityFile={identityFile}
-              picture={profile.picture}
-              onSaved={onSaved}
-              isAccountCurrent={isAccountCurrent}
-              onClose={() => setEditing(false)}
-            />
-          </div>
-        )}
-        {/* The other tabs load afresh each time they show. */}
-        {open && !editor && !keptComputer && (
-          <div className="agent-profile-panel" role="tabpanel" aria-label={tab}>
-            {panel(tab)}
-          </div>
-        )}
+        <Tabs
+          className="contents"
+          value={editor ? null : tab}
+          onValueChange={(name: AgentProfileTab) => {
+            setTab(name);
+            setEditing(false);
+          }}
+        >
+          <TabsList className="agent-profile-tabs" aria-label="Agent profile">
+            {TABS.map(([name, Icon]) => (
+              <Tooltip key={name}>
+                <TooltipTrigger render={<TabsTrigger value={name} aria-label={name} className="agent-profile-tab" />}>
+                  <Icon className="size-5" aria-hidden />
+                </TooltipTrigger>
+                <TooltipContent>{name}</TooltipContent>
+              </Tooltip>
+            ))}
+          </TabsList>
+          {open && editor && (
+            <div className="agent-profile-panel">
+              <IdentityEditor
+                chatServiceUrl={chatServiceUrl}
+                identityFile={identityFile}
+                picture={profile.picture}
+                onSaved={onSaved}
+                isAccountCurrent={isAccountCurrent}
+                onClose={() => setEditing(false)}
+              />
+            </div>
+          )}
+          {TABS.map(([name]) => {
+            const keepMounted = name === "Computer";
+            return (open || keepMounted) && (
+              <TabsContent key={name} className="agent-profile-panel" value={name} keepMounted={keepMounted}>
+                {panels[name]}
+              </TabsContent>
+            );
+          })}
+        </Tabs>
       </div>
     </Arriving>
   );

@@ -203,6 +203,8 @@
 
 .agent-profile-tabs {
   display: flex;
+  width: auto;
+  height: auto;
   gap: var(--space-4);
   margin: 0 var(--space-16);
   padding: var(--space-4);
@@ -212,6 +214,7 @@
 
 .agent-profile-tab {
   flex: 1;
+  height: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -230,6 +233,11 @@
     }
 }
 
+.agent-profile-tab:focus-visible {
+  outline: 1px auto;
+  @apply outline-(--color-blue)/50;
+}
+
 .agent-profile-tab[aria-selected="true"] {
   color: var(--color-text);
   background: var(--color-white);
@@ -238,6 +246,8 @@
 
 .agent-profile-panel {
   flex: 1;
+  font-size: inherit;
+  line-height: inherit;
   overflow: auto;
   padding: var(--space-20) var(--space-16);
 }
