@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { listArtifacts } from "./artifact-catalog";
+import { listArtifacts } from "./artifact-versions";
 import { ArtifactFace } from "./artifact-face";
 import type { Published } from "./artifact-published";
 import { reason } from "./composer-files";

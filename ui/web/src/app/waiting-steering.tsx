@@ -5,6 +5,7 @@ import { Pencil, X } from "lucide-react";
 import { USER_MESSAGE_CLASS } from "./bubble-width";
 import { Fold, foldAway, Shows } from "./motion";
 import { sentFilesOf } from "./composer-files";
+import { baseOf } from "./files-path";
 import { MessageEntranceContext } from "./message-entrance";
 import type { PendingMessage, Withdrawal } from "./steering";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,7 @@ type Row = { message: PendingMessage; shown: boolean };
 
 function textOf(content: string): string {
   const { text, paths } = sentFilesOf(content);
-  return text.trim() || paths.map((path) => path.split("/").pop()).join(", ");
+  return text.trim() || paths.map(baseOf).join(", ");
 }
 
 function rowsOf(waiting: PendingMessage[], closing: Map<string, Closing>): Row[] {
