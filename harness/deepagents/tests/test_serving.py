@@ -2763,6 +2763,7 @@ def test_on_agentcore_a_continuing_sessions_turn_reaches_its_model_after_one_mem
     member: _Member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
     assert service.turn('first question', **member)[-1]['type'] == 'RUN_FINISHED'
     service.fed()
+    agentcore_memory.concurrent_reads = threading.Barrier(9)
     agentcore_memory.latency = MEMORY_ROUND_TRIP
     calls.clear()
     agentcore_memory.round_trips.clear()
@@ -2808,6 +2809,7 @@ def test_on_agentcore_a_new_sessions_turn_reaches_its_model_after_two_serial_rou
         return stream(self, *args, **kwargs)
 
     monkeypatch.setattr(_ScriptedModel, '_stream', first_model_call)
+    agentcore_memory.concurrent_reads = threading.Barrier(8)
     agentcore_memory.latency = MEMORY_ROUND_TRIP
 
     events = service.turn('first question', actor='actor-1', user='actor-1', memory=True)

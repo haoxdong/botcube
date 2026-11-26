@@ -12,6 +12,7 @@ import time
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from datetime import UTC, datetime
+from threading import Barrier
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import uuid4
@@ -80,6 +81,7 @@ class FakeAgentCoreMemory:
         self.sessions: dict[str, list[str]] = defaultdict(list)
         # Seconds each call under Turn credentials takes, as a round trip to AgentCore does.
         self.latency = 0.0
+        self.concurrent_reads: Barrier | None = None
         # Memory clients the Harness built under Turn credentials.
         self.clients = 0
         # Each such call's operation and (start, end) on the perf_counter clock, STS's exchange among them.
@@ -88,7 +90,10 @@ class FakeAgentCoreMemory:
     def round_trip(self, operation: str) -> None:
         if latency := self.latency:
             start = time.perf_counter()
-            time.sleep(latency)
+            if self.concurrent_reads is not None and operation in ('list_events', 'list_memory_records'):
+                self.concurrent_reads.wait(timeout=30)
+            else:
+                time.sleep(latency)
             self.round_trips.append((operation, start, time.perf_counter()))
 
     def lag_listing(self) -> None:
