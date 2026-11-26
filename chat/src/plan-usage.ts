@@ -1,10 +1,10 @@
 import { HttpError } from './http-error.js';
 import { Hono, type Context } from 'hono';
 import { OpenAIIdentityTaken } from './account-resources.js';
+import type { SignedInvocation } from './credential-service-request.js';
 import { verifyCredentialServiceInvocation } from './credential-service-token.js';
 import { jsonPayload } from './payload.js';
-export interface OperatorInvocation { token: string; accountId: string; sessionId: string; }
-export interface PlanUsageSink { ingestPlanUsage(operator: OperatorInvocation, signIn: Record<string, unknown>): Promise<string>; revokePlanUsage(operator: OperatorInvocation): Promise<void>; }
+export interface PlanUsageSink { ingestPlanUsage(operator: SignedInvocation, signIn: Record<string, unknown>): Promise<string>; revokePlanUsage(operator: SignedInvocation): Promise<void>; }
 export interface PlanUsageAccounts { loadAccount(accountId: string): Promise<unknown | null>; requireOpenAIIdentityFree(accountId: string, identity: string): Promise<void>; recordOpenAISignIn(accountId: string, identity: string): Promise<unknown>; removeOpenAISignIn(accountId: string): Promise<unknown>; }
 /** The Credential Service's URL and the invocation token that signs requests to it. */
 export interface CredentialServiceBinding { url: string; invocationToken: string; }
@@ -31,7 +31,7 @@ export interface PlanUsageDeps {
 export function planUsageRoutes(deps: PlanUsageDeps): Hono {
   const routes = new Hono();
 
-  const operator = async (c: Context, scope: string): Promise<[OperatorInvocation, PlanUsageSink]> => {
+  const operator = async (c: Context, scope: string): Promise<[SignedInvocation, PlanUsageSink]> => {
     const sink = deps.credentialSink();
     const header = c.req.header('authorization') ?? '';
     const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';

@@ -21,30 +21,28 @@ import type { TurnRouteSource } from './turn-preparation.js';
 import type { ScheduledRunSource } from './scheduled-runs.js';
 import { computerFilesRoutes } from './computer-files-routes.js';
 import { allowedOrigins, chatTable } from './config.js';
-import { fetchCredentialService } from './credential-service-request.js';
+import { credentialServiceRequest } from './credential-service-request.js';
 import { signCredentialServiceInvocation, signTurnCredential } from './credential-service-token.js';
 import { accountFilesFromEnv, filesConfigured } from './files.js';
 import { filingUserId } from './filing-user-id.js';
 import { localAgentComputer } from './local-agent-computer.js';
 import { managedAgentComputer } from './managed-agent-computer.js';
 import { oidcIdentity } from './oidc-sign-in.js';
+import { isRecord } from './payload.js';
 import { planModels } from './plan-models.js';
 import { testUserConnectorRoutes } from './test-user-connector.js';
 import { tokenIntrospectionRoutes } from './token-introspection.js';
 
-const ACCOUNT_DELETION_SESSION = 'account-deletion';
-const ACCOUNT_SESSION = 'account-session';
-
-/** POST to the Credential Service as the account, under an invocation of the given scope. */
-async function credentialServiceCall(url: string, secret: string, accountId: string, sessionId: string, scope: string, failure: string): Promise<void> {
-  await credentialServiceResponse(url, secret, accountId, sessionId, scope, failure);
-}
-
-async function credentialServiceResponse(url: string, secret: string, accountId: string, sessionId: string, scope: string, failure: string): Promise<Response> {
+async function postCredentialService(
+  url: string, secret: string, accountId: string, sessionId: string, scope: string, step: string,
+  read: 'status' | 'success-json' = 'status',
+): Promise<unknown> {
   const token = signCredentialServiceInvocation(secret, accountId, sessionId, { scope });
-  const response = await fetchCredentialService(url, { token, accountId, sessionId }, { method: 'POST', body: '{}' });
-  if (!response.ok) throw new HttpError(503, `${failure} failed with HTTP ${response.status}`);
-  return response;
+  const { ok, status, body } = await credentialServiceRequest(url, { token, accountId, sessionId }, step, read, {
+    method: 'POST', body: '{}',
+  });
+  if (!ok) throw new HttpError(503, `${step} failed with HTTP ${status}`);
+  return body;
 }
 
 type ComputerStates = Parameters<typeof computerFilesRoutes>[0]['computers'];
@@ -135,17 +133,22 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   const started = agentComputerStartedFromConfig(bot.productService?.agentComputerStartedPath, env, async (accountId) => (await accountStore.loadAccount(accountId))?.status !== 'registered');
   const credentialServiceUrl = env.BOTCUBE_CREDENTIAL_SERVICE_URL;
   // A product service that holds the invocation secret checks the Chat's sessions by Token Introspection.
-  const invocationSecret = env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET;
-  const credentials = credentialServiceUrl
+  const invocationSecret = env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '';
+  const credentialOrigin = credentialServiceUrl ? new URL(credentialServiceUrl).origin : undefined;
+  const credentials = credentialOrigin
     // Revoke every credential the Credential Service holds for the account, at every provider.
-    ? { revoke: (accountId: string) => credentialServiceCall(`${new URL(credentialServiceUrl).origin}/account/revoke`, invocationSecret ?? '', accountId,
-      ACCOUNT_DELETION_SESSION, 'credential_revocation', 'Credential Service account revoke') }
+    ? {
+      async revoke(accountId: string) {
+        await postCredentialService(`${credentialOrigin}/account/revoke`, invocationSecret, accountId,
+          'account-deletion', 'credential_revocation', 'Credential Service account revoke');
+      },
+    }
     : null;
-  const linkedAccounts = credentialServiceUrl
+  const linkedAccounts = credentialOrigin
     ? async (accountId: string): Promise<string[]> => {
-      const response = await credentialServiceResponse(`${new URL(credentialServiceUrl).origin}/account/linked-accounts`, invocationSecret ?? '', accountId,
-        ACCOUNT_SESSION, 'linked_accounts', 'Credential Service Linked Accounts');
-      const { linkedAccounts: providers } = await response.json() as { linkedAccounts?: unknown };
+      const body = await postCredentialService(`${credentialOrigin}/account/linked-accounts`, invocationSecret, accountId,
+        'account-session', 'linked_accounts', 'Credential Service Linked Accounts', 'success-json');
+      const providers = isRecord(body) ? body.linkedAccounts : undefined;
       if (!Array.isArray(providers) || !providers.every((provider) => typeof provider === 'string')) {
         throw new HttpError(503, 'Credential Service Linked Accounts answered an invalid body');
       }
@@ -157,12 +160,14 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
     store,
     invocationSecret: credentialServiceUrl && invocationSecret ? invocationSecret : null,
     ownerAccountId: planOwner,
-    copy: (testUserId, sessionId) => credentialServiceCall(`${(credentialServiceUrl ?? '').replace(/\/+$/, '')}/auth/test-user-copy`, invocationSecret ?? '', testUserId,
-      sessionId, 'test_user_copy', 'Test User Connector copy'),
+    async copy(testUserId, sessionId) {
+      await postCredentialService(`${(credentialServiceUrl ?? '').replace(/\/+$/, '')}/auth/test-user-copy`, invocationSecret, testUserId,
+        sessionId, 'test_user_copy', 'Test User Connector copy');
+    },
   });
   const plan = planModels({
-    credentialServiceUrl: env.BOTCUBE_CREDENTIAL_SERVICE_URL,
-    invocationSecret: env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '',
+    credentialServiceUrl,
+    invocationSecret,
     ownerAccountId: planOwner,
     store,
   });
@@ -227,7 +232,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
       invocationPayload: async (input, requester, model) => ({
         ...input,
         credentialServiceInvocationToken: credentialServiceUrl
-          ? signTurnCredential(invocationSecret ?? '', requester.owner, input.threadId, model, await plan.planAccountId(requester.owner, model))
+          ? signTurnCredential(invocationSecret, requester.owner, input.threadId, model, await plan.planAccountId(requester.owner, model))
           : undefined,
         forwardedProps: {
           ...input.forwardedProps,

@@ -1086,7 +1086,7 @@ describe('a signed-in User deleting their own account', () => {
 describe("the stock Chat Service's /account/session Linked Accounts", () => {
   const SECRET = 'invocation-secret';
   const vault = new Map<string, string[]>();
-  let failing = false;
+  let failure: 'unavailable' | 'truncated' | undefined;
   const credentialService = new HttpFake((request, response) => {
     const invocation = verifyCredentialServiceInvocation(SECRET, String(request.headers.authorization).replace(/^Bearer /, ''));
     if (invocation === null || request.headers['x-botcube-account-id'] !== invocation.accountId) {
@@ -1095,7 +1095,12 @@ describe("the stock Chat Service's /account/session Linked Accounts", () => {
     if (`${request.method} ${request.path}` !== 'POST /account/linked-accounts' || invocation.scope !== 'linked_accounts') {
       return sendJson(response, 404, { detail: 'Not Found' });
     }
-    if (failing) return sendJson(response, 500, { detail: 'Vault unavailable' });
+    if (failure === 'unavailable') return sendJson(response, 500, { detail: 'Vault unavailable' });
+    if (failure === 'truncated') {
+      response.writeHead(200, { 'content-type': 'application/json', 'content-length': '40', connection: 'close' });
+      response.end('{"linkedAccounts":');
+      return;
+    }
     sendJson(response, 200, { linkedAccounts: vault.get(invocation.accountId) ?? [] });
   });
   beforeAll(async () => { await credentialService.listen(); });
@@ -1119,12 +1124,25 @@ describe("the stock Chat Service's /account/session Linked Accounts", () => {
     const linked = await route.request('/account/session', { headers: { Cookie: cookie } });
     expect(await linked.json()).toMatchObject({ accountId, linkedAccounts: ['site'] });
 
-    failing = true;
+    failure = 'unavailable';
     try {
       const failed = await route.request('/account/session', { headers: { Cookie: cookie } });
       expect([failed.status, await failed.json()]).toEqual([503, { detail: 'Credential Service Linked Accounts failed with HTTP 500' }]);
     } finally {
-      failing = false;
+      failure = undefined;
+    }
+  });
+
+  it('reports a Credential Service outage when the Linked Accounts body is cut short', async () => {
+    failure = 'truncated';
+    try {
+      const response = await routes().request('/account/session');
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        detail: 'Credential Service Linked Accounts returned HTTP 200 with an unreadable JSON body',
+      });
+    } finally {
+      failure = undefined;
     }
   });
 

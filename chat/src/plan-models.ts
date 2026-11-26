@@ -1,10 +1,10 @@
 import type { AccountStore } from './account-store.js';
 import { isPlanModelKey, PLAN_MODEL_PREFIX, type AgentModel } from './models.js';
 import { HttpError } from './http-error.js';
-import { fetchCredentialService } from './credential-service-request.js';
+import { credentialServiceRequest, type SignedInvocation } from './credential-service-request.js';
 import { signCredentialServiceInvocation } from './credential-service-token.js';
 import { isRecord } from './payload.js';
-import { planUsageRoutes, type OperatorInvocation, type PlanUsageSink } from './plan-usage.js';
+import { planUsageRoutes, type PlanUsageSink } from './plan-usage.js';
 
 // The Session a catalog fetch is signed for: it belongs to the plan, not to any one chat.
 const PLAN_CATALOG_SESSION = 'plan-catalog';
@@ -72,12 +72,8 @@ export function planModels(config: PlanModelsConfig) {
 function openaiProvider(url: string) {
   const root = `${new URL(url).origin}/openai`;
 
-  async function call(step: string, path: string, operator: OperatorInvocation, init?: Pick<RequestInit, 'method' | 'body'>) {
-    const response = await fetchCredentialService(`${root}${path}`, operator, init);
-    const body: unknown = await response.json().catch(() => {
-      throw new HttpError(503, `Credential Service ${step} returned HTTP ${response.status} with a non-JSON body`);
-    });
-    return { ok: response.ok, status: response.status, body };
+  function call(step: string, path: string, operator: SignedInvocation, init?: Pick<RequestInit, 'method' | 'body'>) {
+    return credentialServiceRequest(`${root}${path}`, operator, `Credential Service ${step}`, 'json', init);
   }
 
   const sink: PlanUsageSink = {
