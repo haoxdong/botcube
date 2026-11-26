@@ -187,9 +187,14 @@ class _ScriptedModel(BaseChatModel):
         if text.startswith('wait: '):
             time.sleep(float(text.removeprefix('wait: ')))
             return _text('Waited')
-        if text.startswith('write: '):
-            path, content = text.removeprefix('write: ').split(': ', 1)
-            return _call('write_file', {'file_path': path, 'content': content}, len(messages))
+        if text.startswith(('edit: ', 'write: ')):
+            verb, _, args = text.partition(': ')
+            fields = {
+                'edit': ('file_path', 'old_string', 'new_string'),
+                'write': ('file_path', 'content'),
+            }[verb]
+            values = args.split(': ', len(fields) - 1)
+            return _call(f'{verb}_file', dict(zip(fields, values, strict=True)), len(messages))
         return _text(f'Echo: {text}')
 
     def _narrated_reply(self, messages: list[BaseMessage], turn_start: int) -> ChatGenerationChunk:
@@ -2250,18 +2255,20 @@ def _bot_writes_memory(monkeypatch: pytest.MonkeyPatch, enabled: bool = True) ->
     monkeypatch.setattr(serving, '_bot', replace(serving._require_bot(), written_memory=enabled))
 
 
-def test_a_line_the_agent_writes_to_written_memory_opens_the_users_next_session(
+def test_a_new_users_first_turn_can_edit_written_memory_for_the_next_session(
     service: _Service, files_bucket: MountedFiles, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _bot_writes_memory(monkeypatch)
 
-    written = service.turn('write: /memories/AGENTS.md: - Prefers copper', thread='chat-a', files=_files())
-    service.turn('hello', thread='chat-b', files=_files())
+    edited = service.turn('edit: /memories/AGENTS.md: # Memory: - Prefers copper', thread='chat-a', files=_files())
 
-    assert written[-1]['type'] == 'RUN_FINISHED'
-    assert '- Prefers copper' in _written_memory(service.recorder.prompts[-1])
-    assert files_bucket.read('memories/AGENTS.md') == b'- Prefers copper'
-    assert 'memories/AGENTS.md' in _keys(files_bucket)
+    assert _written_memory(service.recorder.prompts[0]) == '/memories/AGENTS.md\n\n# Memory'
+    assert edited[-1]['type'] == 'RUN_FINISHED'
+    assert 'Successfully replaced 1 instance' in _tool_output(edited)
+    assert files_bucket.read('memories/AGENTS.md') == b'- Prefers copper\n'
+
+    service.turn('hello', thread='chat-b', files=_files())
+    assert _written_memory(service.recorder.prompts[-1]) == '/memories/AGENTS.md\n\n- Prefers copper'
 
 
 def test_a_session_post_keeps_the_written_memory_loaded_on_opening(
@@ -2281,29 +2288,18 @@ def test_a_session_post_keeps_the_written_memory_loaded_on_opening(
     assert _written_memory(service.recorder.prompts[-1]) == '/memories/AGENTS.md\n\n- Prefers gold'
 
 
-def test_a_user_with_no_written_memory_starts_empty(service: _Service, files_bucket: MountedFiles, monkeypatch: pytest.MonkeyPatch) -> None:
-    _bot_writes_memory(monkeypatch)
-
-    events = service.turn('hello', files=_files())
-
-    assert events[-1]['type'] == 'RUN_FINISHED'
-    assert _said(events) == 'Echo: hello'
-    assert _written_memory(service.recorder.prompts[-1]) == '(No memory loaded)'
-
-
 @pytest.mark.parametrize(('bot_keeps_it', 'props'), [(True, {'writtenMemory': False}), (False, {})], ids=['guest', 'bot-setting-off'])
 def test_a_guest_and_a_bot_with_written_memory_off_get_no_written_memory(
     service: _Service, files_bucket: MountedFiles, monkeypatch: pytest.MonkeyPatch, bot_keeps_it: bool, props: dict[str, Any],
 ) -> None:
     _bot_writes_memory(monkeypatch, bot_keeps_it)
-    files_bucket.write('memories/AGENTS.md', b'- Prefers copper')
 
     events = service.turn('write: /memories/AGENTS.md: - Trades gold', files=_files(), **props)
 
     assert '<agent_memory>' not in service.recorder.prompts[-1]
     assert 'Prefers copper' not in service.recorder.prompts[-1]
     assert 'outside the working directory' in _tool_output(events)
-    assert files_bucket.read('memories/AGENTS.md') == b'- Prefers copper'
+    assert 'memories/AGENTS.md' not in _keys(files_bucket)
 
 
 def test_a_signed_in_users_session_holds_written_and_extracted_memory_in_their_own_blocks(
@@ -2363,11 +2359,11 @@ def test_one_users_session_cannot_read_another_users_written_memory(
         assert set(mounted) == {access_points[user]}
         return events
 
-    chat_as('user-1', 'write: /memories/AGENTS.md: - Prefers copper')
+    chat_as('user-1', 'edit: /memories/AGENTS.md: # Memory: - Prefers copper')
     chat_as('user-2', 'hello')
 
-    assert _written_memory(service.recorder.prompts[-1]) == '(No memory loaded)'
-    assert accounts[access_points['user-1']].read('memories/AGENTS.md') == b'- Prefers copper'
+    assert _written_memory(service.recorder.prompts[-1]) == '/memories/AGENTS.md\n\n# Memory'
+    assert accounts[access_points['user-1']].read('memories/AGENTS.md') == b'- Prefers copper\n'
 
 
 def test_a_turn_without_files_answers_and_the_sessions_next_turn_loads_written_memory(

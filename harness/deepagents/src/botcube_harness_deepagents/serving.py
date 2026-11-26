@@ -18,7 +18,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import aclosing
+from contextlib import aclosing, suppress
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -55,7 +55,7 @@ from . import (
     turn_timing,
 )
 from .actor_identity import ANONYMOUS_ACTOR_ID
-from .agent import build_agent, general_purpose_subagent
+from .agent import WRITTEN_MEMORY, build_agent, general_purpose_subagent
 from .agent_computer import with_agent_computer
 from .agent_documents import (
     AgentDocuments,
@@ -468,6 +468,10 @@ def _files_ready(files: FilesMount | None, run_id: str) -> bool:
     except FilesMountError as error:
         log.warning('Harness Turn answers without Written Memory run_id=%s: %s', run_id, error)
         return False
+    memory = _workspace() / WRITTEN_MEMORY.lstrip('/')
+    memory.parent.mkdir(exist_ok=True)
+    with suppress(FileExistsError), memory.open('x', encoding='utf-8') as seed:
+        seed.write('# Memory\n')
     return True
 
 

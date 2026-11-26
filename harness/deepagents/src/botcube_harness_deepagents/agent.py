@@ -62,6 +62,7 @@ from .model_request import ModelRequestBounds, count_request_tokens
 
 DEFAULT_SYSTEM_PROMPT = ''
 MEMORY_FOLDER = '/memories/'
+WRITTEN_MEMORY = f'{MEMORY_FOLDER}AGENTS.md'
 
 # deepagents 0.7's stdlib SkillMetadata cannot generate JSON schema on Python 3.11.
 # Keep its shape (https://errors.pydantic.dev/2.13/u/typed-dict-version).
@@ -421,7 +422,7 @@ def build_agent(
         _ToolErrorsMiddleware(),
     ]
     if written_memory:
-        kwargs['memory'] = [f'{MEMORY_FOLDER}AGENTS.md']
+        kwargs['memory'] = [WRITTEN_MEMORY]
     if store is not None:
         kwargs['store'] = store
     if checkpointer is not None:
