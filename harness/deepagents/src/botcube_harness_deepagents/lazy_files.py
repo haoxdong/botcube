@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import logging
+import os
 from collections.abc import Awaitable, Callable, Generator, Iterable
 from concurrent.futures import Future
 from contextlib import contextmanager
@@ -199,6 +201,12 @@ class MountedFilesFolder(FilesystemBackend):
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         _ensure_turn_files()
         return super().download_files(paths)
+
+    def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
+        lock_path = self.cwd.parent / '.written-memory.lock'
+        with os.fdopen(os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600), 'r+b') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            return super().edit(file_path, old_string, new_string, replace_all)
 
 
 class LazyFilesMiddleware(AgentMiddleware):

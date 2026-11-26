@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
+from multiprocessing import get_context
 from pathlib import Path
-from threading import Event
+from threading import BrokenBarrierError, Event
 from typing import Any
 
 import pytest
+from deepagents.backends import filesystem
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest, ToolRuntime
 
 from botcube_harness_deepagents import turn_timing
 from botcube_harness_deepagents.files_mount import FilesMount, FilesMountError
-from botcube_harness_deepagents.lazy_files import LazyFilesMiddleware, turn_files
+from botcube_harness_deepagents.lazy_files import (
+    LazyFilesMiddleware,
+    MountedFilesFolder,
+    turn_files,
+)
 from mounted_files import binding
 
 
@@ -20,6 +27,47 @@ def request(name: str) -> ToolCallRequest:
         tool_call={'name': name, 'args': {}, 'id': name, 'type': 'tool_call'}, tool=None, state={},
         runtime=ToolRuntime(state={}, context=None, config={}, stream_writer=lambda _: None, tool_call_id=name, store=None),
     )
+
+
+@pytest.mark.integration
+def test_two_sessions_keep_disjoint_written_memory_edits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    folder = tmp_path / 'memories'
+    folder.mkdir()
+    document = folder / 'AGENTS.md'
+    document.write_text('timezone: UTC\ncurrency: USD\n')
+    processes = get_context('fork')
+    start = processes.Barrier(2)
+    both_read = processes.Barrier(2)
+    replace = filesystem.perform_string_replacement
+
+    def edit(old: str, new: str) -> None:
+        backend = MountedFilesFolder(root_dir=folder, virtual_mode=True)
+        start.wait(timeout=5)
+        result = backend.edit('/AGENTS.md', old, new)
+        assert result.error is None and result.occurrences == 1
+
+    def after_read(content: str, old: str, new: str, replace_all: bool) -> str | tuple[str, int]:
+        with suppress(BrokenBarrierError):
+            both_read.wait(timeout=2)
+        return replace(content, old, new, replace_all)
+
+    monkeypatch.setattr(filesystem, 'perform_string_replacement', after_read)
+    sessions = [
+        processes.Process(target=edit, args=('timezone: UTC', 'timezone: EST')),
+        processes.Process(target=edit, args=('currency: USD', 'currency: EUR')),
+    ]
+    for session in sessions:
+        session.start()
+    try:
+        for session in sessions:
+            session.join(timeout=10)
+        assert [session.exitcode for session in sessions] == [0, 0]
+        assert document.read_text() == 'timezone: EST\ncurrency: EUR\n'
+    finally:
+        for session in sessions:
+            if session.is_alive():
+                session.kill()
+                session.join()
 
 
 def test_workspace_tools_share_one_mount_and_keep_edits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
