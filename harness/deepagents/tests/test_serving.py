@@ -3967,6 +3967,34 @@ def test_withdraw_control_removes_waiting_steering_until_a_model_step_takes_it(
     assert control({'withdrawSteering': 'kept'}) == {'withdrawn': True}
 
 
+def test_a_warm_session_uses_each_turns_model_relay(service: _Service) -> None:
+    model = 'openai-plan:gpt-6-astra'
+    with serving_relay() as first, serving_relay() as second:
+        for index, relay in enumerate((first, second, first)):
+            events = service.turn(
+                'Say exactly: hello', model=model, relay=relay.url, message=f'question-{index}',
+                credentialServiceInvocationToken=f'synthetic-token-{index}',
+            )
+            assert events[-1]['type'] == 'RUN_FINISHED'
+            assert _said(events) == 'hello'
+
+        assert [call['headers']['Authorization'] for call in first.calls] == [
+            'Bearer synthetic-token-0', 'Bearer synthetic-token-2',
+        ]
+        assert [call['headers']['Authorization'] for call in second.calls] == ['Bearer synthetic-token-1']
+
+
+def test_a_warm_session_cannot_supply_a_missing_model_relay(service: _Service) -> None:
+    model = 'openai-plan:gpt-6-astra'
+    with serving_relay() as relay:
+        assert service.turn('Say exactly: hello', model=model, relay=relay.url, message='first')[-1]['type'] == 'RUN_FINISHED'
+        events = service.turn('Say exactly: hello', model=model, message='second')
+
+    assert events[-1]['type'] == 'RUN_ERROR'
+    assert 'this Turn has none' in events[-1]['message']
+    assert len(relay.calls) == 1
+
+
 def test_plan_default_and_explicit_medium_do_not_share_a_cached_model(service: _Service) -> None:
     with serving_relay() as relay:
         service.turn('Say exactly: hello', model='openai-plan:gpt-6-luna', relay=relay.url)

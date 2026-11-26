@@ -14,7 +14,7 @@ from collections.abc import (
 )
 from contextlib import aclosing
 from contextvars import ContextVar
-from functools import cached_property
+from functools import cached_property, partial
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
@@ -193,12 +193,16 @@ class _Response(Protocol):
     def status_code(self) -> int: ...
 
 
+def _authorize_relay(request: _Request, relay: Callable[[], ModelRelay]) -> None:
+    request.headers.pop('x-api-key', None)
+    request.headers['Authorization'] = f'Bearer {relay().token}'
+
+
 def _gateway_hooks(relay: Callable[[], ModelRelay]) -> dict[str, list[Callable[..., Awaitable[None]]]]:
     """A gateway model's HTTP client hooks: the Turn's invocation as its bearer, and each answer's status for its reply's retry."""
 
     async def invocation(request: _Request) -> None:
-        request.headers.pop('x-api-key', None)
-        request.headers['authorization'] = f'Bearer {relay().token}'
+        _authorize_relay(request, relay)
 
     async def answered(response: _Response) -> None:
         if (statuses := _answered.get()) is not None:
@@ -453,10 +457,12 @@ def _plan_model(slug: str, relay: Callable[[], ModelRelay], effort: str | None =
                 raise PlanUsageError(str(body['code']), str(body['message'])) from error
 
     current = relay()
-    model = ChatGPTPlanModel(
+    return ChatGPTPlanModel(
         model=slug,
         base_url=current.base_url,
-        api_key=lambda: relay().token,
+        api_key='botcube-invocation',
+        http_client=openai.DefaultHttpxClient(event_hooks={'request': [partial(_authorize_relay, relay=relay)]}),
+        http_async_client=openai.DefaultAsyncHttpxClient(event_hooks=_gateway_hooks(relay)),
         default_headers=dict(current.headers),
         use_responses_api=True,
         reasoning={'summary': 'auto', **({'effort': resolve_effort(effort)} if effort is not None else {})},
@@ -465,9 +471,6 @@ def _plan_model(slug: str, relay: Callable[[], ModelRelay], effort: str | None =
         store=False,
         max_retries=0,
     )
-    # Inference Latency starts when the request leaves, after LangChain serializes the conversation.
-    model.root_async_client._client.event_hooks['request'].append(turn_timing.dispatched)
-    return model
 
 
 def resolve_model(model: str | None = None) -> str:

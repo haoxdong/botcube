@@ -76,7 +76,7 @@ def test_only_a_snapshot_build_primes_the_harness_without_network_or_the_real_wo
                 'rootsLeft': [root for root in roots if Path(root).exists()],
                 'workspaceEnv': os.environ.get('BOTCUBE_WORKSPACE'),
                 'workspaceEntries': sorted(os.listdir(sys.argv[1])),
-                'cached': [len(serving._AGENTS), len(serving._BACKENDS), len(serving._BACKEND_BY_AGENT), len(serving._MODEL_RELAYS)],
+                'cached': [len(serving._AGENTS), len(serving._BACKENDS), len(serving._BACKEND_BY_AGENT)],
                 'network': len(attempts),
                 'transportVerifyPaths': [client._endpoint.http_session._verify for client in clients],
                 'preparedBundle': str(prepared_root / 'aws_ca_bundle.pem'),
@@ -104,7 +104,7 @@ def test_only_a_snapshot_build_primes_the_harness_without_network_or_the_real_wo
     assert state['rootsLeft'] == []
     assert state['workspaceEnv'] == str(workspace)
     assert state['workspaceEntries'] == []
-    assert state['cached'] == [0, 0, 0, 0]
+    assert state['cached'] == [0, 0, 0]
     assert state['network'] == 0
     assert state['memoryUnbound']
     assert state['spareUnbound'] == snapshot_build
@@ -245,7 +245,7 @@ def test_new_actor_discovers_and_reads_primed_artifact_skills_without_filesystem
     monkeypatch.setattr(artifact, 'SKILLS', skills)
     workspace = tmp_path / 'user-workspace'
     monkeypatch.setenv('BOTCUBE_WORKSPACE', str(workspace))
-    for name in ('_AGENTS', '_BACKENDS', '_BACKEND_BY_AGENT', '_MODEL_RELAYS'):
+    for name in ('_AGENTS', '_BACKENDS', '_BACKEND_BY_AGENT'):
         monkeypatch.setattr(serving, name, {})
     for name in ('_bot', '_CHECKPOINTER', '_STORE'):
         monkeypatch.setattr(serving, name, None)
@@ -301,7 +301,8 @@ def test_new_actor_discovers_and_reads_primed_artifact_skills_without_filesystem
                 model=serving._SNAPSHOT_MODEL, model_relay=relay, syncs_files=True,
             )
             config: RunnableConfig = {'configurable': {'thread_id': 'turn', 'actor_id': 'turn'}}
-            state = asyncio.run(agent.graph.ainvoke({'messages': [('user', 'Reply ok.')]}, config))
+            with serving._model_relay_scope(relay):
+                state = asyncio.run(agent.graph.ainvoke({'messages': [('user', 'Reply ok.')]}, config))
             assert state['messages'][-1].content == 'ok'
             tool_reply, = (message for message in state['messages'] if isinstance(message, ToolMessage))
             assert 'Artifact guidance from the image.' in tool_reply.content

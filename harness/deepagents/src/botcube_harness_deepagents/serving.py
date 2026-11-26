@@ -15,10 +15,12 @@ from collections.abc import (
     Awaitable,
     Callable,
     Coroutine,
+    Generator,
     Mapping,
     Sequence,
 )
-from contextlib import aclosing, suppress
+from contextlib import aclosing, contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -259,6 +261,12 @@ class _RuntimeApp(FastAPI):
 app = _RuntimeApp(title='BotCube DeepAgents Harness Runtime', telemetry={'auto_configure': False})
 
 
+class _ModelRoute(NamedTuple):
+    base_url: str
+    headers: tuple[tuple[str, str], ...]
+    session_id: str
+
+
 class _AgentKey(NamedTuple):
     conversation_id: str
     actor_id: str
@@ -266,6 +274,7 @@ class _AgentKey(NamedTuple):
     persistent_memory: bool
     written_memory: bool
     model: str
+    model_route: _ModelRoute | None
     effort: str | None
     environment: tuple[tuple[str, str], ...]
     documents: str
@@ -281,9 +290,31 @@ _CHECKPOINTER: Any | None = None
 _STORE: InMemoryStore | None = None
 _BACKENDS: dict[tuple[str, str, str, tuple[tuple[str, str], ...]], LocalShellBackend] = {}
 _BACKEND_BY_AGENT: dict[Any, LocalShellBackend] = {}
-_MODEL_RELAYS: dict[_AgentKey, ModelRelay] = {}
+_TURN_MODEL_RELAY: ContextVar[ModelRelay | None] = ContextVar('turn_model_relay', default=None)
 _CACHE_LOCK = threading.RLock()
 _SESSION_TURNS = SessionTurns()
+
+
+@contextmanager
+def _model_relay_scope(relay: ModelRelay | None) -> Generator[None]:
+    token = _TURN_MODEL_RELAY.set(relay)
+    try:
+        yield
+    finally:
+        _TURN_MODEL_RELAY.reset(token)
+
+
+@contextmanager
+def _turn_binding(backend: LocalShellBackend, relay: ModelRelay | None) -> Generator[None]:
+    with _model_relay_scope(relay), bind_turn(backend, relay):
+        yield
+
+
+def _current_model_relay() -> ModelRelay:
+    relay = _TURN_MODEL_RELAY.get()
+    if relay is None:
+        raise RuntimeError('A relayed model call requires a Turn relay')
+    return relay
 
 
 def _build_checkpointer() -> Any:
@@ -326,6 +357,9 @@ def _get_agent(
         environment_key = bot.environment_cache_key(
             {name: value for name, value in (environment or {}).items() if name != 'AGENT_BROWSER_CDP'}
         )
+        model_route = None if model_relay is None else _ModelRoute(
+            model_relay.base_url, tuple(sorted(model_relay.headers.items())), model_relay.session_id,
+        )
         key = _AgentKey(
             conversation_id,
             actor_id,
@@ -333,6 +367,7 @@ def _get_agent(
             persistent_memory,
             written_memory,
             resolved_model,
+            model_route,
             effort,
             environment_key,
             documents.cache_key() if documents else '',
@@ -345,8 +380,6 @@ def _get_agent(
         cached = _AGENTS.get(key)
         if preparing and cached is not None:
             return cached
-        if model_relay is not None:
-            _MODEL_RELAYS[key] = model_relay
         if cached is not None:
             backend = _BACKEND_BY_AGENT[cached]
             _apply_environment(backend, environment)
@@ -359,14 +392,14 @@ def _get_agent(
 
         root = Path(backend.cwd)
 
-        with turn_timing.phase('model_client'):
+        with turn_timing.phase('model_client'), _model_relay_scope(model_relay):
             bot_model = _require_bot().models.get(model or '')
             m = build_model(
                 model=model,
                 effort=effort,
                 provider=bot_model.provider if bot_model else None,
                 max_tokens=bot_model.max_tokens if bot_model else None,
-                relay=None if model_relay is None else lambda: _MODEL_RELAYS[key],
+                relay=None if model_route is None else _current_model_relay,
             )
         prompt_cache_middleware = PromptCacheUsageMiddleware(
             thread_id=conversation_id,
@@ -653,7 +686,7 @@ async def _invoke_agent(input_data: Invocation, context: _RequestContext, auth: 
             agent, backend = await _turn_agent(build_turn, turn_identity, input_data.run_id, persistent_memory, read, prefetch)
             validate_checkpoint(agent.graph, session_config(session), saved)
             _require_bot().apply_session_id(backend, input_data.thread_id)
-            return agent, Path(backend.cwd), bind_turn(backend, auth.model_relay)
+            return agent, Path(backend.cwd), _turn_binding(backend, auth.model_relay)
 
         prompt_hash = _served_prompt_hash(candidate)
         async with aclosing(_SESSION_TURNS.stream(
@@ -937,7 +970,7 @@ _SNAPSHOT_ID = 'snapshot-prime'
 
 
 def _prime_snapshot() -> None:
-    if _AGENTS or _BACKENDS or _BACKEND_BY_AGENT or _MODEL_RELAYS:
+    if _AGENTS or _BACKENDS or _BACKEND_BY_AGENT:
         raise RuntimeError('Snapshot prime requires empty caches')
     started = perf_counter()
     agentcore_memory_backend.sts_client.cache_clear()
@@ -960,7 +993,6 @@ def _prime_snapshot() -> None:
         _AGENTS.clear()
         _BACKENDS.clear()
         _BACKEND_BY_AGENT.clear()
-        _MODEL_RELAYS.clear()
         gc.collect()
         log.info('Snapshot prime completed in %.3f seconds', perf_counter() - started)
 

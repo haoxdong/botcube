@@ -38,7 +38,7 @@ def test_static_skill_roots_survive_snapshot_but_user_roots_still_resolve(
     monkeypatch.setattr(Path, 'resolve', resolving)
     for index, root in enumerate(roots):
         if index:
-            for cache in (serving._AGENTS, serving._BACKENDS, serving._BACKEND_BY_AGENT, serving._MODEL_RELAYS):
+            for cache in (serving._AGENTS, serving._BACKENDS, serving._BACKEND_BY_AGENT):
                 cache.clear()
             resolved.clear()
         agent.build_agent(
