@@ -1,6 +1,6 @@
-import type { Hono } from 'hono';
+import { Hono } from 'hono';
 import { agentIdentity, soul, type AgentDocuments, type AgentDocumentSet } from './agent-documents.js';
-import type { RequesterSource } from './requester.js';
+import type { Requester, RequesterSource } from './requester.js';
 import { HttpError } from './http-error.js';
 import { isRecord } from './payload.js';
 import { picture, pictureUrl } from './pictures.js';
@@ -42,7 +42,6 @@ function taskInstant(value: unknown, field: 'startDate' | 'endDate', required: b
 }
 
 export function accountRoutes(
-  app: Hono,
   bot: RequesterSource & ModelSource & { readonly agentDocuments: AgentDocumentSet },
   sessionMetadata: SessionMetadata,
   agentDocuments: AgentDocuments,
@@ -50,10 +49,17 @@ export function accountRoutes(
   scheduledTasks: ScheduledTasks | null,
   online: boolean,
 ) {
-  const documentsOf = async (owner: string) => agentDocuments.get(owner, bot.agentDocuments);
+  const app = new Hono<{ Variables: { requester: Requester; auth: [number, number] } }>();
+  app.use('*', async (c, next) => {
+    const started = performance.now();
+    c.set('requester', await bot.requester(c));
+    c.set('auth', [started, performance.now()]);
+    await next();
+  });
+  const documentsOf = (owner: string) => agentDocuments.get(owner, bot.agentDocuments);
 
   app.get('/agent', async (c) => {
-    const { owner } = await bot.requester(c);
+    const { owner } = c.var.requester;
     const [{ agentIdentity: identity }, agentPicture] = await Promise.all([documentsOf(owner), agentDocuments.picture(owner)]);
     return c.json({
       name: identity.name,
@@ -64,61 +70,46 @@ export function accountRoutes(
   });
 
   app.put('/agent/picture', async (c) => {
-    const { owner } = await bot.requester(c);
     const body = (await c.req.json().catch(() => undefined)) as { picture?: unknown } | undefined;
-    await agentDocuments.savePicture(owner, picture(body?.picture, "The agent's picture"));
+    await agentDocuments.savePicture(c.var.requester.owner, picture(body?.picture, "The agent's picture"));
     return c.body(null, 204);
   });
 
   app.delete('/agent/picture', async (c) => {
-    await agentDocuments.savePicture((await bot.requester(c)).owner, null);
+    await agentDocuments.savePicture(c.var.requester.owner, null);
     return c.body(null, 204);
   });
 
-  app.get('/agent/models', async (c) => {
-    const requester = await bot.requester(c);
-    return c.json({ models: await accountModelList(bot, requester, { refresh: true }) });
-  });
+  app.get('/agent/models', async (c) => c.json({ models: await accountModelList(bot, c.var.requester, { refresh: true }) }));
 
-  app.get('/agent/identity', async (c) => c.json((await documentsOf((await bot.requester(c)).owner)).agentIdentity));
+  app.get('/agent/identity', async (c) => c.json((await documentsOf(c.var.requester.owner)).agentIdentity));
 
   app.put('/agent/identity', async (c) => {
-    const { owner } = await bot.requester(c);
     const content = agentIdentity(await c.req.json().catch(() => undefined));
-    await agentDocuments.save(owner, { document: 'agentIdentity', content });
+    await agentDocuments.save(c.var.requester.owner, { document: 'agentIdentity', content });
     return c.body(null, 204);
   });
 
-  app.get('/agent/soul', async (c) => c.json({ content: (await documentsOf((await bot.requester(c)).owner)).soul }));
+  app.get('/agent/soul', async (c) => c.json({ content: (await documentsOf(c.var.requester.owner)).soul }));
 
   app.put('/agent/soul', async (c) => {
-    const { owner } = await bot.requester(c);
     const body = (await c.req.json().catch(() => undefined)) as { content?: unknown } | undefined;
-    await agentDocuments.save(owner, { document: 'soul', content: soul(body?.content) });
+    await agentDocuments.save(c.var.requester.owner, { document: 'soul', content: soul(body?.content) });
     return c.body(null, 204);
   });
 
   app.post('/agent/extracted-memory/forget', async (c) => {
-    const { owner, anonymous } = await bot.requester(c);
+    const { owner, anonymous } = c.var.requester;
     if (anonymous) throw new HttpError(403, 'Sign in to use Forget');
     sessions.startForgettingExtractedMemory(owner);
     return c.body(null, 202);
   });
 
-  app.post('/threads', async (c) => {
-    const { owner } = await bot.requester(c);
-    return c.json(await sessions.createSideChat(owner), 201);
-  });
-
-  app.get('/threads', async (c) => {
-    const { owner } = await bot.requester(c);
-    return c.json(await sessions.chatList(owner));
-  });
+  app.post('/threads', async (c) => c.json(await sessions.createSideChat(c.var.requester.owner), 201));
+  app.get('/threads', async (c) => c.json(await sessions.chatList(c.var.requester.owner)));
 
   app.get('/main-chat', async (c) => {
-    const started = performance.now();
-    const { owner } = await bot.requester(c);
-    const authenticated = performance.now();
+    const { auth: [started, authenticated], requester: { owner } } = c.var;
     const transcript = await sessions.mainChat(owner, c.req.query('before'));
     const replayed = performance.now();
     const response = c.json(transcript);
@@ -133,10 +124,7 @@ export function accountRoutes(
     return response;
   });
 
-  app.get('/activity', async (c) => {
-    const { owner } = await bot.requester(c);
-    return c.json({ tasks: await sessions.activity(owner) });
-  });
+  app.get('/activity', async (c) => c.json({ tasks: await sessions.activity(c.var.requester.owner) }));
 
   const tasks = (): ScheduledTasks => {
     if (scheduledTasks === null) throw new HttpError(503, 'Scheduled tasks are not configured');
@@ -149,12 +137,12 @@ export function accountRoutes(
   });
 
   app.get('/scheduled-tasks', async (c) => {
-    const { owner } = await bot.requester(c);
+    const { owner } = c.var.requester;
     return c.json({ tasks: await Promise.all((await tasks().list(owner)).map((task) => taskView(owner, task))) });
   });
 
   app.post('/scheduled-tasks', async (c) => {
-    const requester = await bot.requester(c);
+    const requester = c.var.requester;
     const { owner } = requester;
     const scheduled = tasks();
     const body: unknown = await c.req.json().catch(() => undefined);
@@ -168,7 +156,7 @@ export function accountRoutes(
   });
 
   app.patch('/scheduled-tasks/:id', async (c) => {
-    const requester = await bot.requester(c);
+    const requester = c.var.requester;
     const { owner } = requester;
     const body: unknown = await c.req.json().catch(() => undefined);
     const changes = taskDefinition(body, false);
@@ -182,13 +170,11 @@ export function accountRoutes(
   });
 
   app.delete('/scheduled-tasks/:id', async (c) => {
-    const { owner } = await bot.requester(c);
-    if (!(await tasks().delete(owner, c.req.param('id')))) throw new HttpError(404, 'Scheduled task not found');
+    if (!(await tasks().delete(c.var.requester.owner, c.req.param('id')))) throw new HttpError(404, 'Scheduled task not found');
     return c.body(null, 204);
   });
 
   app.post('/threads/:id/read', async (c) => {
-    const { owner } = await bot.requester(c);
     const body: unknown = await c.req.json().catch(() => undefined);
     const runId = isRecord(body) ? body.runId : undefined;
     const completedAt = isRecord(body) ? body.completedAt : undefined;
@@ -200,30 +186,23 @@ export function accountRoutes(
       if (typeof completedAt !== 'string' || !Number.isFinite(Date.parse(completedAt))) throw new HttpError(422, 'completedAt must be a timestamp');
       observed = completedAt;
     }
-    await sessionMetadata.markRead(owner, c.req.param('id'), observed);
+    await sessionMetadata.markRead(c.var.requester.owner, c.req.param('id'), observed);
     return c.body(null, 204);
   });
 
-  app.get('/threads/:id', async (c) => {
-    const { owner } = await bot.requester(c);
-    const sessionId = c.req.param('id');
-    return c.json(await sessions.replay(owner, sessionId, c.req.query('before')));
-  });
+  app.get('/threads/:id', async (c) => c.json(await sessions.replay(c.var.requester.owner, c.req.param('id'), c.req.query('before'))));
 
   app.patch('/threads/:id', async (c) => {
-    const { owner } = await bot.requester(c);
     const body: unknown = await c.req.json().catch(() => undefined);
     const title = isRecord(body) ? body.title : undefined;
     if (typeof title !== 'string' || !title.trim()) throw new HttpError(422, 'title must be a non-empty string');
-    return c.json(await sessions.renameSideChat(owner, c.req.param('id'), title));
+    return c.json(await sessions.renameSideChat(c.var.requester.owner, c.req.param('id'), title));
   });
 
   // Fence the Session at once, then purge its events in the background (ADR 0067 §6).
   app.delete('/threads/:id', async (c) => {
-    const { owner } = await bot.requester(c);
-    const sessionId = c.req.param('id');
-    await sessions.removeSideChat(owner, sessionId);
+    await sessions.removeSideChat(c.var.requester.owner, c.req.param('id'));
     return c.body(null, 204);
   });
-
+  return app;
 }

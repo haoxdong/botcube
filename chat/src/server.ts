@@ -7,7 +7,8 @@ import { assumeRoleAwsAccess } from './turn-credentials.js';
 import { TurnIdentity, turnIdentityConfigFromEnv, turnIdentityRoutes, type TurnIdentityConfig } from './turn-identity.js';
 import { serve, type ServerType, type WebSocketServerLike } from '@hono/node-server';
 import { WebSocketServer } from 'ws';
-import { Hono, type Context } from 'hono';
+import { Hono, type Context, type ErrorHandler } from 'hono';
+import { mount } from 'hono/mount';
 import { cors } from 'hono/cors';
 import { DynamoDBAgentDocuments, type AgentDocuments } from './agent-documents.js';
 import { awsFetch, presignAwsUrl } from './aws.js';
@@ -188,7 +189,7 @@ export function createChatService(
     await next();
     if (c.res.status === 502 || c.res.status === 504) c.res = new Response(c.res.body, { status: 503, headers: c.res.headers });
   });
-  app.onError((cause, c) => {
+  const onError: ErrorHandler = (cause, c) => {
     const error = sessionAccessError(cause);
     if (!(error instanceof HttpError) || error.cause !== undefined) {
       console.error(`${c.req.method} ${c.req.path} failed`, error);
@@ -197,7 +198,8 @@ export function createChatService(
     if (error instanceof SessionDispatchPendingError) return c.json({ detail: error.message, status: 'pending' }, 503);
     if (error instanceof HttpError) return c.json({ detail: error.detail, ...(error.code === undefined ? {} : { code: error.code }) }, error.status as 400);
     return c.text('Internal Server Error', 500);
-  });
+  };
+  app.onError(onError);
   if (turnIdentity !== null) app.route('/', turnIdentityRoutes(turnIdentity));
   if (turnIdentity !== null) app.route('/', userTokenRoutes(turnIdentity, (c) => bot.requester(c)));
   app.route('/', bot.routes);
@@ -209,6 +211,12 @@ export function createChatService(
     harness: { upstream, warmupTimeoutMs: config.warmupTimeoutMs },
     turns: { turnQuota, awsAccess, userTokens: turnIdentity },
   });
+
+  const account = accountRoutes(bot, sessionMetadata, agentDocuments, sessions, scheduledTasks, upstream !== null).onError(onError);
+  const accountHandler = mount(account.fetch, { replaceRequest: false });
+  for (const { method, path } of account.routes) {
+    if (path !== '/*') app.on(method, path, accountHandler);
+  }
 
   const checkReadiness = async () => {
     await initialRecovery;
@@ -245,8 +253,6 @@ export function createChatService(
     if (scheduledRunsUnavailable) throw new HttpError(503, 'Scheduled runs are unavailable');
     return c.json({ status: 'Healthy' });
   });
-
-  accountRoutes(app, bot, sessionMetadata, agentDocuments, sessions, scheduledTasks, upstream !== null);
 
   app.get('/browser-live-view-url', async (c) => {
     const sessionId = c.req.query('session_id');

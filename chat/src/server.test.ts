@@ -132,7 +132,7 @@ describe('GET /browser-live-view-url', () => {
 });
 
 describe('a request that fails', () => {
-  it('with an HttpError answers its status and detail', async () => {
+  it('requires authentication on every account route and leaves other routes outside the guard', async () => {
     const refusing = await startInProcess({
       overrides: {
         requester: async () => {
@@ -141,10 +141,23 @@ describe('a request that fails', () => {
       },
     });
     try {
-      const response = await refusing.app.request('/threads');
-
-      expect(response.status).toBe(401);
-      expect(await response.json()).toEqual({ detail: 'Missing account cookie' });
+      const routes = [
+        ['GET', '/agent'], ['PUT', '/agent/picture'], ['DELETE', '/agent/picture'],
+        ['GET', '/agent/models'], ['GET', '/agent/identity'], ['PUT', '/agent/identity'],
+        ['GET', '/agent/soul'], ['PUT', '/agent/soul'], ['POST', '/agent/extracted-memory/forget'],
+        ['POST', '/threads'], ['GET', '/threads'], ['GET', '/main-chat'], ['GET', '/activity'],
+        ['GET', '/scheduled-tasks'], ['POST', '/scheduled-tasks'],
+        ['PATCH', '/scheduled-tasks/task'], ['DELETE', '/scheduled-tasks/task'],
+        ['POST', '/threads/session/read'], ['GET', '/threads/session'],
+        ['PATCH', '/threads/session'], ['DELETE', '/threads/session'],
+      ] as const;
+      await Promise.all(routes.map(async ([method, path]) => {
+        const response = await refusing.app.request(path, { method });
+        expect(response.status, `${method} ${path}`).toBe(401);
+        expect(await response.json()).toEqual({ detail: 'Missing account cookie' });
+      }));
+      expect((await refusing.app.request('/health')).status).toBe(200);
+      expect((await refusing.app.request('/not-a-route')).status).toBe(404);
     } finally {
       await refusing.stop();
     }
