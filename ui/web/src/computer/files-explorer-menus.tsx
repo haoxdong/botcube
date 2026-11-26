@@ -121,7 +121,7 @@ export function SortMenuList({ arrangement, children }: { arrangement: Arrangeme
 }
 
 /**
- * An item's menu: Open, then for a file Cut, Copy, Download, Rename and Delete, for a folder Rename, and for either Copy
+ * An item's menu: Open, then for a file Cut, Copy, Download, Rename and Delete, for a folder Copy and Rename, and for either Copy
  * path and Properties. On an item of a selection of several, it acts on them all, and Rename is off. It opens on a right-click, or `open` from
  * Shift+F10 or the menu key; each item has its keytip.
  */
@@ -132,6 +132,7 @@ export function RowMenu({ item, open, actions, children }: { item: FilesItem; op
   const entries: Entry[] = [
     { label: 'Open', icon: <Open20Regular />, act: actions.onOpen, off: false },
     ...(item.folder ? [
+      { label: 'Copy', icon: <Copy20Regular />, act: actions.onCopy, off: false },
       { label: 'Rename', icon: <Rename20Regular />, act: actions.onStartRename, off: many },
     ] satisfies Entry[] : [
       { label: 'Cut', icon: <Cut20Regular />, act: actions.onCut, off: false },

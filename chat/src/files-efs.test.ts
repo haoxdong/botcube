@@ -123,12 +123,43 @@ describe('EFS account Files', () => {
     await expect(files.copy(ACCOUNT, 'a.txt', 'b.txt')).rejects.toMatchObject({ status: 409, message: 'A file named b.txt is already in Files' });
     expect(await readFile(path.join(root, HASH, 'b.txt'), 'utf8')).toBe('B');
     await expect(files.copy(ACCOUNT, 'gone.txt', 'c.txt')).rejects.toMatchObject({ status: 404, message: 'No file gone.txt in Files' });
-    await expect(files.copy(ACCOUNT, 'archive', 'archive copy')).rejects.toMatchObject({ status: 400 });
     for (const to of ['../x', 'a/../../x', '.hidden/x']) {
       // eslint-disable-next-line no-await-in-loop -- one name at a time
       await expect(files.copy(ACCOUNT, 'a.txt', to)).rejects.toMatchObject({ status: 400 });
     }
     expect((await files.list(ACCOUNT)).files.map(({ name }) => name).sort()).toEqual(['a.txt', 'archive/a.txt', 'b.txt']);
+  });
+
+  it('copies a folder with everything in it, never over anything already there nor into itself', async () => {
+    const { files } = setup();
+    await put(HASH, 'reports/q1.csv', 'Q1');
+    await put(HASH, 'reports/2026/q2.csv', 'Q2');
+    await mkdir(path.join(root, HASH, 'reports/empty'));
+    await files.copy(ACCOUNT, 'reports', 'reports - Copy');
+    await files.copy(ACCOUNT, 'reports', 'archive/reports');
+    const listed = await files.list(ACCOUNT);
+    expect(listed.files.map(({ name }) => name).sort()).toEqual([
+      'archive/reports/2026/q2.csv', 'archive/reports/q1.csv', 'reports - Copy/2026/q2.csv', 'reports - Copy/q1.csv', 'reports/2026/q2.csv', 'reports/q1.csv',
+    ]);
+    expect(listed.folders.map(({ name }) => name)).toContain('reports - Copy/empty');
+    expect(await readFile(path.join(root, HASH, 'reports - Copy/2026/q2.csv'), 'utf8')).toBe('Q2');
+
+    await put(HASH, 'kept/mine.txt', 'mine');
+    await expect(files.copy(ACCOUNT, 'reports', 'kept')).rejects.toMatchObject({ status: 409, message: 'A file named kept is already in Files' });
+    await put(HASH, 'taken.txt', 'T');
+    await expect(files.copy(ACCOUNT, 'reports', 'taken.txt')).rejects.toMatchObject({ status: 409 });
+    expect(await readdir(path.join(root, HASH, 'kept'))).toEqual(['mine.txt']);
+    expect(await readFile(path.join(root, HASH, 'taken.txt'), 'utf8')).toBe('T');
+
+    for (const to of ['reports', 'reports/reports', 'reports/2026/inner']) {
+      // eslint-disable-next-line no-await-in-loop -- one name at a time
+      await expect(files.copy(ACCOUNT, 'reports', to)).rejects.toMatchObject({ status: 400, message: "reports can't be copied into itself" });
+    }
+    for (const to of ['../x', '.hidden', 'a/.cache']) {
+      // eslint-disable-next-line no-await-in-loop -- one name at a time
+      await expect(files.copy(ACCOUNT, 'reports', to)).rejects.toMatchObject({ status: 400 });
+    }
+    expect((await files.list(ACCOUNT)).files).toHaveLength(8);
   });
 
   it('renames a folder with everything in it, but never over anything already there', async () => {
@@ -734,6 +765,21 @@ describe('EFS account Files', () => {
       expect(await names()).toEqual(['theirs.txt']);
       expect(await snapshot(path.join(root, OTHER))).toEqual(before);
       expect(await readFile(path.join(root, HASH, 'mine/b.txt'), 'utf8')).toBe('B');
+    });
+
+    it('copies no folder that holds a link, and leaves nothing half-copied', async () => {
+      const { files } = setup();
+      await put(HASH, 'mine/b.txt', 'B');
+      await put(HASH, 'mine/deep/c.txt', 'C');
+      const before = await planted('mine/deep/out');
+      await symlink(path.join(root, OTHER, 'theirs.txt'), path.join(root, HASH, 'mine/theirs.txt'));
+      const linked = { status: 400, message: expect.stringContaining('is a symbolic link') };
+      await expect(files.copy(ACCOUNT, 'mine', 'mine - Copy')).rejects.toMatchObject(linked);
+      await expect(files.copy(ACCOUNT, 'mine/deep', 'deep')).rejects.toMatchObject(linked);
+      await expect(files.copy(ACCOUNT, 'mine/deep/out', 'theirs')).rejects.toMatchObject(linked);
+      await expect(files.copy(ACCOUNT, 'mine/b.txt', 'mine/deep/out/b.txt')).rejects.toMatchObject(linked);
+      expect((await readdir(path.join(root, HASH))).sort()).toEqual(['mine']);
+      expect(await snapshot(path.join(root, OTHER))).toEqual(before);
     });
 
     it('refuses a remove through a linked folder, and leaves the file it points into', async () => {

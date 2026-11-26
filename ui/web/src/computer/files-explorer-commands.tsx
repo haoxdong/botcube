@@ -110,9 +110,11 @@ function SeeMore({ commands, arrangement, selection, keytips, news }: { commands
  * New, then each command as an icon button with its name as a tooltip, acting on every selected file, then View and
  * Sort, and See more. Whatever doesn't fit the window's width goes, from the end, into See more.
  */
-export function CommandBar({ hasFiles, canRename, canPaste, canNewFolder, arrangement, selection, keytips, onNewFolder, onUpload, onCut, onCopy, onPaste, onDownload, onRename, onDelete }: {
-  /** Whether a file is selected, for Cut, Copy, Download and Delete to act on. */
+export function CommandBar({ hasFiles, canCopy, canRename, canPaste, canNewFolder, arrangement, selection, keytips, onNewFolder, onUpload, onCut, onCopy, onPaste, onDownload, onRename, onDelete }: {
+  /** Whether a file is selected, for Cut, Download and Delete to act on. */
   hasFiles: boolean;
+  /** Whether anything is selected, a folder too, for Copy. */
+  canCopy: boolean;
   /** Whether one item alone is selected, for Rename. */
   canRename: boolean;
   canPaste: boolean;
@@ -135,7 +137,7 @@ export function CommandBar({ hasFiles, canRename, canPaste, canNewFolder, arrang
   const restoreFocus = useRestoreFocusTarget();
   const commands: Command[] = [
     { id: 'cut', label: 'Cut', Icon: Cut20Regular, disabled: !hasFiles, act: onCut },
-    { id: 'copy', label: 'Copy', Icon: Copy20Regular, disabled: !hasFiles, act: onCopy },
+    { id: 'copy', label: 'Copy', Icon: Copy20Regular, disabled: !canCopy, act: onCopy },
     { id: 'paste', label: 'Paste', Icon: ClipboardPaste20Regular, disabled: !canPaste, act: onPaste },
     { id: 'download', label: 'Download', Icon: ArrowDownload20Regular, disabled: !hasFiles, act: onDownload },
     { id: 'rename', label: 'Rename', Icon: Rename20Regular, disabled: !canRename, act: onRename },

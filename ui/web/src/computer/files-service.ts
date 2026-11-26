@@ -117,19 +117,22 @@ export async function withUploadsSettled<T>(change: () => Promise<T>): Promise<T
   }
 }
 
-/** The name of a file's copy, as a file manager gives it: `plan (2).txt`, within 255 bytes. */
-export function uploadCopyName(name: string, copy: number): string {
-  return suffixed(name, ` (${copy})`);
+/** The name of a file's copy, as a file manager gives it: `plan (2).txt`, within 255 bytes; a folder's has no extension. */
+export function uploadCopyName(name: string, copy: number, folder = false): string {
+  return suffixed(name, ` (${copy})`, folder);
 }
 
-/** Windows' name for a copy pasted beside its file: `plan - Copy.txt`, then `plan - Copy (2).txt`, within 255 bytes. */
-export function pastedCopyName(name: string, copy: number): string {
-  return suffixed(name, copy === 1 ? ' - Copy' : ` - Copy (${copy})`);
+/**
+ * Windows' name for a copy pasted beside its file: `plan - Copy.txt`, then `plan - Copy (2).txt`, within 255 bytes;
+ * a folder's goes at the end of its name (`v1.2 - Copy`).
+ */
+export function pastedCopyName(name: string, copy: number, folder = false): string {
+  return suffixed(name, copy === 1 ? ' - Copy' : ` - Copy (${copy})`, folder);
 }
 
-/** A name with `suffix` before its extension, both cut to keep it within 255 bytes. */
-function suffixed(name: string, suffix: string): string {
-  const dot = name.lastIndexOf('.');
+/** A name with `suffix` before its extension, a folder's at its end, both cut to keep it within 255 bytes. */
+function suffixed(name: string, suffix: string, folder: boolean): string {
+  const dot = folder ? -1 : name.lastIndexOf('.');
   const extension = [...(dot > 0 ? name.slice(dot) : '')];
   const stem = [...(dot > 0 ? name.slice(0, dot) : name)];
   const encoder = new TextEncoder();
@@ -193,7 +196,7 @@ async function intoFolder(put: (to: string) => Promise<void>, folder: string, na
 }
 
 /** A name, then its copy names (`plan (2).txt`). */
-const orCopy = (name: string) => (copy: number) => (copy === 1 ? name : uploadCopyName(name, copy));
+const orCopy = (name: string, folder = false) => (copy: number) => (copy === 1 ? name : uploadCopyName(name, copy, folder));
 
 /**
  * Moves a file into a folder ('' for workspace) under `name`, its own name unless given, or the first copy name
@@ -204,14 +207,18 @@ export async function moveIntoFolder(from: string, folder: string, service: Chat
 }
 
 /**
- * Copies a file into a folder ('' for workspace) and resolves to the copy's path. Beside its file the copy takes
- * Windows' `plan - Copy.txt`; elsewhere its own name, or `plan (2).txt` where that is taken.
+ * Copies a file, or a folder (its path ends in `/`) with everything in it, into a folder ('' for workspace) and
+ * resolves to the copy's path. Beside its original the copy takes Windows' `plan - Copy.txt`; elsewhere its own
+ * name, or `plan (2).txt` where that is taken.
  */
 export async function copyIntoFolder(from: string, folder: string, service: ChatServiceOptions): Promise<string> {
-  const cut = from.lastIndexOf('/') + 1;
-  const name = from.slice(cut);
-  const nameAt = from.slice(0, cut) === folder ? (copy: number) => pastedCopyName(name, copy) : orCopy(name);
-  return intoFolder((to) => copyFile(from, to, service), folder, nameAt);
+  const isFolder = from.endsWith('/');
+  const source = isFolder ? from.slice(0, -1) : from;
+  const cut = source.lastIndexOf('/') + 1;
+  const name = source.slice(cut);
+  const nameAt = source.slice(0, cut) === folder ? (copy: number) => pastedCopyName(name, copy, isFolder) : orCopy(name, isFolder);
+  const copied = await intoFolder((to) => copyFile(source, to, service), folder, nameAt);
+  return isFolder ? `${copied}/` : copied;
 }
 
 /**

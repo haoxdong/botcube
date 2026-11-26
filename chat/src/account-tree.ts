@@ -74,6 +74,48 @@ export class AccountTree {
     }
   }
 
+  /**
+   * Copies the folder `from`, with everything in it, to a new folder `to`; false when anything is at `to`, which is
+   * never replaced. Each folder is read through its own pinned fd and each file opened with O_NOFOLLOW, so a link
+   * anywhere inside, even one swapped in mid-copy, refuses the copy, and the part already made is removed.
+   */
+  async copyFolderNoClobber(from: string, to: string): Promise<boolean> {
+    await this.refuseLink(from);
+    if (!await this.makeFolder(to)) return false;
+    try {
+      await this.copyEntries(from, to);
+    } catch (error) {
+      await this.removeTree(to);
+      throw error;
+    }
+    return true;
+  }
+
+  /** Copies what the folder `from` holds into the new, empty folder `to`, one entry at a time, never following a link. */
+  private async copyEntries(from: string, to: string): Promise<void> {
+    const source = await this.pin(from.split('/'), false);
+    let entries;
+    try {
+      entries = await readdir(`/proc/self/fd/${source.fd}`, { withFileTypes: true });
+    } finally {
+      await source.close();
+    }
+    for (const entry of entries) {
+      const [inside, made] = [`${from}/${entry.name}`, `${to}/${entry.name}`];
+      if (entry.isSymbolicLink()) throw this.linked(inside);
+      if (entry.isDirectory()) {
+        // eslint-disable-next-line no-await-in-loop -- one entry at a time keeps the open fds bounded by the depth
+        if (!await this.makeFolder(made)) throw Object.assign(new Error(`${made} appeared mid-copy`), { code: 'EEXIST' });
+        // eslint-disable-next-line no-await-in-loop -- one entry at a time
+        await this.copyEntries(inside, made);
+      } else {
+        // A file opens with O_NOFOLLOW and must be a regular file: a link swapped in since the read is refused.
+        // eslint-disable-next-line no-await-in-loop -- one entry at a time
+        await this.copyFile(inside, made);
+      }
+    }
+  }
+
   /** Streams the file `from` into a new file `to`, fd to fd: EEXIST when anything is at `to`, which is never replaced. */
   private async copyFile(from: string, to: string): Promise<void> {
     const source = await this.open(from, constants.O_RDONLY);

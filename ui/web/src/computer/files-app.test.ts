@@ -7,7 +7,7 @@ import { FilesApp } from './files-app';
 import { FilesWindow } from './files-explorer';
 import { WindowsDesktop } from './windows-desktop';
 import { groupsOf, itemsIn } from './files-items';
-import { deleteFile, fileDownloadUrl, listFiles, moveIntoFolder, pastedCopyName, renameFile, uploadFile, uploadInto, withUploadsSettled, type UploadOptions } from './files-service';
+import { deleteFile, fileDownloadUrl, listFiles, moveIntoFolder, pastedCopyName, renameFile, uploadCopyName, uploadFile, uploadInto, withUploadsSettled, type UploadOptions } from './files-service';
 
 const entry = (name: string, size = 1, lastModified = '2026-10-01T09:00:00.000Z') => ({ name, size, lastModified });
 
@@ -174,6 +174,10 @@ describe('uploading a file the user attached in the chat', () => {
     ['a.' + 'b'.repeat(253), 1, 'a - Copy.' + 'b'.repeat(246)],
   ])('names copy %s, number %i, pasted beside it %s as Windows does', (name, copy, named) => {
     expect(pastedCopyName(name, copy)).toBe(named);
+  });
+
+  it('names a folder\'s copy at the end of its name, never splitting an extension', () => {
+    expect([pastedCopyName('v1.2', 1, true), pastedCopyName('v1.2', 2, true), uploadCopyName('v1.2', 2, true)]).toEqual(['v1.2 - Copy', 'v1.2 - Copy (2)', 'v1.2 (2)']);
   });
 
   it.each([
@@ -436,10 +440,12 @@ const ROUTES: Record<string, (body: Moving) => Response> = {
   },
   '/files/copy': ({ from, to }) => {
     if (taken(to)) return Response.json({ detail: `A file named ${to} is already in Files` }, { status: 409 });
+    const inside = stored.filter(({ name }) => name.startsWith(`${from}/`));
     const source = stored.find(({ name }) => name === from);
-    if (source === undefined) return Response.json({ detail: `No file ${from} in Files` }, { status: 404 });
+    if (source === undefined && inside.length === 0) return Response.json({ detail: `No file ${from} in Files` }, { status: 404 });
+    if (source === undefined && to.startsWith(`${from}/`)) return Response.json({ detail: `${from} can't be copied into itself` }, { status: 400 });
     calls.push(`copied ${from} to ${to}`);
-    stored = [...stored, { ...source, name: to }];
+    stored = [...stored, ...(source === undefined ? inside : [source]).map((file) => ({ ...file, name: moved(file.name, from, to) }))];
     return Response.json({ name: to });
   },
 };
@@ -997,12 +1003,12 @@ describe('FilesApp', () => {
   });
 
   describe('the command bar', () => {
-    it("acts on the selected file, and is off for nothing selected; a folder has Rename alone", async () => {
+    it("acts on the selected file, and is off for nothing selected; a folder has Copy and Rename", async () => {
       const { host, props } = await windowWith({ files: [entry('report.csv'), entry('reports/q3.pdf')] });
       const off = () => ['Cut', 'Copy', 'Download', 'Rename', 'Delete'].map((label) => command(label).disabled);
       expect(off()).toEqual([true, true, true, true, true]);
       await press(host, 'reports');
-      expect(off()).toEqual([true, true, true, false, true]);
+      expect(off()).toEqual([true, false, true, false, true]);
 
       await press(host, 'report.csv');
       expect(off()).toEqual([false, false, false, false, false]);
@@ -1033,7 +1039,7 @@ describe('FilesApp', () => {
   });
 
   describe("a row's menu", () => {
-    it('opens on a right-click with Open, Cut, Copy, Download, Rename, Delete, Copy path and Properties, selecting the row; a folder has Open, Rename, Copy path and Properties', async () => {
+    it('opens on a right-click with Open, Cut, Copy, Download, Rename, Delete, Copy path and Properties, selecting the row; a folder has Open, Copy, Rename, Copy path and Properties', async () => {
       stored.push(entry('report.csv'), entry('reports/q3.pdf'));
       const host = await app();
 
@@ -1045,7 +1051,7 @@ describe('FilesApp', () => {
       expect(menu()).toBeNull();
 
       await contextMenu(host, 'reports');
-      expect(menuItems()).toEqual(['Open', 'Rename', 'Copy path', 'Properties']);
+      expect(menuItems()).toEqual(['Open', 'Copy', 'Rename', 'Copy path', 'Properties']);
       await menuItem('Open');
       expect(names(host)).toEqual(['q3.pdf']);
     });
@@ -1487,6 +1493,52 @@ describe('FilesApp', () => {
       await settled();
       expect(calls).toContain('copied top.txt to top - Copy (2).txt');
       expect(selected(host)).toEqual(['top - Copy (2).txt']);
+    });
+  });
+
+  describe('copying and pasting a folder', () => {
+    beforeEach(() => {
+      stored.push(entry('notes/a.md'), entry('reports/2026/q1.csv'), entry('reports/b.pdf'));
+    });
+
+    it('copies a folder with everything in it beside itself as Windows names it, then selected, and again', async () => {
+      const host = await app();
+      await contextMenu(host, 'reports');
+      await menuItem('Copy');
+      await clickOn(command('Paste'));
+      await settled();
+
+      expect(calls).toContain('copied reports to reports - Copy');
+      expect(names(host)).toEqual(['notes', 'reports', 'reports - Copy']);
+      expect(selected(host)).toEqual(['reports - Copy']);
+      expect(stored.map(({ name }) => name).filter((name) => name.startsWith('reports - Copy/')).sort()).toEqual(['reports - Copy/2026/q1.csv', 'reports - Copy/b.pdf']);
+
+      await key(rowOf(host, 'reports - Copy'), '{Control>}v{/Control}');
+      await settled();
+      expect(calls).toContain('copied reports to reports - Copy (2)');
+      expect(selected(host)).toEqual(['reports - Copy (2)']);
+    });
+
+    it('copies on Ctrl+C into another folder under its own name, then "name (2)", and never into itself', async () => {
+      stored.push(entry('notes/reports/old.txt'));
+      const host = await app();
+      await press(host, 'reports');
+      expect(command('Copy').disabled).toBe(false);
+      await key(rowOf(host, 'reports'), '{Control>}c{/Control}');
+
+      await tree.open(host, 'notes');
+      await clickOn(command('Paste'));
+      await settled();
+      expect(calls).toContain('copied reports to notes/reports (2)');
+      expect(names(host)).toEqual(['reports', 'reports (2)', 'a.md']);
+      expect(selected(host)).toEqual(['reports (2)']);
+
+      await tree.open(host, 'reports');
+      await press(host, '2026', 2);
+      await clickOn(command('Paste'));
+      await settled();
+      expect(calls.filter((call) => call.startsWith('copied reports to reports/'))).toEqual([]);
+      expect(host.textContent).toContain("reports can't be copied into itself");
     });
   });
 

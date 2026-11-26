@@ -304,10 +304,17 @@ export function accountFilesEfs({
     async copy(userId, from, to) {
       const [source, destination] = [filePath(from), filePath(fileDestination(to))];
       await requireActive(userId);
-      await inFiles(userId, from, (tree) => tree.copy(source, destination, false)).catch((error: unknown) => {
-        if (errorCode(error) === 'EEXIST') throw new HttpError(409, `A file named ${to} is already in Files`);
-        throw error;
+      const taken = () => new HttpError(409, `A file named ${to} is already in Files`);
+      const copied = await inFiles(userId, from, async (tree) => {
+        if (!await tree.isFolder(source)) return tree.copy(source, destination, false).then(() => true);
+        // A folder is checked as one, as a rename checks it, and it can't go inside itself.
+        fileDestination(`${destination}/`);
+        if (destination === source || destination.startsWith(`${source}/`)) throw new HttpError(400, `${from} can't be copied into itself`);
+        return tree.copyFolderNoClobber(source, destination);
+      }).catch((error: unknown) => {
+        throw errorCode(error) === 'EEXIST' ? taken() : error;
       });
+      if (!copied) throw taken();
     },
     async uploadUrl(userId, name) {
       await requireActive(userId);

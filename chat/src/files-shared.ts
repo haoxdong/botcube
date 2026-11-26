@@ -81,7 +81,7 @@ export interface AccountFiles {
   list(accountId: string): Promise<FileListing>;
   /** Make a folder, and its parents; 409 when anything is already at `name`. */
   makeFolder(accountId: string, name: string): Promise<void>;
-  /** Copy a file without replacing anything at `to`. */
+  /** Copy a file, or a folder with everything in it, without replacing anything at `to`; a folder never into itself. */
   copy(accountId: string, from: string, to: string): Promise<void>;
   /** A signed link's path and query on the Chat Service, which uploads `name` as a new file. */
   uploadUrl(accountId: string, name: string): Promise<string>;

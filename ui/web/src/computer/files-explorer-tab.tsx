@@ -186,7 +186,8 @@ export function ExplorerTab({ active, onPlace, className, ...props }: TabProps &
   };
   const canPaste = canPasteInto(place, clipboard);
   const paste = () => void pasteInto(place, clipboard, { onCopy, onMove, onClipboard }).then((pasted) => setSelection((now) => afterPaste(now, pasted)));
-  const take = (some: readonly FilesItem[], copy: boolean) => onClipboard({ paths: some.filter(({ folder }) => !folder).map(({ path }) => path), copy });
+  // Copy takes folders too; Cut takes files only.
+  const take = (some: readonly FilesItem[], copy: boolean) => onClipboard({ paths: some.filter(({ folder }) => copy || !folder).map(({ path }) => path), copy });
   const newFolder = () => makeFolder(place, onNewFolder, startRename);
   // An item's menu acts on the selection it is part of, else on the item alone.
   const targets = (item: FilesItem) => (selection.paths.includes(item.path) ? chosen : [item]);
@@ -248,7 +249,7 @@ export function ExplorerTab({ active, onPlace, className, ...props }: TabProps &
       setMenu(at);
     },
     cut: () => take(chosenFiles, false),
-    copy: () => take(chosenFiles, true),
+    copy: () => take(chosen, true),
     paste,
     newFolder,
     forgetCut: () => onClipboard(EMPTY_CLIPBOARD),
@@ -287,6 +288,7 @@ export function ExplorerTab({ active, onPlace, className, ...props }: TabProps &
       />
       <CommandBar
         hasFiles={chosenFiles.length > 0}
+        canCopy={chosen.length > 0}
         canRename={alone !== undefined}
         canPaste={canPaste}
         canNewFolder={place !== null}
