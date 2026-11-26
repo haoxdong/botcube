@@ -7,6 +7,7 @@ packages:
   - ui/*
 
 linkWorkspacePackages: true
+verifyDepsBeforeRun: false
 
 allowBuilds:
   '@scarf/scarf': false
