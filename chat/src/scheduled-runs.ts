@@ -143,31 +143,19 @@ async function scheduledTaskAdmission(deps: ScheduledRunDeps, store: ScheduledRu
 
 /** A redelivered run past its post: finish settling it, and fail it again if the run failed. */
 async function finishRedelivery(deps: ScheduledRunDeps, store: ScheduledRunStore, previous: ScheduledDelivery): Promise<void> {
-  await resumeScheduledDelivery(deps.sessionMetadata, previous, deps.scheduledTasks);
-  await retireFinished(deps, store, previous);
+  if (previous.phase !== 'completed') {
+    await deps.sessionMetadata.resumePost(previous);
+    await store.complete(previous);
+  }
+  if (previous.status !== undefined) {
+    await deps.scheduledTasks.recordRun(await store.executionOwner(previous), previous.taskId, { at: previous.startedAt, status: previous.status });
+  }
+  const owner = await store.executionOwner(previous);
+  const task = await deps.scheduledTasks.get(owner, previous.taskId);
+  if (task !== null) await deps.scheduledTasks.retire(owner, task);
   if (previous.failed) {
     await store.retryFailed(previous);
     throw new HttpError(503, 'Scheduled delivery previously failed; its Main Chat notification is complete');
-  }
-}
-
-/** A redelivered run that already finished and posted: its one-off may not have left the account yet. */
-async function retireFinished(deps: ScheduledRunDeps, store: ScheduledRunStore, previous: ScheduledDelivery): Promise<void> {
-  const executionOwner = await store.executionOwner(previous);
-  const task = await deps.scheduledTasks.get(executionOwner, previous.taskId);
-  if (task !== null) await deps.scheduledTasks.retire(executionOwner, task);
-}
-
-async function resumeScheduledDelivery(sessionMetadata: SessionMetadata, previous: ScheduledDelivery, tasks: Pick<ScheduledTasks, 'recordRun'>): Promise<void> {
-  const store = sessionMetadata.scheduledRuns;
-  if (store === undefined) throw new HttpError(503, 'Scheduled delivery storage is unavailable');
-  if (previous.phase !== 'completed') {
-    await sessionMetadata.resumePost(previous);
-    await store.complete(previous);
-  }
-  // Its end may not have reached the task before the delivery failed; recording it again changes nothing.
-  if (previous.status !== undefined) {
-    await tasks.recordRun(await store.executionOwner(previous), previous.taskId, { at: previous.startedAt, status: previous.status });
   }
 }
 
@@ -296,7 +284,7 @@ async function finishScheduledTurn(
 
 /** The queue that schedules deliver their runs to. */
 export interface RunQueue {
-  receive(signal: AbortSignal): Promise<{ body: string; receipt: string; deliveryId: string; firedAt: Date }[]>;
+  receive(signal: AbortSignal): Promise<{ body: string; receipt: string; deliveryId: string }[]>;
   delete(receipt: string): Promise<void>;
 }
 
@@ -308,15 +296,14 @@ export function sqsRunQueue(
   return {
     async receive(signal) {
       const { Messages } = await sqs.send(
-        new ReceiveMessageCommand({ QueueUrl: queueUrl, MaxNumberOfMessages: 1, WaitTimeSeconds: 20, MessageSystemAttributeNames: ['SentTimestamp'] }),
+        new ReceiveMessageCommand({ QueueUrl: queueUrl, MaxNumberOfMessages: 1, WaitTimeSeconds: 20 }),
         { abortSignal: signal },
       );
-      return (Messages ?? []).map(({ Body, ReceiptHandle, MessageId, Attributes }) => {
-        const sent = Number(Attributes?.SentTimestamp);
-        if (Body === undefined || ReceiptHandle === undefined || MessageId === undefined || !Number.isFinite(sent)) {
-          throw new Error('Scheduled run delivery is missing its Body, ReceiptHandle, MessageId or SentTimestamp');
+      return (Messages ?? []).map(({ Body, ReceiptHandle, MessageId }) => {
+        if (Body === undefined || ReceiptHandle === undefined || MessageId === undefined) {
+          throw new Error('Scheduled run delivery is missing its Body, ReceiptHandle or MessageId');
         }
-        return { body: Body, receipt: ReceiptHandle, deliveryId: MessageId, firedAt: new Date(sent) };
+        return { body: Body, receipt: ReceiptHandle, deliveryId: MessageId };
       });
     },
     async delete(receipt) {
@@ -406,9 +393,12 @@ export function pollScheduledRuns(
   };
   const executeBatch = async (messages: Awaited<ReturnType<RunQueue['receive']>>) => {
     try {
-      for (const { body, receipt, deliveryId, firedAt } of messages) {
+      for (const { body, receipt, deliveryId } of messages) {
+        const { scheduledAt, ...message } = JSON.parse(body) as ScheduledRunMessage;
+        const firedAt = new Date(Date.parse(scheduledAt ?? ''));
+        if (!Number.isFinite(firedAt.getTime())) throw new Error('Scheduled delivery has an invalid occurrence time');
         // eslint-disable-next-line no-await-in-loop -- runs are taken one at a time
-        await run({ ...JSON.parse(body) as ScheduledRunMessage, deliveryId, firedAt });
+        await run({ ...message, deliveryId, firedAt });
         // eslint-disable-next-line no-await-in-loop -- runs are taken one at a time
         await queue.delete(receipt);
       }

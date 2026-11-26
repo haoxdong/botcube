@@ -89,6 +89,7 @@ export interface ScheduledRunMessage {
   owner: string;
   taskId: string;
   deliveryFence?: string;
+  scheduledAt?: string;
 }
 
 const ownerPk = (owner: string) => `SCHEDULED#${owner}`;
@@ -826,7 +827,10 @@ export class ScheduledTasks {
   }
 
   private schedule(owner: string, { id, schedule_name, schedule, timezone, startDate: starts, endDate, paused, created_at, deliveryFence }: TaskItem, group = this.config.group): CreateScheduleCommandInput {
-    const message: ScheduledRunMessage = { owner, taskId: id, ...(deliveryFence === undefined ? {} : { deliveryFence }) };
+    const message: ScheduledRunMessage = {
+      owner, taskId: id, scheduledAt: '<aws.scheduler.scheduled-time>',
+      ...(deliveryFence === undefined ? {} : { deliveryFence }),
+    };
     const startDate = nextRateTick(schedule, created_at, Date.now(), starts) ?? (starts === undefined ? undefined : new Date(starts));
     // Disable stopped schedules and omit their past EndDate. The task keeps the date for edits.
     const stopped = endDate !== undefined && Date.parse(endDate) <= Date.now();

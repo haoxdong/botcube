@@ -13,6 +13,7 @@ import {
 import { SendMessageCommand, type SQSClient } from '@aws-sdk/client-sqs';
 import { nextScheduledRun } from './schedule-time.js';
 import type { ScheduleCommand, Schedules } from './scheduler.js';
+import type { ScheduledRunMessage } from './scheduled-tasks.js';
 
 /** How often the poller reads its due schedules: a run starts at most this late. */
 const POLL_MILLISECONDS = 10_000;
@@ -82,7 +83,10 @@ export class TableSchedules implements Schedules {
     });
     for await (const page of pages) due.push(...(page.Items ?? []) as ScheduleRow[]);
     await Promise.all(due.map(async (row) => {
-      if (await this.claim(row, now)) await this.sqs.send(new SendMessageCommand({ QueueUrl: this.queueUrl, MessageBody: row.input }));
+      const message = { ...JSON.parse(row.input) as ScheduledRunMessage, scheduledAt: row.due };
+      if (await this.claim(row, now)) {
+        await this.sqs.send(new SendMessageCommand({ QueueUrl: this.queueUrl, MessageBody: JSON.stringify(message) }));
+      }
     }));
   }
 

@@ -202,7 +202,7 @@ describe('rate schedule cadence', () => {
       await stack.history.transfer(source, destination);
       expect(await scheduler.schedule(task.id)).toMatchObject({
         StartDate: new Date('2030-10-06T10:29:32.000Z').getTime() / 1000,
-        Target: { Input: JSON.stringify({ owner: destination, taskId: task.id }) },
+        Target: { Input: JSON.stringify({ owner: destination, taskId: task.id, scheduledAt: '<aws.scheduler.scheduled-time>' }) },
       });
     } finally {
       vi.useRealTimers();
@@ -405,7 +405,7 @@ describe('POST /scheduled-tasks', () => {
       Target: {
         Arn: scheduler.runs.queueArn,
         RoleArn: scheduler.runs.roleArn,
-        Input: JSON.stringify({ owner: account, taskId: task.id }),
+        Input: JSON.stringify({ owner: account, taskId: task.id, scheduledAt: '<aws.scheduler.scheduled-time>' }),
       },
     });
   });
@@ -526,7 +526,7 @@ describe('POST /scheduled-tasks', () => {
     expect(await scheduler.name(again.id)).toBe(name);
     expect(await scheduler.schedule(id)).toBeNull();
     expect(await scheduler.schedule(again.id)).toMatchObject({
-      Target: { Input: JSON.stringify({ owner: account, taskId: again.id }) },
+      Target: { Input: JSON.stringify({ owner: account, taskId: again.id, scheduledAt: '<aws.scheduler.scheduled-time>' }) },
     });
     expect(await listed(account)).toEqual([again]);
   });
@@ -596,7 +596,7 @@ describe('PATCH /scheduled-tasks/:id', () => {
       ScheduleExpression: 'rate(1 day)',
       ScheduleExpressionTimezone: 'America/New_York',
       State: 'DISABLED',
-      Target: { Input: JSON.stringify({ owner: account, taskId: id }) },
+      Target: { Input: JSON.stringify({ owner: account, taskId: id, scheduledAt: '<aws.scheduler.scheduled-time>' }) },
     });
   });
 
@@ -821,7 +821,7 @@ describe("an account's scheduled tasks", () => {
       await stack.history.transfer(source, destination);
 
       const moved = await scheduler.schedule(task.id);
-      expect(moved).toMatchObject({ State: 'DISABLED', Target: { Input: JSON.stringify({ owner: destination, taskId: task.id }) } });
+      expect(moved).toMatchObject({ State: 'DISABLED', Target: { Input: JSON.stringify({ owner: destination, taskId: task.id, scheduledAt: '<aws.scheduler.scheduled-time>' }) } });
       expect(moved).not.toMatchObject({ EndDate: expect.anything() });
       const { nextRun: _, ...ended } = { ...task, ended: true };
       expect(await listed(destination)).toEqual([ended]);
@@ -846,10 +846,10 @@ describe("an account's scheduled tasks", () => {
 
     expect(await listed(source)).toEqual([]);
     expect(await listed(destination)).toEqual([kept, first, asPaused(second)]);
-    expect((await scheduler.schedule(first.id))?.Target.Input).toBe(JSON.stringify({ owner: destination, taskId: first.id }));
+    expect((await scheduler.schedule(first.id))?.Target.Input).toBe(JSON.stringify({ owner: destination, taskId: first.id, scheduledAt: '<aws.scheduler.scheduled-time>' }));
     expect(await scheduler.schedule(second.id)).toMatchObject({
       State: 'DISABLED',
-      Target: { Input: JSON.stringify({ owner: destination, taskId: second.id }) },
+      Target: { Input: JSON.stringify({ owner: destination, taskId: second.id, scheduledAt: '<aws.scheduler.scheduled-time>' }) },
     });
     expect((await request(destination, `/scheduled-tasks/${first.id}`, { method: 'DELETE' })).status).toBe(204);
   });
@@ -942,7 +942,7 @@ describe("an account's scheduled tasks", () => {
     expect(await scheduler.schedule(current.id)).toMatchObject({
       ScheduleExpression: 'rate(1 day)',
       State: stays ? 'DISABLED' : 'ENABLED',
-      Target: { Input: JSON.stringify({ owner: destination, taskId: current.id }) },
+      Target: { Input: JSON.stringify({ owner: destination, taskId: current.id, scheduledAt: '<aws.scheduler.scheduled-time>' }) },
     });
   });
 
@@ -961,8 +961,8 @@ describe("an account's scheduled tasks", () => {
     expect(replacement.id).not.toBe(task.id);
     expect(await scheduler.name(replacement.id)).not.toBe(movedName);
     const [moved, recreated] = await Promise.all([scheduler.schedule(task.id), scheduler.schedule(replacement.id)]);
-    expect(moved).toMatchObject({ Target: { Input: JSON.stringify({ owner: destination, taskId: task.id }) } });
-    expect(recreated).toMatchObject({ Target: { Input: JSON.stringify({ owner: source, taskId: replacement.id }) } });
+    expect(moved).toMatchObject({ Target: { Input: JSON.stringify({ owner: destination, taskId: task.id, scheduledAt: '<aws.scheduler.scheduled-time>' }) } });
+    expect(recreated).toMatchObject({ Target: { Input: JSON.stringify({ owner: source, taskId: replacement.id, scheduledAt: '<aws.scheduler.scheduled-time>' }) } });
   });
 
   it('keeps the moved schedule when Account Claim lands during source reconfirmation', async () => {
@@ -988,7 +988,7 @@ describe("an account's scheduled tasks", () => {
     expect(replacement.created).toBe(true);
     expect(replacement.task.id).not.toBe(original.id);
     expect(await scheduler.schedule(name)).toMatchObject({
-      Target: { Input: JSON.stringify({ owner: destination, taskId: original.id }) },
+      Target: { Input: JSON.stringify({ owner: destination, taskId: original.id, scheduledAt: '<aws.scheduler.scheduled-time>' }) },
     });
   });
 
@@ -1183,7 +1183,7 @@ describe('ScheduledTasks', () => {
       receive: async (signal) => {
         if (!delivered) {
           delivered = true;
-          return [{ body: JSON.stringify({ owner: account, taskId: healthy.id }), receipt: 'healthy-receipt', deliveryId: randomUUID(), firedAt: new Date() }];
+          return [{ body: JSON.stringify({ owner: account, taskId: healthy.id, scheduledAt: new Date().toISOString() }), receipt: 'healthy-receipt', deliveryId: randomUUID() }];
         }
         return new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))));
       },
@@ -1255,8 +1255,8 @@ describe('ScheduledTasks', () => {
         if (!delivered) {
           delivered = true;
           return [
-            { body: JSON.stringify({ owner: account, taskId: retiring.id }), receipt: 'retiring-receipt', deliveryId: randomUUID(), firedAt: new Date() },
-            { body: JSON.stringify({ owner: account, taskId: healthy.id }), receipt: 'healthy-receipt', deliveryId: randomUUID(), firedAt: new Date() },
+            { body: JSON.stringify({ owner: account, taskId: retiring.id, scheduledAt: new Date().toISOString() }), receipt: 'retiring-receipt', deliveryId: randomUUID() },
+            { body: JSON.stringify({ owner: account, taskId: healthy.id, scheduledAt: new Date().toISOString() }), receipt: 'healthy-receipt', deliveryId: randomUUID() },
           ];
         }
         return new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))));
@@ -1728,7 +1728,7 @@ describe('ScheduledTasks', () => {
     expect(await tasks.list(account)).toEqual([stored(confirmed)]);
     expect(await new TaskSchedules(motoEndpoint(), runs).schedule(confirmed.id)).toMatchObject({
       Name: original.name,
-      Target: { Input: JSON.stringify({ owner: account, taskId: confirmed.id }) },
+      Target: { Input: JSON.stringify({ owner: account, taskId: confirmed.id, scheduledAt: '<aws.scheduler.scheduled-time>' }) },
     });
   });
 
@@ -2181,7 +2181,7 @@ describe('ScheduledTasks', () => {
     expect(held.find((task) => task.id === moved.id)).toEqual(asPaused(moved));
     expect(await new TaskSchedules(motoEndpoint(), runs).schedule(moved.id)).toMatchObject({
       State: 'DISABLED',
-      Target: { Input: JSON.stringify({ owner: destination, taskId: moved.id }) },
+      Target: { Input: JSON.stringify({ owner: destination, taskId: moved.id, scheduledAt: '<aws.scheduler.scheduled-time>' }) },
     });
   });
 
@@ -2235,10 +2235,10 @@ describe('scheduled task delivery fence', () => {
     expect(await tasks.get('source', task.id)).not.toHaveProperty('deliveryFence');
     await tasks.update('source', task.id, { timezone: 'UTC' });
     const view = new TaskSchedules(endpoint, runs);
-    expect(JSON.parse(defined(await view.schedule(task.id), 'edited schedule').Target.Input)).toEqual({ owner: 'source', taskId: task.id, deliveryFence: 'frozen-cutover' });
+    expect(JSON.parse(defined(await view.schedule(task.id), 'edited schedule').Target.Input)).toEqual({ owner: 'source', taskId: task.id, scheduledAt: '<aws.scheduler.scheduled-time>', deliveryFence: 'frozen-cutover' });
     await tasks.transfer('source', 'destination');
     expect(await tasks.get('destination', task.id, {})).toBeNull();
     expect(await tasks.get('destination', task.id, { deliveryFence: 'frozen-cutover' })).toMatchObject({ id: task.id });
-    expect(JSON.parse(defined(await view.schedule(task.id), 'claimed schedule').Target.Input)).toEqual({ owner: 'destination', taskId: task.id, deliveryFence: 'frozen-cutover' });
+    expect(JSON.parse(defined(await view.schedule(task.id), 'claimed schedule').Target.Input)).toEqual({ owner: 'destination', taskId: task.id, scheduledAt: '<aws.scheduler.scheduled-time>', deliveryFence: 'frozen-cutover' });
   });
 });

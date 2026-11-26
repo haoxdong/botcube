@@ -79,10 +79,10 @@ export class SchedulerView {
    * Deliver the schedule's target input to its queue, as Scheduler does when the schedule is due, then delete a
    * schedule that asks for it (a one-off's `ActionAfterCompletion: DELETE`).
    */
-  async fire(name: string): Promise<void> {
+  async fire(name: string, scheduledAt = new Date()): Promise<void> {
     const schedule = await this.schedule(name);
     if (schedule === null) throw new Error(`No schedule ${name}`);
-    await this.deliver(schedule.Target.Input);
+    await this.deliver(schedule.Target.Input, scheduledAt);
     if (schedule.ActionAfterCompletion !== 'DELETE') return;
     const deleted = await scheduler(this.endpoint, 'DELETE', `/schedules/${name}?groupName=${this.runs.group}`);
     if (deleted.status !== 200) throw new Error(`DeleteSchedule: ${deleted.status} ${await deleted.text()}`);
@@ -98,7 +98,7 @@ export class SchedulerView {
   }
 
   /** Send a run to the queue as a schedule would, whether or not the schedule still exists. */
-  async deliver(input: string): Promise<void> {
-    await sqs(this.endpoint, 'SendMessage', { QueueUrl: this.runs.queueUrl, MessageBody: input });
+  async deliver(input: string, scheduledAt = new Date()): Promise<void> {
+    await sqs(this.endpoint, 'SendMessage', { QueueUrl: this.runs.queueUrl, MessageBody: input.replace('<aws.scheduler.scheduled-time>', scheduledAt.toISOString()) });
   }
 }

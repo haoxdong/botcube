@@ -108,6 +108,26 @@ describe('the enterprise example schedules from its table', () => {
     expect(await delivered()).toEqual([retry.task.id]);
   });
 
+  it('delivers the original occurrence after the table poller restarts', async () => {
+    vi.setSystemTime(new Date('2026-11-16T12:00:00.000Z'));
+    const scheduling = enterprise();
+    if (scheduling === null) throw new Error('the enterprise example schedules nothing');
+    const owner = randomUUID();
+    const { task } = await scheduling.tasks.create(owner, randomUUID(), {
+      title: 'Brief', prompt: 'Brief me', schedule: 'at(2026-11-16T12:30:00)', timezone: 'UTC',
+    });
+
+    vi.setSystemTime(new Date('2026-11-16T13:00:00.000Z'));
+    const restarted = enterprise();
+    if (restarted === null) throw new Error('the enterprise example schedules nothing');
+    await restarted.poll?.tick();
+
+    const messages = await restarted.queue.receive(new AbortController().signal);
+    expect(messages.map(({ body }) => JSON.parse(body))).toEqual([
+      { owner, taskId: task.id, scheduledAt: '2026-11-16T12:30:00.000Z' },
+    ]);
+  });
+
   it('pauses and resumes a task through its schedule row', async () => {
     vi.setSystemTime(new Date('2026-11-16T12:00:00.000Z'));
     const scheduling = enterprise();

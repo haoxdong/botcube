@@ -17,7 +17,7 @@ describe('pollScheduledRuns', () => {
 
   /** A queue holding these deliveries, then none until the poller stops. */
   function queue(...bodies: string[]) {
-    const deliveries = bodies.map((body, n) => [{ body, receipt: `receipt-${n}`, deliveryId: `delivery-${n}`, firedAt: new Date(0) }]);
+    const deliveries = bodies.map((body, n) => [{ body, receipt: `receipt-${n}`, deliveryId: `delivery-${n}` }]);
     const deleted: string[] = [];
     const signals: AbortSignal[] = [];
     let receives = 0;
@@ -39,7 +39,7 @@ describe('pollScheduledRuns', () => {
   const neverDraining = async () => false;
 
   it('waits for the current delivery to finish and be acknowledged when stopped', async () => {
-    const { fake, deleted, receives } = queue('{"owner":"a","taskId":"t1"}');
+    const { fake, deleted, receives } = queue('{"owner":"a","taskId":"t1","scheduledAt":"1970-01-01T00:00:00.000Z"}');
     let started!: () => void;
     let finish!: () => void;
     const running = new Promise<void>((resolve) => { started = resolve; });
@@ -61,7 +61,7 @@ describe('pollScheduledRuns', () => {
     const heldMaintenance = new Promise<void>((resolve) => { releaseMaintenance = resolve; });
     let maintenancePending = false;
     let maintenanceStarts = 0;
-    const { fake, deleted, receives } = queue('{"owner":"healthy-owner","taskId":"healthy-task"}');
+    const { fake, deleted, receives } = queue('{"owner":"healthy-owner","taskId":"healthy-task","scheduledAt":"1970-01-01T00:00:00.000Z"}');
     const runs: ScheduledRunMessage[] = [];
     const stop = pollScheduledRuns(fake, async (message) => {
       runs.push(message);
@@ -92,7 +92,7 @@ describe('pollScheduledRuns', () => {
     const heldMaintenance = new Promise<void>((_, reject) => { rejectMaintenance = reject; });
     const failure = new Error('Expiry storage unavailable');
     const failed = vi.fn();
-    const { fake, deleted, receives, signals } = queue('{"owner":"healthy-owner","taskId":"healthy-task"}');
+    const { fake, deleted, receives, signals } = queue('{"owner":"healthy-owner","taskId":"healthy-task","scheduledAt":"1970-01-01T00:00:00.000Z"}');
     const runs: ScheduledRunMessage[] = [];
     const stop = pollScheduledRuns(fake, async (message) => {
       runs.push(message);
@@ -121,9 +121,9 @@ describe('pollScheduledRuns', () => {
     const releases: (() => void)[] = [];
     const waits = Array.from({ length: 3 }, () => new Promise<void>((resolve) => { releases.push(resolve); }));
     const { fake, deleted, receives } = queue(
-      '{"owner":"healthy-owner","taskId":"first"}',
-      '{"owner":"healthy-owner","taskId":"second"}',
-      '{"owner":"healthy-owner","taskId":"third"}',
+      '{"owner":"healthy-owner","taskId":"first","scheduledAt":"1970-01-01T00:00:00.000Z"}',
+      '{"owner":"healthy-owner","taskId":"second","scheduledAt":"1970-01-01T00:00:00.000Z"}',
+      '{"owner":"healthy-owner","taskId":"third","scheduledAt":"1970-01-01T00:00:00.000Z"}',
     );
     const receive = fake.receive;
     let waiting = 0;
@@ -181,7 +181,7 @@ describe('pollScheduledRuns', () => {
 
   it('stops and reports expiration maintenance failure without deleting queued work', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { fake, deleted, receives } = queue('{"owner":"a","taskId":"t1"}');
+    const { fake, deleted, receives } = queue('{"owner":"a","taskId":"t1","scheduledAt":"1970-01-01T00:00:00.000Z"}');
     const failure = new Error('Expiry storage unavailable');
     const failed = vi.fn();
     const run = vi.fn();
@@ -199,7 +199,7 @@ describe('pollScheduledRuns', () => {
     let draining = false;
     const receive = vi.fn(async () => {
       draining = true;
-      return [{ body: '{"owner":"a","taskId":"t1"}', receipt: 'in-flight', deliveryId: 'claimed', firedAt: new Date(0) }];
+      return [{ body: '{"owner":"a","taskId":"t1","scheduledAt":"1970-01-01T00:00:00.000Z"}', receipt: 'in-flight', deliveryId: 'claimed' }];
     });
     const remove = vi.fn(async () => undefined);
     const run = vi.fn(async () => undefined);
@@ -227,7 +227,7 @@ describe('pollScheduledRuns', () => {
   });
 
   it('runs each delivery and then deletes it', async () => {
-    const { fake, deleted } = queue('{"owner":"a","taskId":"t1"}', '{"owner":"b","taskId":"t2"}');
+    const { fake, deleted } = queue('{"owner":"a","taskId":"t1","scheduledAt":"1970-01-01T00:00:00.000Z"}', '{"owner":"b","taskId":"t2","scheduledAt":"1970-01-01T00:00:00.000Z"}');
     const runs: ScheduledRunMessage[] = [];
 
     const stop = pollScheduledRuns(
@@ -246,10 +246,28 @@ describe('pollScheduledRuns', () => {
     await stop();
   });
 
+  it('leaves a delivery without an occurrence time unacknowledged', async () => {
+    vi.useFakeTimers();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { fake, deleted } = queue('{"owner":"a","taskId":"t1"}');
+    const run = vi.fn(async () => undefined);
+    const stop = pollScheduledRuns(fake, run, neverDraining);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(run).not.toHaveBeenCalled();
+      expect(deleted).toEqual([]);
+      expect(errors).toHaveBeenCalledWith('Scheduled run failed', new Error('Scheduled delivery has an invalid occurrence time'));
+    } finally {
+      const stopped = stop();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await stopped;
+    }
+  });
+
   it('leaves a failed run on the queue, logs it, and receives again after five seconds', async () => {
     vi.useFakeTimers();
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { fake, deleted, receives } = queue('{"owner":"a","taskId":"t1"}');
+    const { fake, deleted, receives } = queue('{"owner":"a","taskId":"t1","scheduledAt":"1970-01-01T00:00:00.000Z"}');
     const failure = new Error('AgentCore is down');
 
     const stop = pollScheduledRuns(
@@ -285,7 +303,7 @@ describe('pollScheduledRuns', () => {
 
   it('takes no more runs once its task is draining, so a deploy hands them to the new revision', async () => {
     const logs = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const { fake, deleted, receives } = queue('{"owner":"a","taskId":"t1"}', '{"owner":"b","taskId":"t2"}');
+    const { fake, deleted, receives } = queue('{"owner":"a","taskId":"t1","scheduledAt":"1970-01-01T00:00:00.000Z"}', '{"owner":"b","taskId":"t2","scheduledAt":"1970-01-01T00:00:00.000Z"}');
     let draining = false;
 
     pollScheduledRuns(
@@ -303,7 +321,7 @@ describe('pollScheduledRuns', () => {
 
   it('stops before receiving and propagates an unanswered drain check to service health', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { fake, receives } = queue('{"owner":"a","taskId":"t1"}');
+    const { fake, receives } = queue('{"owner":"a","taskId":"t1","scheduledAt":"1970-01-01T00:00:00.000Z"}');
     const failure = new Error('ECS DescribeTasks is unreachable');
     const failed = vi.fn();
     const run = vi.fn();
@@ -400,24 +418,23 @@ describe('ecsTaskDraining', () => {
 });
 
 describe('the SQS run queue', () => {
-  it('dates each run by when its schedule sent it, however late it is received', async () => {
-    const client = { send: async () => ({ Messages: [{ Body: '{"owner":"a","taskId":"t1"}', ReceiptHandle: 'receipt-1', MessageId: 'm', Attributes: { SentTimestamp: '1793000000000' } }] }) } as unknown as SQSClient;
+  it('receives the delivery without requesting an enqueue timestamp', async () => {
+    const client = { send: async () => ({ Messages: [{ Body: '{"owner":"a","taskId":"t1","scheduledAt":"1970-01-01T00:00:00.000Z"}', ReceiptHandle: 'receipt-1', MessageId: 'm' }] }) } as unknown as SQSClient;
 
     expect(await sqsRunQueue('https://queue.test/runs', client).receive(new AbortController().signal)).toEqual([
-      { body: '{"owner":"a","taskId":"t1"}', receipt: 'receipt-1', deliveryId: 'm', firedAt: new Date(1793000000000) },
+      { body: '{"owner":"a","taskId":"t1","scheduledAt":"1970-01-01T00:00:00.000Z"}', receipt: 'receipt-1', deliveryId: 'm' },
     ]);
   });
 
   it.each([
-    ['a body', { ReceiptHandle: 'receipt-1', MessageId: 'm', Attributes: { SentTimestamp: '1' } }],
-    ['a receipt handle', { Body: '{"owner":"a","taskId":"t1"}', MessageId: 'm', Attributes: { SentTimestamp: '1' } }],
-    ['a stable message identity', { Body: '{"owner":"a","taskId":"t1"}', ReceiptHandle: 'receipt-1', Attributes: { SentTimestamp: '1' } }],
-    ['the time its schedule sent it', { Body: '{"owner":"a","taskId":"t1"}', ReceiptHandle: 'receipt-1', MessageId: 'm' }],
+    ['a body', { ReceiptHandle: 'receipt-1', MessageId: 'm' }],
+    ['a receipt handle', { Body: '{"owner":"a","taskId":"t1","scheduledAt":"1970-01-01T00:00:00.000Z"}', MessageId: 'm' }],
+    ['a stable message identity', { Body: '{"owner":"a","taskId":"t1","scheduledAt":"1970-01-01T00:00:00.000Z"}', ReceiptHandle: 'receipt-1' }],
   ])('refuses a delivery without %s', async (_missing, message) => {
     const client = { send: async () => ({ Messages: [message] }) } as unknown as SQSClient;
 
     await expect(sqsRunQueue('https://queue.test/runs', client).receive(new AbortController().signal)).rejects.toThrow(
-      'Scheduled run delivery is missing its Body, ReceiptHandle, MessageId or SentTimestamp',
+      'Scheduled run delivery is missing its Body, ReceiptHandle or MessageId',
     );
   });
 
@@ -425,7 +442,7 @@ describe('the SQS run queue', () => {
     const endpoint = motoEndpoint();
     const runs = await createScheduledRuns(endpoint);
     const view = new SchedulerView(endpoint, runs);
-    await view.deliver('{"owner":"a","taskId":"t1"}');
+    await view.deliver('{"owner":"a","taskId":"t1","scheduledAt":"1970-01-01T00:00:00.000Z"}');
     const client = new SQSClient(motoAws());
 
     await expect(sqsRunQueue(runs.queueUrl, client).receive(AbortSignal.abort())).rejects.toThrow();

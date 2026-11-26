@@ -52,7 +52,7 @@ describe('Account Claim at the scheduled-task cap', () => {
     expect(await tasks.list('source')).toEqual([]);
     expect(await tasks.get('destination', task.id)).toEqual({ ...task, paused: true, nextRun: undefined });
     expect(await view.schedule(task.id)).toMatchObject({
-      State: 'DISABLED', Target: { Input: JSON.stringify({ owner: 'destination', taskId: task.id }) },
+      State: 'DISABLED', Target: { Input: JSON.stringify({ owner: 'destination', taskId: task.id, scheduledAt: '<aws.scheduler.scheduled-time>' }) },
     });
   });
 

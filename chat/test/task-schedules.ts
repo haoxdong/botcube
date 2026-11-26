@@ -22,9 +22,9 @@ export class TaskSchedules extends SchedulerView {
     return null;
   }
 
-  override async fire(taskId: string): Promise<void> {
+  override async fire(taskId: string, scheduledAt?: Date): Promise<void> {
     // SchedulerView.fire uses the physical name for both the lookup and one-off deletion.
-    await super.fire(await this.name(taskId));
+    await super.fire(await this.name(taskId), scheduledAt);
   }
 
   async name(taskId: string): Promise<string> {

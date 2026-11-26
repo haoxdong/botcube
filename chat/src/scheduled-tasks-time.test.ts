@@ -238,7 +238,7 @@ describe('timestamp task lifecycle', () => {
     await tasks.recoverMutation(owner, task.id);
     expect(await tasks.list(owner)).toEqual([]);
     expect(await tasks.get(destination, task.id)).toMatchObject({ id: task.id });
-    expect(await view.schedule(task.id)).toMatchObject({ Target: { Input: JSON.stringify({ owner: destination, taskId: task.id }) } });
+    expect(await view.schedule(task.id)).toMatchObject({ Target: { Input: JSON.stringify({ owner: destination, taskId: task.id, scheduledAt: '<aws.scheduler.scheduled-time>' }) } });
   });
 
   it('retains retirement after Scheduler succeeds but metadata fails and completes the same deletion on retry', async () => {

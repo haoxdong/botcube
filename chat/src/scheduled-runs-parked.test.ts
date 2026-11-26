@@ -27,7 +27,7 @@ const request = (account: string, path: string, body?: unknown) =>
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 
-async function fireTask(account: string, prompt: string): Promise<void> {
+async function fireTask(account: string, prompt: string, scheduledAt?: Date): Promise<void> {
   stack.agentcore.scriptPrompt(prompt, {
     kind: 'stream',
     frames: () => [{ type: 'RUN_STARTED' }, { type: 'TEXT_MESSAGE_CHUNK', messageId: 'brief', role: 'assistant', delta: 'Payrolls beat.' }, { type: 'RUN_FINISHED' }]
@@ -36,7 +36,7 @@ async function fireTask(account: string, prompt: string): Promise<void> {
   const { id } = (await (await request(account, '/scheduled-tasks', {
     title: 'Payrolls', prompt, schedule: 'rate(1 day)', timezone: 'UTC', proposalId: prompt,
   })).json()) as { id: string };
-  await defined(stack.scheduler, 'the stack schedules tasks').fire(id);
+  await defined(stack.scheduler, 'the stack schedules tasks').fire(id, scheduledAt);
 }
 
 async function mainChatPosts(account: string): Promise<string[]> {
@@ -61,6 +61,19 @@ describe('a scheduled run due while production was Parked', () => {
     expect(await mainChatPosts(account)).toEqual(['Scheduled task "Payrolls" skipped: it was due while BotCube was paused']);
     expect(stack.agentcore.invocations().some(({ body }) => body.includes(prompt))).toBe(false);
     expect(defined(asked.at(-1), 'the checked fire time').getTime()).toBeGreaterThanOrEqual(Math.floor(sent / 1000) * 1000);
+  });
+
+  it('skips a Parked occurrence that EventBridge delivers after wake', async () => {
+    const scheduledAt = new Date(Date.now() - 5 * 60_000);
+    parkedUntil = scheduledAt.getTime() + 60_000;
+    const account = owner();
+    const prompt = `Delayed ${Math.random().toString(36).slice(2)}`;
+
+    await fireTask(account, prompt, scheduledAt);
+
+    expect(await mainChatPosts(account)).toEqual(['Scheduled task "Payrolls" skipped: it was due while BotCube was paused']);
+    expect(stack.agentcore.invocations().some(({ body }) => body.includes(prompt))).toBe(false);
+    expect(asked.at(-1)).toEqual(scheduledAt);
   });
 
   it('runs when it was due while Live', async () => {
