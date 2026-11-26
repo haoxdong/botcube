@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
+import { BedrockAgentCoreClient, GetResourceOauth2TokenCommand, GetWorkloadAccessTokenForUserIdCommand } from '@aws-sdk/client-bedrock-agentcore';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import type { BotSettings } from 'botcube-config';
+import type { BotCubeConfig, BotSettings } from 'botcube-config';
 import { openEgressProxy } from 'botcube-config/deployment';
 import { loadBotSettings, validateBotDeployment } from 'botcube-config/load';
 import { loadResolvedConfig, type ResolvedConfig } from 'botcube-config/resolved';
@@ -43,6 +44,51 @@ async function postCredentialService(
   });
   if (!ok) throw new HttpError(503, `${step} failed with HTTP ${status}`);
   return body;
+}
+
+function connectorRevocation(
+  config: BotCubeConfig['integrations']['connectorIdentity'], env: NodeJS.ProcessEnv, accountKey: string, store: AccountStore,
+) {
+  if (config === undefined) return undefined;
+  const { workloadName, providers } = config;
+  const identity = new BedrockAgentCoreClient({
+    ...(env.AWS_REGION && { region: env.AWS_REGION }),
+    ...(env.AWS_ENDPOINT_URL_BEDROCK_AGENTCORE && { endpoint: env.AWS_ENDPOINT_URL_BEDROCK_AGENTCORE }),
+  });
+
+  return async (accountId: string, name?: string): Promise<void> => {
+    const targets = name === undefined ? providers : providers.filter(provider => provider.name === name);
+    if (targets.length === 0) return;
+    const account = await store.loadAccount(accountId);
+    if (account === null) return;
+    const userId = account.oidc?.subject ?? filingUserId(accountKey, accountId);
+    const { workloadAccessToken } = await identity.send(new GetWorkloadAccessTokenForUserIdCommand({ workloadName, userId }),
+      { abortSignal: AbortSignal.timeout(10_000) });
+    if (!workloadAccessToken) throw new HttpError(503, 'AgentCore Identity did not return a workload token');
+
+    const results = await Promise.allSettled(targets.map(async ({ providerName, scopes, revocationEndpoint }) => {
+      const { accessToken, authorizationUrl } = await identity.send(new GetResourceOauth2TokenCommand({
+        workloadIdentityToken: workloadAccessToken,
+        resourceCredentialProviderName: providerName,
+        scopes,
+        oauth2Flow: 'USER_FEDERATION',
+      }), { abortSignal: AbortSignal.timeout(10_000) });
+      if (!accessToken) {
+        if (authorizationUrl) return;
+        throw new HttpError(503, 'AgentCore Identity did not return an access token or consent URL');
+      }
+      const response = await fetch(revocationEndpoint, {
+        method: 'POST',
+        body: new URLSearchParams({ token: accessToken }),
+        redirect: 'error',
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new HttpError(503, `Connector revocation failed with HTTP ${response.status}`);
+    }));
+    for (const result of results) {
+      if (result.status === 'rejected') throw result.reason;
+    }
+  };
 }
 
 type ComputerStates = Parameters<typeof computerFilesRoutes>[0]['computers'];
@@ -127,6 +173,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   const { config, bot, webOrigins } = deployment(env, options.resolved);
   const accountStore = options.accountStore ?? new AccountStore(chatTable(env), { key: bot.accountKey, product: bot.agentIdentity.name });
   const store = () => accountStore;
+  const revokeLinkedAccounts = connectorRevocation(config.integrations.connectorIdentity, env, bot.accountKey, accountStore);
   const cookies = accountCookies(bot.accountKey);
   const identity = config.integrations.signIn.kind === 'oidc' ? oidcIdentity(config.integrations.signIn, env, { store, cookies, returnOrigins: allowedOrigins(webOrigins), proxy: config.integrations.proxy }) : null;
   const files = accountFilesFromEnv(env, store, config.existing?.files, options.filesRoot);
@@ -173,6 +220,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   });
   return (history) => {
     const accounts = accountRoutes({ store, cookies, signIns: async () => [],
+      ...(revokeLinkedAccounts && { revokeLinkedAccounts }),
       session: async (account) => ({
         ...(identity === null ? {} : { signIn: 'oidc' }),
         ...(linkedAccounts === null ? {} : { linkedAccounts: await linkedAccounts(account.accountId) }),
@@ -187,7 +235,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
     const computer = env.AGENTCORE_AGENT_COMPUTER_BROWSER_ID?.trim()
       ? managedAgentComputer({ history, requester, env, store, files, started, profileOmitsCookieDomains: bot.agentComputer.profileOmitsCookieDomains, accountKey: bot.accountKey })
       : (options.agentComputer ?? ((local) => local))(localAgentComputer({ history, requester, env, startPage: options.startPage, started, proxy: openEgressProxy(config) }));
-    const lifecycle = accountLifecycle({ credentials, history, files: filesConfigured(env) ? files : null, computers: computer, store });
+    const lifecycle = accountLifecycle({ credentials, history, files: filesConfigured(env) ? files : null, computers: computer, store, ...(revokeLinkedAccounts && { revokeLinkedAccounts }) });
     const deletions = accountDeletions({
       store, deleteAccount: lifecycle.deleteAccount,
       // A waking Credential Service starts beside this one: the first sweep revokes only once it is healthy.

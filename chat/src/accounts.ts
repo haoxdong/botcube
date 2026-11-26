@@ -17,6 +17,8 @@ export interface SignIn {
   username?: string | null;
 }
 
+type RevokeLinkedAccounts = (accountId: string, connector?: string) => Promise<void>;
+
 export interface AccountRoutesOptions<A extends Account> {
   store: () => AccountStore<A>;
   cookies: AccountCookies;
@@ -30,6 +32,7 @@ export interface AccountRoutesOptions<A extends Account> {
   /** Where a signed-out browser goes next, so the OIDC provider ends its own session too. */
   logoutUrl?: string | undefined;
   deleteTestUser?: (accountId: string) => Promise<void>;
+  revokeLinkedAccounts?: RevokeLinkedAccounts;
 }
 
 /**
@@ -37,7 +40,7 @@ export interface AccountRoutesOptions<A extends Account> {
  * registered account its session signed in. Serves `/account/session`,
  * `/account/sign-ins`, `/auth/logout` and the account profile.
  */
-export function accountRoutes<A extends Account>({ store, cookies, session, signIns, connectors = [], signedOut, logoutUrl, deleteTestUser }: AccountRoutesOptions<A>) {
+export function accountRoutes<A extends Account>({ store, cookies, session, signIns, connectors = [], signedOut, logoutUrl, deleteTestUser, revokeLinkedAccounts }: AccountRoutesOptions<A>) {
   const naming = () => store().naming;
   const trustedAccountId = (c: Context) => store().sessionAccountId(cookies.sessionToken(c));
   async function operatorAccount(c: Context): Promise<A | null> {
@@ -86,6 +89,17 @@ export function accountRoutes<A extends Account>({ store, cookies, session, sign
   }
 
   const routes = new Hono();
+
+  if (revokeLinkedAccounts !== undefined) {
+    routes.delete('/account/connectors/:name/link', async (c) => {
+      const { owner: accountId } = await owner(c);
+      await store().accountDeletionLock(accountId, async () => {
+        if ((await owner(c)).owner !== accountId) throw new HttpError(409, 'Account changed');
+        await revokeLinkedAccounts(accountId, c.req.param('name'));
+      });
+      return c.body(null, 204);
+    });
+  }
 
   routes.delete('/operator/test-user', async (c) => {
     const account = await store().operatorTestUser(c.req.header('x-botcube-test-user') ?? '');
@@ -168,6 +182,7 @@ export function accountRoutes<A extends Account>({ store, cookies, session, sign
  */
 export function accountLifecycle<A extends Account>({
   credentials,
+  revokeLinkedAccounts,
   history,
   files,
   computers,
@@ -175,6 +190,7 @@ export function accountLifecycle<A extends Account>({
 }: {
   /** The Credential Service's revoke of every credential the account holds, or null when nothing here holds any. */
   credentials: { revoke(accountId: string): Promise<void> } | null;
+  revokeLinkedAccounts?: RevokeLinkedAccounts;
   history: AccountHistory;
   /** The deploy's Files, or null without them. */
   files: (() => AccountFiles) | null;
@@ -185,6 +201,7 @@ export function accountLifecycle<A extends Account>({
     /** Erase the account: its credentials, its Agent Computer, then its Sessions and Files, then the account itself. */
     async deleteAccount(accountId: string): Promise<void> {
       await credentials?.revoke(accountId);
+      await revokeLinkedAccounts?.(accountId);
       await computers.erase(accountId);
       await history.delete(accountId);
       if (files !== null) await files().delete(accountId);

@@ -275,6 +275,36 @@
       "default": {},
       "type": "object",
       "properties": {
+        "connectorIdentity": {
+          "type": "object",
+          "properties": {
+            "workloadName": { "type": "string", "minLength": 1 },
+            "providers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string", "minLength": 1 },
+                  "providerName": { "type": "string", "minLength": 1 },
+                  "scopes": {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1 }
+                  },
+                  "revocationEndpoint": { "type": "string", "format": "uri" }
+                },
+                "required": [
+                  "name",
+                  "providerName",
+                  "scopes",
+                  "revocationEndpoint"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["workloadName", "providers"],
+          "additionalProperties": false
+        },
         "signIn": {
           "default": { "kind": "botcube-accounts" },
           "description": "How Users sign in.",

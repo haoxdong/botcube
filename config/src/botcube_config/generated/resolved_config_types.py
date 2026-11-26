@@ -202,6 +202,18 @@ class ConfigIntegrationsProxy2(TypedDict):
     kind: Literal["none"]
 
 
+class ConfigIntegrationsConnectorIdentityProvidersItem(TypedDict):
+    name: str
+    providerName: str
+    scopes: list[str]
+    revocationEndpoint: str
+
+
+class ConfigIntegrationsConnectorIdentity(TypedDict):
+    workloadName: str
+    providers: list[ConfigIntegrationsConnectorIdentityProvidersItem]
+
+
 class ConfigIntegrationsConnectorGateway(TypedDict):
     url: str
     headers: NotRequired[dict[str, str]]
@@ -219,6 +231,7 @@ class ConfigIntegrations(TypedDict):
     imageRegistry: ConfigIntegrationsImageRegistry
     telemetry: ConfigIntegrationsTelemetry1 | ConfigIntegrationsTelemetry2 | ConfigIntegrationsTelemetry3
     proxy: ConfigIntegrationsProxy1 | ConfigIntegrationsProxy2
+    connectorIdentity: NotRequired[ConfigIntegrationsConnectorIdentity]
     connectorGateway: NotRequired[ConfigIntegrationsConnectorGateway]
     relayProviders: NotRequired[dict[str, ConfigIntegrationsRelayProvidersValue]]
 

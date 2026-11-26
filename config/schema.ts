@@ -214,6 +214,15 @@ export const configSections = z.strictObject({
     'A PEM file of roots for verifying the proxy and endpoints, loaded at startup. It replaces the default roots for SSL_CERT_FILE and REQUESTS_CA_BUNDLE, so include the public roots alongside private roots. NODE_EXTRA_CA_CERTS adds it to Node.js defaults. If omitted, each image keeps its own roots.',
   ),
   integrations: z.strictObject({
+    connectorIdentity: z.strictObject({
+      workloadName: z.string().min(1),
+      providers: z.array(z.strictObject({
+        name: z.string().min(1),
+        providerName: z.string().min(1),
+        scopes: z.array(z.string().min(1)),
+        revocationEndpoint: z.url({ protocol: /^https$/ }),
+      })),
+    }).optional(),
     signIn: identity.default({ kind: 'botcube-accounts' }).describe('How Users sign in.'),
     modelGateway: models.default({ kind: 'bedrock' }).describe('Where models run.'),
     connectorGateway: endpoint.pick({ url: true, headers: true }).optional()

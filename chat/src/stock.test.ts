@@ -510,6 +510,102 @@ const efsFiles = () => ({
   BOTCUBE_FILES_MOUNT_TARGET_IP: '192.0.2.12',
 });
 
+it('revokes portal Linked Accounts through Chat unlink and account erasure', async () => {
+  const steps: string[] = [];
+  const providers = new Set(['test-gmail', 'test-other', 'test-third']);
+  let refusing: string | undefined;
+  let subject = '';
+  const identity = new HttpFake((request, response) => {
+    expect(request.headers.authorization).toMatch(/^AWS4-HMAC-SHA256 /);
+    if (request.path === '/identities/GetWorkloadAccessTokenForUserId') {
+      expect(JSON.parse(request.body)).toEqual({ workloadName: 'portal-workload', userId: subject });
+      return sendJson(response, 200, { workloadAccessToken: 'workload-token' });
+    }
+    expect(request.path).toBe('/identities/oauth2/token');
+    const body = JSON.parse(request.body) as { resourceCredentialProviderName: string };
+    expect(body).toMatchObject({
+      workloadIdentityToken: 'workload-token', scopes: ['read'], oauth2Flow: 'USER_FEDERATION',
+    });
+    const provider = body.resourceCredentialProviderName;
+    steps.push(`identity:${provider}`);
+    sendJson(response, 200, providers.has(provider)
+      ? { accessToken: provider }
+      : { authorizationUrl: 'https://portal.example.com/connect' });
+  });
+  const relay = new HttpFake((request, response) => {
+    expect(request.path).toBe('/account/revoke');
+    steps.push('relay');
+    sendJson(response, 200, {});
+  });
+  await Promise.all([identity.listen(), relay.listen()]);
+  const fetchOriginal = globalThis.fetch;
+  const outbound = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    if (url !== 'https://provider.example.com/revoke') return fetchOriginal(url, init);
+    expect(init?.method).toBe('POST');
+    expect(init?.redirect).toBe('error');
+    const token = (init?.body as URLSearchParams).get('token');
+    if (token === refusing) return new Response(null, { status: 503 });
+    if (!token || !providers.delete(token)) return new Response(null, { status: 400 });
+    steps.push(`revoke:${token}`);
+    return new Response(null);
+  });
+  try {
+    const documents = memoryDocuments();
+    const store = new AccountStore('chat', { key: 'template', product: 'Template' }, documents);
+    const accountId = 'acct_portal_test';
+    const token = 'test_portal_user';
+    subject = filingUserId('template', accountId);
+    await documents.send(new PutCommand({ TableName: 'chat', Item: { pk: `ACCOUNT#${accountId}`, sk: 'META',
+      record: { version: 1, accountId, status: 'test', rateTier: 'test', createdAt: 1, updatedAt: 1 } } }));
+    await documents.send(new PutCommand({ TableName: 'chat', Item: { pk: `TOKEN#${token}`, sk: 'META',
+      record: { accountId, kind: 'test-user', expiresAt: Math.floor(Date.now() / 1000) + 600 } } }));
+    const configPath = publicExample({
+      integrations: {
+        connectorGateway: { url: 'https://gateway.example.com/mcp' },
+        connectorIdentity: {
+          workloadName: 'portal-workload',
+          providers: ['gmail', 'other', 'third'].map(name => ({
+            name, providerName: `test-${name}`, scopes: ['read'], revocationEndpoint: 'https://provider.example.com/revoke',
+          })),
+        },
+      },
+    });
+    const chat = stockChatService({
+      BOTCUBE_CONFIG: configPath, AWS_REGION: 'us-east-1', AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: identity.url,
+      BOTCUBE_CREDENTIAL_SERVICE_URL: relay.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'relay-secret',
+    }, { accountStore: store })(history);
+    const routes = new Hono().onError((error, c) => {
+      if (error instanceof HttpError && error.status === 503) return c.json({ detail: error.detail }, 503);
+      throw error;
+    }).route('/', chat.routes);
+    const headers = { 'x-botcube-test-user': token };
+    const unlink = () => routes.request('/account/connectors/gmail/link', { method: 'DELETE', headers });
+    expect((await unlink()).status).toBe(204);
+    expect(steps).toEqual(['identity:test-gmail', 'revoke:test-gmail']);
+    expect(providers).toEqual(new Set(['test-other', 'test-third']));
+
+    const erase = () => routes.request('/operator/test-user', { method: 'DELETE', headers });
+    steps.length = 0;
+    refusing = 'test-other';
+    expect((await erase()).status).toBe(503);
+    expect(steps[0]).toBe('relay');
+    expect(steps.slice(1).sort()).toEqual(['identity:test-gmail', 'identity:test-other', 'identity:test-third', 'revoke:test-third']);
+    expect(await store.loadAccount(accountId)).not.toBeNull();
+    expect(providers).toEqual(new Set(['test-other']));
+
+    steps.length = 0;
+    refusing = undefined;
+    expect((await erase()).status).toBe(204);
+    expect(steps[0]).toBe('relay');
+    expect(steps.slice(1).sort()).toEqual(['identity:test-gmail', 'identity:test-other', 'identity:test-third', 'revoke:test-other']);
+    expect(providers.size).toBe(0);
+    expect(await store.loadAccount(accountId)).toBeNull();
+  } finally {
+    outbound.mockRestore();
+    await Promise.all([identity.close(), relay.close()]);
+  }
+});
+
 describe("the stock Chat Service's account deletion", () => {
   const SECRET = 'invocation-secret';
   // The Credential Service's Vault: the accounts it holds credentials for, and those whose revoke it refuses.

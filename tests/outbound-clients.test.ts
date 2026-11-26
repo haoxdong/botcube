@@ -16,6 +16,7 @@ const DIRECT = {
   operator: "an operator command, on the operator's own machine and its environment",
   sender: 'sends with the dispatcher its caller gives',
   harnessToken: 'the Harness bearer, whose configuration has no proxy reference',
+  connectorRevocation: 'the HTTPS provider revocation endpoint in the resolved deployment metadata',
 } as const;
 
 type Route =
@@ -56,6 +57,10 @@ const CLIENTS: Readonly<Record<string, readonly { client: string; route: Route }
   [`${CHAT}/cdp.ts`]: [{ client: "AgentCore Browser's automation stream", route: { direct: 'aws' } }],
   [`${CHAT}/browser-sessions.ts`]: [{ client: 'AgentCore Browser sessions', route: { direct: 'aws' } }],
   [`${CHAT}/server.ts`]: [{ client: 'AgentCore Browser live view', route: { direct: 'aws' } }],
+  [`${CHAT}/stock.ts`]: [
+    { client: 'AgentCore Identity', route: { direct: 'aws' } },
+    { client: 'the Linked Account provider revocation endpoint', route: { direct: 'connectorRevocation' } },
+  ],
   ...Object.fromEntries([
     'account-resources.ts', 'account-store.ts', 'agent-documents.ts', 'files-efs.ts', 'files-pool-lease.ts', 'files-pool-manifest.ts',
     'park-history.ts', 'production-activity.ts', 'scheduled-execution.ts', 'scheduled-run-store.ts', 'scheduled-tasks.ts', 'scheduler.ts',
