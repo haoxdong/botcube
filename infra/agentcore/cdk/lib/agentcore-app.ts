@@ -30,6 +30,8 @@ export function addAgentCoreStacks(
   {
     deployRoot,
     botcubeConfigPath,
+    connectors,
+    signIn,
     identity,
     spec,
     targets,
@@ -84,6 +86,8 @@ export function addAgentCoreStacks(
         harnessCodeLocation: path.resolve(deployRoot, runtime.codeLocation),
         runtimeImage,
         botcubeConfigPath,
+        connectors,
+        signIn,
         ...memoryEncryption,
         runtimeNetwork: agentCore.runtimeNetwork,
         ...overrides,

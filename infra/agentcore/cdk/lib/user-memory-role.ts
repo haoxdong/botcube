@@ -4,7 +4,7 @@ import { Key } from 'aws-cdk-lib/aws-kms';
 import type { TokenAudiences } from '../../../../config/seams.js' with { 'resolution-mode': 'import' };
 
 /** The audience of the Chat Service's per-Turn JWT. */
-const TURN_IDENTITY_AUDIENCE: TokenAudiences['turnIdentity'] = 'sts.amazonaws.com';
+export const TURN_IDENTITY_AUDIENCE: TokenAudiences['turnIdentity'] = 'sts.amazonaws.com';
 
 /**
  * The Memory role each Turn's credentials come from (ADR 0067 §8). With `issuer`, the Chat Service's public origin

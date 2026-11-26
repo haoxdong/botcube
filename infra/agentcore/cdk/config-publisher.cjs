@@ -6,11 +6,18 @@ const { BlockPublicAccess, Bucket, BucketEncryption } = require('aws-cdk-lib/aws
 const { BucketDeployment, Source } = require('aws-cdk-lib/aws-s3-deployment');
 const { configBucketName } = require('botcube-config/config-bucket');
 
-function publishConfig(stack, configPath) {
+function publishConfig(stack, configPath, connectorGatewayUrl) {
   const json = execFileSync(process.execPath, [require.resolve('botcube-config/cli'), 'resolve', configPath], {
     encoding: 'utf8',
   });
-  const digest = createHash('sha256').update(json).digest('hex');
+  const hash = createHash('sha256').update(json);
+  if (connectorGatewayUrl !== undefined) hash.update('connector-gateway');
+  const digest = hash.digest('hex');
+  const filename = `${digest}.json`;
+  const source =
+    connectorGatewayUrl === undefined
+      ? Source.data(filename, json)
+      : Source.jsonData(filename, withConnectorGateway(json, connectorGatewayUrl));
   const key = `resolved/${digest}.json`;
   const bucketName = configBucketName(stack.account, stack.region, stack.stackName);
   const bucket = new Bucket(stack, 'BotCubeConfig', {
@@ -23,7 +30,7 @@ function publishConfig(stack, configPath) {
   const publish = new BucketDeployment(stack, 'PublishBotCubeConfig', {
     destinationBucket: bucket,
     destinationKeyPrefix: 'resolved',
-    sources: [Source.data(`${digest}.json`, json)],
+    sources: [source],
     prune: false,
     retainOnDelete: true,
     outputObjectKeys: false,
@@ -50,6 +57,12 @@ function publishConfig(stack, configPath) {
       consumer.node.addDependency(publish);
     },
   };
+}
+
+function withConnectorGateway(json, url) {
+  const resolved = JSON.parse(json);
+  resolved.config.integrations.connectorGateway = { url };
+  return resolved;
 }
 
 module.exports = { publishConfig };

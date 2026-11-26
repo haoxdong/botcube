@@ -271,6 +271,244 @@
       "format": "starts_with",
       "pattern": "^\\/.*"
     },
+    "connectors": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+              },
+              "defaultOn": { "default": false, "type": "boolean" },
+              "access": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": { "type": "string", "const": "none" }
+                    },
+                    "required": ["kind"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": { "type": "string", "const": "api-key" },
+                      "credential": {
+                        "type": "object",
+                        "properties": {
+                          "kind": { "type": "string", "const": "secret" },
+                          "secretId": {
+                            "type": "string",
+                            "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                            "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
+                          }
+                        },
+                        "required": ["kind", "secretId"],
+                        "additionalProperties": false,
+                        "description": "The registered Secrets Manager secret with an apiKey JSON field."
+                      },
+                      "header": {
+                        "type": "string",
+                        "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+                      }
+                    },
+                    "required": ["kind", "credential", "header"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "linked-account",
+                          "client-credentials",
+                          "on-behalf-of"
+                        ]
+                      },
+                      "oauthClient": {
+                        "type": "object",
+                        "properties": {
+                          "discoveryUrl": {
+                            "type": "string",
+                            "pattern": "^https:\\/\\/[\\s\\S]{0,}\\/\\.well-known\\/openid-configuration$"
+                          },
+                          "clientId": { "type": "string", "minLength": 1 },
+                          "clientSecret": {
+                            "type": "object",
+                            "properties": {
+                              "kind": { "type": "string", "const": "secret" },
+                              "secretId": {
+                                "type": "string",
+                                "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                                "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
+                              }
+                            },
+                            "required": ["kind", "secretId"],
+                            "additionalProperties": false,
+                            "description": "The registered Secrets Manager secret with a clientSecret JSON field."
+                          },
+                          "scopes": {
+                            "type": "array",
+                            "items": { "type": "string", "minLength": 1 }
+                          }
+                        },
+                        "required": ["discoveryUrl", "clientSecret", "scopes"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["kind", "oauthClient"],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "url": { "type": "string", "format": "uri" },
+              "toolSchema": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "inlinePayload": { "type": "string", "minLength": 1 }
+                    },
+                    "required": ["inlinePayload"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "s3": {
+                        "type": "object",
+                        "properties": {
+                          "uri": {
+                            "type": "string",
+                            "pattern": "^s3:\\/\\/[^/]+\\/.+$"
+                          },
+                          "bucketOwnerAccountId": {
+                            "type": "string",
+                            "pattern": "^\\d{12}$"
+                          }
+                        },
+                        "required": ["uri"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["s3"],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "required": ["name", "access", "url"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 64,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+              },
+              "defaultOn": { "default": false, "type": "boolean" },
+              "access": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": { "type": "string", "const": "none" }
+                    },
+                    "required": ["kind"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": { "type": "string", "const": "api-key" },
+                      "credential": {
+                        "type": "object",
+                        "properties": {
+                          "kind": { "type": "string", "const": "secret" },
+                          "secretId": {
+                            "type": "string",
+                            "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                            "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
+                          }
+                        },
+                        "required": ["kind", "secretId"],
+                        "additionalProperties": false,
+                        "description": "The registered Secrets Manager secret with an apiKey JSON field."
+                      },
+                      "header": {
+                        "type": "string",
+                        "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+                      }
+                    },
+                    "required": ["kind", "credential", "header"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "linked-account",
+                          "client-credentials",
+                          "on-behalf-of"
+                        ]
+                      },
+                      "oauthClient": {
+                        "type": "object",
+                        "properties": {
+                          "discoveryUrl": {
+                            "type": "string",
+                            "pattern": "^https:\\/\\/[\\s\\S]{0,}\\/\\.well-known\\/openid-configuration$"
+                          },
+                          "clientId": { "type": "string", "minLength": 1 },
+                          "clientSecret": {
+                            "type": "object",
+                            "properties": {
+                              "kind": { "type": "string", "const": "secret" },
+                              "secretId": {
+                                "type": "string",
+                                "pattern": "^(arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+|[A-Za-z0-9/_+=.@-]{1,512})$",
+                                "description": "As Secrets Manager GetSecretValue's SecretId: the secret's name, in the reader's own account and region, or its ARN."
+                              }
+                            },
+                            "required": ["kind", "secretId"],
+                            "additionalProperties": false,
+                            "description": "The registered Secrets Manager secret with a clientSecret JSON field."
+                          },
+                          "scopes": {
+                            "type": "array",
+                            "items": { "type": "string", "minLength": 1 }
+                          }
+                        },
+                        "required": ["discoveryUrl", "clientSecret", "scopes"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["kind", "oauthClient"],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "openApi": {
+                "type": "string",
+                "pattern": "^s3:\\/\\/[^/]+\\/.+$"
+              }
+            },
+            "required": ["name", "access", "openApi"],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
     "integrations": {
       "default": {},
       "type": "object",

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { HarnessAuth, TokenAudiences } from './seams.js';
 import { commandFields, credentialFields } from 'botcube-config/credential-fields';
 import { proxiedFields } from 'botcube-config/proxied-fields';
-import { absolutePath, credentialSource, endpoint, endpointHeaders, endpointTls, forwardProxy, gatewayModels, modelProvider, proxyReference, relayProviders, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource } from 'botcube-config/blocks';
+import { absolutePath, credentialSource, endpoint, endpointHeaders, endpointTls, forwardProxy, gatewayModels, modelProvider, proxyReference, relayProviders, oidcDiscoveryUrl, oidcIssuer, secretsManagerSource, trust, type CredentialSource } from 'botcube-config/blocks';
 import { existing } from 'botcube-config/existing';
 import { agentCore, alarms, cloudflare, deploymentKeys, natGateways, openEgress, parking, publicIp, RETIRED_FILES, services } from 'botcube-config/deployment';
 import { imageRegistry } from 'botcube-config/images';
@@ -202,6 +202,47 @@ const telemetry = z.discriminatedUnion('kind', [
   kindOnly('none').describe('No traces leave the services, and no collector or X-Ray grant is created.'),
 ]);
 
+const connectorFields = {
+  name: z.string().max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  defaultOn: z.boolean().default(false),
+  access: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('none') }),
+    z.strictObject({
+      kind: z.literal('api-key'),
+      credential: secretsManagerSource.describe('The registered Secrets Manager secret with an apiKey JSON field.'),
+      header: z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/),
+    }),
+    z.strictObject({
+      kind: z.enum(['linked-account', 'client-credentials', 'on-behalf-of']),
+      oauthClient: z.strictObject({
+        discoveryUrl: oidcDiscoveryUrl,
+        clientId: z.string().min(1).optional(),
+        clientSecret: secretsManagerSource.describe('The registered Secrets Manager secret with a clientSecret JSON field.'),
+        scopes: z.array(z.string().min(1)),
+      }),
+    }),
+  ]),
+};
+const s3Uri = z.string().regex(/^s3:\/\/[^/]+\/.+$/);
+const connector = z.union([
+  z.strictObject({
+    ...connectorFields,
+    url: z.url({ protocol: /^https$/ }),
+    toolSchema: z.union([
+      z.strictObject({ inlinePayload: z.string().min(1) }),
+      z.strictObject({ s3: z.strictObject({ uri: s3Uri, bucketOwnerAccountId: z.string().regex(/^\d{12}$/).optional() }) }),
+    ]).optional(),
+  }).refine(({ toolSchema, access }) => toolSchema === undefined || access.kind === 'linked-account', {
+    path: ['toolSchema'],
+    message: 'An MCP tool schema is for a linked-account Connector',
+  }),
+  z.strictObject({ ...connectorFields, openApi: s3Uri })
+    .refine(({ access }) => access.kind !== 'on-behalf-of' && access.kind !== 'none', {
+      path: ['access', 'kind'],
+      message: 'OpenAPI Connectors require API-key, linked-account, or client-credentials access',
+    }),
+]);
+
 /** The BotCube Config's sections, for a process that reads some of them; `botcubeConfig` checks the whole file. */
 export const configSections = z.strictObject({
   $schema: schemaReference,
@@ -213,6 +254,10 @@ export const configSections = z.strictObject({
   caBundle: absolutePath.optional().describe(
     'A PEM file of roots for verifying the proxy and endpoints, loaded at startup. It replaces the default roots for SSL_CERT_FILE and REQUESTS_CA_BUNDLE, so include the public roots alongside private roots. NODE_EXTRA_CA_CERTS adds it to Node.js defaults. If omitted, each image keeps its own roots.',
   ),
+  connectors: z.array(connector).refine(
+    (connectors) => new Set(connectors.map(({ name }) => name)).size === connectors.length,
+    'Connector names must be unique',
+  ).optional(),
   integrations: z.strictObject({
     connectorIdentity: z.strictObject({
       workloadName: z.string().min(1),

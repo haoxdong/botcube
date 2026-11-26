@@ -258,6 +258,56 @@ class ConfigLiveView2(TypedDict):
     kind: Literal["agentcore-browser"]
 
 
+class ConfigConnectorsItem1Access1(TypedDict):
+    kind: Literal["none"]
+
+
+class ConfigConnectorsItem1Access2(TypedDict):
+    kind: Literal["api-key"]
+    credential: ConfigIntegrationsSignIn1ClientsItemClientSecret1
+    header: str
+
+
+class ConfigConnectorsItem1Access3OauthClient(TypedDict):
+    discoveryUrl: str
+    clientSecret: ConfigIntegrationsSignIn1ClientsItemClientSecret1
+    scopes: list[str]
+    clientId: NotRequired[str]
+
+
+class ConfigConnectorsItem1Access3(TypedDict):
+    kind: Literal["linked-account", "client-credentials", "on-behalf-of"]
+    oauthClient: ConfigConnectorsItem1Access3OauthClient
+
+
+class ConfigConnectorsItem1ToolSchema1(TypedDict):
+    inlinePayload: str
+
+
+class ConfigConnectorsItem1ToolSchema2S3(TypedDict):
+    uri: str
+    bucketOwnerAccountId: NotRequired[str]
+
+
+class ConfigConnectorsItem1ToolSchema2(TypedDict):
+    s3: ConfigConnectorsItem1ToolSchema2S3
+
+
+class ConfigConnectorsItem1(TypedDict):
+    url: str
+    name: str
+    defaultOn: bool
+    access: ConfigConnectorsItem1Access1 | ConfigConnectorsItem1Access2 | ConfigConnectorsItem1Access3
+    toolSchema: NotRequired[ConfigConnectorsItem1ToolSchema1 | ConfigConnectorsItem1ToolSchema2]
+
+
+class ConfigConnectorsItem2(TypedDict):
+    openApi: str
+    name: str
+    defaultOn: bool
+    access: ConfigConnectorsItem1Access1 | ConfigConnectorsItem1Access2 | ConfigConnectorsItem1Access3
+
+
 class ConfigServicesChatService(TypedDict):
     image: NotRequired[str]
 
@@ -451,6 +501,7 @@ Config = TypedDict(
         "schedules": ConfigIntegrationsTelemetry3 | ConfigSchedules2 | ConfigSchedules3,
         "liveView": ConfigIntegrationsTelemetry3 | ConfigLiveView2,
         "caBundle": NotRequired[str],
+        "connectors": NotRequired[list[ConfigConnectorsItem1 | ConfigConnectorsItem2]],
         "services": NotRequired[ConfigServices],
         "agentCore": NotRequired[ConfigAgentCore],
         "cloudflare": NotRequired[ConfigCloudflare],

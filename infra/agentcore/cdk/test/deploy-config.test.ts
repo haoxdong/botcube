@@ -7,6 +7,8 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import { Asset } from 'aws-cdk-lib/aws-s3-assets';
 import { ModuleKind, transpileModule } from 'typescript';
 import { findConfigRoot, type AgentCoreProjectSpec } from '@aws/agentcore-cdk';
+import { addAgentCoreStacks } from '../lib/agentcore-app';
+import type { DeployedResources } from '../lib/runtime-seams';
 import { loadDeployConfig } from '../lib/deploy-config';
 
 const botcubeRoot = path.resolve(__dirname, '../../../..');
@@ -176,4 +178,185 @@ test('synthesizes the Harness asset from a vendored CDK package', async () => {
   const asset = new Asset(stack, 'Harness', { path: path.join(runtimeOf(deploy.spec).codeLocation, entrypoint) });
   new CfnOutput(stack, 'HarnessAssetKey', { value: asset.s3ObjectKey });
   Template.fromStack(stack).hasOutput('HarnessAssetKey', { Value: Match.stringLikeRegexp('^[a-f0-9]{64}\\.py$') });
+});
+
+test('deploys declared Connectors and retains their credentials when targets are removed', async () => {
+  const connectors = `
+connectors:
+  - name: keyless
+    url: https://fixture.example.com/mcp
+    access: { kind: none }
+  - name: bigdata
+    url: https://mcp.example.com/mcp
+    defaultOn: true
+    access:
+      kind: api-key
+      header: x-api-key
+      credential: { kind: secret, secretId: arn:aws:secretsmanager:us-east-1:000000000000:secret:agentcore-bot-cube-template/connectors/bigdata-Ab1234 }
+  - name: reports
+    openApi: s3://example-schemas/agentcore-bot-cube-template/connectors/reports.json
+    access:
+      kind: linked-account
+      oauthClient:
+        discoveryUrl: https://idp.example.com/.well-known/openid-configuration
+        clientSecret: { kind: secret, secretId: agentcore-bot-cube-template/connectors/reports }
+        scopes: [read]
+  - name: research
+    url: https://research.example.com/mcp
+    toolSchema:
+      inlinePayload: '{"tools":[{"name":"lookup","inputSchema":{"type":"object"}}]}'
+    access:
+      kind: linked-account
+      oauthClient:
+        discoveryUrl: https://idp.example.com/.well-known/openid-configuration
+        clientId: research
+        clientSecret: { kind: secret, secretId: agentcore-bot-cube-template/connectors/research }
+        scopes: [read]
+  - name: data
+    url: https://data.example.com/mcp
+    toolSchema:
+      s3:
+        uri: s3://example-schemas/agentcore-bot-cube-template/connectors/tools.json
+    access:
+      kind: linked-account
+      oauthClient:
+        discoveryUrl: https://idp.example.com/.well-known/openid-configuration
+        clientSecret: { kind: secret, secretId: agentcore-bot-cube-template/connectors/data }
+        scopes: [read]
+`;
+  const templateFor = async (text: string, deployedResources?: DeployedResources) => {
+    const app = new App();
+    const config = await loadDeployConfig(
+      publicExample(yaml => yaml + text),
+      '/'
+    );
+    addAgentCoreStacks(app, config, 'fixture', deployedResources ? { deployedResources } : {});
+    return Template.fromStack(app.node.children[0] as Stack);
+  };
+  const configured = await templateFor(connectors);
+  const { identity } = await loadDeployConfig(PUBLIC_EXAMPLE, '/');
+  configured.hasResourceProperties('AWS::BedrockAgentCore::Gateway', {
+    AuthorizerType: 'CUSTOM_JWT',
+    AuthorizerConfiguration: {
+      CustomJWTAuthorizer: {
+        DiscoveryUrl: `https://${new URL(identity.domains.chatService).hostname}/.well-known/openid-configuration`,
+        AllowedAudience: ['sts.amazonaws.com'],
+      },
+    },
+  });
+  const [gateway] = Object.keys(configured.findResources('AWS::BedrockAgentCore::Gateway'));
+  expect(JSON.stringify(configured.findResources('Custom::CDKBucketDeployment'))).toContain(
+    JSON.stringify({ 'Fn::GetAtt': [gateway, 'GatewayUrl'] })
+  );
+  configured.hasResourceProperties('AWS::BedrockAgentCore::GatewayTarget', {
+    Name: 'keyless',
+    TargetConfiguration: { Mcp: { McpServer: { Endpoint: 'https://fixture.example.com/mcp' } } },
+    CredentialProviderConfigurations: Match.absent(),
+  });
+  configured.hasResourceProperties('AWS::BedrockAgentCore::GatewayTarget', {
+    Name: 'bigdata',
+    GatewayIdentifier: { 'Fn::GetAtt': [gateway, 'GatewayIdentifier'] },
+    TargetConfiguration: { Mcp: { McpServer: { Endpoint: 'https://mcp.example.com/mcp' } } },
+    CredentialProviderConfigurations: [{ CredentialProviderType: 'API_KEY' }],
+  });
+  configured.hasResourceProperties('AWS::BedrockAgentCore::GatewayTarget', {
+    Name: 'reports',
+    TargetConfiguration: {
+      Mcp: {
+        OpenApiSchema: { S3: { Uri: 's3://example-schemas/agentcore-bot-cube-template/connectors/reports.json' } },
+      },
+    },
+    CredentialProviderConfigurations: [
+      {
+        CredentialProviderType: 'OAUTH',
+        CredentialProvider: { OauthCredentialProvider: { GrantType: 'AUTHORIZATION_CODE', Scopes: ['read'] } },
+      },
+    ],
+  });
+  configured.hasResourceProperties('AWS::BedrockAgentCore::ApiKeyCredentialProvider', {
+    ApiKeySecretSource: 'EXTERNAL',
+    ApiKeySecretConfig: {
+      SecretId:
+        'arn:aws:secretsmanager:us-east-1:000000000000:secret:agentcore-bot-cube-template/connectors/bigdata-Ab1234',
+      JsonKey: 'apiKey',
+    },
+  });
+  configured.hasResourceProperties('AWS::BedrockAgentCore::OAuth2CredentialProvider', {
+    Oauth2ProviderConfigInput: {
+      CustomOauth2ProviderConfig: {
+        ClientId: Match.absent(),
+        ClientSecretSource: 'EXTERNAL',
+        ClientSecretConfig: { SecretId: 'agentcore-bot-cube-template/connectors/reports', JsonKey: 'clientSecret' },
+      },
+    },
+  });
+  for (const type of ['ApiKeyCredentialProvider', 'OAuth2CredentialProvider']) {
+    configured.hasResource(`AWS::BedrockAgentCore::${type}`, {
+      DeletionPolicy: 'Retain',
+      UpdateReplacePolicy: 'Retain',
+    });
+  }
+  configured.hasResourceProperties('AWS::BedrockAgentCore::GatewayTarget', {
+    Name: 'research',
+    TargetConfiguration: {
+      Mcp: {
+        McpServer: {
+          McpToolSchema: { InlinePayload: '{"tools":[{"name":"lookup","inputSchema":{"type":"object"}}]}' },
+        },
+      },
+    },
+  });
+  configured.hasResourceProperties('AWS::BedrockAgentCore::GatewayTarget', {
+    Name: 'data',
+    TargetConfiguration: {
+      Mcp: {
+        McpServer: {
+          McpToolSchema: { S3: { Uri: 's3://example-schemas/agentcore-bot-cube-template/connectors/tools.json' } },
+        },
+      },
+    },
+  });
+  configured.hasResourceProperties('AWS::IAM::Policy', {
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        Match.objectLike({
+          Action: 'secretsmanager:GetSecretValue',
+          Resource: {
+            'Fn::Join': [
+              '',
+              [
+                'arn:',
+                { Ref: 'AWS::Partition' },
+                ':secretsmanager:us-east-1:000000000000:secret:agentcore-bot-cube-template/connectors/*',
+              ],
+            ],
+          },
+        }),
+        Match.objectLike({
+          Action: 's3:GetObject',
+          Resource: {
+            'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':s3:::*/agentcore-bot-cube-template/connectors/*']],
+          },
+          Condition: { StringEquals: { 's3:ResourceAccount': '000000000000' } },
+        }),
+      ]),
+    },
+  });
+  const removed = await templateFor('', configured.toJSON().Resources as DeployedResources);
+  const restored = await templateFor(connectors, removed.toJSON().Resources as DeployedResources);
+  for (const type of ['ApiKeyCredentialProvider', 'OAuth2CredentialProvider']) {
+    const resourceType = `AWS::BedrockAgentCore::${type}`;
+    const before = configured.findResources(resourceType);
+    expect(removed.findResources(resourceType)).toEqual(before);
+    expect(restored.findResources(resourceType)).toEqual(before);
+  }
+  expect(restored.findResources('AWS::BedrockAgentCore::GatewayTarget')).toEqual(
+    configured.findResources('AWS::BedrockAgentCore::GatewayTarget')
+  );
+  removed.resourceCountIs('AWS::BedrockAgentCore::GatewayTarget', 0);
+  const [emptyGateway] = Object.keys(removed.findResources('AWS::BedrockAgentCore::Gateway'));
+  expect(emptyGateway).toBe(gateway);
+  expect(JSON.stringify(removed.findResources('Custom::CDKBucketDeployment'))).toContain(
+    JSON.stringify({ 'Fn::GetAtt': [emptyGateway, 'GatewayUrl'] })
+  );
 });

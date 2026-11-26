@@ -90,6 +90,8 @@ export interface DeployIdentity {
 export interface DeployConfig {
   deployRoot: string;
   botcubeConfigPath?: string;
+  connectors?: DeploymentConfig['connectors'];
+  signIn?: NonNullable<DeploymentConfig['integrations']>['signIn'];
   identity: DeployIdentity;
   spec: AgentCoreProjectSpec;
   targets: AwsDeploymentTarget[];
@@ -186,6 +188,9 @@ export async function loadDeployConfig(configuredRoot: string | undefined, cwd: 
   }
   const deployRoot = path.resolve(cwd, configuredRoot);
   const config = readDeployment(deployRoot);
+  if (config.integrations?.connectorGateway) {
+    throw new Error('The AgentCore deploy fills integrations.connectorGateway');
+  }
   const identity = readDeployIdentity(deployRoot, config);
   const spec = readProjectSpec(deployRoot, config);
   setSessionProjectRoot(agentCoreProjectRoot(spec));
@@ -199,6 +204,8 @@ export async function loadDeployConfig(configuredRoot: string | undefined, cwd: 
   return {
     deployRoot,
     botcubeConfigPath: path.resolve(deployRoot, '../botcube.yaml'),
+    connectors: config.connectors,
+    signIn: config.integrations?.signIn,
     identity,
     spec,
     targets,

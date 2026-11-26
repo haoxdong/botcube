@@ -9,13 +9,20 @@ import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import type { DeployConfig } from './deploy-config';
 import { sessionApiCode, sessionApiTimeout } from './predeploy-assets';
 import { applyRuntimeNetwork, type RuntimeNetwork } from './runtime-network';
 import { applyRuntimePlatform, type RuntimePlatformVersion } from './runtime-platform';
 import { sessionApiExports } from 'botcube-infra-agentcore-cdk/exports';
 import { Construct } from 'constructs';
 import { configureRuntimeTelemetry } from './runtime-telemetry';
-import { applyDeploymentSeams, publishRuntimeConfig, useExistingImageKey } from './runtime-seams';
+import {
+  addConnectorGateway,
+  applyDeploymentSeams,
+  type DeployedResources,
+  publishRuntimeConfig,
+  useExistingImageKey,
+} from './runtime-seams';
 import type { HarnessAuth, ModelsDeployment, RuntimeTelemetry } from '../../../../config/seams.js' with {
   'resolution-mode': 'import',
 };
@@ -68,7 +75,8 @@ export interface AgentCorePhysicalIdentity {
   };
 }
 
-export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBoundary'> {
+export interface AgentCoreStackProps
+  extends Omit<StackProps, 'permissionsBoundary'>, Pick<DeployConfig, 'connectors' | 'signIn'> {
   executionRole?: iam.IRole;
   vpc?: ec2.IVpc;
   subnets?: ec2.SubnetSelection;
@@ -111,6 +119,7 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
   userMemoryRole?: UserMemoryRole;
   /** The Chat Service's public origin, which serves the OIDC discovery for the tokens it signs with its Turn identity keys. */
   chatServiceIssuer?: string;
+  deployedResources?: DeployedResources;
   /** How the Chat Service authenticates to the Runtime, the BotCube Config's `harnessAuth`; absent, SigV4. */
   harnessAuth?: HarnessAuth;
   /** The BotCube Config's `models` section off Bedrock, as `modelGatewayResources` in botcube/config gives it; absent, Bedrock. */
@@ -222,7 +231,8 @@ export class AgentCoreStack extends Stack {
   }
 
   private configureRuntimes(props: AgentCoreStackProps): void {
-    publishRuntimeConfig(this, this.runtimes, props);
+    const gatewayUrl = props.botcubeConfigPath === undefined ? undefined : addConnectorGateway(this, props);
+    publishRuntimeConfig(this, this.runtimes, props, gatewayUrl);
     // agentcore-cdk does not expose lifecycle or request-header settings.
     for (const env of this.runtimes) {
       const cfnRuntime = env.runtime.node.defaultChild as bedrockagentcore.CfnRuntime;

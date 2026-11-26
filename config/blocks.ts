@@ -16,8 +16,10 @@ const command = {
   timeoutSeconds: z.number().int().positive().default(COMMAND_TIMEOUT_SECONDS).describe('How long the command may run before it is stopped.'),
 };
 
+export const secretsManagerSource = z.strictObject({ kind: z.literal('secret'), secretId }).describe("A Secrets Manager secret's string, read with the process's own AWS credentials.");
+
 const secretSources = [
-  z.strictObject({ kind: z.literal('secret'), secretId }).describe("A Secrets Manager secret's string, read with the process's own AWS credentials."),
+  secretsManagerSource,
   z.strictObject({
     kind: z.literal('file'),
     path: absolutePath.describe('A file the platform mounts, such as a secret injector writes; read again as it rotates.'),

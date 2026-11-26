@@ -4,6 +4,8 @@ import { loadDeployConfig } from '../lib/deploy-config';
 import { readCdkContext } from '../lib/cdk-context';
 import { App } from 'aws-cdk-lib';
 import { execFileSync } from 'child_process';
+import { readFileSync } from 'node:fs';
+import type { DeployedResources } from '../lib/runtime-seams';
 import * as path from 'path';
 
 // HEAD, marked `-dirty` when tracked files differ from it, so a deploy never claims a commit it did not ship.
@@ -23,7 +25,11 @@ async function main() {
   }).trim();
   const commit = app.node.tryGetContext('deploymentCommit') ?? checkoutCommit(repositoryRoot);
 
-  addAgentCoreStacks(app, config, commit);
+  const deployedTemplateFile: string | undefined = app.node.tryGetContext('deployedTemplateFile');
+  const deployedTemplate = deployedTemplateFile
+    ? (JSON.parse(readFileSync(deployedTemplateFile, 'utf8')) as { Resources: DeployedResources })
+    : undefined;
+  addAgentCoreStacks(app, config, commit, deployedTemplate ? { deployedResources: deployedTemplate.Resources } : {});
   app.synth();
 }
 

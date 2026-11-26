@@ -1,6 +1,9 @@
 import { publishConfig } from 'botcube-infra-agentcore-cdk/config-publisher';
 import type { AgentCoreApplication } from '@aws/agentcore-cdk';
-import type { Stack } from 'aws-cdk-lib';
+import { createHash } from 'node:crypto';
+import { ArnFormat, CfnResource, RemovalPolicy, type Stack } from 'aws-cdk-lib';
+import type { DeployConfig } from './deploy-config';
+import { TURN_IDENTITY_AUDIENCE } from './user-memory-role';
 import * as bedrockagentcore from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -80,10 +83,11 @@ type AgentCoreRuntime =
 export function publishRuntimeConfig(
   stack: Stack,
   runtimes: readonly { runtime: AgentCoreRuntime }[],
-  { botcubeConfigPath, executionRole }: { botcubeConfigPath?: string | undefined; executionRole?: iam.IRole }
+  { botcubeConfigPath, executionRole }: { botcubeConfigPath?: string | undefined; executionRole?: iam.IRole },
+  connectorGatewayUrl?: string
 ): void {
   if (botcubeConfigPath === undefined || runtimes.length === 0) return;
-  const published = publishConfig(stack, botcubeConfigPath);
+  const published = publishConfig(stack, botcubeConfigPath, connectorGatewayUrl);
   for (const { runtime } of runtimes) {
     const definition = runtime.node.defaultChild;
     if (!(definition instanceof bedrockagentcore.CfnRuntime))
@@ -91,6 +95,237 @@ export function publishRuntimeConfig(
     runtime.addEnvironmentVariable('BOTCUBE_CONFIG', published.locator);
     published.grantRead(executionRole ?? runtime.role, definition);
   }
+}
+
+export type DeployedResources = Record<string, { Type: string; Properties?: Record<string, unknown> }>;
+
+export function addConnectorGateway(
+  stack: Stack,
+  {
+    connectors = [],
+    signIn,
+    chatServiceIssuer,
+    deployedResources = {},
+  }: Pick<DeployConfig, 'connectors' | 'signIn'> & { chatServiceIssuer?: string; deployedResources?: DeployedResources }
+): string {
+  if (!chatServiceIssuer) throw new Error('Connectors need the Chat Service issuer');
+  const deploymentId = createHash('sha256').update(stack.stackName).digest('hex').slice(0, 16);
+  const name = `connectors-${deploymentId}`;
+  const resourcePrefix = `${stack.stackName.toLowerCase()}/connectors/`;
+  const role = new iam.Role(stack, 'ConnectorGatewayRole', {
+    assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com', {
+      conditions: {
+        StringEquals: { 'aws:SourceAccount': stack.account },
+        ArnLike: {
+          'aws:SourceArn': stack.formatArn({
+            service: 'bedrock-agentcore',
+            resource: 'gateway',
+            resourceName: `${name}-*`,
+            arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
+          }),
+        },
+      },
+    }),
+  });
+  const customJwtAuthorizer =
+    signIn?.kind === 'oidc'
+      ? {
+          discoveryUrl: `${signIn.issuer.replace(/\/$/, '')}/.well-known/openid-configuration`,
+          allowedClients: signIn.clients.map(client => client.clientId),
+        }
+      : {
+          discoveryUrl: `${chatServiceIssuer}/.well-known/openid-configuration`,
+          allowedAudience: [TURN_IDENTITY_AUDIENCE],
+        };
+  const gateway = new bedrockagentcore.CfnGateway(stack, 'ConnectorGateway', {
+    name,
+    roleArn: role.roleArn,
+    authorizerType: 'CUSTOM_JWT',
+    authorizerConfiguration: { customJwtAuthorizer },
+    protocolType: 'MCP',
+    protocolConfiguration: { mcp: { supportedVersions: ['2025-03-26', '2025-06-18', '2025-11-25'] } },
+  });
+  const identityArn = (resource: string) => stack.formatArn({ service: 'bedrock-agentcore', resource });
+  role.addToPrincipalPolicy(
+    new iam.PolicyStatement({
+      actions: [
+        'bedrock-agentcore:GetWorkloadAccessToken',
+        'bedrock-agentcore:GetWorkloadAccessTokenForJWT',
+        'bedrock-agentcore:GetWorkloadAccessTokenForUserId',
+        'bedrock-agentcore:GetApiKeyCredential',
+        'bedrock-agentcore:GetResourceApiKey',
+        'bedrock-agentcore:GetResourceOauth2Token',
+      ],
+      resources: [
+        identityArn(`token-vault/default/apikeycredentialprovider/${name}-*`),
+        identityArn(`token-vault/default/oauth2credentialprovider/${name}-*`),
+        identityArn('token-vault/default'),
+        identityArn('workload-identity-directory/default'),
+        identityArn(`workload-identity-directory/default/workload-identity/${gateway.attrGatewayIdentifier}`),
+      ],
+    })
+  );
+  role.addToPrincipalPolicy(
+    new iam.PolicyStatement({
+      actions: ['secretsmanager:GetSecretValue'],
+      resources: [
+        stack.formatArn({
+          service: 'secretsmanager',
+          resource: 'secret',
+          resourceName: `${resourcePrefix}*`,
+          arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+        }),
+      ],
+    })
+  );
+  role.addToPrincipalPolicy(
+    new iam.PolicyStatement({
+      actions: ['s3:GetObject'],
+      resources: [stack.formatArn({ service: 's3', region: '', account: '', resource: `*/${resourcePrefix}*` })],
+      conditions: { StringEquals: { 's3:ResourceAccount': stack.account } },
+    })
+  );
+  for (const connector of connectors) {
+    validateConnectorResourceNames(stack, connector, resourcePrefix);
+    const credential = connectorCredential(stack, connector, name);
+    const target = new bedrockagentcore.CfnGatewayTarget(stack, `ConnectorTarget-${connector.name}`, {
+      name: connector.name,
+      gatewayIdentifier: gateway.attrGatewayIdentifier,
+      targetConfiguration: { mcp: connectorTarget(connector) },
+      ...(credential && { credentialProviderConfigurations: [credential] }),
+    });
+    target.node.addDependency(role.node.findChild('DefaultPolicy'));
+  }
+  retainConnectorProviders(stack, name, deployedResources);
+  return gateway.attrGatewayUrl;
+}
+
+function validateConnectorResourceNames(
+  stack: Stack,
+  connector: NonNullable<DeployConfig['connectors']>[number],
+  resourcePrefix: string
+): void {
+  const { access } = connector;
+  if (access.kind !== 'none') {
+    const { secretId } = access.kind === 'api-key' ? access.credential : access.oauthClient.clientSecret;
+    const secretName = secretId.startsWith('arn:')
+      ? stack.splitArn(secretId, ArnFormat.COLON_RESOURCE_NAME).resourceName
+      : secretId;
+    if (!secretName?.startsWith(resourcePrefix)) {
+      throw new Error(`Connector ${connector.name}: secret name must start with ${resourcePrefix}`);
+    }
+  }
+  const s3 =
+    'openApi' in connector
+      ? connector.openApi
+      : connector.toolSchema && 's3' in connector.toolSchema
+        ? connector.toolSchema.s3.uri
+        : undefined;
+  if (s3 && !s3.slice(s3.indexOf('/', 5) + 1).startsWith(resourcePrefix)) {
+    throw new Error(`Connector ${connector.name}: S3 object key must start with ${resourcePrefix}`);
+  }
+}
+
+function connectorTarget(
+  connector: NonNullable<DeployConfig['connectors']>[number]
+): bedrockagentcore.CfnGatewayTarget.McpTargetConfigurationProperty {
+  if ('openApi' in connector) return { openApiSchema: { s3: { uri: connector.openApi } } };
+  const { url, toolSchema, access } = connector;
+  const schema =
+    toolSchema && 's3' in toolSchema
+      ? {
+          s3: {
+            uri: toolSchema.s3.uri,
+            ...(toolSchema.s3.bucketOwnerAccountId && { bucketOwnerAccountId: toolSchema.s3.bucketOwnerAccountId }),
+          },
+        }
+      : toolSchema;
+  return {
+    mcpServer: {
+      endpoint: url,
+      ...(schema && { mcpToolSchema: schema }),
+      ...(access.kind === 'on-behalf-of' && { listingMode: 'DYNAMIC' }),
+    },
+  };
+}
+
+function retainConnectorProviders(stack: Stack, name: string, deployedResources: DeployedResources): void {
+  const configuredIds = new Set(
+    stack.node.children
+      .filter(
+        (child): child is CfnResource => child instanceof CfnResource && child.node.id.startsWith('ConnectorProvider-')
+      )
+      .map(resource => stack.getLogicalId(resource))
+  );
+  for (const [logicalId, { Type, Properties }] of Object.entries(deployedResources)) {
+    if (configuredIds.has(logicalId) || !logicalId.startsWith('ConnectorProvider')) continue;
+    if (
+      Type !== bedrockagentcore.CfnApiKeyCredentialProvider.CFN_RESOURCE_TYPE_NAME &&
+      Type !== bedrockagentcore.CfnOAuth2CredentialProvider.CFN_RESOURCE_TYPE_NAME
+    )
+      continue;
+    if (typeof Properties?.Name !== 'string' || !Properties.Name.startsWith(`${name}-`)) continue;
+    const provider = new CfnResource(stack, `Retained${logicalId}`, { type: Type, properties: Properties });
+    provider.overrideLogicalId(logicalId);
+    provider.applyRemovalPolicy(RemovalPolicy.RETAIN);
+  }
+}
+
+function connectorCredential(
+  stack: Stack,
+  connector: NonNullable<DeployConfig['connectors']>[number],
+  gatewayName: string
+) {
+  const { access } = connector;
+  if (access.kind === 'none') return undefined;
+  const name = `${gatewayName}-${connector.name}`;
+  if (access.kind === 'api-key') {
+    const provider = new bedrockagentcore.CfnApiKeyCredentialProvider(stack, `ConnectorProvider-${connector.name}`, {
+      name,
+      apiKeySecretSource: 'EXTERNAL',
+      apiKeySecretConfig: { secretId: access.credential.secretId, jsonKey: 'apiKey' },
+    });
+    provider.applyRemovalPolicy(RemovalPolicy.RETAIN);
+    return {
+      credentialProviderType: 'API_KEY',
+      credentialProvider: {
+        apiKeyCredentialProvider: {
+          providerArn: provider.attrCredentialProviderArn,
+          credentialLocation: 'HEADER',
+          credentialParameterName: access.header,
+        },
+      },
+    };
+  }
+  const { clientId, clientSecret, discoveryUrl, scopes } = access.oauthClient;
+  const provider = new bedrockagentcore.CfnOAuth2CredentialProvider(stack, `ConnectorProvider-${connector.name}`, {
+    name,
+    credentialProviderVendor: 'CustomOauth2',
+    oauth2ProviderConfigInput: {
+      customOauth2ProviderConfig: {
+        ...(clientId === undefined ? {} : { clientId }),
+        clientSecretSource: 'EXTERNAL',
+        clientSecretConfig: { secretId: clientSecret.secretId, jsonKey: 'clientSecret' },
+        clientAuthenticationMethod: 'CLIENT_SECRET_BASIC',
+        oauthDiscovery: { discoveryUrl },
+        ...(access.kind === 'on-behalf-of' && {
+          onBehalfOfTokenExchangeConfig: { grantType: 'JWT_AUTHORIZATION_GRANT' },
+        }),
+      },
+    },
+  });
+  provider.applyRemovalPolicy(RemovalPolicy.RETAIN);
+  const grantType = {
+    'linked-account': 'AUTHORIZATION_CODE',
+    'client-credentials': 'CLIENT_CREDENTIALS',
+    'on-behalf-of': 'TOKEN_EXCHANGE',
+  }[access.kind];
+  return {
+    credentialProviderType: 'OAUTH',
+    credentialProvider: {
+      oauthCredentialProvider: { providerArn: provider.attrCredentialProviderArn, grantType, scopes },
+    },
+  };
 }
 
 /**

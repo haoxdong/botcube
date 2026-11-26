@@ -4,7 +4,8 @@ import type { Construct } from 'constructs';
 
 export function publishConfig(
   stack: Stack,
-  configPath: string
+  configPath: string,
+  connectorGatewayUrl?: string
 ): {
   locator: string;
   grantRead(role: IRole, consumer: Construct): void;
