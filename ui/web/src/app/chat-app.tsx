@@ -314,7 +314,7 @@ export default function App({
                 threadId={activeId}
                 accountId={accountId}
                 replayLoaded={replayLoaded}
-                turnRunsOnServer={turnRunsOnServer}
+                turn={turn}
                 turnMayRun={turnMayRun}
                 onOpened={() => { setKeptChatShown(false); setOpenedChat(activeId); }}
                 showWelcome={showWelcome}
@@ -329,7 +329,6 @@ export default function App({
                 onMessageSubmitted={messageSubmitted}
                 onTurnStarting={(provider) => { resetWarmup(); turnStarting(provider); }}
                 onCompose={composing}
-                stopServerTurn={stopServerTurn}
                 savedFailure={turnFailure}
                 openAt={openAt}
                 loadOlder={loadOlder}

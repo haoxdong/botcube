@@ -9,16 +9,15 @@ type TurnPhase = StreamPhase | "onServer";
 export interface Turn {
   phase: TurnPhase;
   /** Null with no Turn, or a server Turn whose run is unknown. */
-  stop: (() => void) | null;
+  stop: "local" | (() => void) | null;
   /** Holds `opening` until `run` streams or settles. */
   ask: (run: () => Promise<unknown>) => Promise<void>;
 }
 
-export function useTurn({ agent, runsOnServer, stopOnServer, stopHere }: {
+export function useTurn({ agent, runsOnServer, stopOnServer }: {
   agent: SavedMessagesHttpAgent;
   runsOnServer: boolean;
   stopOnServer: (() => void) | null;
-  stopHere?: () => void;
 }): Turn {
   const stream = useSyncExternalStore<StreamPhase>(agent.subscribeTurn, agent.getTurnPhase, () => "idle");
   const [asked, setAsked] = useState<SavedMessagesHttpAgent | null>(null);
@@ -31,5 +30,5 @@ export function useTurn({ agent, runsOnServer, stopOnServer, stopHere }: {
     }
   }, [agent]);
   const phase: TurnPhase = stream !== "idle" ? stream : asked === agent ? "opening" : runsOnServer ? "onServer" : "idle";
-  return { phase, stop: phase === "idle" ? null : phase === "onServer" ? stopOnServer : stopHere ?? null, ask };
+  return { phase, stop: phase === "idle" ? null : phase === "onServer" ? stopOnServer : "local", ask };
 }

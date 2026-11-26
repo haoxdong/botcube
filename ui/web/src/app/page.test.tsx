@@ -1385,6 +1385,7 @@ describe('an assistant reply', () => {
   });
 
   async function renderStreamingReply(markdown: string) {
+    service.mainChat.messages = [{ id: 'earlier', role: 'user', content: 'Hello' }];
     const view = await renderPage();
     act(() => { copilot.running = true; });
     copilot.reply = markdown;
@@ -4706,6 +4707,7 @@ describe('Side Chats', () => {
   });
 
   it('shows Main chat, then the Side chats disclosure and plus, and no search or archive', async () => {
+    service.mainChat.messages = [{ id: 'earlier', role: 'user', content: 'Hello' }];
     service.sideChats = [sideChat('a', 'First')];
     await renderPage();
     await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
@@ -5820,6 +5822,7 @@ describe('agent profile', () => {
   });
 
   it("opens from the agent's avatar and name in the chat's header", async () => {
+    service.mainChat.messages = [{ id: 'earlier', role: 'user', content: 'Hello' }];
     await renderPage();
     expect(avatar()).toHaveTextContent(/^Ada Bot$/);
     expect(avatar().querySelector('.avatar-agent .avatar-monocle')).not.toBeNull();
@@ -7140,6 +7143,7 @@ describe('agent profile', () => {
   });
 
   it("shows the bot's agent name in the header and the failure in the profile when the agent cannot load", async () => {
+    service.mainChat.messages = [{ id: 'earlier', role: 'user', content: 'Hello' }];
     service.failing.set('GET /agent', 503);
     await renderPage();
     expect(avatar()).toHaveTextContent(/^Ada$/);
@@ -7285,6 +7289,7 @@ describe('agent profile', () => {
   });
 
   it('renames the agent, updating its header and profile, and closes the editor', async () => {
+    service.mainChat.messages = [{ id: 'earlier', role: 'user', content: 'Hello' }];
     await renderPage();
     await openPersonalization();
     const editor = await editIdentity();
@@ -7670,6 +7675,7 @@ describe('agent profile', () => {
   });
 
   it("clears the agent's picture back to its default avatar", async () => {
+    service.mainChat.messages = [{ id: 'earlier', role: 'user', content: 'Hello' }];
     service.agentPicture = PICTURE;
     await renderPage();
     await userEvent.click(avatar());
@@ -7735,6 +7741,7 @@ describe('agent profile', () => {
   });
 
   it("shows the agent's own edit in the header, profile, and Personalization tab", async () => {
+    service.mainChat.messages = [{ id: 'earlier', role: 'user', content: 'Hello' }];
     await renderPage();
     const panel = await openPersonalization();
     const soul = await openFile(panel, 'Soul');
@@ -9478,6 +9485,18 @@ describe('agent opening Turn', () => {
     await act(async () => { window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('online')); });
     await settle();
     expect(copilot.openingTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the header working while the composer can stop a pending Opening Turn', async () => {
+    let finish!: () => void;
+    copilot.openingTurn.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    await renderPage();
+    try {
+      expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Agent profile' })).toHaveAttribute('data-working');
+    } finally {
+      await act(async () => { finish(); });
+    }
   });
 
   it('does not greet a populated replay', async () => {

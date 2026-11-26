@@ -1,4 +1,5 @@
-import { act, renderHook } from '@testing-library/react';
+import { act, render, renderHook, screen } from '@testing-library/react';
+import { useEffect } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildDirectAgent, type SavedMessagesHttpAgent } from './conversations';
@@ -52,17 +53,16 @@ describe('useTurn', () => {
 
   it('opens, starts, ends at the end event and goes idle at the stream close', async () => {
     const service = chatService('t1');
-    const stopHere = vi.fn();
-    const { result } = renderHook(() => useTurn({ ...session(service.agent), stopHere }));
+    const { result } = renderHook(() => useTurn(session(service.agent)));
     expect(result.current).toMatchObject({ phase: 'idle', stop: null });
 
     await service.start();
-    expect(result.current).toMatchObject({ phase: 'opening', stop: stopHere });
+    expect(result.current).toMatchObject({ phase: 'opening', stop: 'local' });
     await service.send({ type: 'RUN_STARTED' });
     expect(result.current.phase).toBe('started');
     // The answer settles at RUN_FINISHED, while the stream stays open for the Turn's record.
     await service.send({ type: 'RUN_FINISHED' });
-    expect(result.current).toMatchObject({ phase: 'ended', stop: stopHere });
+    expect(result.current).toMatchObject({ phase: 'ended', stop: 'local' });
     await service.close();
     expect(result.current).toMatchObject({ phase: 'idle', stop: null });
   });
@@ -104,11 +104,10 @@ describe('useTurn', () => {
 
   it('follows the stream here over the server record of the same Turn', async () => {
     const service = chatService('t1');
-    const stopHere = vi.fn();
-    const { result } = renderHook(() => useTurn({ ...session(service.agent, { runsOnServer: true, stopOnServer: () => undefined }), stopHere }));
+    const { result } = renderHook(() => useTurn(session(service.agent, { runsOnServer: true, stopOnServer: () => undefined })));
     await service.start();
     await service.send({ type: 'RUN_STARTED' });
-    expect(result.current).toMatchObject({ phase: 'started', stop: stopHere });
+    expect(result.current).toMatchObject({ phase: 'started', stop: 'local' });
   });
 
   // A Turn running in one chat leaves another idle, so a send there starts a Turn rather than steering.
@@ -123,6 +122,25 @@ describe('useTurn', () => {
     expect(result.current).toMatchObject({ phase: 'idle', stop: null });
     rerender({ agent: running.agent });
     expect(result.current.phase).toBe('started');
+  });
+
+  it('holds a pending Opening Turn requested when the thread mounts', async () => {
+    const service = chatService('opening');
+    const dispatch = Promise.withResolvers<void>();
+    function OpeningThread({ ask }: Pick<Turn, 'ask'>) {
+      useEffect(() => { void ask(() => dispatch.promise); }, [ask]);
+      return null;
+    }
+    function Chat() {
+      const turn = useTurn(session(service.agent));
+      return <><OpeningThread ask={turn.ask} /><output>{turn.phase}</output></>;
+    }
+
+    render(<Chat />);
+    expect(screen.getByRole('status')).toHaveTextContent('opening');
+
+    await act(async () => { dispatch.resolve(); });
+    expect(screen.getByRole('status')).toHaveTextContent('idle');
   });
 
   it('holds an asked run opening until it streams, then follows its stream', async () => {

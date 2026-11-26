@@ -41,7 +41,7 @@ import { PlotlyPrefetch } from "../components/plotly-bundle";
 import { shows, useSteering, type PendingMessage, type Withdrawal } from "./steering";
 import { WaitingMessages } from "./waiting-steering";
 import { MessageEntranceRow, MessageEntranceContext, type MessageEntrances } from "./message-entrance";
-import { useTurn, type Turn } from "./turn";
+import type { Turn } from "./turn";
 import { ThreadScrollView } from "./conversation-thread";
 import { AlertLine } from "./alert-line";
 
@@ -97,7 +97,7 @@ const ComposerPicker = createContext<{ picker: ReactNode; autoFocus: boolean }>(
 const SubmitTurn = createContext<((message: string, submit: Submit, retry?: () => void) => boolean) | null>(null);
 const ComposerSubmit = createContext<{ current: Submit | null } | null>(null);
 const ComposerStop = createContext<{ current: (() => void) | null } | null>(null);
-const SessionTurn = createContext<Turn>({ phase: "idle", stop: null, ask: async (run) => { await run(); } });
+const SessionTurn = createContext<{ phase: Turn["phase"]; stop: (() => void) | null }>({ phase: "idle", stop: null });
 const SteeringDrop = createContext<{ current: (() => void) | null } | null>(null);
 const SteeringWaiting = createContext<{ waiting: PendingMessage[]; withdraw: (id: string) => Promise<Withdrawal>; sendNow: (id: string) => Promise<Withdrawal> } | null>(null);
 type LentComposer = { edit: (content: string) => void; stopTurn: (() => void) | undefined };
@@ -402,7 +402,7 @@ function ChatThread({
   threadId,
   accountId,
   replayLoaded,
-  turnRunsOnServer,
+  turn,
   turnMayRun,
   onMessageSubmitted,
   onTurnStarting,
@@ -416,7 +416,6 @@ function ChatThread({
   models,
   selectedModel,
   isAccountCurrent,
-  stopServerTurn,
   savedFailure,
   onOpened,
   openAt,
@@ -428,7 +427,7 @@ function ChatThread({
   threadId: string;
     accountId: string | undefined;
   replayLoaded: boolean;
-  turnRunsOnServer: boolean;
+  turn: Turn;
   turnMayRun: () => void;
   onMessageSubmitted: () => void;
   onTurnStarting: (provider: string | undefined) => void;
@@ -437,7 +436,6 @@ function ChatThread({
     models: ModelList;
   selectedModel: string | undefined;
     isAccountCurrent: () => boolean;
-    stopServerTurn: (() => void) | null;
     savedFailure: SavedTurnFailure | null;
   showWelcome: boolean;
   isMainChat: boolean;
@@ -489,7 +487,7 @@ function ChatThread({
   const accountRef = useRef({ models, isAccountCurrent, selectedModel });
   accountRef.current = { models, isAccountCurrent, selectedModel };
   const modelsReady = () => accountRef.current.isAccountCurrent() && accountRef.current.models.loaded;
-  const turn = useTurn({ agent, runsOnServer: turnRunsOnServer, stopOnServer: stopServerTurn, stopHere: () => copilotkit.stopAgent({ agent }) });
+  const stop = turn.stop === "local" ? () => copilotkit.stopAgent({ agent }) : turn.stop;
   const running = turn.phase !== "idle";
   const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
   const runningRef = useRef(running);
@@ -593,7 +591,7 @@ function ChatThread({
       <SubmitTurn.Provider value={submitTurn}>
       <ComposerSubmit.Provider value={composerSubmit}>
       <ComposerStop.Provider value={composerStop}>
-      <SessionTurn.Provider value={turn}>
+      <SessionTurn.Provider value={{ phase: turn.phase, stop }}>
       <ComposerAccessory.Provider value={composerAccessory}>
       <ComposerPicker.Provider value={{ picker: children, autoFocus: newChat && showWelcome }}>
       <SteeringWaiting.Provider value={{ waiting, withdraw, sendNow }}>
