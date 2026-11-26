@@ -6,7 +6,7 @@ import { Rnd } from 'react-rnd';
 import chromium from './app-icons/chromium.svg';
 import folder from './app-icons/file-folder-3d.png';
 import terminal from './app-icons/windows-terminal.svg';
-import type { Zone } from './windows-snap';
+import { SnapLayouts, type Zone } from './windows-snap';
 
 /** The computer's apps, each in its own window and on the taskbar. */
 export type DockApp = 'Chromium' | 'Terminal' | 'Files';
@@ -102,6 +102,8 @@ export function AppIcon({ app, size }: { app: DockApp; size: 16 | 24 }) {
 
 interface TitleBarProps {
   window: DesktopWindow;
+  /** Where Windows' own flyouts open, in the system's light theme rather than the app's. */
+  system: HTMLElement | null;
   /** The id of the window's contents, which Terminal's session tab controls. */
   panel: string;
   active: boolean;
@@ -117,7 +119,7 @@ interface TitleBarProps {
 }
 
 /** The app's icon and title (Terminal's session tab), the caption buttons, and Windows' window menu on a right click. */
-function TitleBar({ window: { app, title, tabs }, panel, active, full, snapped, phone, onMinimise, onMaximise, onRestore, onSnap, onClose }: TitleBarProps) {
+function TitleBar({ window: { app, title, tabs }, system, panel, active, full, snapped, phone, onMinimise, onMaximise, onRestore, onSnap, onClose }: TitleBarProps) {
   const styles = useStyles();
   return (
     <Menu openOnContext>
@@ -147,7 +149,7 @@ function TitleBar({ window: { app, title, tabs }, panel, active, full, snapped, 
           )}
           <span className={styles.captions}>
             <Button appearance="subtle" aria-label={`Minimise ${app}`} icon={<Subtract16Regular />} onClick={onMinimise} />
-            <Button appearance="subtle" aria-label={full ? `Restore ${app}` : `Maximise ${app}`} icon={full ? <SquareMultiple16Regular /> : <Maximize16Regular />} onClick={onMaximise} />
+            <SnapLayouts app={app} mountNode={system} enabled={!phone} label={full ? `Restore ${app}` : `Maximise ${app}`} icon={full ? <SquareMultiple16Regular /> : <Maximize16Regular />} onMaximise={onMaximise} onSnap={onSnap} />
             <Button appearance="subtle" aria-label={`Close ${app}`} icon={<Dismiss16Regular />} onClick={onClose} />
           </span>
         </div>
@@ -183,6 +185,8 @@ export interface WindowFrameProps {
   snapping: boolean;
   /** The phone layout: windows fill the screen, so they neither snap nor restore. */
   phone: boolean;
+  /** Where Windows' own flyouts open, in the system's light theme rather than the app's. */
+  system: HTMLElement | null;
   onRaise: () => void;
   onPlace: (place: Partial<Rect>) => void;
   /** Let go after a drag by its title bar, at `at`: the desktop snaps it if the pointer held an edge. */
@@ -215,7 +219,7 @@ function shrinkStyle(away: boolean, life: Life, toward: WindowFrameProps['toward
 }
 
 /** One window: react-rnd moves and resizes it, Fluent draws its frame in the window's own theme. */
-export function WindowFrame({ window: win, life, opening, active, away, place, full, snapped, toward, scale, interactive, layer, snapping, phone, onRaise, onPlace, onDrop, onUnsnap, onDragAt, onSnap, onRestore, onSnapped, onMinimise, onMaximise, onClose, onClosed }: WindowFrameProps) {
+export function WindowFrame({ window: win, life, opening, active, away, place, full, snapped, toward, scale, interactive, layer, snapping, phone, system, onRaise, onPlace, onDrop, onUnsnap, onDragAt, onSnap, onRestore, onSnapped, onMinimise, onMaximise, onClose, onClosed }: WindowFrameProps) {
   const styles = useStyles();
   const panel = useId();
   return (
@@ -251,7 +255,7 @@ export function WindowFrame({ window: win, life, opening, active, away, place, f
             carries the theme and styles.css's shield alone, and the window is the div inside it; an inline style is not copied. */}
         <FluentProvider theme={win.dark === true ? webDarkTheme : webLightTheme} className="agent-computer-fluent" style={{ display: 'contents' }}>
           <div className={mergeClasses('agent-computer-windows-window', styles.window, opening && styles.opening, active && styles.windowActive, full && styles.windowFull)}>
-            <TitleBar window={win} panel={panel} active={active} full={full} snapped={snapped} phone={phone} onMinimise={onMinimise} onMaximise={onMaximise} onRestore={onRestore} onSnap={onSnap} onClose={onClose} />
+            <TitleBar window={win} system={system} panel={panel} active={active} full={full} snapped={snapped} phone={phone} onMinimise={onMinimise} onMaximise={onMaximise} onRestore={onRestore} onSnap={onSnap} onClose={onClose} />
             {/* A session's tab controls the window's contents, its tab panel. */}
             <div className={styles.content} {...(win.tabs === undefined ? {} : { id: panel, role: 'tabpanel', 'aria-labelledby': `${panel}-tab` })}>{win.children}</div>
           </div>

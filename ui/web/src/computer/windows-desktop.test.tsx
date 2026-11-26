@@ -3,6 +3,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WindowsDesktop, type WindowsDesktopProps } from './windows-desktop';
+import { SNAP_LAYOUTS_DELAY } from './windows-snap';
 
 const WINDOWS: WindowsDesktopProps['windows'] = [
   { app: 'Files', title: 'Files', startsClosed: true, children: React.createElement('p', null, 'Files here') },
@@ -43,6 +44,7 @@ const surface = (name: string) => {
   if (element === null) throw new Error(`no ${name} flyout`);
   return element;
 };
+const noSurface = (name: string) => document.querySelector(`.fui-PopoverSurface[aria-label="${name}"]`) === null;
 const names = (element: HTMLElement) => within(element).getAllByRole('button').map((button) => button.textContent).filter(Boolean);
 
 afterEach(() => vi.useRealTimers());
@@ -168,6 +170,31 @@ describe('a taskbar app', () => {
 });
 
 describe('snapping', () => {
+  it('offers the snap layouts on a held hover of Maximise, and snaps the window to the zone picked', () => {
+    vi.useFakeTimers();
+    desktop({ front: 'Terminal' });
+    fireEvent.mouseOver(screen.getByRole('button', { name: 'Maximise Terminal' }));
+    act(() => { vi.advanceTimersByTime(SNAP_LAYOUTS_DELAY - 1); });
+    expect(noSurface('Snap layouts for Terminal')).toBe(true);
+    act(() => { vi.advanceTimersByTime(1); });
+    const layouts = surface('Snap layouts for Terminal');
+    expect(within(layouts).getAllByRole('group').map((group) => group.getAttribute('aria-label'))).toEqual(['Halves', 'Two thirds and a third', 'A half and two quarters', 'Quarters']);
+
+    fireEvent.click(within(within(layouts).getByRole('group', { name: 'Quarters' })).getByRole('button', { name: 'Top right quarter' }));
+    expect(place('Terminal')).toBe('640,0 640pxx336px');
+  });
+
+  it('offers no layouts for a hover that leaves before the wait', () => {
+    vi.useFakeTimers();
+    desktop({ front: 'Terminal' });
+    const maximise = screen.getByRole('button', { name: 'Maximise Terminal' });
+    fireEvent.mouseOver(maximise);
+    act(() => { vi.advanceTimersByTime(SNAP_LAYOUTS_DELAY / 2); });
+    fireEvent.mouseOut(maximise);
+    act(() => { vi.advanceTimersByTime(SNAP_LAYOUTS_DELAY * 4); });
+    expect(noSurface('Snap layouts for Terminal')).toBe(true);
+  });
+
   it("offers Windows' window menu on the title bar, enabling only what applies", () => {
     desktop({ front: 'Terminal' });
     const titleBar = () => frame('Terminal').querySelector('.window-titlebar') ?? document.body;

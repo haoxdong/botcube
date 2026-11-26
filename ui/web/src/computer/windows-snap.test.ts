@@ -9,6 +9,8 @@ describe('snap zones', () => {
     expect(zoneRect('max', AREA)).toEqual({ x: 0, y: 0, width: 1280, height: 672 });
     expect(zoneRect('right', AREA)).toEqual({ x: 640, y: 0, width: 640, height: 672 });
     expect(zoneRect('bottom-left', AREA)).toEqual({ x: 0, y: 336, width: 640, height: 336 });
+    expect(zoneRect('left-two-thirds', AREA)).toEqual({ x: 0, y: 0, width: 853, height: 672 });
+    expect(zoneRect('right-third', AREA)).toEqual({ x: 853, y: 0, width: 427, height: 672 });
   });
 
   it('snaps by where the pointer lets go: a side to its half, a corner to its quarter, the top to the whole screen', () => {

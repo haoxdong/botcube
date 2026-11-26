@@ -166,6 +166,8 @@ export function WindowsDesktop({ windows, front, interactive, onFront, agentName
   const [desktopShown, setDesktopShown] = useState<readonly DockApp[] | null>(null);
   const buttons = useRef<Partial<Record<DockApp, HTMLButtonElement | null>>>({});
   const screen = useRef<HTMLDivElement>(null);
+  // Windows' own flyouts mount here, under the desktop's light theme, whatever the app's theme.
+  const [system, setSystem] = useState<HTMLElement | null>(null);
   // The computer's own pick comes to the front, open.
   useLayoutEffect(() => {
     setLife((all) => (all[front] === 'open' ? all : { ...all, [front]: 'open' }));
@@ -278,6 +280,7 @@ export function WindowsDesktop({ windows, front, interactive, onFront, agentName
                   layer={closing.has(app) ? order.length + 1 : order.indexOf(app) + 1}
                   snapping={snapping === app}
                   phone={phoneLayout}
+                  system={system}
                   onRaise={() => { if (app !== active) raise(app); }}
                   onPlace={(next) => reshape(app, next)}
                   onDrop={(at) => drop(app, at)}
@@ -309,6 +312,7 @@ export function WindowsDesktop({ windows, front, interactive, onFront, agentName
             onShowDesktop={showDesktop}
           />
         </div>
+        <div ref={setSystem} />
       </FluentProvider>
     </div>
   );
