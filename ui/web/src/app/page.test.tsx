@@ -833,7 +833,7 @@ describe('account errors in a conversation', () => {
 
     const alert = screen.getByRole('alert');
     expect(alert).toHaveTextContent(new RegExp(`^${error}$`));
-    expect(header().nextElementSibling).toBe(alert);
+    expect(header().nextElementSibling).toContainElement(alert);
   });
 
   it('shows the account error on the empty chat too', async () => {

@@ -14,6 +14,7 @@ declare module 'vitest' {
   export interface ProvidedContext {
     screenshotDirectory: string;
     visualCompare: boolean;
+    storyRuleNames: string[];
     screen: 'phone' | 'desktop';
     renderingProfile: string;
     renderingTrace: boolean;
@@ -36,7 +37,9 @@ const nativeFrame = window.requestAnimationFrame.bind(window);
 const REDUCE_MOTION = /-reduce-motion$/;
 
 beforeEach(async (context) => {
-  if (inject('visualCompare')) MotionGlobalConfig.skipAnimations = true;
+  const storyRule = inject('storyRuleNames').includes(context.task.name);
+  if (inject('visualCompare')) MotionGlobalConfig.skipAnimations = !storyRule;
+  if (storyRule) return;
   if (REDUCE_MOTION.test(context.task.name)) await commands.emulateMedia('reduce');
   if (inject('renderingProfile')) {
     configure({ asyncUtilTimeout: 60000 });
@@ -50,6 +53,7 @@ beforeEach(async (context) => {
 });
 
 afterEach(async (context) => {
+  if (inject('storyRuleNames').includes(context.task.name)) return;
   if (inject('renderingProfile') && renderingProof) {
     try {
       if (inject('renderingTrace')) performance.mark('rendering-story-end');
@@ -66,6 +70,7 @@ afterEach(async (context) => {
 });
 
 afterEach(async (context) => {
+  if (inject('storyRuleNames').includes(context.task.name)) return;
   const output = inject('screenshotDirectory');
   if ((!output && !inject('visualCompare')) || context.task.result?.state === 'fail') return;
   if (inject('visualCompare')) {

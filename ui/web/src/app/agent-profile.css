@@ -67,18 +67,25 @@
 
 /* A failed sign-in, sign-out or Sheet action, between the header and the chat. */
 .chat-account-error {
-  flex-shrink: 0;
   margin: 0 auto var(--space-4);
   width: min(640px, calc(100% - 32px));
   text-align: center;
 }
 
+.chat-alerts {
+  flex-shrink: 0;
+}
+
+.chat-alerts:empty {
+  display: none;
+}
+
 /* A phone's chat scrolls the page: the alerts stay on screen just under the fixed header, on the page's
    white over the chat. */
 @media (max-width: 640px) {
-  .chat-alerts {
+  .chat-alerts:not(:empty) {
     position: sticky;
-    top: var(--chat-header-height);
+    top: calc(var(--chat-header-height) + var(--viewport-top, 0px));
     z-index: var(--layer-bar);
     display: flow-root;
     background: var(--color-white);

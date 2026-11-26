@@ -227,7 +227,7 @@
   }
 
   /* The scroll view, CopilotKit's first child of the chat; the composer, its sibling, stays crisp. */
-  .chat-header + :is(.app-chat, .artifact-layout) .copilotKitChat > :first-child {
+  :is(.chat-header, .chat-header + :where(.chat-alerts:empty)) + :is(.app-chat, .artifact-layout) .copilotKitChat > :first-child {
     -webkit-mask-image: linear-gradient(to bottom, transparent 16px, var(--color-white) var(--chat-header-height));
     mask-image: linear-gradient(to bottom, transparent 16px, var(--color-white) var(--chat-header-height));
   }

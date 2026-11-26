@@ -54,6 +54,7 @@ async function titled(frame: DriverFrame, name: string, path: readonly string[])
 
 const screen = process.env.STORYBOOK_SCREEN ?? 'desktop';
 const visual = process.env.STORYBOOK_VISUAL_COMPARE === '1';
+const storyRuleNames: string[] = JSON.parse(process.env.STORYBOOK_RULE_NAMES ?? '[]');
 
 class VisualSequencer extends BaseSequencer {
   override sort(files: TestSpecification[]) {
@@ -91,7 +92,7 @@ export default defineConfig({
   plugins: [
     storybookTest({
       configDir: path.resolve(appRoot, '.storybook'),
-      tags: visual ? { include: ['visual'] } : { exclude: ['visual'] },
+      tags: visual ? { include: storyRuleNames.length ? ['visual', 'pre-merge'] : ['visual'] } : { exclude: ['visual'] },
       initialGlobals: { viewport: { value: visual ? null : screen, isRotated: false } },
     }).then(plugins => {
       const storyTests = plugins.find(plugin => plugin.name === 'vite-plugin-storybook-test');
@@ -117,6 +118,7 @@ export default defineConfig({
       screen,
       renderingProfile: profile,
       visualCompare: visual,
+      storyRuleNames,
       ...(visual ? { [STORYBOOK_TEST_PROVIDE_KEY]: { a11y: false } } : {}),
       renderingTrace: Boolean(traceMatcher),
     },

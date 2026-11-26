@@ -65,7 +65,7 @@
 }
 
 /* Right under the agent's header, which floats over the chat, the first message starts below it. */
-.chat-header + :is(.app-chat, .artifact-layout) .copilotKitMessages {
+:is(.chat-header, .chat-header + :where(.chat-alerts:empty)) + :is(.app-chat, .artifact-layout) .copilotKitMessages {
   padding-top: calc(var(--chat-header-height) + var(--space-8));
 }
 
