@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import ssl
 import time
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -37,6 +37,7 @@ class CredentialServiceSettings:
     invocation_secret: Callable[[], str]
     # Trusted deployment owner for Plan Usage; other providers remain unrestricted.
     plan_usage_owner_account_id: str = ''
+    erase_product_account: Callable[[str], Awaitable[None]] | None = None
 
 
 def plan_usage_owner(config: Mapping[str, Any]) -> str:
@@ -104,6 +105,15 @@ def _check_ca_bundle(config: Config) -> None:
             raise RuntimeError(f'caBundle {path}: {error}') from None
 
 
+async def _erase_account(
+    account_id: str, providers: Sequence[CredentialProvider[Any]], settings: CredentialServiceSettings,
+) -> None:
+    for provider in providers:
+        await provider.revoke(account_id)
+    if settings.erase_product_account is not None:
+        await settings.erase_product_account(account_id)
+
+
 def create_app(
     settings: CredentialServiceSettings, providers: Sequence[CredentialProvider[Any]], *, config: Config,
 ) -> FastAPI:
@@ -144,8 +154,7 @@ def create_app(
     async def revoke_account(request: Request) -> dict[str, str]:
         """Account deletion: revoke the account at every provider, so no Durable Credential outlives it."""
         invocation = guard.verify_request(request, CREDENTIAL_REVOCATION_SCOPE)
-        for provider in providers:
-            await provider.revoke(invocation.account_id)
+        await _erase_account(invocation.account_id, providers, settings)
         return {'status': 'revoked'}
 
     @app.post('/account/linked-accounts')
