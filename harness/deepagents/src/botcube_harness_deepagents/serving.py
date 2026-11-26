@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from time import perf_counter, time_ns
-from typing import Any, Literal, NamedTuple, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeGuard, cast
 
 from ag_ui.core import (
     CustomEvent,
@@ -39,6 +39,9 @@ from ag_ui_langgraph import LangGraphAgent
 from deepagents.backends import LocalShellBackend
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from httpx2 import Auth
+from httpx2 import Request as HTTPRequest
+from httpx2 import Response as HTTPResponse
 from langgraph.checkpoint.base import CheckpointTuple
 from langgraph.store.memory import InMemoryStore
 from opentelemetry import trace
@@ -97,7 +100,11 @@ from .prompt_cache_observability import (
 )
 from .proxy_relay import shell_proxy_environment
 from .scheduled_tasks import propose_scheduled_task
-from .session_agent import AnsweredToolResultsMiddleware, SessionAgent
+from .session_agent import (
+    AnsweredToolResultsMiddleware,
+    SessionAgent,
+    connector_turn_token,
+)
 from .session_format import (
     SessionFormatLegacyError,
     latest_checkpoint,
@@ -119,6 +126,13 @@ from .turn_lifecycle import (
 from .turn_lifecycle import error_code as _error_code
 from .turn_lifetime import invocation_deadline
 from .turn_memory import TurnFeedError
+
+if TYPE_CHECKING:
+    from botcube_config.generated.resolved_config_types import (
+        ConfigIntegrationsConnectorGateway,
+    )
+    from fastmcp import FastMCP
+    from langchain_core.tools import BaseTool
 
 log = logging.getLogger(__name__)
 AGENT_SYSTEM_PROMPT = """You are the user's own agent, with your own computer, Files and schedule.
@@ -191,6 +205,7 @@ class HarnessBot:
     default_model: str | None = None
     models: Mapping[str, BotModel] = field(default_factory=dict)
     written_memory: bool = False
+    connector_gateway: ConfigIntegrationsConnectorGateway | None = None
 
 
 _bot: HarnessBot | None = None
@@ -236,6 +251,7 @@ def configure_harness_definition(definition: HarnessDefinition, default_model: s
             default_model=default_model,
             models=definition.models,
             written_memory=definition.written_memory,
+            connector_gateway=deployed_config()['config']['integrations'].get('connectorGateway'),
         )
     )
 
@@ -330,6 +346,29 @@ def _workspace() -> Path:
     return root
 
 
+class _ConnectorAuth(Auth):
+    def auth_flow(self, request: HTTPRequest) -> Generator[HTTPRequest, HTTPResponse, None]:
+        if (token := connector_turn_token.get()) is None:
+            raise TurnIdentityError('The Connector Gateway requires a Turn token')
+        request.headers['Authorization'] = f'Bearer {token}'
+        yield request
+
+
+async def _connector_tools(url: str, headers: dict[str, str] | None) -> tuple[FastMCP, list[BaseTool]]:
+    from fastmcp import Client
+    from fastmcp.client.transports import StreamableHttpTransport
+    from fastmcp.server import create_proxy
+    from fastmcp.server.transforms.search import BM25SearchTransform
+    from langchain.mcp import as_langchain_tool
+
+    proxy = create_proxy(Client(StreamableHttpTransport(url, headers=headers, auth=_ConnectorAuth())))
+    search = BM25SearchTransform()
+    proxy.add_transform(search)
+    client = Client(proxy)
+    definitions = await search.transform_tools(())
+    return proxy, [await as_langchain_tool(tool.to_mcp_tool(), client) for tool in definitions]
+
+
 def _get_agent(
     *,
     actor_id: str,
@@ -413,6 +452,10 @@ def _get_agent(
             message_times.MessageTimesMiddleware(),
         ]
         tools: list[Any] = [] if scheduled_run else [propose_scheduled_task]
+        connector_gateway = None
+        if gateway := bot.connector_gateway:
+            connector_gateway, connector_tools = asyncio.run(_connector_tools(gateway['url'], gateway.get('headers')))
+            tools.extend(connector_tools)
         if syncs_files:
             tools.append(artifact_tool(root, bot.skills))
         if persistent_memory:
@@ -452,7 +495,7 @@ def _get_agent(
         }
         identity: dict[str, Any] = {'name': bot.agent_name}  # pragma: no mutate: the name is never read
         with turn_timing.phase('stream_adapter'):
-            agent = SessionAgent(**identity, graph=graph, config=config)
+            agent = SessionAgent(**identity, graph=graph, config=config, connector_gateway=connector_gateway)
         _AGENTS[key] = agent
         _BACKEND_BY_AGENT[agent] = backend
         return agent
@@ -559,7 +602,8 @@ async def _turn_agent(
         if initial is not None:
             await initial
         graph = agent.graph.copy({'checkpointer': saver, 'store': store if persistent_memory else None})
-        return SessionAgent(name=agent.name, graph=graph, config=agent.config), backend
+        return SessionAgent(name=agent.name, graph=graph, config=agent.config,
+                            connector_gateway=getattr(agent, 'connector_gateway', None)), backend
     except BaseException:
         if initial is not None:
             await asyncio.gather(initial, return_exceptions=True)

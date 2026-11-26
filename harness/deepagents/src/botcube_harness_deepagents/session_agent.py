@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
+from contextvars import ContextVar
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from ag_ui.core import (
     EventType,
@@ -27,17 +29,28 @@ from langchain.agents.middleware.types import (
     ModelRequest,
     ModelResponse,
 )
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.messages.content import ReasoningContentBlock
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import TypeAdapter
 
 from . import message_times, turn_timing
-from .conversation import OPENING_INSTRUCTION, conversation, reasoning_chunk
+from .conversation import (
+    OPENING_INSTRUCTION,
+    connector_activity,
+    conversation,
+    reasoning_chunk,
+)
 from .graph_stream import answering_model_step, clock_events, drain_after_answer
 from .invocation import Invocation, InvocationOptions
 from .turn_lifecycle import error_code, observe_reply_model
+
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
+
+
+connector_turn_token: ContextVar[str | None] = ContextVar('connector_turn_token', default=None)
 
 log = logging.getLogger(f'{__package__}.serving')
 
@@ -62,7 +75,7 @@ class SessionAgent(LangGraphAgent):
     _graph_stream: Any = None
     _asked: int | None = None
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, *, connector_gateway: FastMCP | None = None, **kwargs: Any) -> None:
         # The graph's raw events carry the Session's transcript, which no client reads; skip
         # building and JSON-converting them for every streamed event.
         kwargs.setdefault('emit_raw_events', False)
@@ -71,13 +84,15 @@ class SessionAgent(LangGraphAgent):
         self._thinking: dict[str, _Thinking] = {}
         self._early_answer = False
         self._used_tools = False
+        self.connector_gateway = connector_gateway
+        self._gateway_discovery: asyncio.Task[Any] | None = None
+        self._connector_calls: dict[str, str] = {}
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[Any, None]:
         self._asked = None
         self._used_tools = False
         try:
-            source = super()._handle_stream_events(input)
-            timed = clock_events(source, lambda: self._model_lane, canonical=_invocation_options(input).worklog_clock == 1)
+            timed = self._turn_events(input)
             async with aclosing(timed) as events:
                 async for event in events:
                     if event.type == EventType.RUN_STARTED and self._asked is not None:
@@ -101,6 +116,28 @@ class SessionAgent(LangGraphAgent):
             if self._graph_stream is not None:
                 await self._graph_stream.aclose()
                 self._graph_stream = None
+
+    async def _turn_events(self, input: RunAgentInput) -> AsyncGenerator[Any, None]:
+        source = super()._handle_stream_events(input)
+        timed = clock_events(source, lambda: self._model_lane, canonical=_invocation_options(input).worklog_clock == 1)
+        if self.connector_gateway is None:
+            async with aclosing(timed) as events:
+                async for event in events:
+                    yield event
+            return
+        identity = input.turn_identity if isinstance(input, Invocation) else None
+        token = connector_turn_token.set(identity if isinstance(identity, str) else None)
+        try:
+            async with aclosing(connector_activity(timed, self._connector_calls)) as events:
+                async for event in events:
+                    yield event
+        finally:
+            if self._gateway_discovery is not None:
+                self._gateway_discovery.cancel()
+                await asyncio.gather(self._gateway_discovery, return_exceptions=True)
+                self._gateway_discovery = None
+            self._connector_calls.clear()
+            connector_turn_token.reset(token)
 
     def _close_thoughts(self) -> list[Any]:
         events = []
@@ -225,6 +262,8 @@ class SessionAgent(LangGraphAgent):
         )
 
     async def _model_output(self, event: Any, state: Any, lane: str, thought: _Thinking | None) -> AsyncGenerator[Any, None]:
+        if self.connector_gateway is not None:
+            self._observe_connector_model(event)
         if event['event'] == 'on_chat_model_start' and thought is not None:
             for opened in self._thought_start(lane, thought):
                 yield opened
@@ -236,6 +275,18 @@ class SessionAgent(LangGraphAgent):
                     self._thinking.pop(lane)
                     thought = None
                 yield emitted
+
+    def _observe_connector_model(self, event: Any) -> None:
+        if event['event'] == 'on_chat_model_start':
+            return
+        if self.connector_gateway is not None and connector_turn_token.get() and self._gateway_discovery is None:
+            self._gateway_discovery = asyncio.create_task(self.connector_gateway.list_tools())
+        chunk = event['data'].get('chunk')
+        if not isinstance(chunk, AIMessageChunk):
+            return
+        for call in chunk.tool_call_chunks:
+            if call.get('name') == 'call_tool' and (call_id := call.get('id')) and (args := call.get('args')):
+                self._connector_calls[self._resolve_public_tool_call_id(call_id)] = args
 
     def _current_lane(self) -> str:
         return self._model_lane or super()._current_lane()

@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from typing import Any
 
-from ag_ui.core import Message, ReasoningMessage
+from ag_ui.core import (
+    EventType,
+    Message,
+    ReasoningMessage,
+    ToolCallArgsEvent,
+    ToolCallStartEvent,
+)
 from ag_ui_langgraph.utils import langchain_messages_to_agui
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.messages.content import ReasoningContentBlock
@@ -32,6 +41,47 @@ def conversation(messages: list[BaseMessage]) -> list[dict[str, Any]]:
         for replayed in _replayed(message)
         if replayed.role != 'system'
     ]
+
+
+def connector_call(arguments: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    name, params = arguments.get('name'), arguments.get('arguments')
+    if isinstance(name, str) and name and (params is None or isinstance(params, dict)):
+        return name, params or {}
+    return None
+
+
+def connector_display(name: str, arguments: str) -> tuple[str, str]:
+    if name == 'call_tool':
+        try:
+            payload = json.loads(arguments)
+        except ValueError:
+            return name, arguments
+        if isinstance(payload, dict) and (call := connector_call(payload)):
+            return call[0], json.dumps(call[1])
+    return name, arguments
+
+
+async def connector_activity(source: AsyncGenerator[Any, None], completed: dict[str, str]) -> AsyncGenerator[Any, None]:
+    calls: dict[str, tuple[ToolCallStartEvent, list[str]]] = {}
+    async with aclosing(source):
+        async for event in source:
+            if event.type == EventType.TOOL_CALL_START and event.tool_call_name == 'call_tool':
+                calls[event.tool_call_id] = event, []
+                continue
+            if event.type == EventType.TOOL_CALL_ARGS and event.tool_call_id in calls:
+                calls[event.tool_call_id][1].append(event.delta)
+                continue
+            if event.type == EventType.TOOL_CALL_END and event.tool_call_id in calls:
+                start, deltas = calls.pop(event.tool_call_id)
+                streamed = ''.join(deltas)
+                prefix = completed.pop(event.tool_call_id, '')
+                name, arguments = connector_display(start.tool_call_name, streamed)
+                if name == 'call_tool' and prefix:
+                    name, arguments = connector_display(name, prefix + streamed)
+                start.tool_call_name = name
+                yield start
+                yield ToolCallArgsEvent(tool_call_id=event.tool_call_id, delta=arguments)
+            yield event
 
 
 def reasoning_blocks(message: AIMessage) -> list[ReasoningContentBlock]:
@@ -79,6 +129,10 @@ def _replayed(message: BaseMessage) -> list[Message]:
 
 
 def _timed_message(message: Message, times: dict[str, Any] | None, metadata: dict[str, Any]) -> Message:
+    if message.role == 'assistant' and message.tool_calls:
+        for call in message.tool_calls:
+            name, arguments = connector_display(call.function.name, call.function.arguments)
+            call.function.name, call.function.arguments = name, arguments
     if not metadata or message.role == 'reasoning':
         return message
     projected = message.model_copy(update={'metadata': metadata})

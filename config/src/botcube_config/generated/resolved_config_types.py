@@ -202,6 +202,11 @@ class ConfigIntegrationsProxy2(TypedDict):
     kind: Literal["none"]
 
 
+class ConfigIntegrationsConnectorGateway(TypedDict):
+    url: str
+    headers: NotRequired[dict[str, str]]
+
+
 class ConfigIntegrationsRelayProvidersValue(TypedDict):
     proxy: NotRequired[Literal["integrations.proxy"]]
 
@@ -214,6 +219,7 @@ class ConfigIntegrations(TypedDict):
     imageRegistry: ConfigIntegrationsImageRegistry
     telemetry: ConfigIntegrationsTelemetry1 | ConfigIntegrationsTelemetry2 | ConfigIntegrationsTelemetry3
     proxy: ConfigIntegrationsProxy1 | ConfigIntegrationsProxy2
+    connectorGateway: NotRequired[ConfigIntegrationsConnectorGateway]
     relayProviders: NotRequired[dict[str, ConfigIntegrationsRelayProvidersValue]]
 
 

@@ -13,7 +13,7 @@ dependencies = [
   "boto3>=1.43.108",
   "cryptography>=48.0.1",
   "deepagents==0.7.22",
-  "langchain>=1.4.3",
+  "langchain[mcp]>=1.4.7",
   "ag-ui-protocol>=1.0.0",
   "langchain-anthropic>=1.7.5",
   "langchain-aws>=1.8.0",
@@ -32,6 +32,8 @@ dependencies = [
   "zstandard>=0.25.0",
   "ruamel-yaml>=0.18,<0.19",
   "anyio>=4",
+  "fastmcp>=4.2.6",
+  "httpx2>=2.13.1",
 ]
 
 [project.scripts]

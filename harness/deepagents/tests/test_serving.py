@@ -60,7 +60,7 @@ from langgraph.checkpoint.base import empty_checkpoint
 from langgraph_checkpoint_aws import AgentCoreMemorySaver
 from openai import APIStatusError
 from PIL import Image, PngImagePlugin
-from starlette.types import Message
+from starlette.types import Message, Receive, Scope, Send
 
 from agentcore_fake import (
     MEMORY_ID,
@@ -218,7 +218,7 @@ def _text(content: str) -> ChatGenerationChunk:
     return ChatGenerationChunk(message=AIMessageChunk(content=content, usage_metadata=usage))
 
 
-def _call(name: str, args: Mapping[str, str], index: int) -> ChatGenerationChunk:
+def _call(name: str, args: Mapping[str, Any], index: int) -> ChatGenerationChunk:
     call = tool_call_chunk(name=name, args=json.dumps(args), id=f'call-{index}', index=0)
     return ChatGenerationChunk(message=AIMessageChunk(content='', tool_call_chunks=[call]))
 
@@ -4137,3 +4137,152 @@ def test_a_plan_turn_keeps_every_part_when_reasoning_items_restart_the_summary_i
     thoughts = [message for message in replay if message['role'] == 'reasoning']
     assert [message['content'] for message in thoughts] == expected
     assert [message['id'] for message in thoughts] == list(streamed)
+
+
+@pytest.fixture
+def connector_deployment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    deploy(monkeypatch, tmp_path, integrations={'connectorGateway': {
+        'url': 'https://gateway.example/mcp', 'headers': {'X-Deployment': 'test'},
+    }})
+
+
+@pytest.mark.parametrize(('model_id', 'outcome'), [
+    ('us.anthropic.claude-sonnet-4-6', 'answer'),
+    ('deepseek.v3.2', 'answer'),
+    ('gpt-6', 'answer'),
+    ('gpt-6', 'parallel'),
+])
+def test_a_turn_searches_and_calls_a_connector_with_its_own_token(
+    connector_deployment: None, service: _Service, monkeypatch: pytest.MonkeyPatch, model_id: str, outcome: str,
+) -> None:
+    from fastmcp import FastMCP
+    from fastmcp.client.transports import StreamableHttpTransport
+    from fastmcp.server.dependencies import get_http_headers
+
+    gateway = FastMCP('test gateway')
+    tool_lists: list[str] = []
+    called: list[tuple[str, str, str]] = []
+    model_requests: list[str] = []
+    gateway_requests = 0
+
+    @gateway.tool
+    def get_weather(city: str) -> str:
+        """Return the weather for a city."""
+        headers = get_http_headers(include_all=True)
+        called.append((headers['authorization'], headers['x-deployment'], city))
+        return f'{city}: 19 C'
+
+    app = gateway.http_app(stateless_http=True, json_response=True)
+    initialize_transport = StreamableHttpTransport.__init__
+
+    async def count_gateway_request(scope: Scope, receive: Receive, send: Send) -> None:
+        nonlocal gateway_requests
+        gateway_requests += 1
+        await app(scope, receive, send)
+
+    async def gateway_request(request: httpx2.Request) -> None:
+        if request.method == 'POST' and json.loads(request.content)['method'] == 'tools/list':
+            tool_lists.append(request.headers['authorization'])
+
+    def gateway_client(
+        headers: dict[str, str] | None = None,
+        timeout: httpx2.Timeout | None = None,
+        auth: httpx2.Auth | None = None,
+        **options: Any,
+    ) -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(
+            headers=headers, timeout=timeout, auth=auth, transport=httpx2.ASGITransport(app=count_gateway_request),
+            event_hooks={'request': [gateway_request]}, **options,
+        )
+
+    def use_gateway(transport: StreamableHttpTransport, *args: Any, **kwargs: Any) -> None:
+        initialize_transport(transport, *args, **kwargs, httpx_client_factory=gateway_client)
+
+    monkeypatch.setattr(StreamableHttpTransport, '__init__', use_gateway)
+
+    def assert_gateway_idle() -> None:
+        assert gateway_requests == 0
+
+    model = _connector_model(model_id, model_requests, assert_gateway_idle, parallel=outcome == 'parallel')
+    monkeypatch.setattr(serving, 'build_model', lambda **_: model)
+    assert service.client.portal is not None
+    with service.client.portal.wrap_async_context_manager(app.lifespan(app)):
+        for nonce in ('first', 'second'):
+            jwt = turn_identity('actor-1', 'user-1', nonce=nonce)
+            events = service.turn('What is the weather in Paris?', turnIdentity=jwt, run_id=nonce, message=nonce, worklog_clock=1)
+            assert _said(events) == 'Paris: 19 C', events[-1]
+            assert called[-1] == (f'Bearer {jwt}', 'test', 'Paris')
+            assert f'Bearer {jwt}' in tool_lists
+            _assert_connector_activity(events, count=2 if outcome == 'parallel' else 1)
+        assert len(set(model_requests)) == 1
+        names = [tool.get('function', tool.get('toolSpec', {})).get('name') for tool in json.loads(model_requests[0])]
+        assert {'search_tools', 'call_tool'} <= set(names)
+        assert 'get_weather' not in names
+
+
+def _assert_connector_activity(events: list[dict[str, Any]], *, count: int) -> None:
+    assert [e['toolCallName'] for e in events if e['type'] == 'TOOL_CALL_START'] == ['search_tools', *['get_weather'] * count]
+    assert [e['delta'] for e in events if e['type'] == 'TOOL_CALL_ARGS' and 'Paris' in e['delta']] == ['{"city": "Paris"}'] * count
+
+
+def _connector_model(
+    model_id: str, requests: list[str], assert_gateway_idle: Callable[[], None], *, parallel: bool,
+) -> BaseChatModel:
+    def reply(last: Any) -> tuple[str, dict[str, Any]]:
+        step = (len(requests) - 1) % 3
+        if step == 0:
+            if len(requests) == 1:
+                assert_gateway_idle()
+            return 'search_tools', {'query': 'weather'}
+        if step == 1:
+            assert 'get_weather' in str(last) and 'city' in str(last)
+            return 'call_tool', {'name': 'get_weather', 'arguments': {'city': 'Paris'}}
+        assert 'Paris: 19 C' in str(last), last
+        return '', {}
+
+    class Bedrock(DelegatingBedrockClient):
+        def converse(self, **kwargs: Any) -> dict[str, Any]:
+            requests.append(json.dumps(kwargs['toolConfig']['tools']))
+            name, arguments = reply(kwargs['messages'][-1])
+            content = ([{'toolUse': {'toolUseId': f'call-{len(requests)}', 'name': name, 'input': arguments}}]
+                       if name else [{'text': 'Paris: 19 C'}])
+            return {'output': {'message': {'role': 'assistant', 'content': content}},
+                    'stopReason': 'tool_use' if name else 'end_turn',
+                    'usage': {'inputTokens': 10, 'outputTokens': 10, 'totalTokens': 20}, 'metrics': {'latencyMs': 1}}
+
+    if model_id == 'gpt-6':
+        return _connector_openai_model(model_id, requests, reply, parallel=parallel)
+    return fake_bedrock_model(Bedrock(), model_id, streaming=True)
+
+
+def _connector_openai_model(
+    model_id: str, requests: list[str], reply: Callable[[Any], tuple[str, dict[str, Any]]], *, parallel: bool,
+) -> BaseChatModel:
+    from langchain_openai import ChatOpenAI
+    from pydantic import SecretStr
+
+    async def openai(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        requests.append(json.dumps(body['tools']))
+        name, arguments = reply(body['messages'][-1])
+        count = 2 if parallel and name == 'call_tool' else 1
+        calls = [
+            {'index': index, 'id': f'call-{len(requests)}-{index}', 'type': 'function',
+             'function': {'name': name, 'arguments': json.dumps(arguments)}}
+            for index in range(count)
+        ]
+        delta = {'tool_calls': calls} if name else {'content': 'Paris: 19 C'}
+        chunks = [
+            {'index': 0, 'delta': {'role': 'assistant'}, 'finish_reason': None},
+            {'index': 0, 'delta': delta, 'finish_reason': None},
+            {'index': 0, 'delta': {}, 'finish_reason': 'tool_calls' if name else 'stop'},
+        ]
+        frame = {'id': f'reply-{len(requests)}', 'object': 'chat.completion.chunk', 'model': model_id, 'created': 0}
+        events = ''.join(
+            f'data: {json.dumps({**frame, "choices": [choice]})}\n\n'
+            for choice in chunks
+        )
+        return httpx2.Response(200, text=events + 'data: [DONE]\n\n', headers={'content-type': 'text/event-stream'})
+
+    return ChatOpenAI(model=model_id, api_key=SecretStr('test'), use_responses_api=False, streaming=True, max_retries=0,
+                      http_async_client=httpx2.AsyncClient(transport=httpx2.MockTransport(openai)))

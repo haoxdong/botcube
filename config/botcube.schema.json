@@ -636,6 +636,24 @@
             }
           ]
         },
+        "connectorGateway": {
+          "description": "The Connector Gateway receives the User's existing Turn token.",
+          "type": "object",
+          "properties": {
+            "url": { "type": "string", "format": "uri" },
+            "headers": {
+              "description": "Headers sent on every request, such as a tenant or routing header a gateway requires; never a secret.",
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+              },
+              "additionalProperties": { "type": "string" }
+            }
+          },
+          "required": ["url"],
+          "additionalProperties": false
+        },
         "harnessAuth": {
           "default": { "kind": "sigv4" },
           "oneOf": [

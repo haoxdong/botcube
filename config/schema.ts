@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { HarnessAuth, TokenAudiences } from './seams.js';
 import { commandFields, credentialFields } from 'botcube-config/credential-fields';
 import { proxiedFields } from 'botcube-config/proxied-fields';
-import { absolutePath, credentialSource, endpointHeaders, endpointTls, forwardProxy, gatewayModels, modelProvider, proxyReference, relayProviders, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource } from 'botcube-config/blocks';
+import { absolutePath, credentialSource, endpoint, endpointHeaders, endpointTls, forwardProxy, gatewayModels, modelProvider, proxyReference, relayProviders, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource } from 'botcube-config/blocks';
 import { existing } from 'botcube-config/existing';
 import { agentCore, alarms, cloudflare, deploymentKeys, natGateways, openEgress, parking, publicIp, RETIRED_FILES, services } from 'botcube-config/deployment';
 import { imageRegistry } from 'botcube-config/images';
@@ -216,6 +216,8 @@ export const configSections = z.strictObject({
   integrations: z.strictObject({
     signIn: identity.default({ kind: 'botcube-accounts' }).describe('How Users sign in.'),
     modelGateway: models.default({ kind: 'bedrock' }).describe('Where models run.'),
+    connectorGateway: endpoint.pick({ url: true, headers: true }).optional()
+      .describe("The Connector Gateway receives the User's existing Turn token."),
     harnessAuth: harnessAuth.prefault({ kind: 'sigv4' }),
     awsAccess: awsAccess.default({ kind: 'web-identity' }),
     imageRegistry,
