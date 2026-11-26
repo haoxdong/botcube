@@ -17,11 +17,16 @@ from botcube_credential_source import (
     CredentialSourceError,
     credential_source,
 )
+from botcube_endpoint_tls.endpoint_tls import (
+    EndpointTls,
+    EndpointTlsError,
+    endpoint_tls,
+    tls_network_backend,
+)
 from fastapi import APIRouter, HTTPException, WebSocket
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .cookies import stateless_http_client
-from .endpoint_tls import EndpointTls, EndpointTlsError, endpoint_tls
 from .proxy_relay import proxy_url_from_config
 
 if TYPE_CHECKING:
@@ -70,7 +75,7 @@ def models_provider_from_config(
         routes[provider] = ProviderRoute(route['url'], route['headers'], credentials[seam])
     tls = endpoint_tls('models', models['tls'], env=env) if 'tls' in models else None
     if tls is not None:
-        tls.context()
+        tls.validate_client_certificate()
     return ModelsEndpointProvider(routes, audit=audit, transport=transport, tls=tls, proxy=proxy)
 
 
@@ -199,7 +204,7 @@ class _EndpointTransport(httpx.AsyncBaseTransport):
         self._pool = httpcore.AsyncConnectionPool(
             ssl_context=endpoint_context,
             proxy=_proxy(proxy),
-            network_backend=_TlsBackend(_anyio_backend(), tls, endpoint_context),
+            network_backend=tls_network_backend(tls, endpoint_context),
         )
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
@@ -215,13 +220,6 @@ class _EndpointTransport(httpx.AsyncBaseTransport):
 
     async def aclose(self) -> None:
         await self._pool.aclose()
-
-
-def _anyio_backend() -> httpcore.AsyncNetworkBackend:
-    backend = httpcore.AnyIOBackend()
-    if not isinstance(backend, httpcore.AsyncNetworkBackend):
-        raise RuntimeError('httpcore has no anyio backend')
-    return backend
 
 
 def _proxy(address: str | None) -> httpcore.Proxy | None:
@@ -275,60 +273,3 @@ def _httpx_errors() -> Generator[None]:
         if mapped is None:
             raise
         raise mapped(str(error)) from error
-
-
-class _TlsBackend(httpcore.AsyncNetworkBackend):
-    def __init__(self, inner: httpcore.AsyncNetworkBackend, tls: EndpointTls, endpoint_context: ssl.SSLContext) -> None:
-        self._inner = inner
-        self._tls = tls
-        self._endpoint_context = endpoint_context
-
-    async def connect_tcp(
-        self, host: str, port: int, timeout: float | None = None, local_address: str | None = None, socket_options: Any = None,
-    ) -> httpcore.AsyncNetworkStream:
-        stream = await self._inner.connect_tcp(host, port, timeout=timeout, local_address=local_address, socket_options=socket_options)
-        return _TlsStream(stream, self._tls, self._endpoint_context)
-
-    async def connect_unix_socket(self, path: str, timeout: float | None = None, socket_options: Any = None) -> httpcore.AsyncNetworkStream:
-        return await self._inner.connect_unix_socket(path, timeout=timeout, socket_options=socket_options)
-
-    async def sleep(self, seconds: float) -> None:
-        await self._inner.sleep(seconds)
-
-
-class _TlsStream(httpcore.AsyncNetworkStream):
-    """A connection whose handshake with the Endpoint presents the certificate as read now and checks the identity, before any request byte."""
-
-    def __init__(self, inner: httpcore.AsyncNetworkStream, tls: EndpointTls, endpoint_context: ssl.SSLContext) -> None:
-        self._inner = inner
-        self._tls = tls
-        self._endpoint_context = endpoint_context
-
-    async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
-        return await self._inner.read(max_bytes, timeout)
-
-    async def write(self, buffer: bytes, timeout: float | None = None) -> None:
-        await self._inner.write(buffer, timeout)
-
-    async def aclose(self) -> None:
-        await self._inner.aclose()
-
-    def get_extra_info(self, info: str) -> Any:
-        return self._inner.get_extra_info(info)
-
-    async def start_tls(self, ssl_context: ssl.SSLContext, server_hostname: str | None = None, timeout: float | None = None) -> httpcore.AsyncNetworkStream:
-        if ssl_context is not self._endpoint_context:
-            return _TlsStream(await self._inner.start_tls(ssl_context, server_hostname, timeout), self._tls, self._endpoint_context)
-        try:
-            context = await anyio.to_thread.run_sync(self._tls.context)
-        except EndpointTlsError as error:
-            await self._inner.aclose()
-            raise httpcore.ConnectError(str(error)) from error
-        context.set_alpn_protocols(['http/1.1'])
-        stream = await self._inner.start_tls(context, server_hostname, timeout)
-        try:
-            self._tls.check(stream.get_extra_info('ssl_object'))
-        except EndpointTlsError as error:
-            await stream.aclose()
-            raise httpcore.ConnectError(str(error)) from error
-        return stream

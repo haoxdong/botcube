@@ -7,6 +7,7 @@ RUN --mount=type=secret,id=build_ca \
 COPY config/pyproject.toml config/bot.schema.json /opt/config/
 COPY config/src/ /opt/config/src/
 COPY credential-source/ /opt/credential-source/
+COPY endpoint-tls/ /opt/endpoint-tls/
 COPY credential-service/ /opt/credential-service/
 WORKDIR /opt/credential-service
 RUN --mount=type=secret,id=build_ca \

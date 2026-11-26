@@ -9,13 +9,13 @@ import { createServer, getCACertificates, setDefaultCACertificates, type Server,
 export const SERVER_IDENTITY = 'spiffe://example.org/ns/egress/sa/proxy';
 export const IMPOSTOR_IDENTITY = 'spiffe://example.org/ns/other/sa/impostor';
 /** One URI SAN whose text embeds the expected identity, which Node prints JSON-quoted (CVE-2021-44532). */
-export const SPOOFED_URI = `spiffe://example.org/x, URI:${SERVER_IDENTITY}`;
+const SPOOFED_URI = `spiffe://example.org/x, URI:${SERVER_IDENTITY}`;
 
 export interface MtlsCertificates {
   readonly dir: string;
   readonly authority: string;
   /** Each certificate's PEM chain and key file paths, by name. */
-  readonly files: Record<'server' | 'impostor' | 'spoof' | 'untrusted' | 'clientA' | 'clientB', { certificate: string; key: string }>;
+  readonly files: Record<'server' | 'impostor' | 'spoof' | 'localhost' | 'untrusted' | 'clientA' | 'clientB', { certificate: string; key: string }>;
   pem(name: keyof MtlsCertificates['files']): { cert: string; key: string };
   /** Remove the files. */
   remove(): void;
@@ -42,11 +42,12 @@ export function mtlsCertificates(): MtlsCertificates {
   writeFileSync(join(dir, 'spoof.ext'), `extendedKeyUsage=serverAuth\nsubjectAltName=@alt\n[alt]\nURI.1 = ${SPOOFED_URI}\n`);
   openssl(dir, 'req', '-new', ...EC.slice(0, -2), '-subj', '/CN=spoof', '-keyout', 'spoof.key', '-out', 'spoof.csr');
   openssl(dir, 'x509', '-req', '-in', 'spoof.csr', '-CA', 'ca.pem', '-CAkey', 'ca.key', '-CAcreateserial', '-days', '1', '-extfile', 'spoof.ext', '-out', 'spoof.pem');
+  leaf('localhost', 'localhost', 'IP:127.0.0.1', 'serverAuth');
   leaf('clientA', 'client-a', 'URI:spiffe://example.org/ns/botcube/sa/chat', 'clientAuth');
   leaf('clientB', 'client-b', 'URI:spiffe://example.org/ns/botcube/sa/chat', 'clientAuth');
   openssl(dir, 'req', '-x509', ...EC, '-subj', '/CN=untrusted', '-addext', `subjectAltName=URI:${SERVER_IDENTITY}`, '-keyout', 'untrusted.key', '-out', 'untrusted.pem');
   const pair = (name: string) => ({ certificate: join(dir, `${name}.pem`), key: join(dir, `${name}.key`) });
-  const files = { server: pair('server'), impostor: pair('impostor'), spoof: pair('spoof'), untrusted: pair('untrusted'), clientA: pair('clientA'), clientB: pair('clientB') };
+  const files = { server: pair('server'), impostor: pair('impostor'), spoof: pair('spoof'), localhost: pair('localhost'), untrusted: pair('untrusted'), clientA: pair('clientA'), clientB: pair('clientB') };
   return {
     dir,
     authority: readFileSync(join(dir, 'ca.pem'), 'utf8'),
@@ -77,7 +78,7 @@ export class FakeMtlsProxy {
   readonly connections: { client: string | undefined; head: string }[] = [];
   private readonly server: Server;
 
-  constructor(certificates: MtlsCertificates, server: 'server' | 'impostor' | 'spoof' | 'untrusted' = 'server', private readonly routes: Readonly<Record<string, number>> = {}) {
+  constructor(certificates: MtlsCertificates, server: 'server' | 'impostor' | 'spoof' | 'localhost' | 'untrusted' = 'server', private readonly routes: Readonly<Record<string, number>> = {}) {
     this.server = createServer({ ...certificates.pem(server), ca: certificates.authority, requestCert: true, rejectUnauthorized: true }, (socket) => this.serve(socket));
     this.server.on('tlsClientError', () => undefined);
   }

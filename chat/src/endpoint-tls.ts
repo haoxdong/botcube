@@ -1,28 +1,100 @@
 import { X509Certificate } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { createSecureContext, type ConnectionOptions, type PeerCertificate } from 'node:tls';
+import { Agent, type RequestOptions } from 'node:https';
+import { isIP, Socket } from 'node:net';
+import type { Duplex } from 'node:stream';
+import { connect as tlsConnect, createSecureContext, type ConnectionOptions, type PeerCertificate, type TLSSocket } from 'node:tls';
+import { callbackify } from 'node:util';
 import { ALLOW_COMMAND_CREDENTIALS_ENV, type EndpointTls as EndpointTlsConfig } from 'botcube-config/blocks';
 import { z } from 'zod';
 import { refreshingAhead, stdoutOf } from './credential-source.js';
 
-/** The TLS options of one new connection; a key lives only here, never in an error or a log. */
-export type TlsConnectOptions = Pick<ConnectionOptions, 'cert' | 'key' | 'checkServerIdentity'>;
-
 export interface EndpointTls {
-  /** The client certificate as its source gives it now, and the check of the server's identity. */
-  connectOptions(): Promise<TlsConnectOptions>;
+  secure(stream: Socket | { host: string; port: number }, hostname: string): Promise<TLSSocket>;
+  agent(proxy: string | undefined, onError: (error: EndpointTlsError) => void): Agent;
 }
 
 export class EndpointTlsError extends Error {
   override name = 'EndpointTlsError';
 }
 
-export function endpointTls(seam: string, config: EndpointTlsConfig, { env = process.env }: { env?: NodeJS.ProcessEnv } = {}): EndpointTls {
-  const certificate = config.clientCertificate && clientCertificate(seam, config.clientCertificate, env);
-  const checkServerIdentity = config.serverIdentity === undefined ? undefined : identityCheck(seam, config.serverIdentity);
+export function endpointTls(seam: string, config?: EndpointTlsConfig, { env = process.env }: { env?: NodeJS.ProcessEnv } = {}): EndpointTls {
+  const certificate = config?.clientCertificate && clientCertificate(seam, config.clientCertificate, env);
+  const identity = config?.serverIdentity;
+  const checkServerIdentity = identity === undefined ? undefined : identityCheck(seam, identity);
+  const options = async () => ({
+    ...(certificate ? await certificate() : {}),
+    ...(checkServerIdentity ? { checkServerIdentity } : {}),
+    rejectUnauthorized: true,
+  });
+
+  class EndpointAgent extends Agent {
+    constructor(private readonly proxy: string | undefined, private readonly report: (error: EndpointTlsError) => void) {
+      super({ proxyEnv: { NODE_ENV: process.env.NODE_ENV, HTTPS_PROXY: proxy }, maxCachedSessions: 0 });
+    }
+
+    override createConnection(request: RequestOptions, callback?: (error: Error | null, socket: Duplex) => void): undefined {
+      if (callback) this.open(request, callback);
+      return undefined;
+    }
+
+    private readonly open = callbackify(async (request: RequestOptions): Promise<Duplex> => {
+      try {
+        const tls = await options();
+        if (this.proxy === undefined) {
+          const socket = super.createConnection({ ...request, ...tls });
+          if (!socket) throw new EndpointTlsError(`${seam} TLS: Node did not open a socket`);
+          return await verified(socket);
+        }
+        return await new Promise<Duplex>((resolve, reject) => {
+          // Node delivers the Endpoint's verified TLS socket after establishing CONNECT.
+          super.createConnection({ ...request, ...tls }, (error, tunnel) => {
+            if (error) {
+              tunnel.destroy();
+              reject(error);
+            } else {
+              resolve(tunnel);
+            }
+          });
+        });
+      } catch (error) {
+        if (error instanceof EndpointTlsError) this.report(error);
+        throw error;
+      }
+    });
+  }
+
   return {
-    connectOptions: async () => ({ ...(certificate ? await certificate() : {}), ...(checkServerIdentity ? { checkServerIdentity } : {}) }),
+    async secure(stream, hostname) {
+      try {
+        const connection = stream instanceof Socket ? { socket: stream, host: hostname } : stream;
+        return await verified(tlsConnect({ ...connection, ...(isIP(hostname) ? {} : { servername: hostname }), ...await options() }));
+      } catch (error) {
+        if (stream instanceof Socket) stream.destroy();
+        throw error;
+      }
+    },
+    agent: (proxy, onError) => new EndpointAgent(proxy, onError),
   };
+}
+
+function verified<T extends Duplex>(socket: T): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const failed = (error: Error) => {
+      cleanup();
+      socket.destroy();
+      reject(error);
+    };
+    const closed = () => failed(new Error('TLS connection closed before peer verification'));
+    const secured = () => {
+      cleanup();
+      resolve(socket);
+    };
+    const cleanup = () => {
+      socket.off('error', failed).off('close', closed).off('secureConnect', secured);
+    };
+    socket.once('error', failed).once('close', closed).once('secureConnect', secured);
+  });
 }
 
 type ClientCertificate = NonNullable<EndpointTlsConfig['clientCertificate']>;

@@ -10,8 +10,9 @@ from typing import Any, ClassVar
 
 import pytest
 from botcube_credential_source import credential_source
+from botcube_endpoint_tls import endpoint_tls
 
-from botcube_harness_deepagents import endpoint_tls, restore_prime
+from botcube_harness_deepagents import restore_prime
 from botcube_harness_deepagents.proxy_relay import (
     proxy_url_from_config,
     shell_proxy_environment,
@@ -187,9 +188,3 @@ def test_relay_reaches_a_proxy_signed_by_the_ca_bundle_after_the_snapshot_prime_
         relay = start_proxy_relay(upstream=proxy.url, listen=('127.0.0.1', 0), credential=None, headers={'x-egress-route': 'botcube'})
 
         assert mtls_fake.tunnel(relay) == b'HTTP/1.1 200 Connection Established\r\n\r\nhello'
-
-
-def test_endpoint_tls_is_byte_identical_to_the_credential_services_which_tests_it() -> None:
-    twin = Path(__file__).resolve().parents[3] / 'credential-service/src/botcube_credential_service/endpoint_tls.py'
-
-    assert Path(endpoint_tls.__file__).read_bytes() == twin.read_bytes()

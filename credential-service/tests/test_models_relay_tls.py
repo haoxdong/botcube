@@ -10,10 +10,10 @@ from threading import Thread
 from typing import Any, ClassVar
 
 import pytest
+from botcube_endpoint_tls.endpoint_tls import EndpointTlsError
 from fastapi.testclient import TestClient
 
 from botcube_credential_service.audit import CredentialAuditRecorder
-from botcube_credential_service.endpoint_tls import EndpointTlsError
 from botcube_credential_service.invocation import sign_credential_service_invocation
 from botcube_credential_service.models import models_provider_from_config
 from botcube_credential_service.server import CredentialServiceSettings, create_app

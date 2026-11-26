@@ -1,4 +1,4 @@
-"""The Credential Service's stand-in mTLS front and certificates, which the Harness's twin `endpoint_tls` shares."""
+"""The Credential Service's stand-in mTLS front and certificates, used by the Harness."""
 from __future__ import annotations
 
 import importlib.util

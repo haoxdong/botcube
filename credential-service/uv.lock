@@ -94,6 +94,7 @@ dependencies = [
     { name = "awslambdaric" },
     { name = "botcube-config" },
     { name = "botcube-credential-source" },
+    { name = "botcube-endpoint-tls" },
     { name = "boto3" },
     { name = "certifi" },
     { name = "cryptography" },
@@ -118,6 +119,7 @@ requires-dist = [
     { name = "awslambdaric", specifier = ">=4.2.3" },
     { name = "botcube-config", directory = "../config" },
     { name = "botcube-credential-source", directory = "../credential-source" },
+    { name = "botcube-endpoint-tls", editable = "../endpoint-tls" },
     { name = "boto3", specifier = ">=1.43.108" },
     { name = "certifi", specifier = ">=2026.7.22" },
     { name = "cryptography", specifier = ">=49.0.0" },
@@ -151,6 +153,27 @@ dependencies = [
 requires-dist = [
     { name = "boto3", specifier = ">=1.43.108" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "pydantic", specifier = ">=2" },
+]
+
+[[package]]
+name = "botcube-endpoint-tls"
+version = "0.1.0"
+source = { editable = "../endpoint-tls" }
+dependencies = [
+    { name = "anyio" },
+    { name = "botcube-credential-source" },
+    { name = "cryptography" },
+    { name = "httpcore" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anyio", specifier = ">=4" },
+    { name = "botcube-credential-source", directory = "../credential-source" },
+    { name = "cryptography", specifier = ">=48.0.1" },
+    { name = "httpcore", specifier = ">=1.0.9" },
     { name = "pydantic", specifier = ">=2" },
 ]
 

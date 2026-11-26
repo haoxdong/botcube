@@ -3,7 +3,8 @@ import { copyFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { FakeMtlsProxy, IMPOSTOR_IDENTITY, mtlsCertificates, SERVER_IDENTITY, SPOOFED_URI, trustCa } from '../test/fakes/mtls.js';
+import { z } from 'zod';
+import { FakeMtlsProxy, mtlsCertificates, SERVER_IDENTITY, trustCa } from '../test/fakes/mtls.js';
 import { endpointTls } from './endpoint-tls.js';
 import { startProxyRelay, type ProxyRelay } from './proxy-relay.js';
 
@@ -53,13 +54,45 @@ async function relayThrough(proxy: FakeMtlsProxy, tls: Parameters<typeof endpoin
 }
 
 describe('the proxy relay to a proxy with TLS', () => {
-  it.each(['127.0.0.1', '::1'] as const)('presents the client certificate and verifies the proxy URI identity on %s', async (host) => {
+  const vectors = z.array(z.object({
+    server: z.enum(['server', 'impostor', 'spoof', 'localhost', 'untrusted']),
+    identity: z.string().optional(),
+    result: z.enum(['verified', 'identity', 'handshake']),
+    presented: z.string().optional(),
+  })).parse(JSON.parse(readFileSync(new URL('../../tests/fixtures/endpoint-tls.json', import.meta.url), 'utf8')));
+
+  it('presents the client certificate and verifies the proxy URI identity over IPv6', async () => {
     const proxy = new FakeMtlsProxy(certificates);
-    const relay = await relayThrough(proxy, { clientCertificate: certificates.files.clientA, serverIdentity: SERVER_IDENTITY }, {}, host);
+    const relay = await relayThrough(proxy, { clientCertificate: certificates.files.clientA, serverIdentity: SERVER_IDENTITY }, {}, '::1');
 
     expect(await tunnel(relay)).toBe('HTTP/1.1 200 Connection Established\r\n\r\nhello');
     expect(proxy.clients()).toEqual(['client-a']);
     expect(proxy.hosts()).toEqual(['models.example.com:443']);
+  });
+
+  it.each(vectors)('verifies the $server certificate ($result)', async ({ server, identity, result, presented }) => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const proxy = new FakeMtlsProxy(certificates, server);
+    const relay = await relayThrough(proxy, {
+      clientCertificate: certificates.files.clientA,
+      ...(identity === undefined ? {} : { serverIdentity: identity }),
+    });
+
+    const answer = await tunnel(relay);
+    if (result === 'verified') {
+      expect(answer).toBe('HTTP/1.1 200 Connection Established\r\n\r\nhello');
+      expect(proxy.clients()).toEqual(['client-a']);
+      expect(proxy.hosts()).toEqual(['models.example.com:443']);
+    } else {
+      expect(proxy.connections).toEqual([]);
+      if (result === 'identity') {
+        expect(answer.split('\r\n')[0]).toBe('HTTP/1.1 502 Bad Gateway');
+        expect(answer).toContain(`expected server identity ${identity}, but the server presented ${presented}`);
+        expect(JSON.stringify([answer, errors.mock.calls])).not.toContain('PRIVATE KEY');
+      } else {
+        expect(answer).toBe('');
+      }
+    }
   });
 
   it('presents a certificate whose files were replaced on the next connection, without a restart', async () => {
@@ -107,40 +140,6 @@ describe('the proxy relay to a proxy with TLS', () => {
     expect(readFileSync(calls, 'utf8')).toBe('xx');
   });
 
-  it('refuses a proxy carrying another identity before sending it anything, naming the expected and received identities', async () => {
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const proxy = new FakeMtlsProxy(certificates, 'impostor');
-    const relay = await relayThrough(proxy, { clientCertificate: certificates.files.clientA, serverIdentity: SERVER_IDENTITY });
-
-    const answer = await tunnel(relay);
-
-    expect(answer.split('\r\n')[0]).toBe('HTTP/1.1 502 Bad Gateway');
-    expect(answer).toContain(`expected server identity ${SERVER_IDENTITY}, but the server presented ${IMPOSTOR_IDENTITY}`);
-    expect(proxy.connections).toEqual([]);
-    expect(JSON.stringify([answer, errors.mock.calls])).not.toContain('PRIVATE KEY');
-  });
-
-  it('refuses a proxy whose one URI SAN only embeds the expected identity in its text', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const proxy = new FakeMtlsProxy(certificates, 'spoof');
-    const relay = await relayThrough(proxy, { serverIdentity: SERVER_IDENTITY });
-
-    const answer = await tunnel(relay);
-
-    expect(answer.split('\r\n')[0]).toBe('HTTP/1.1 502 Bad Gateway');
-    expect(answer).toContain(`but the server presented ${SPOOFED_URI}`);
-    expect(proxy.connections).toEqual([]);
-  });
-
-  it("still verifies the proxy's chain: a certificate carrying the expected identity from outside the trust roots is refused", async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const proxy = new FakeMtlsProxy(certificates, 'untrusted');
-    const relay = await relayThrough(proxy, { serverIdentity: SERVER_IDENTITY });
-
-    expect(await tunnel(relay)).toBe('');
-    expect(proxy.connections).toEqual([]);
-  });
-
   it('listens without reading the client certificate, and answers the first connection 502 naming the file and no key', async () => {
     const missing = { certificate: certificates.files.clientA.certificate, key: join(certificates.dir, 'missing.key') };
     const relay = await startProxyRelay({
@@ -180,7 +179,7 @@ describe('a client certificate command', () => {
     writeFileSync(printed, JSON.stringify({ kind: 'ExecCredential', status: { token: 'not-a-certificate', clientKeyData: '-----BEGIN PRIVATE KEY-----' } }));
     const tls = endpointTls('proxy', { clientCertificate: { command: ['/bin/cat', printed], timeoutSeconds: 5 } }, { env: { BOTCUBE_ALLOW_COMMAND_CREDENTIALS: '1' } });
 
-    const failure = tls.connectOptions();
+    const failure = tls.secure({ host: '127.0.0.1', port: 9 }, 'localhost');
 
     await expect(failure).rejects.toThrow(
       'proxy client certificate (command /bin/cat): the command did not print a Kubernetes ExecCredential with status.clientCertificateData and status.clientKeyData',

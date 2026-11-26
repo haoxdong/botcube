@@ -13,22 +13,21 @@ import logging
 import os
 import socket
 import socketserver
-import ssl
 from collections.abc import Callable, Mapping
 from threading import Lock, Thread
 from typing import Any
 from urllib.parse import urlsplit
 
 from botcube_credential_source import CredentialSource, credential_source
-
-from . import aws_clients
-from .endpoint_tls import (
+from botcube_endpoint_tls.endpoint_tls import (
+    DEFAULT_TLS,
     EndpointTls,
     EndpointTlsError,
-    connect_proxy,
     endpoint_tls,
     refuse,
 )
+
+from . import aws_clients
 
 log = logging.getLogger(__name__)
 
@@ -91,12 +90,12 @@ def start_proxy_relay(
             try:
                 head, rest = _read_head(client)
                 authorization = f'Bearer {credential.get().value}' if credential else None
-                context = (tls.context() if tls else ssl.create_default_context()) if secure else None
             except Exception as error:
                 refuse(client, f'could not open a request through {upstream}', error)
                 return
             try:
-                proxy = connect_proxy(address, context, tls)
+                proxy = ((tls or DEFAULT_TLS).secure(lambda: socket.create_connection(address), address[0])
+                         if secure else socket.create_connection(address))
             except EndpointTlsError as error:
                 refuse(client, f'refused {upstream}', error)
                 return

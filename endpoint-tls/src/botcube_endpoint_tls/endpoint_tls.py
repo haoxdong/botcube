@@ -1,12 +1,4 @@
-"""An Endpoint's TLS (ADR 0091), the Python twin of botcube/chat's `endpoint-tls.ts`.
-
-botcube/harness/deepagents holds a byte-identical copy of botcube/credential-service's, where its behaviour is tested.
-
-Mounted certificates are read on each connection and command certificates are refreshed before expiry. The server
-identity, a URI or SPIFFE ID, is matched against the server certificate's URI SAN
-in place of its hostname; the chain is still verified against the trust roots. The environment carries only the
-certificate's paths or command: a key printed by a command lives in an anonymous file only while it is loaded.
-"""
+"""Client TLS for BotCube Endpoints (ADR 0091)."""
 from __future__ import annotations
 
 import contextlib
@@ -15,9 +7,12 @@ import os
 import socket
 import ssl
 from collections.abc import Callable, Generator, Mapping
+from threading import Lock
 from time import time
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
+import anyio
+import httpcore
 from botcube_credential_source import (
     ALLOW_COMMAND_CREDENTIALS_ENV,
     Credential,
@@ -75,12 +70,15 @@ class EndpointTlsError(RuntimeError):
 
 
 class EndpointTls:
-    def __init__(self, seam: str, config: TlsConfig, env: Mapping[str, str]) -> None:
+    def __init__(self, seam: str, config: TlsConfig | None, env: Mapping[str, str]) -> None:
         self._seam = seam
-        self._expected = config.server_identity
-        self._load = _certificate_loader(seam, config.client_certificate, env)
+        self._expected = config.server_identity if config else None
+        self._load = _certificate_loader(seam, config.client_certificate, env) if config else None
 
-    def context(self, base: Callable[[], ssl.SSLContext] = ssl.create_default_context) -> ssl.SSLContext:
+    def validate_client_certificate(self) -> None:
+        self._context()
+
+    def _context(self, base: Callable[[], ssl.SSLContext] = ssl.create_default_context) -> ssl.SSLContext:
         """A context for one new connection: `base`'s trust roots, the client certificate as read now, and no hostname check under an identity."""
         context = base()
         if self._expected is not None:
@@ -90,7 +88,7 @@ class EndpointTls:
             self._load(context)
         return context
 
-    def check(self, peer: ssl.SSLSocket | ssl.SSLObject) -> None:
+    def _check(self, peer: ssl.SSLSocket | ssl.SSLObject) -> None:
         """Refuse a server whose certificate does not carry the expected identity; call after the handshake, before sending."""
         if self._expected is None:
             return
@@ -100,6 +98,85 @@ class EndpointTls:
             raise EndpointTlsError(
                 f'{self._seam} TLS: expected server identity {self._expected}, but the server presented {", ".join(received) or "no URI identity"}',
             )
+
+
+    def secure(self, stream: socket.socket | Callable[[], socket.socket], hostname: str | bytes | None) -> ssl.SSLSocket:
+        """Upgrade a connected stream or open it lazily. Return it only after peer verification."""
+        try:
+            context = self._context()
+        except BaseException:
+            if isinstance(stream, socket.socket):
+                stream.close()
+            raise
+        sock = stream if isinstance(stream, socket.socket) else stream()
+        return self._wrap(sock, context.wrap_socket, server_hostname=hostname)
+
+    def _wrap(
+        self, sock: socket.socket, wrap: Callable[..., ssl.SSLSocket], *,
+        server_hostname: str | bytes | None, suppress_ragged_eofs: bool = True, session: ssl.SSLSession | None = None,
+    ) -> ssl.SSLSocket:
+        try:
+            secured = wrap(sock, server_hostname=server_hostname, suppress_ragged_eofs=suppress_ragged_eofs, session=session)
+        except BaseException:
+            sock.close()
+            raise
+        try:
+            self._check(secured)
+        except BaseException:
+            secured.close()
+            raise
+        return secured
+
+    async def secure_async(
+        self, stream: httpcore.AsyncNetworkStream, hostname: str | None, timeout: float | None,
+    ) -> httpcore.AsyncNetworkStream:
+        """Upgrade httpcore's Endpoint connection, including one reached through a proxy tunnel."""
+        try:
+            context = await anyio.to_thread.run_sync(self._context)
+            context.set_alpn_protocols(['http/1.1'])
+            stream = await stream.start_tls(context, hostname, timeout)
+            self._check(stream.get_extra_info('ssl_object'))
+        except BaseException as error:
+            with anyio.CancelScope(shield=True):
+                await stream.aclose()
+            if isinstance(error, EndpointTlsError):
+                raise httpcore.ConnectError(str(error)) from error
+            raise
+        return stream
+
+    def urllib3_context(self) -> ssl.SSLContext:
+        """Supply urllib3's socket hook so each connection reloads the client certificate."""
+        tls = self
+        lock = Lock()
+
+        class PerConnection(ssl.SSLContext):
+            def wrap_socket(
+                self, sock: socket.socket, server_side: bool = False, do_handshake_on_connect: bool = True,
+                suppress_ragged_eofs: bool = True, server_hostname: str | bytes | None = None, session: ssl.SSLSession | None = None,
+            ) -> ssl.SSLSocket:
+                with lock:
+                    # urllib3 disables hostname checks before invoking this hook.
+                    self.verify_mode = ssl.CERT_REQUIRED
+                    self.check_hostname = True
+                    try:
+                        tls._context(lambda: self)
+                    except BaseException:
+                        sock.close()
+                        raise
+                    return tls._wrap(
+                        sock, super().wrap_socket, server_hostname=server_hostname,
+                        suppress_ragged_eofs=suppress_ragged_eofs, session=session,
+                    )
+
+            def wrap_bio(
+                self, incoming: ssl.MemoryBIO, outgoing: ssl.MemoryBIO, server_side: bool = False,
+                server_hostname: str | bytes | None = None, session: ssl.SSLSession | None = None,
+            ) -> ssl.SSLObject:
+                raise EndpointTlsError('telemetry TLS: the Endpoint is reached through an https proxy, which the Harness tunnels only over http')
+
+        context = PerConnection(ssl.PROTOCOL_TLS_CLIENT)
+        context.load_default_certs()
+        return context
 
 
 def endpoint_tls(seam: str, config: object, *, env: Mapping[str, str] = os.environ) -> EndpointTls:
@@ -192,26 +269,7 @@ def _private_file(text: str) -> Generator[str]:
         os.close(fd)
 
 
-def connect_proxy(address: tuple[str, int], context: ssl.SSLContext | None, tls: EndpointTls | None) -> socket.socket:
-    """
-    A connection to the proxy at `address`, over TLS when `context` is given, its chain verified and identity checked
-    before any byte is sent. Raises `EndpointTlsError` for a refused identity, `OSError` for anything else.
-    """
-    proxy = socket.create_connection(address)
-    if context is None:
-        return proxy
-    try:
-        secured = context.wrap_socket(proxy, server_hostname=address[0])
-    except OSError:
-        proxy.close()
-        raise
-    if tls is not None:
-        try:
-            tls.check(secured)
-        except EndpointTlsError:
-            secured.close()
-            raise
-    return secured
+DEFAULT_TLS = EndpointTls('endpoint', None, {})
 
 
 def refuse(client: socket.socket, doing: str, error: BaseException) -> None:
@@ -223,3 +281,55 @@ def refuse(client: socket.socket, doing: str, error: BaseException) -> None:
             b'HTTP/1.1 502 Bad Gateway\r\ncontent-type: text/plain\r\nconnection: close\r\n'
             + f'content-length: {len(message)}\r\n\r\n'.encode() + message,
         )
+
+
+def tls_network_backend(tls: EndpointTls, endpoint_context: ssl.SSLContext) -> httpcore.AsyncNetworkBackend:
+    backend = httpcore.AnyIOBackend()
+    if not isinstance(backend, httpcore.AsyncNetworkBackend):
+        raise RuntimeError('httpcore has no anyio backend')
+    return _TlsBackend(backend, tls, endpoint_context)
+
+
+class _TlsBackend(httpcore.AsyncNetworkBackend):
+    def __init__(self, inner: httpcore.AsyncNetworkBackend, tls: EndpointTls, endpoint_context: ssl.SSLContext) -> None:
+        self._inner = inner
+        self._tls = tls
+        self._endpoint_context = endpoint_context
+
+    async def connect_tcp(
+        self, host: str, port: int, timeout: float | None = None, local_address: str | None = None, socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        stream = await self._inner.connect_tcp(host, port, timeout=timeout, local_address=local_address, socket_options=socket_options)
+        return _TlsStream(stream, self._tls, self._endpoint_context)
+
+    async def connect_unix_socket(self, path: str, timeout: float | None = None, socket_options: Any = None) -> httpcore.AsyncNetworkStream:
+        return await self._inner.connect_unix_socket(path, timeout=timeout, socket_options=socket_options)
+
+    async def sleep(self, seconds: float) -> None:
+        await self._inner.sleep(seconds)
+
+
+class _TlsStream(httpcore.AsyncNetworkStream):
+    """A connection whose handshake with the Endpoint presents the certificate as read now and checks the identity, before any request byte."""
+
+    def __init__(self, inner: httpcore.AsyncNetworkStream, tls: EndpointTls, endpoint_context: ssl.SSLContext) -> None:
+        self._inner = inner
+        self._tls = tls
+        self._endpoint_context = endpoint_context
+
+    async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        return await self._inner.read(max_bytes, timeout)
+
+    async def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        await self._inner.write(buffer, timeout)
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+    def get_extra_info(self, info: str) -> Any:
+        return self._inner.get_extra_info(info)
+
+    async def start_tls(self, ssl_context: ssl.SSLContext, server_hostname: str | None = None, timeout: float | None = None) -> httpcore.AsyncNetworkStream:
+        if ssl_context is not self._endpoint_context:
+            return _TlsStream(await self._inner.start_tls(ssl_context, server_hostname, timeout), self._tls, self._endpoint_context)
+        return await self._tls.secure_async(self._inner, server_hostname, timeout)

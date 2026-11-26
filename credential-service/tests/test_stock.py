@@ -46,6 +46,7 @@ def test_the_stock_image_runs_the_stock_service_from_its_packages() -> None:
         '${BOTCUBE_ROOT}/config/bot.schema.json',
         '${BOTCUBE_ROOT}/config/src/',
         '${BOTCUBE_ROOT}/credential-source/',
+        '${BOTCUBE_ROOT}/endpoint-tls/',
         '${BOTCUBE_ROOT}/credential-service/',
     ]
     assert dockerfile.rstrip().endswith('CMD ["python", "-m", "botcube_credential_service.stock"]')

@@ -25,6 +25,7 @@ export function sessionApiCode(codeLocation: string, buildArgs: Record<string, s
       '!/config/bot.schema.json',
       '!/config/src',
       '!/credential-source',
+      '!/endpoint-tls',
       '!/harness',
       '/harness/*',
       `!/${harness}`,

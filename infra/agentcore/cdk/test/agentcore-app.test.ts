@@ -352,6 +352,9 @@ test('stages the session API source without the Sandbox tools virtualenv', () =>
     for (const file of [...configFiles, 'config/schema.ts']) {
       writeFileSync(resolve(fixture, file), file);
     }
+    const endpointTls = 'endpoint-tls/src/botcube_endpoint_tls/endpoint_tls.py';
+    mkdirSync(dirname(resolve(fixture, endpointTls)), { recursive: true });
+    writeFileSync(resolve(fixture, endpointTls), 'TLS fixture');
     writeFileSync(resolve(source, 'tools/.venv/lib/numpy-fixture.py'), 'installed dependency');
     mkdirSync(resolve(source, '.tool-dist/bot/cli'), { recursive: true });
     writeFileSync(resolve(source, '.tool-dist/bot/cli/tool.js'), 'unrelated staged CLI');
@@ -375,6 +378,7 @@ test('stages the session API source without the Sandbox tools virtualenv', () =>
       expect(readFileSync(resolve(app.outdir, sessionAsset, file), 'utf8')).toBe(file);
     }
     expect(existsSync(resolve(app.outdir, sessionAsset, 'config/schema.ts'))).toBe(false);
+    expect(readFileSync(resolve(app.outdir, sessionAsset, endpointTls), 'utf8')).toBe('TLS fixture');
     for (const file of ['pyproject.toml', 'uv.lock']) {
       expect(readFileSync(resolve(app.outdir, sessionAsset, harness, file), 'utf8')).toBe(file);
     }

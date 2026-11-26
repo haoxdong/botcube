@@ -58,6 +58,10 @@ def certificates(directory: Path) -> Certificates:
             '-addext', 'keyUsage=critical,keyCertSign,cRLSign', '-keyout', 'ca.key', '-out', 'ca.pem')
     leaf('server', 'egress proxy', f'URI:{SERVER_IDENTITY}', 'serverAuth')
     leaf('impostor', 'impostor', f'URI:{IMPOSTOR_IDENTITY}', 'serverAuth')
+    (directory / 'spoof.ext').write_text(f'extendedKeyUsage=serverAuth\nsubjectAltName=@alt\n[alt]\nURI.1 = spiffe://example.org/x, URI:{SERVER_IDENTITY}\n')
+    openssl('req', '-new', *_EC, '-subj', '/CN=spoof', '-keyout', 'spoof.key', '-out', 'spoof.csr')
+    openssl('x509', '-req', '-in', 'spoof.csr', '-CA', 'ca.pem', '-CAkey', 'ca.key', '-CAcreateserial', '-days', '1',
+            '-extfile', 'spoof.ext', '-out', 'spoof.pem')
     leaf('localhost', 'localhost', 'IP:127.0.0.1', 'serverAuth')
     leaf('client_a', 'client-a', 'URI:spiffe://example.org/ns/botcube/sa/credential-service', 'clientAuth')
     leaf('client_b', 'client-b', 'URI:spiffe://example.org/ns/botcube/sa/credential-service', 'clientAuth')

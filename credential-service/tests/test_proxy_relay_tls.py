@@ -10,16 +10,15 @@ from pathlib import Path
 
 import pytest
 from botcube_config.resolved_config import load_resolved_config
+from botcube_endpoint_tls import endpoint_tls as tls_module
+from botcube_endpoint_tls.endpoint_tls import EndpointTlsError, endpoint_tls
 from cryptography import x509
 
-from botcube_credential_service import endpoint_tls as tls_module
-from botcube_credential_service.endpoint_tls import EndpointTlsError, endpoint_tls
 from botcube_credential_service.proxy_relay import (
     proxy_url_from_config,
     start_proxy_relay,
 )
 from mtls_fake import (
-    IMPOSTOR_IDENTITY,
     SERVER_IDENTITY,
     Certificates,
     certificates,
@@ -48,12 +47,28 @@ def _relay(upstream: str, tls: dict[str, object], env: dict[str, str] | None = N
     return start_proxy_relay(upstream=upstream, listen=('127.0.0.1', 0), credential=None, headers={}, tls=endpoint_tls('proxy', tls, env=env or {}))
 
 
-def test_relay_presents_the_client_certificate_to_a_proxy_carrying_the_expected_identity(certs: Certificates) -> None:
-    with mtls_proxy(certs) as proxy:
-        relay = _relay(proxy.url, {'clientCertificate': certs.files('client_a'), 'serverIdentity': SERVER_IDENTITY})
+_VECTORS = json.loads((Path(__file__).resolve().parents[2] / 'tests/fixtures/endpoint-tls.json').read_text())
 
-        assert tunnel(relay) == b'HTTP/1.1 200 Connection Established\r\n\r\nhello'
-        assert proxy.clients() == ['client-a']
+
+@pytest.mark.parametrize('case', _VECTORS, ids=[f"{case['server']}-{case['result']}" for case in _VECTORS])
+def test_endpoint_tls_certificate_vectors(certs: Certificates, caplog: pytest.LogCaptureFixture, case: dict[str, str]) -> None:
+    config: dict[str, object] = {'clientCertificate': certs.files('client_a')}
+    if 'identity' in case:
+        config['serverIdentity'] = case['identity']
+
+    with mtls_proxy(certs, case['server']) as proxy, caplog.at_level(logging.ERROR):
+        answer = tunnel(_relay(proxy.url, config)).decode('latin-1')
+        if case['result'] == 'verified':
+            assert answer == 'HTTP/1.1 200 Connection Established\r\n\r\nhello'
+            assert proxy.clients() == ['client-a']
+        else:
+            assert proxy.connections == []
+            if case['result'] == 'identity':
+                assert answer.startswith('HTTP/1.1 502 Bad Gateway\r\n')
+                assert f"expected server identity {case['identity']}, but the server presented {case['presented']}" in answer
+                assert 'PRIVATE KEY' not in answer + caplog.text
+            else:
+                assert answer == ''
 
 
 def test_relay_presents_a_replaced_certificate_on_the_next_connection_without_a_restart(certs: Certificates, tmp_path: Path) -> None:
@@ -103,26 +118,6 @@ def test_relay_uses_one_command_until_client_certificate_refresh(
         assert calls.read_text() == 'xx'
 
 
-def test_relay_refuses_another_identity_before_sending_anything_naming_both(certs: Certificates, caplog: pytest.LogCaptureFixture) -> None:
-    with mtls_proxy(certs, 'impostor') as proxy, caplog.at_level(logging.ERROR):
-        relay = _relay(proxy.url, {'clientCertificate': certs.files('client_a'), 'serverIdentity': SERVER_IDENTITY})
-
-        answer = tunnel(relay).decode('latin-1')
-
-        assert answer.split('\r\n')[0] == 'HTTP/1.1 502 Bad Gateway'
-        assert f'expected server identity {SERVER_IDENTITY}, but the server presented {IMPOSTOR_IDENTITY}' in answer
-        assert proxy.connections == []
-        assert 'PRIVATE KEY' not in answer + caplog.text
-
-
-def test_relay_still_verifies_the_chain_of_a_proxy_carrying_the_expected_identity(certs: Certificates) -> None:
-    with mtls_proxy(certs, 'untrusted') as proxy:
-        relay = _relay(proxy.url, {'serverIdentity': SERVER_IDENTITY})
-
-        assert tunnel(relay) == b''
-        assert proxy.connections == []
-
-
 def test_relay_reads_its_tls_from_the_botcube_config_file(certs: Certificates, tmp_path: Path) -> None:
     with mtls_proxy(certs) as proxy:
         tls = {'clientCertificate': certs.files('client_a'), 'serverIdentity': SERVER_IDENTITY}
@@ -155,7 +150,7 @@ def test_a_certificate_command_printing_no_certificate_fails_naming_the_command_
     tls = endpoint_tls('proxy', {'clientCertificate': {'command': ['/bin/cat', str(printed)], 'timeoutSeconds': 5}}, env=_OPT_IN)
 
     with pytest.raises(EndpointTlsError) as raised:
-        tls.context()
+        tls.secure(lambda: socket.create_connection(("127.0.0.1", 9)), "localhost")
 
     assert str(raised.value) == (
         'proxy client certificate (command /bin/cat): the command did not print a Kubernetes ExecCredential '

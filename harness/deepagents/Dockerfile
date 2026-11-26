@@ -86,6 +86,7 @@ COPY harness/deepagents/pyproject.toml harness/deepagents/uv.lock ./
 COPY config/pyproject.toml config/bot.schema.json /config/
 COPY config/src/ /config/src/
 COPY credential-source/ /credential-source/
+COPY endpoint-tls/ /endpoint-tls/
 RUN --mount=type=secret,id=build_ca \
     if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \
     touch README.md && uv sync --frozen --no-dev --no-install-project

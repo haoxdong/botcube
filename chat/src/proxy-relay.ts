@@ -1,12 +1,12 @@
-import { connect as tcpConnect, createServer, isIP, type Socket } from 'node:net';
-import { connect as tlsConnect } from 'node:tls';
+import { once } from 'node:events';
+import { connect as tcpConnect, createServer, type Socket } from 'node:net';
 import { urlToHttpOptions } from 'node:url';
 import type { BotCubeConfig } from 'botcube-config';
 import type { CustomFetch } from 'openid-client';
 import { ProxyAgent } from 'undici';
 import { dispatcherFetch } from './dispatcher-fetch.js';
 import { credentialSource, type CredentialSource } from './credential-source.js';
-import { endpointTls, EndpointTlsError, type EndpointTls, type TlsConnectOptions } from './endpoint-tls.js';
+import { endpointTls, EndpointTlsError, type EndpointTls } from './endpoint-tls.js';
 
 /** The most a client's request head may take before the relay refuses it. */
 const MAX_HEAD_BYTES = 64 * 1024;
@@ -38,7 +38,7 @@ export async function startProxyRelay({ upstream, listen, credential, headers, t
     readHead(client)
       .then(async ({ head, rest }) => {
         const authorization = credential ? `Bearer ${(await credential.get()).value}` : undefined;
-        relay(client, upstream, rewrite(head, authorization, headers), rest, await tls?.connectOptions());
+        await relay(client, upstream, rewrite(head, authorization, headers), rest, tls);
       })
       .catch((error: unknown) => refuse(client, `could not open a request through ${upstream.origin}`, error));
   });
@@ -141,27 +141,43 @@ function refuse(client: Socket, doing: string, error: unknown): void {
   client.end(`HTTP/1.1 502 Bad Gateway\r\ncontent-type: text/plain\r\ncontent-length: ${Buffer.byteLength(message)}\r\nconnection: close\r\n\r\n${message}`);
 }
 
-function relay(client: Socket, upstream: URL, head: string, rest: Buffer, tls: TlsConnectOptions | undefined): void {
-  const { protocol, hostname, port } = urlToHttpOptions(upstream);
-  if (!hostname) throw new TypeError('The forward proxy URL must include a hostname');
+const DEFAULT_TLS = endpointTls('proxy');
+
+async function relay(client: Socket, upstream: URL, head: string, rest: Buffer, tls: EndpointTls | undefined): Promise<void> {
+  const { protocol, hostname: host, port } = urlToHttpOptions(upstream);
+  if (!host) throw new TypeError('The forward proxy URL must include a hostname');
   const secure = protocol === 'https:';
-  const address = { host: hostname, port: Number(port ?? (secure ? 443 : 80)) };
-  const servername = isIP(hostname) === 0 ? hostname : undefined;
-  const proxy = secure ? tlsConnect({ ...address, servername, ...tls }) : tcpConnect(address);
-  proxy.on('error', (error) => {
+  const address = { host, port: Number(port ?? (secure ? 443 : 80)) };
+  let proxy: Socket;
+  try {
+    if (secure) {
+      proxy = await (tls ?? DEFAULT_TLS).secure(address, host);
+    } else {
+      proxy = tcpConnect(address);
+      await once(proxy, 'connect');
+    }
+  } catch (error) {
     if (error instanceof EndpointTlsError) {
       refuse(client, `refused ${upstream.origin}`, error);
       return;
     }
+    console.error(`Proxy relay could not reach ${upstream.origin}: ${error instanceof Error ? error.message : String(error)}`);
+    client.destroy();
+    return;
+  }
+
+  proxy.on('error', (error) => {
     console.error(`Proxy relay could not reach ${upstream.origin}: ${error.message}`);
     client.destroy();
   });
+  if (client.destroyed) {
+    proxy.destroy();
+    return;
+  }
   client.on('close', () => proxy.destroy());
   proxy.on('close', () => client.end().resume());
-  proxy.once(secure ? 'secureConnect' : 'connect', () => {
-    proxy.write(head);
-    if (rest.length) proxy.write(rest);
-    client.pipe(proxy).pipe(client);
-    client.resume();
-  });
+  proxy.write(head);
+  if (rest.length) proxy.write(rest);
+  client.pipe(proxy).pipe(client);
+  client.resume();
 }

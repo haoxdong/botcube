@@ -1,0 +1,32 @@
+[
+  {
+    "server": "server",
+    "identity": "spiffe://example.org/ns/egress/sa/proxy",
+    "result": "verified"
+  },
+  {
+    "server": "impostor",
+    "identity": "spiffe://example.org/ns/egress/sa/proxy",
+    "result": "identity",
+    "presented": "spiffe://example.org/ns/other/sa/impostor"
+  },
+  {
+    "server": "spoof",
+    "identity": "spiffe://example.org/ns/egress/sa/proxy",
+    "result": "identity",
+    "presented": "spiffe://example.org/x, URI:spiffe://example.org/ns/egress/sa/proxy"
+  },
+  {
+    "server": "untrusted",
+    "identity": "spiffe://example.org/ns/egress/sa/proxy",
+    "result": "handshake"
+  },
+  {
+    "server": "localhost",
+    "result": "verified"
+  },
+  {
+    "server": "server",
+    "result": "handshake"
+  }
+]

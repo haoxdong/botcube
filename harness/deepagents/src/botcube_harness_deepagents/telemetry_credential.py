@@ -6,19 +6,16 @@ beside the BotCube Config's `otlp` Endpoint; the Credential Source and the TLS a
 """
 from __future__ import annotations
 
-import socket
-import ssl
-import threading
 from typing import Any
 
 import requests
 from botcube_credential_source import CredentialSource, credential_source
+from botcube_endpoint_tls.endpoint_tls import EndpointTls, endpoint_tls
 from requests.adapters import HTTPAdapter
 from requests.auth import AuthBase
 
 from . import aws_clients
 from .deployment import deployed_config
-from .endpoint_tls import EndpointTls, EndpointTlsError, endpoint_tls
 from .proxy_relay import proxy_url_from_config
 
 
@@ -37,7 +34,7 @@ class _TlsAdapter(HTTPAdapter):
     """Opens each https connection, direct or through a proxy's tunnel, with the Endpoint's TLS in place of requests' own."""
 
     def __init__(self, tls: EndpointTls) -> None:
-        self._context = _per_connection_context(tls)
+        self._context = tls.urllib3_context()
         super().__init__()
 
     def build_connection_pool_key_attributes(
@@ -45,37 +42,6 @@ class _TlsAdapter(HTTPAdapter):
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         host, pool = super().build_connection_pool_key_attributes(request, verify, cert)
         return host, {**pool, 'ssl_context': self._context, 'assert_hostname': False}
-
-
-def _per_connection_context(tls: EndpointTls) -> ssl.SSLContext:
-    """A context that presents the client certificate as read for each new connection, and refuses a server without the
-    expected identity before anything is sent; with no identity expected, it checks the hostname itself."""
-    lock = threading.Lock()
-
-    class PerConnection(ssl.SSLContext):
-        def wrap_socket(
-            self, sock: socket.socket, server_side: bool = False, do_handshake_on_connect: bool = True,
-            suppress_ragged_eofs: bool = True, server_hostname: str | bytes | None = None, session: ssl.SSLSession | None = None,
-        ) -> ssl.SSLSocket:
-            with lock:
-                # urllib3 turns the hostname check off on this shared context (assert_hostname=False); put it back, and
-                # `tls.context` takes it off again only when an identity is expected, which `tls.check` then verifies.
-                self.verify_mode = ssl.CERT_REQUIRED
-                self.check_hostname = True
-                tls.context(lambda: self)
-                secured = super().wrap_socket(sock, server_side, do_handshake_on_connect, suppress_ragged_eofs, server_hostname, session)
-            tls.check(secured)
-            return secured
-
-        def wrap_bio(
-            self, incoming: ssl.MemoryBIO, outgoing: ssl.MemoryBIO, server_side: bool = False,
-            server_hostname: str | bytes | None = None, session: ssl.SSLSession | None = None,
-        ) -> ssl.SSLObject:
-            raise EndpointTlsError('telemetry TLS: the Endpoint is reached through an https proxy, which the Harness tunnels only over http')
-
-    context = PerConnection(ssl.PROTOCOL_TLS_CLIENT)
-    context.load_default_certs()
-    return context
 
 
 def telemetry_session() -> requests.Session:

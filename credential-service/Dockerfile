@@ -13,6 +13,7 @@ RUN --mount=type=secret,id=build_ca \
 COPY ${BOTCUBE_ROOT}/config/pyproject.toml ${BOTCUBE_ROOT}/config/bot.schema.json /opt/botcube/config/
 COPY ${BOTCUBE_ROOT}/config/src/ /opt/botcube/config/src/
 COPY ${BOTCUBE_ROOT}/credential-source/ /opt/botcube/credential-source/
+COPY ${BOTCUBE_ROOT}/endpoint-tls/ /opt/botcube/endpoint-tls/
 COPY ${BOTCUBE_ROOT}/credential-service/ /opt/botcube/credential-service/
 WORKDIR /opt/botcube/credential-service
 RUN --mount=type=secret,id=build_ca \
